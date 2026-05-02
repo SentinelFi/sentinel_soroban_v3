@@ -1,0 +1,25 @@
+[package]
+name = "controller"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+stellar-access = { workspace = true }
+stellar-macros = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+governance_module = { path = "../governance_module" }
+risk_vault = { path = "../risk_vault" }
+oracle_aggregator = { path = "../oracle_aggregator" }
+flight_pool = { path = "../flight_pool" }
+recovery_pool = { path = "../recovery_pool" }
+
+[package.metadata.stellar]
+cargo_inherit = true
