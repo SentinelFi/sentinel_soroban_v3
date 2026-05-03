@@ -6,7 +6,7 @@ This document describes how we manage the build process for this project — how
 
 ## Overview
 
-Development is broken into phases (see `spec/development_list.md`). Each phase has its own lifecycle: it is planned before work starts, worked through incrementally, and explicitly closed by the user after validation.
+Development is broken into phases (see `spec/dev_steps.md`). Each phase has its own lifecycle: it is planned before work starts, worked through incrementally, and explicitly closed by the user after validation.
 
 The agent uses these files to resume work seamlessly across sessions without losing context.
 
@@ -62,7 +62,7 @@ planned → in_progress → paused → complete
 **When:** Before you're ready to start a phase.
 
 **What it does:**
-1. Generates `spec/phases/phase-{NN}-{slug}.md` pre-populated with the goal, all subtasks from `spec/development_list.md`, and empty sections for you to fill in
+1. Generates `spec/phases/phase-{NN}-{slug}.md` pre-populated with the goal, all subtasks from `spec/dev_steps.md`, and empty sections for you to fill in
 2. Builds a **Context Manifest** — lists the exact skills, external docs (with URLs), and project files the agent will need when `/start-phase` runs
 3. Shows you the manifest summary so you know what the agent will load
 

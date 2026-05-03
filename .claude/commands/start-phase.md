@@ -39,23 +39,17 @@ This gives the agent just enough context to orient before diving into phase-spec
 
 ### 2. Read the phase file
 
-- Determine the phase file path using the slug table:
-  - 0 → `spec/phases/phase-00-foundry-init.md`
-  - 1 → `spec/phases/phase-01-mockusdc.md`
-  - 2 → `spec/phases/phase-02-recoverypool.md`
-  - 3 → `spec/phases/phase-03-governancemodule.md`
-  - 4 → `spec/phases/phase-04-riskvault.md`
-  - 5 → `spec/phases/phase-05-oracleaggregator.md`
-  - 6 → `spec/phases/phase-06-flightpool.md`
-  - 7 → `spec/phases/phase-07-controller.md`
-  - 8 → `spec/phases/phase-08-integration-tests.md`
-  - 9 → `spec/phases/phase-09-mock-api-server.md`
-  - 10 → `spec/phases/phase-10-cre-workflow-mock.md`
-  - 11 → `spec/phases/phase-11-cre-workflow-aeroapi.md`
-  - 12 → `spec/phases/phase-12-testnet.md`
-  - 13 → `spec/phases/phase-13-frontend-init.md`
-  - 14 → `spec/phases/phase-14-frontend.md`
-  - 15 → `spec/phases/phase-15-mainnet.md`
+- Determine the phase file path using the slug table (Phase 3 — contract improvements, see `spec/dev_steps.md`):
+  - 1  → `spec/phases/phase-01-delete-flight-pool.md`
+  - 2  → `spec/phases/phase-02-delete-recovery-pool.md`
+  - 3  → `spec/phases/phase-03-flight-pool-manager.md`
+  - 4  → `spec/phases/phase-04-governance-routes-instance.md`
+  - 5  → `spec/phases/phase-05-vault-withdrawal-queue.md`
+  - 6  → `spec/phases/phase-06-vault-claimable-ttl.md`
+  - 7  → `spec/phases/phase-07-vault-snapshot-temporary.md`
+  - 8  → `spec/phases/phase-08-oracle-prune-ttl-miss.md`
+  - 9  → `spec/phases/phase-09-controller-rewire.md`
+  - 10 → `spec/phases/phase-10-integration-tests.md`
 
 - Read the full phase file — confirm Status is `planned`
 - Read the **Pre-work Notes** — these are the user's constraints, treat as hard requirements
@@ -84,8 +78,8 @@ Execute these in parallel:
 - These are reference docs — scan for patterns and APIs relevant to this phase's subtasks
 - If a fetch fails, note it in the Work Log but do not block — proceed with architecture.md as primary reference
 
-**d) Read development_list.md:**
-- Read `spec/development_list.md` for the full test list and gate conditions for this phase
+**d) Read dev_steps.md:**
+- Read `spec/dev_steps.md` for the full task list and gate conditions for this phase
 
 ### 4. Update the phase file
 

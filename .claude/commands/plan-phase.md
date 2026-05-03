@@ -16,7 +16,7 @@ The user provides a phase number as the argument (e.g. `/plan-phase 4`).
 
 ### 1. Read context
 
-- Read `spec/development_list.md` — extract all subtasks for the requested phase number
+- Read `spec/dev_steps.md` — extract all subtasks for the requested phase number
 - Read `spec/progress.md` — check the phase's current status (must be `planned` to generate a plan)
 - Read `spec/architecture.md` — understand what this phase's contracts/components depend on
 
@@ -28,23 +28,17 @@ spec/phases/phase-{NN}-{slug}.md
 ```
 where `{NN}` is zero-padded phase number and `{slug}` is a short kebab-case name.
 
-Phase slugs:
-- 0  → phase-00-foundry-init
-- 1  → phase-01-mockusdc
-- 2  → phase-02-recoverypool
-- 3  → phase-03-governancemodule
-- 4  → phase-04-riskvault
-- 5  → phase-05-oracleaggregator
-- 6  → phase-06-flightpool
-- 7  → phase-07-controller
-- 8  → phase-08-integration-tests
-- 9  → phase-09-mock-api-server
-- 10 → phase-10-cre-workflow-mock
-- 11 → phase-11-cre-workflow-aeroapi
-- 12 → phase-12-testnet
-- 13 → phase-13-frontend-init
-- 14 → phase-14-frontend
-- 15 → phase-15-mainnet
+Phase slugs (Phase 3 — contract improvements, see `spec/dev_steps.md`):
+- 1  → phase-01-delete-flight-pool
+- 2  → phase-02-delete-recovery-pool
+- 3  → phase-03-flight-pool-manager
+- 4  → phase-04-governance-routes-instance
+- 5  → phase-05-vault-withdrawal-queue
+- 6  → phase-06-vault-claimable-ttl
+- 7  → phase-07-vault-snapshot-temporary
+- 8  → phase-08-oracle-prune-ttl-miss
+- 9  → phase-09-controller-rewire
+- 10 → phase-10-integration-tests
 
 ### 3. Build the Context Manifest
 
@@ -106,7 +100,7 @@ Examples of things worth asking about:
 - Edge cases where the architecture doc is silent
 - Any constraints the user may want to enforce (storage rent, access control style, upgrade patterns)
 
-Do not ask about things that are already clearly specified in architecture.md, development_list.md, or memory. Keep questions concise — one to three questions is typical. If nothing is genuinely ambiguous, skip this step and proceed directly to writing the file.
+Do not ask about things that are already clearly specified in architecture.md, dev_steps.md, or memory. Keep questions concise — one to three questions is typical. If nothing is genuinely ambiguous, skip this step and proceed directly to writing the file.
 
 ### 5. Generate the phase file
 
@@ -152,7 +146,7 @@ Completed: —
 
 ## Subtasks
 
-{All numbered subtasks from development_list.md for this phase, as unchecked boxes}
+{All numbered subtasks from dev_steps.md for this phase, as unchecked boxes}
 
 - [ ] 1. ...
 - [ ] 2. ...
@@ -160,7 +154,7 @@ Completed: —
 
 ### Gate
 
-{The gate condition from development_list.md — what must be true before this phase is considered done.}
+{The gate condition from dev_steps.md — what must be true before this phase is considered done.}
 
 ---
 
