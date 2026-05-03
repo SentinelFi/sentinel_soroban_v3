@@ -1,5 +1,5 @@
 [package]
-name = "controller"
+name = "flight_pool_manager"
 version = "0.0.0"
 edition = "2021"
 publish = false
@@ -12,13 +12,11 @@ doctest = false
 soroban-sdk = { workspace = true }
 stellar-access = { workspace = true }
 stellar-macros = { workspace = true }
+risk_vault = { path = "../risk_vault" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-governance_module = { path = "../governance_module" }
-risk_vault = { path = "../risk_vault" }
-oracle_aggregator = { path = "../oracle_aggregator" }
-flight_pool_manager = { path = "../flight_pool_manager" }
+mock_usdc = { path = "../mock_usdc" }
 
 [package.metadata.stellar]
 cargo_inherit = true

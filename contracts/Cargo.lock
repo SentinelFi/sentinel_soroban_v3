@@ -256,10 +256,9 @@ checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 name = "controller"
 version = "0.0.0"
 dependencies = [
- "flight_pool",
+ "flight_pool_manager",
  "governance_module",
  "oracle_aggregator",
- "recovery_pool",
  "risk_vault",
  "soroban-sdk",
  "stellar-access",
@@ -616,12 +615,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
-name = "flight_pool"
+name = "flight_pool_manager"
 version = "0.0.0"
 dependencies = [
- "recovery_pool",
+ "mock_usdc",
  "risk_vault",
  "soroban-sdk",
+ "stellar-access",
+ "stellar-macros",
 ]
 
 [[package]]
@@ -808,10 +809,9 @@ name = "integration_tests"
 version = "0.0.0"
 dependencies = [
  "controller",
- "flight_pool",
+ "flight_pool_manager",
  "governance_module",
  "oracle_aggregator",
- "recovery_pool",
  "risk_vault",
  "soroban-sdk",
 ]
@@ -1075,15 +1075,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
-]
-
-[[package]]
-name = "recovery_pool"
-version = "0.0.0"
-dependencies = [
- "soroban-sdk",
- "stellar-access",
- "stellar-macros",
 ]
 
 [[package]]

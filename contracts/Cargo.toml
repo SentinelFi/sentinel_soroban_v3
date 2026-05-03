@@ -5,6 +5,7 @@ members = [
     "governance_module",
     "risk_vault",
     "oracle_aggregator",
+    "flight_pool_manager",
     "controller",
     "integration_tests",
 ]

@@ -15,5 +15,4 @@ controller = { path = "../controller" }
 governance_module = { path = "../governance_module" }
 risk_vault = { path = "../risk_vault" }
 oracle_aggregator = { path = "../oracle_aggregator" }
-flight_pool = { path = "../flight_pool" }
-recovery_pool = { path = "../recovery_pool" }
+flight_pool_manager = { path = "../flight_pool_manager" }
