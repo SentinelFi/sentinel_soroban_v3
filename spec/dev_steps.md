@@ -1,9 +1,10 @@
 # Dev Steps — Phase 3 Contract Changes
 
 Contract-level changes only. One step per contract action (delete / add / modify).
-Order matters: deletions and the new contract come first; storage-tier moves
-that do not change TTL behaviour come next; explicit TTL work is grouped near
-the bottom (steps 8–9); integration tests are last as the green-build gate.
+Order matters: deletions and the new contract come first; per-contract refactors
+(storage tiers, API surfaces, queue placement) come next; explicit TTL tuning
+and observability are grouped near the bottom (steps 8–9); integration tests are
+last as the green-build gate.
 
 `mock_usdc/` is unchanged in this phase and is not listed.
 
@@ -144,24 +145,112 @@ build -p <name>` commands.
 
 ## Step 4 — MODIFY `contracts/governance_module/`
 
-**Action:** Move `Route` and `RouteList` from Persistent to Instance storage
-(Improvement #4).
+**Action:** Holistic redesign — TTL strategy, typed-enum read API, explicit
+lifecycle operations, partial-update semantics, and events for an off-chain
+indexer (Improvement #4).
 
-**Why:** Routes are global shared state under ~50 entries; per Soroban best
-practice that should live in Instance and ride the existing TTL cron, not
-Persistent.
+**Why:** Routes scale to thousands in production (many
+`(flight_id, origin, dest)` tuples across hub airports). At that scale:
+- **Instance is wrong** — every invocation loads all Instance entries into
+  the tx footprint; thousands of routes blow past per-tx limits.
+- **Persistent without a TTL strategy is what exists today** — entries
+  archive silently and `buy_insurance` panics with `"route not found"`,
+  indistinguishable from a never-whitelisted route.
+- **`RouteList`** (one `Vec` of every route) is a footprint hazard at any
+  tier — a single storage entry holding thousands of tuples.
 
-**Tasks:**
-- In `src/lib.rs`, grep for `storage().persistent()` and switch every call site
-  that touches `DataKey::Route(..)` or `DataKey::RouteList` to
-  `storage().instance()`. This applies to `get`, `set`, `has`, `remove`.
-- Delete any explicit `extend_ttl` calls for these keys — Instance TTL is
-  managed by the existing per-contract cron.
-- Confirm the `DataKey` enum comments in the contract match the architecture
-  doc (`Route(..)` and `RouteList` annotated as Instance).
+The fix is layered: keep keyed `Route(...)` Persistent, add a TTL strategy
+(in-contract on writes + owner cron on idle entries), collapse the read API
+to a typed enum, make updates safely partial, emit events so an off-chain
+indexer owns enumeration.
 
-**Verification:** `cargo build -p governance_module` clean; existing unit tests
-pass after switching their reads to `instance()` if they introspect storage.
+**Storage:**
+- `Route(flight_id, origin, dest) → RouteTerms` — **stays Persistent**, keyed
+  per-route, independent TTL.
+- **`RouteList` is removed.** Enumeration moves off-chain.
+- Instance entries (`Owner`, `Admin(addr)`, `DefaultPremium`, `DefaultPayoff`,
+  `DefaultDelayHours`) unchanged.
+
+**Read API:**
+
+Define a typed enum that distinguishes the three on-chain states:
+```rust
+#[contracttype]
+pub enum RouteStatus {
+    Active(ResolvedTerms),  // entry exists, approved == true
+    Disabled,               // entry exists, approved == false
+    Unknown,                // entry missing (never whitelisted, archived, or removed)
+}
+
+pub fn route_status(env, flight_id, origin, dest) -> RouteStatus;
+```
+
+**Drop:** `is_route_whitelisted`, `get_route_terms`, `get_whitelisted_routes`.
+**Keep:** `get_defaults`, `is_admin`.
+
+Controller's `buy_insurance` switches from two redundant cross-contract
+calls (`is_route_whitelisted` + `get_route_terms`) to one `route_status()`
+call + match.
+
+**Write API:**
+- `whitelist_route` — drops the `RouteList` append; emits `route.listed`.
+- `disable_route` — soft-disable unchanged; emits `route.disabled`.
+- `enable_route` — **new.** Re-enables a disabled route without touching
+  custom terms; emits `route.enabled`.
+- `remove_route` — **new.** Hard-deletes the `Route(...)` entry; emits
+  `route.removed`.
+- `update_route_terms` — **refactored** to take a partial-update struct
+  `RouteUpdate { premium: Field<i128>, payoff: Field<i128>, delay_hours: Field<u32> }`
+  where `Field<T> = Keep | Set(T) | UseDefault`; emits `route.updated`.
+- `set_defaults` — emits `gov.defaults`.
+- `add_admin` / `remove_admin` — emit `gov.admin_added` / `gov.admin_removed`.
+
+**TTL strategy:**
+- In-contract `extend_ttl` on every `Route(...)` write (60-day window at
+  5s/ledger). Covers actively edited routes.
+- Owner cron extends idle routes via `ExtendFootprintTTLOp` — add
+  `DataKey::Route(...)` keys to Cron #4's footprint (Improvement #6,
+  already covering `FlightConfig` / `FlightData`).
+- Existing `extend_ttl()` for the contract instance stays.
+
+**Events** (consumed by off-chain indexer):
+```
+("route", "listed")     → (flight_id, origin, dest, premium, payoff, delay_hours)
+("route", "disabled")   → (flight_id, origin, dest)
+("route", "enabled")    → (flight_id, origin, dest)
+("route", "updated")    → (flight_id, origin, dest, premium, payoff, delay_hours)
+("route", "removed")    → (flight_id, origin, dest)
+("gov",   "defaults")   → (premium, payoff, delay_hours)
+("gov",   "admin_added")   → (admin)
+("gov",   "admin_removed") → (admin)
+```
+
+**Tasks (suggested order — each step keeps the workspace green):**
+1. Add `RouteStatus` enum + `route_status()` alongside the existing API.
+2. Update Controller's `buy_insurance` to use `route_status()` + match —
+   drops the redundant `is_route_whitelisted` cross-contract call.
+3. Add events to existing write functions (`whitelist_route`,
+   `disable_route`, `update_route_terms`, `set_defaults`, `add_admin`,
+   `remove_admin`).
+4. Add `enable_route` and `remove_route` operations + events.
+5. Refactor `update_route_terms` to the partial-update struct.
+6. Drop `RouteList` writes from `whitelist_route`; remove
+   `get_whitelisted_routes`.
+7. Drop `is_route_whitelisted` and `get_route_terms` from the contract;
+   remove from `controller/src/lib.rs`'s `GovClient` trait.
+8. Add `extend_ttl` calls to all `Route(...)` writes.
+9. Rewrite governance unit tests for the new API.
+10. Spot-check `controller/src/test.rs` and integration tests
+    (`setup.rs`, `group2_capital.rs`, `group4_parallel.rs`) — these only
+    call `whitelist_route`, so changes are minimal.
+
+**Verification:**
+- `cargo build -p governance_module` clean.
+- `cargo build -p controller` clean (after tasks 2 + 7).
+- `cargo test -p governance_module` passes the rewritten suite.
+- Integration test: purchase on a whitelisted route succeeds; disable +
+  retry panics with `"route is disabled"`; remove + retry panics with
+  `"route not whitelisted"`.
 
 ---
 

@@ -31,8 +31,7 @@ pub enum CtrlKey {
 
 #[contractclient(name = "GovClient")]
 pub trait GovernanceInterface {
-    fn is_route_whitelisted(env: &Env, flight_id: Symbol, origin: Symbol, dest: Symbol) -> bool;
-    fn get_route_terms(env: &Env, flight_id: Symbol, origin: Symbol, dest: Symbol) -> ResolvedTerms;
+    fn route_status(env: &Env, flight_id: Symbol, origin: Symbol, dest: Symbol) -> RouteStatus;
 }
 
 #[contracttype]
@@ -41,6 +40,14 @@ pub struct ResolvedTerms {
     pub premium: i128,
     pub payoff: i128,
     pub delay_hours: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum RouteStatus {
+    Active(ResolvedTerms),
+    Disabled,
+    Unknown,
 }
 
 #[contractclient(name = "VaultClient")]
@@ -306,15 +313,13 @@ impl Controller {
         let recovery_addr: Address = e.storage().instance().get(&CtrlKey::RecoveryPool).unwrap();
         let wasm_hash: BytesN<32> = e.storage().instance().get(&CtrlKey::FlightPoolWasm).unwrap();
 
-        // 1. Validate route
+        // 1+2. Validate route + read terms in one cross-contract call.
         let gov = GovClient::new(e, &gov_addr);
-        assert!(
-            gov.is_route_whitelisted(&flight_id, &origin, &dest),
-            "route not whitelisted"
-        );
-
-        // 2. Read terms
-        let terms = gov.get_route_terms(&flight_id, &origin, &dest);
+        let terms = match gov.route_status(&flight_id, &origin, &dest) {
+            RouteStatus::Active(t) => t,
+            RouteStatus::Disabled => panic!("route is disabled"),
+            RouteStatus::Unknown => panic!("route not whitelisted"),
+        };
 
         // 3. Enforce minimum lead time
         let min_lead: u64 = e.storage().instance().get(&CtrlKey::MinLeadTime).unwrap();

@@ -3,7 +3,7 @@
 > Phase dashboard for the Phase 3 contract improvements.
 > Source of truth for subtasks: `spec/dev_steps.md`. Per-phase living docs: `spec/phases/phase-{NN}-{slug}.md` (created by `/plan-phase`).
 
-**Current Phase:** — (none in_progress; next up: Phase 4 — Governance routes Persistent → Instance)
+**Current Phase:** — (none in_progress; next up: Phase 5 — RiskVault `WithdrawalQueue` Persistent → Instance)
 
 ---
 
@@ -14,7 +14,7 @@
 | 1  | Delete `flight_pool/`                                                 | complete | 2026-05-02 | 2026-05-02 |
 | 2  | Delete `recovery_pool/`                                               | complete | 2026-05-02 | 2026-05-02 |
 | 3  | Add `flight_pool_manager/`                                            | complete | 2026-05-02 | 2026-05-02 |
-| 4  | Governance routes — Persistent → Instance                             | planned  | —       | —         |
+| 4  | Governance routes — API redesign + events + TTL                       | complete | 2026-05-03 | 2026-05-03 |
 | 5  | RiskVault `WithdrawalQueue` — Persistent → Instance                   | planned  | —       | —         |
 | 6  | Oracle `ActiveFlightList` — Persistent → Instance + prune             | planned  | —       | —         |
 | 7  | Controller — wire `FlightPoolManager` + `TravelerFlights`             | planned  | —       | —         |

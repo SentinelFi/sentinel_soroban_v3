@@ -37,95 +37,156 @@ TypeScript bindings for every Soroban contract.
 
 ### GovernanceModule
 
-The route authority. Owns the canonical list of whitelisted flight routes and manages
-premium, payoff, and delay threshold terms. The Controller reads terms from this contract
-before every insurance purchase.
+The route authority. Owns the canonical terms for whitelisted flight routes — premium, payoff,
+and delay threshold. The Controller reads route status from this contract before every
+insurance purchase. **Route enumeration lives off-chain** via an event-sourced indexer; the
+contract intentionally does NOT maintain a list of all whitelisted routes (was a footprint
+hazard at scale).
 
-- A **route** is identified by `(flight_id, origin, destination)` as a `Symbol` / `String` tuple.
-- The contract stores **global default terms** — `default_premium`, `default_payoff`, and
-  `default_delay_hours` — that apply to any whitelisted route that does not have custom terms.
+- A **route** is identified by `(flight_id, origin, destination)` as a `Symbol` tuple.
+- The contract stores **global default terms** — `default_premium`, `default_payoff`,
+  `default_delay_hours` — that apply to any whitelisted route without custom terms.
 - When a route is **whitelisted**, custom `premium`, `payoff`, and `delay_hours` can
-  optionally be assigned. If not assigned, the route falls back to global defaults.
-- Routes can be **whitelisted** or **disabled**. Disabling blocks new purchases but does not
-  affect already-active flights.
-- **Terms can be updated** by the owner or an admin. Updates only apply to flights
-  registered after the update; existing flights have their terms locked at registration.
+  optionally be assigned; unset fields fall back to defaults.
+- A route has three states from the protocol's view: **Active** (entry exists,
+  approved), **Disabled** (entry exists, soft-blocked from new purchases),
+  **Unknown** (entry missing — never whitelisted, removed, or storage archived).
+  The typed `route_status()` reader exposes all three.
+- **Disabling** is reversible (`disable_route` → `enable_route`) and used for temporary
+  suspension. **Removing** is permanent: hard-deletes the storage entry. `remove_route` is
+  **strict** — it requires the route to be disabled first, preventing fat-finger removal of
+  an actively-purchasable route.
+- **Terms can be updated** by the owner or an admin. Updates only apply to flights registered
+  after the update; existing flights have their terms locked at registration (the Controller
+  resolves `route_status()` at purchase time and snapshots into `FlightConfig`).
 - **Whitelisting a route does NOT create a flight entry.** Flight entries are created lazily
   on first purchase (see Controller).
-- Admin whitelist managed by `owner.require_auth()`. Admins authenticated via
-  `admin.require_auth()` on route management functions.
+- All route writes are gated by `require_owner_or_admin`. Owner-only changes
+  (`set_defaults`, `add_admin`, `remove_admin`) use the OZ `#[only_owner]` guard.
 
 **Storage layout:**
 
 ```rust
 #[contracttype]
 pub enum DataKey {
-    Owner,                                          // Address — Instance
     Admin(Address),                                 // bool — Instance
     DefaultPremium,                                 // i128 — Instance (stroops of USDC)
     DefaultPayoff,                                  // i128 — Instance (stroops of USDC)
     DefaultDelayHours,                              // u32 — Instance (hours)
-    Route(Symbol, Symbol, Symbol),                  // RouteTerms — Instance
-    RouteList,                                      // Vec<(Symbol, Symbol, Symbol)> — Instance
+    Route(Symbol, Symbol, Symbol),                  // RouteTerms — Persistent
 }
 
 #[contracttype]
 pub struct RouteTerms {
-    pub premium: Option<i128>,      // None -> use default
-    pub payoff: Option<i128>,       // None -> use default
-    pub delay_hours: Option<u32>,   // None -> use default
+    pub premium: Option<i128>,      // None → use default
+    pub payoff: Option<i128>,       // None → use default
+    pub delay_hours: Option<u32>,   // None → use default
     pub approved: bool,
 }
 ```
 
-**Key functions:**
+`Owner` lives in OZ `ownable` storage (not in `DataKey`).
+
+**Read API — typed status:**
 
 ```rust
-// Global defaults
-fn set_defaults(env: Env, owner: Address, premium: i128, payoff: i128, delay_hours: u32);
-fn get_defaults(env: Env) -> (i128, i128, u32);
+#[contracttype]
+pub enum RouteStatus {
+    Active(ResolvedTerms),  // entry exists, approved == true; defaults folded
+    Disabled,               // entry exists, approved == false
+    Unknown,                // entry missing (never whitelisted, removed, or archived)
+}
 
-// Route management — premium, payoff, delay_hours are optional overrides
-fn whitelist_route(env: Env, caller: Address, flight_id: Symbol,
-                   origin: Symbol, dest: Symbol,
-                   premium: Option<i128>, payoff: Option<i128>,
-                   delay_hours: Option<u32>);
-fn disable_route(env: Env, caller: Address, flight_id: Symbol,
-                 origin: Symbol, dest: Symbol);
-fn update_route_terms(env: Env, caller: Address, flight_id: Symbol,
-                      origin: Symbol, dest: Symbol,
-                      new_premium: Option<i128>, new_payoff: Option<i128>,
-                      new_delay_hours: Option<u32>);
-
-// Admin management
-fn add_admin(env: Env, owner: Address, admin: Address);
-fn remove_admin(env: Env, owner: Address, admin: Address);
-
-// Read functions — resolve defaults before returning
-fn get_whitelisted_routes(env: Env) -> Vec<(Symbol, Symbol, Symbol)>;
-fn is_route_whitelisted(env: Env, flight_id: Symbol, origin: Symbol, dest: Symbol) -> bool;
-fn get_route_terms(env: Env, flight_id: Symbol, origin: Symbol,
-                   dest: Symbol) -> ResolvedTerms;
-```
-
-**`get_route_terms()` resolves defaults** — returns a `ResolvedTerms` struct with concrete
-values (never `None`). If the route has custom terms, those are used; otherwise the global
-defaults are returned.
-
-```rust
 #[contracttype]
 pub struct ResolvedTerms {
     pub premium: i128,
     pub payoff: i128,
     pub delay_hours: u32,
 }
+
+fn route_status(env: Env, flight_id: Symbol, origin: Symbol,
+                dest: Symbol) -> RouteStatus;
+fn get_defaults(env: Env) -> (i128, i128, u32);
+fn is_admin(env: Env, addr: Address) -> bool;
 ```
 
-**Storage tier rationale:** Routes and RouteList are in **Instance** storage. They are global
-shared state that all protocol users depend on — per Soroban best practice, global state that
-cannot be Temporary should be Instance. This keeps them alive automatically with the contract
-instance via the existing TTL cron. Route count is expected to stay under ~50 for a flight
-insurance protocol, making Instance storage practical.
+`route_status()` resolves defaults at read time — `Active(ResolvedTerms)` returns concrete
+values, never `Option`. The Controller's purchase path is one cross-contract call + a `match`
+on three variants (replacing the old two-call `is_route_whitelisted` + `get_route_terms`
+pattern).
+
+**Write API — explicit lifecycle + partial updates:**
+
+```rust
+// Defaults (owner-only)
+fn set_defaults(env: Env, premium: i128, payoff: i128, delay_hours: u32);
+
+// Admin management (owner-only)
+fn add_admin(env: Env, admin: Address);
+fn remove_admin(env: Env, admin: Address);
+
+// Route lifecycle (owner or admin)
+fn whitelist_route(env: Env, caller: Address, flight_id: Symbol,
+                   origin: Symbol, dest: Symbol,
+                   premium: Option<i128>, payoff: Option<i128>,
+                   delay_hours: Option<u32>);
+fn disable_route(env: Env, caller: Address, flight_id: Symbol,
+                 origin: Symbol, dest: Symbol);
+fn enable_route(env: Env, caller: Address, flight_id: Symbol,
+                origin: Symbol, dest: Symbol);
+fn remove_route(env: Env, caller: Address, flight_id: Symbol,
+                origin: Symbol, dest: Symbol);  // strict: requires disabled
+
+// Partial-update on terms (per-field op enums)
+pub enum PremiumUpdate    { Keep, Set(i128), UseDefault }
+pub enum PayoffUpdate     { Keep, Set(i128), UseDefault }
+pub enum DelayHoursUpdate { Keep, Set(u32),  UseDefault }
+
+fn update_route_terms(env: Env, caller: Address, flight_id: Symbol,
+                      origin: Symbol, dest: Symbol,
+                      premium: PremiumUpdate, payoff: PayoffUpdate,
+                      delay_hours: DelayHoursUpdate);
+```
+
+The three per-field `*Update` enums encode partial updates without Soroban's generic-free
+contracttype constraint. `Keep` skips the field, `Set(v)` writes a custom value,
+`UseDefault` clears the override so the global default applies. The op encoding itself is a
+caller-input type — never persisted, never on the event wire.
+
+**Events (consumed by off-chain indexer):**
+
+```
+("route", "listed")     → (flight_id, origin, dest, premium?, payoff?, delay_hours?)
+("route", "disabled")   → (flight_id, origin, dest)
+("route", "enabled")    → (flight_id, origin, dest)
+("route", "updated")    → (flight_id, origin, dest, premium?, payoff?, delay_hours?)
+("route", "removed")    → (flight_id, origin, dest)
+("gov",   "defaults")   → (premium, payoff, delay_hours)
+("gov",   "admin_added")   → (admin)
+("gov",   "admin_removed") → (admin)
+```
+
+`flight_id` is also the third event topic for every `route.*` event (after the two-symbol
+prefix), which lets indexers filter by flight at the RPC layer. `route.listed` and
+`route.updated` carry **`Option<T>`** for `premium` / `payoff` / `delay_hours` — `None`
+means "use default" — so the indexer can mirror option-ness in its schema (e.g. SQL `NULL`)
+and re-resolve against the latest `gov.defaults` row at read time. This means a defaults
+change doesn't require updating every `UseDefault` route — the indexer just updates its
+defaults singleton.
+
+The on-chain `route_status()` is the protocol's source of truth on the buy path. The
+off-chain indexer is read-side cache only — it folds these events into a queryable
+"current whitelist" table for the TTL cron (Cron #4) and any admin UI. A stale or down
+indexer cannot influence purchase decisions.
+
+**Storage tier rationale:** `Route(...)` lives in **Persistent** storage, keyed per-route
+with an independent TTL. Instance is wrong at scale — every contract invocation loads all
+Instance entries into the transaction footprint, so thousands of routes (realistic at hub
+airports with multi-leg itineraries) would blow past per-tx limits. `RouteList` was removed
+for the same reason: a single `Vec` of all routes is a footprint hazard at any storage tier.
+TTL on every `Route(...)` write maintains a 60-day window for actively edited routes; idle
+routes are kept alive by the off-chain TTL cron (Cron #4) which folds `Route(...)` keys into
+its `ExtendFootprintTTLOp` footprint using the indexer's enumeration.
 
 ---
 
@@ -427,7 +488,11 @@ executor backends.
 ```rust
 // Generated client for GovernanceModule
 let gov_client = GovernanceModuleClient::new(&env, &governance_addr);
-let terms = gov_client.get_route_terms(&flight_id, &origin, &dest);
+let terms = match gov_client.route_status(&flight_id, &origin, &dest) {
+    RouteStatus::Active(t) => t,
+    RouteStatus::Disabled  => panic!("route is disabled"),
+    RouteStatus::Unknown   => panic!("route not whitelisted"),
+};
 
 // Generated client for RiskVault
 let vault_client = RiskVaultClient::new(&env, &vault_addr);
@@ -844,10 +909,11 @@ double execution. Rollback = set addresses back to old backend.
 ```
 Owner or Admin -> GovernanceModule.whitelist_route(flight_id, origin, dest,
                                                   premium?, payoff?, delay_hours?)
-    +-> route stored as whitelisted (Instance storage)
+    +-> route stored in Persistent storage, keyed Route(flight_id, origin, dest)
         if custom terms provided -> stored per-route
-        if not -> will fall back to global defaults when queried
-        visible in get_whitelisted_routes()
+        if not -> will fall back to global defaults when queried via route_status()
+        Route TTL extended (60-day window) on this write
+        emits route.listed event -> off-chain indexer materializes the row
         NO flight entry created yet — lazy creation on first purchase
 ```
 
@@ -857,9 +923,10 @@ Owner or Admin -> GovernanceModule.whitelist_route(flight_id, origin, dest,
 Traveler -> Controller.buy_insurance(flight_id, origin, dest, date)
                 |
                 +-> traveler.require_auth()
-                +-> GovernanceModule.is_route_whitelisted(...)    revert if not whitelisted
-                +-> GovernanceModule.get_route_terms(...)         read resolved terms
-                |                                                 (premium, payoff, delay_hours)
+                +-> GovernanceModule.route_status(flight_id, origin, dest)
+                |       match { Active(terms) => use terms (premium, payoff, delay_hours)
+                |               Disabled      => revert "route is disabled"
+                |               Unknown       => revert "route not whitelisted" }
                 +-> enforce minimum_lead_time                     revert if departure too soon
                 |
                 +-> flight exists in FlightPoolManager for (flight_id, date)?

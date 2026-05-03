@@ -1,11 +1,13 @@
 use super::*;
-use soroban_sdk::{symbol_short, testutils::Address as _, Env};
+use soroban_sdk::{
+    symbol_short, testutils::Address as _, testutils::Events as _, Env, Symbol,
+};
 
-const DEFAULT_PREMIUM: i128 = 50_0000000; // 50 USDC
+const DEFAULT_PREMIUM: i128 = 50_0000000; // 50 USDC (7 decimals)
 const DEFAULT_PAYOFF: i128 = 500_0000000; // 500 USDC
 const DEFAULT_DELAY_HOURS: u32 = 3;
 
-fn setup() -> (Env, GovernanceModuleClient<'static>, Address) {
+fn setup() -> (Env, GovernanceModuleClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -16,10 +18,10 @@ fn setup() -> (Env, GovernanceModuleClient<'static>, Address) {
     );
     let client = GovernanceModuleClient::new(&env, &contract_id);
 
-    (env, client, owner)
+    (env, client, owner, contract_id)
 }
 
-fn route_ids(_env: &Env) -> (Symbol, Symbol, Symbol) {
+fn route_ids() -> (Symbol, Symbol, Symbol) {
     (
         symbol_short!("AA100"),
         symbol_short!("JFK"),
@@ -27,23 +29,57 @@ fn route_ids(_env: &Env) -> (Symbol, Symbol, Symbol) {
     )
 }
 
+// Count events on `addr` whose first TWO topics match (`prefix0`, `prefix1`).
+// Governance events use the 2-element prefix scheme (e.g. ["route", "listed"]).
+//
+// IMPORTANT: `env.events().all()` returns events only from the MOST RECENT
+// contract invocation. Call this helper IMMEDIATELY after the emitting call,
+// before any other contract call (including reads like `route_status()`).
+fn count_events(env: &Env, addr: &Address, prefix0: Symbol, prefix1: Symbol) -> u32 {
+    use soroban_sdk::TryFromVal;
+    let mut count: u32 = 0;
+    for (event_addr, topics, _data) in env.events().all().iter() {
+        if event_addr != *addr {
+            continue;
+        }
+        if topics.len() < 2 {
+            continue;
+        }
+        let t0 = topics.get(0).unwrap();
+        let t1 = topics.get(1).unwrap();
+        let s0 = Symbol::try_from_val(env, &t0);
+        let s1 = Symbol::try_from_val(env, &t1);
+        if let (Ok(s0), Ok(s1)) = (s0, s1) {
+            if s0 == prefix0 && s1 == prefix1 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+// =========================================================================
+// Constructor & defaults
+// =========================================================================
+
 #[test]
 fn test_constructor_and_defaults() {
-    let (_env, client, owner) = setup();
+    let (_env, client, owner, _addr) = setup();
 
     assert_eq!(client.get_owner(), Some(owner));
     let (premium, payoff, delay_hours) = client.get_defaults();
     assert_eq!(premium, DEFAULT_PREMIUM);
     assert_eq!(payoff, DEFAULT_PAYOFF);
     assert_eq!(delay_hours, DEFAULT_DELAY_HOURS);
-    assert_eq!(client.get_whitelisted_routes().len(), 0);
 }
 
 #[test]
-fn test_set_defaults() {
-    let (_env, client, _owner) = setup();
+fn test_set_defaults_emits_event() {
+    let (env, client, _owner, addr) = setup();
 
     client.set_defaults(&100_0000000, &1000_0000000, &4);
+    // Event check FIRST — the next contract call clears the event log.
+    assert!(count_events(&env, &addr, symbol_short!("gov"), symbol_short!("defaults")) >= 1);
 
     let (premium, payoff, delay_hours) = client.get_defaults();
     assert_eq!(premium, 100_0000000);
@@ -52,9 +88,59 @@ fn test_set_defaults() {
 }
 
 #[test]
-fn test_whitelist_route_with_defaults() {
-    let (env, client, owner) = setup();
-    let (flight_id, origin, dest) = route_ids(&env);
+#[should_panic]
+fn test_set_defaults_unauthorized() {
+    let env = Env::default();
+    // No mock_all_auths — owner auth will fail.
+    let owner = Address::generate(&env);
+    let contract_id = env.register(
+        GovernanceModule,
+        (&owner, &DEFAULT_PREMIUM, &DEFAULT_PAYOFF, &DEFAULT_DELAY_HOURS),
+    );
+    let client = GovernanceModuleClient::new(&env, &contract_id);
+
+    client.set_defaults(&100_0000000, &1000_0000000, &3);
+}
+
+// =========================================================================
+// Admin management
+// =========================================================================
+
+#[test]
+fn test_add_admin_emits_event() {
+    let (env, client, _owner, addr) = setup();
+    let admin = Address::generate(&env);
+
+    client.add_admin(&admin);
+    assert!(
+        count_events(&env, &addr, Symbol::new(&env, "gov"), Symbol::new(&env, "admin_added"))
+            >= 1
+    );
+    assert!(client.is_admin(&admin));
+}
+
+#[test]
+fn test_remove_admin_emits_event() {
+    let (env, client, _owner, addr) = setup();
+    let admin = Address::generate(&env);
+
+    client.add_admin(&admin);
+    client.remove_admin(&admin);
+    assert!(
+        count_events(&env, &addr, Symbol::new(&env, "gov"), Symbol::new(&env, "admin_removed"))
+            >= 1
+    );
+    assert!(!client.is_admin(&admin));
+}
+
+// =========================================================================
+// whitelist_route + route_status (Active / Disabled / Unknown)
+// =========================================================================
+
+#[test]
+fn test_whitelist_with_defaults_route_status_active() {
+    let (env, client, owner, addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
 
     client.whitelist_route(
         &owner,
@@ -65,20 +151,22 @@ fn test_whitelist_route_with_defaults() {
         &None::<i128>,
         &None::<u32>,
     );
+    assert!(count_events(&env, &addr, symbol_short!("route"), symbol_short!("listed")) >= 1);
 
-    assert!(client.is_route_whitelisted(&flight_id, &origin, &dest));
-    assert_eq!(client.get_whitelisted_routes().len(), 1);
-
-    let terms = client.get_route_terms(&flight_id, &origin, &dest);
-    assert_eq!(terms.premium, DEFAULT_PREMIUM);
-    assert_eq!(terms.payoff, DEFAULT_PAYOFF);
-    assert_eq!(terms.delay_hours, DEFAULT_DELAY_HOURS);
+    match client.route_status(&flight_id, &origin, &dest) {
+        RouteStatus::Active(t) => {
+            assert_eq!(t.premium, DEFAULT_PREMIUM);
+            assert_eq!(t.payoff, DEFAULT_PAYOFF);
+            assert_eq!(t.delay_hours, DEFAULT_DELAY_HOURS);
+        }
+        _ => panic!("expected Active"),
+    }
 }
 
 #[test]
-fn test_whitelist_route_with_custom_terms() {
-    let (env, client, owner) = setup();
-    let (flight_id, origin, dest) = route_ids(&env);
+fn test_whitelist_with_custom_terms() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
 
     client.whitelist_route(
         &owner,
@@ -90,18 +178,21 @@ fn test_whitelist_route_with_custom_terms() {
         &Some(1u32),
     );
 
-    let terms = client.get_route_terms(&flight_id, &origin, &dest);
-    assert_eq!(terms.premium, 75_0000000);
-    assert_eq!(terms.payoff, 750_0000000);
-    assert_eq!(terms.delay_hours, 1);
+    match client.route_status(&flight_id, &origin, &dest) {
+        RouteStatus::Active(t) => {
+            assert_eq!(t.premium, 75_0000000);
+            assert_eq!(t.payoff, 750_0000000);
+            assert_eq!(t.delay_hours, 1);
+        }
+        _ => panic!("expected Active"),
+    }
 }
 
 #[test]
-fn test_whitelist_route_partial_custom() {
-    let (env, client, owner) = setup();
-    let (flight_id, origin, dest) = route_ids(&env);
+fn test_whitelist_partial_custom_uses_defaults_for_rest() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
 
-    // Only custom premium, rest use defaults
     client.whitelist_route(
         &owner,
         &flight_id,
@@ -112,144 +203,33 @@ fn test_whitelist_route_partial_custom() {
         &None::<u32>,
     );
 
-    let terms = client.get_route_terms(&flight_id, &origin, &dest);
-    assert_eq!(terms.premium, 75_0000000);
-    assert_eq!(terms.payoff, DEFAULT_PAYOFF);
-    assert_eq!(terms.delay_hours, DEFAULT_DELAY_HOURS);
+    match client.route_status(&flight_id, &origin, &dest) {
+        RouteStatus::Active(t) => {
+            assert_eq!(t.premium, 75_0000000);
+            assert_eq!(t.payoff, DEFAULT_PAYOFF);
+            assert_eq!(t.delay_hours, DEFAULT_DELAY_HOURS);
+        }
+        _ => panic!("expected Active"),
+    }
 }
 
 #[test]
-fn test_disable_route() {
-    let (env, client, owner) = setup();
-    let (flight_id, origin, dest) = route_ids(&env);
+fn test_route_status_unknown_when_not_whitelisted() {
+    let (_env, client, _owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
 
-    client.whitelist_route(
-        &owner,
-        &flight_id,
-        &origin,
-        &dest,
-        &None::<i128>,
-        &None::<i128>,
-        &None::<u32>,
+    assert_eq!(
+        client.route_status(&flight_id, &origin, &dest),
+        RouteStatus::Unknown
     );
-    assert!(client.is_route_whitelisted(&flight_id, &origin, &dest));
-
-    client.disable_route(&owner, &flight_id, &origin, &dest);
-    assert!(!client.is_route_whitelisted(&flight_id, &origin, &dest));
-
-    // Route still in list (not removed, just disabled)
-    assert_eq!(client.get_whitelisted_routes().len(), 1);
-}
-
-#[test]
-fn test_update_route_terms() {
-    let (env, client, owner) = setup();
-    let (flight_id, origin, dest) = route_ids(&env);
-
-    client.whitelist_route(
-        &owner,
-        &flight_id,
-        &origin,
-        &dest,
-        &None::<i128>,
-        &None::<i128>,
-        &None::<u32>,
-    );
-
-    client.update_route_terms(
-        &owner,
-        &flight_id,
-        &origin,
-        &dest,
-        &Some(80_0000000i128),
-        &Some(800_0000000i128),
-        &Some(4u32),
-    );
-
-    let terms = client.get_route_terms(&flight_id, &origin, &dest);
-    assert_eq!(terms.premium, 80_0000000);
-    assert_eq!(terms.payoff, 800_0000000);
-    assert_eq!(terms.delay_hours, 4);
-}
-
-#[test]
-fn test_admin_can_whitelist() {
-    let (env, client, _owner) = setup();
-    let admin = Address::generate(&env);
-    let (flight_id, origin, dest) = route_ids(&env);
-
-    client.add_admin(&admin);
-    assert!(client.is_admin(&admin));
-
-    client.whitelist_route(
-        &admin,
-        &flight_id,
-        &origin,
-        &dest,
-        &None::<i128>,
-        &None::<i128>,
-        &None::<u32>,
-    );
-
-    assert!(client.is_route_whitelisted(&flight_id, &origin, &dest));
-}
-
-#[test]
-fn test_admin_can_disable_and_update() {
-    let (env, client, owner) = setup();
-    let admin = Address::generate(&env);
-    let (flight_id, origin, dest) = route_ids(&env);
-
-    client.add_admin(&admin);
-
-    // Owner whitelists
-    client.whitelist_route(
-        &owner,
-        &flight_id,
-        &origin,
-        &dest,
-        &None::<i128>,
-        &None::<i128>,
-        &None::<u32>,
-    );
-
-    // Admin updates terms
-    client.update_route_terms(
-        &admin,
-        &flight_id,
-        &origin,
-        &dest,
-        &Some(60_0000000i128),
-        &None::<i128>,
-        &None::<u32>,
-    );
-
-    let terms = client.get_route_terms(&flight_id, &origin, &dest);
-    assert_eq!(terms.premium, 60_0000000);
-
-    // Admin disables
-    client.disable_route(&admin, &flight_id, &origin, &dest);
-    assert!(!client.is_route_whitelisted(&flight_id, &origin, &dest));
-}
-
-#[test]
-fn test_remove_admin() {
-    let (env, client, _owner) = setup();
-    let admin = Address::generate(&env);
-
-    client.add_admin(&admin);
-    assert!(client.is_admin(&admin));
-
-    client.remove_admin(&admin);
-    assert!(!client.is_admin(&admin));
 }
 
 #[test]
 #[should_panic(expected = "not owner or admin")]
 fn test_unauthorized_whitelist() {
-    let (env, client, _owner) = setup();
+    let (env, client, _owner, _addr) = setup();
     let stranger = Address::generate(&env);
-    let (flight_id, origin, dest) = route_ids(&env);
+    let (flight_id, origin, dest) = route_ids();
 
     client.whitelist_route(
         &stranger,
@@ -262,26 +242,14 @@ fn test_unauthorized_whitelist() {
     );
 }
 
-#[test]
-#[should_panic]
-fn test_unauthorized_set_defaults() {
-    let env = Env::default();
-    // No mock_all_auths — auth will fail
-    let owner = Address::generate(&env);
-    let contract_id = env.register(
-        GovernanceModule,
-        (&owner, &DEFAULT_PREMIUM, &DEFAULT_PAYOFF, &DEFAULT_DELAY_HOURS),
-    );
-    let client = GovernanceModuleClient::new(&env, &contract_id);
-
-    client.set_defaults(&100_0000000, &1000_0000000, &3);
-}
+// =========================================================================
+// disable_route / enable_route
+// =========================================================================
 
 #[test]
-#[should_panic(expected = "route is disabled")]
-fn test_get_terms_disabled_route() {
-    let (env, client, owner) = setup();
-    let (flight_id, origin, dest) = route_ids(&env);
+fn test_disable_route_status_disabled_event_fires() {
+    let (env, client, owner, addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
 
     client.whitelist_route(
         &owner,
@@ -293,65 +261,577 @@ fn test_get_terms_disabled_route() {
         &None::<u32>,
     );
     client.disable_route(&owner, &flight_id, &origin, &dest);
+    assert!(count_events(&env, &addr, symbol_short!("route"), symbol_short!("disabled")) >= 1);
 
-    // Should panic — route is disabled
-    client.get_route_terms(&flight_id, &origin, &dest);
+    assert_eq!(
+        client.route_status(&flight_id, &origin, &dest),
+        RouteStatus::Disabled
+    );
 }
 
 #[test]
-fn test_multiple_routes() {
-    let (_env, client, owner) = setup();
+#[should_panic(expected = "route already disabled")]
+fn test_disable_already_disabled_panics() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
 
-    let r1 = (symbol_short!("AA100"), symbol_short!("JFK"), symbol_short!("LAX"));
-    let r2 = (symbol_short!("UA200"), symbol_short!("SFO"), symbol_short!("ORD"));
-
-    client.whitelist_route(&owner, &r1.0, &r1.1, &r1.2, &None::<i128>, &None::<i128>, &None::<u32>);
-    client.whitelist_route(&owner, &r2.0, &r2.1, &r2.2, &Some(100_0000000i128), &Some(1000_0000000i128), &None::<u32>);
-
-    assert_eq!(client.get_whitelisted_routes().len(), 2);
-
-    let terms1 = client.get_route_terms(&r1.0, &r1.1, &r1.2);
-    assert_eq!(terms1.premium, DEFAULT_PREMIUM);
-
-    let terms2 = client.get_route_terms(&r2.0, &r2.1, &r2.2);
-    assert_eq!(terms2.premium, 100_0000000);
-    assert_eq!(terms2.payoff, 1000_0000000);
-    assert_eq!(terms2.delay_hours, DEFAULT_DELAY_HOURS);
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.disable_route(&owner, &flight_id, &origin, &dest);
+    client.disable_route(&owner, &flight_id, &origin, &dest);
 }
 
 #[test]
-fn test_whitelist_same_route_twice_no_duplicate() {
-    let (env, client, owner) = setup();
-    let (flight_id, origin, dest) = route_ids(&env);
-
-    client.whitelist_route(&owner, &flight_id, &origin, &dest, &None::<i128>, &None::<i128>, &None::<u32>);
-    client.whitelist_route(&owner, &flight_id, &origin, &dest, &Some(75_0000000i128), &None::<i128>, &None::<u32>);
-
-    // Should not duplicate in route list
-    assert_eq!(client.get_whitelisted_routes().len(), 1);
-
-    // Should have updated terms
-    let terms = client.get_route_terms(&flight_id, &origin, &dest);
-    assert_eq!(terms.premium, 75_0000000);
+#[should_panic(expected = "route not whitelisted")]
+fn test_disable_unknown_panics() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+    client.disable_route(&owner, &flight_id, &origin, &dest);
 }
 
 #[test]
-fn test_defaults_change_affects_resolution() {
-    let (env, client, owner) = setup();
-    let (flight_id, origin, dest) = route_ids(&env);
+fn test_enable_after_disable_returns_to_active() {
+    let (env, client, owner, addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
 
-    // Whitelist with no custom terms (uses defaults)
-    client.whitelist_route(&owner, &flight_id, &origin, &dest, &None::<i128>, &None::<i128>, &None::<u32>);
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &Some(75_0000000i128),
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.disable_route(&owner, &flight_id, &origin, &dest);
+    client.enable_route(&owner, &flight_id, &origin, &dest);
+    assert!(count_events(&env, &addr, symbol_short!("route"), symbol_short!("enabled")) >= 1);
 
-    let terms_before = client.get_route_terms(&flight_id, &origin, &dest);
-    assert_eq!(terms_before.premium, DEFAULT_PREMIUM);
+    match client.route_status(&flight_id, &origin, &dest) {
+        RouteStatus::Active(t) => {
+            // Custom premium preserved through disable -> enable
+            assert_eq!(t.premium, 75_0000000);
+        }
+        _ => panic!("expected Active after enable"),
+    }
+}
 
-    // Change defaults
+#[test]
+#[should_panic(expected = "route already active")]
+fn test_enable_already_active_panics() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.enable_route(&owner, &flight_id, &origin, &dest);
+}
+
+#[test]
+#[should_panic(expected = "route not whitelisted")]
+fn test_enable_unknown_panics() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+    client.enable_route(&owner, &flight_id, &origin, &dest);
+}
+
+// =========================================================================
+// remove_route — strict (must be disabled first)
+// =========================================================================
+
+#[test]
+fn test_remove_route_after_disable() {
+    let (env, client, owner, addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.disable_route(&owner, &flight_id, &origin, &dest);
+    client.remove_route(&owner, &flight_id, &origin, &dest);
+    assert!(count_events(&env, &addr, symbol_short!("route"), symbol_short!("removed")) >= 1);
+
+    // After remove, status is Unknown.
+    assert_eq!(
+        client.route_status(&flight_id, &origin, &dest),
+        RouteStatus::Unknown
+    );
+}
+
+#[test]
+#[should_panic(expected = "route must be disabled before removal")]
+fn test_remove_active_route_panics() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    // Strict: cannot remove active route.
+    client.remove_route(&owner, &flight_id, &origin, &dest);
+}
+
+#[test]
+#[should_panic(expected = "route not whitelisted")]
+fn test_remove_unknown_panics() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+    client.remove_route(&owner, &flight_id, &origin, &dest);
+}
+
+#[test]
+fn test_rewhitelist_after_remove() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &Some(75_0000000i128),
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.disable_route(&owner, &flight_id, &origin, &dest);
+    client.remove_route(&owner, &flight_id, &origin, &dest);
+
+    // Re-whitelisting after removal works and starts fresh.
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    match client.route_status(&flight_id, &origin, &dest) {
+        RouteStatus::Active(t) => {
+            // Fresh entry: previous custom premium gone, falls to default.
+            assert_eq!(t.premium, DEFAULT_PREMIUM);
+        }
+        _ => panic!("expected Active"),
+    }
+}
+
+// =========================================================================
+// update_route_terms — partial update with per-field op enums
+// =========================================================================
+
+#[test]
+fn test_update_keep_keep_keep_no_change() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &Some(75_0000000i128),
+        &Some(750_0000000i128),
+        &Some(2u32),
+    );
+
+    client.update_route_terms(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &PremiumUpdate::Keep,
+        &PayoffUpdate::Keep,
+        &DelayHoursUpdate::Keep,
+    );
+
+    match client.route_status(&flight_id, &origin, &dest) {
+        RouteStatus::Active(t) => {
+            assert_eq!(t.premium, 75_0000000);
+            assert_eq!(t.payoff, 750_0000000);
+            assert_eq!(t.delay_hours, 2);
+        }
+        _ => panic!("expected Active"),
+    }
+}
+
+#[test]
+fn test_update_set_set_set_emits_event() {
+    let (env, client, owner, addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+
+    client.update_route_terms(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &PremiumUpdate::Set(80_0000000),
+        &PayoffUpdate::Set(800_0000000),
+        &DelayHoursUpdate::Set(4),
+    );
+    assert!(count_events(&env, &addr, symbol_short!("route"), symbol_short!("updated")) >= 1);
+
+    match client.route_status(&flight_id, &origin, &dest) {
+        RouteStatus::Active(t) => {
+            assert_eq!(t.premium, 80_0000000);
+            assert_eq!(t.payoff, 800_0000000);
+            assert_eq!(t.delay_hours, 4);
+        }
+        _ => panic!("expected Active"),
+    }
+}
+
+#[test]
+fn test_update_use_default_clears_override() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    // Start with custom values.
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &Some(75_0000000i128),
+        &Some(750_0000000i128),
+        &Some(2u32),
+    );
+
+    // Clear premium override; leave payoff & delay alone.
+    client.update_route_terms(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &PremiumUpdate::UseDefault,
+        &PayoffUpdate::Keep,
+        &DelayHoursUpdate::Keep,
+    );
+
+    match client.route_status(&flight_id, &origin, &dest) {
+        RouteStatus::Active(t) => {
+            assert_eq!(t.premium, DEFAULT_PREMIUM); // resolved from default
+            assert_eq!(t.payoff, 750_0000000);      // custom kept
+            assert_eq!(t.delay_hours, 2);            // custom kept
+        }
+        _ => panic!("expected Active"),
+    }
+}
+
+#[test]
+fn test_update_set_keep_use_default_mixed() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &Some(75_0000000i128),
+        &Some(750_0000000i128),
+        &Some(2u32),
+    );
+
+    client.update_route_terms(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &PremiumUpdate::Set(99_0000000),
+        &PayoffUpdate::Keep,
+        &DelayHoursUpdate::UseDefault,
+    );
+
+    match client.route_status(&flight_id, &origin, &dest) {
+        RouteStatus::Active(t) => {
+            assert_eq!(t.premium, 99_0000000);             // Set
+            assert_eq!(t.payoff, 750_0000000);              // Keep (was custom)
+            assert_eq!(t.delay_hours, DEFAULT_DELAY_HOURS); // UseDefault
+        }
+        _ => panic!("expected Active"),
+    }
+}
+
+#[test]
+fn test_update_all_use_default_falls_back_to_resolved_defaults() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &Some(75_0000000i128),
+        &Some(750_0000000i128),
+        &Some(2u32),
+    );
+    client.update_route_terms(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &PremiumUpdate::UseDefault,
+        &PayoffUpdate::UseDefault,
+        &DelayHoursUpdate::UseDefault,
+    );
+
+    match client.route_status(&flight_id, &origin, &dest) {
+        RouteStatus::Active(t) => {
+            assert_eq!(t.premium, DEFAULT_PREMIUM);
+            assert_eq!(t.payoff, DEFAULT_PAYOFF);
+            assert_eq!(t.delay_hours, DEFAULT_DELAY_HOURS);
+        }
+        _ => panic!("expected Active"),
+    }
+}
+
+#[test]
+#[should_panic(expected = "route not whitelisted")]
+fn test_update_unknown_panics() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+    client.update_route_terms(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &PremiumUpdate::Set(80_0000000),
+        &PayoffUpdate::Keep,
+        &DelayHoursUpdate::Keep,
+    );
+}
+
+// =========================================================================
+// Admin can perform owner-or-admin functions
+// =========================================================================
+
+#[test]
+fn test_admin_can_whitelist_disable_enable_remove_update() {
+    let (env, client, _owner, _addr) = setup();
+    let admin = Address::generate(&env);
+    let (flight_id, origin, dest) = route_ids();
+
+    client.add_admin(&admin);
+
+    client.whitelist_route(
+        &admin,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    assert!(matches!(
+        client.route_status(&flight_id, &origin, &dest),
+        RouteStatus::Active(_)
+    ));
+
+    client.update_route_terms(
+        &admin,
+        &flight_id,
+        &origin,
+        &dest,
+        &PremiumUpdate::Set(60_0000000),
+        &PayoffUpdate::Keep,
+        &DelayHoursUpdate::Keep,
+    );
+    if let RouteStatus::Active(t) = client.route_status(&flight_id, &origin, &dest) {
+        assert_eq!(t.premium, 60_0000000);
+    } else {
+        panic!("expected Active");
+    }
+
+    client.disable_route(&admin, &flight_id, &origin, &dest);
+    assert_eq!(
+        client.route_status(&flight_id, &origin, &dest),
+        RouteStatus::Disabled
+    );
+
+    client.enable_route(&admin, &flight_id, &origin, &dest);
+    assert!(matches!(
+        client.route_status(&flight_id, &origin, &dest),
+        RouteStatus::Active(_)
+    ));
+
+    client.disable_route(&admin, &flight_id, &origin, &dest);
+    client.remove_route(&admin, &flight_id, &origin, &dest);
+    assert_eq!(
+        client.route_status(&flight_id, &origin, &dest),
+        RouteStatus::Unknown
+    );
+}
+
+// =========================================================================
+// Defaults change affects resolution at read time (UseDefault routes update)
+// =========================================================================
+
+#[test]
+fn test_defaults_change_affects_use_default_routes_at_read_time() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    // Whitelist with all defaults.
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+
+    if let RouteStatus::Active(t) = client.route_status(&flight_id, &origin, &dest) {
+        assert_eq!(t.premium, DEFAULT_PREMIUM);
+    } else {
+        panic!("expected Active");
+    }
+
+    // Change defaults; route_status resolution should reflect new defaults
+    // immediately (no per-route update needed).
     client.set_defaults(&100_0000000, &1000_0000000, &4);
 
-    // Resolution should now use new defaults
-    let terms_after = client.get_route_terms(&flight_id, &origin, &dest);
-    assert_eq!(terms_after.premium, 100_0000000);
-    assert_eq!(terms_after.payoff, 1000_0000000);
-    assert_eq!(terms_after.delay_hours, 4);
+    if let RouteStatus::Active(t) = client.route_status(&flight_id, &origin, &dest) {
+        assert_eq!(t.premium, 100_0000000);
+        assert_eq!(t.payoff, 1000_0000000);
+        assert_eq!(t.delay_hours, 4);
+    } else {
+        panic!("expected Active");
+    }
+}
+
+// =========================================================================
+// Multiple routes (no shared state cross-route)
+// =========================================================================
+
+#[test]
+fn test_multiple_routes_independent() {
+    let (_env, client, owner, _addr) = setup();
+
+    let r1 = (
+        symbol_short!("AA100"),
+        symbol_short!("JFK"),
+        symbol_short!("LAX"),
+    );
+    let r2 = (
+        symbol_short!("UA200"),
+        symbol_short!("SFO"),
+        symbol_short!("ORD"),
+    );
+
+    client.whitelist_route(
+        &owner,
+        &r1.0,
+        &r1.1,
+        &r1.2,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.whitelist_route(
+        &owner,
+        &r2.0,
+        &r2.1,
+        &r2.2,
+        &Some(100_0000000i128),
+        &Some(1000_0000000i128),
+        &None::<u32>,
+    );
+
+    if let RouteStatus::Active(t1) = client.route_status(&r1.0, &r1.1, &r1.2) {
+        assert_eq!(t1.premium, DEFAULT_PREMIUM);
+    } else {
+        panic!("r1 should be Active");
+    }
+    if let RouteStatus::Active(t2) = client.route_status(&r2.0, &r2.1, &r2.2) {
+        assert_eq!(t2.premium, 100_0000000);
+        assert_eq!(t2.payoff, 1000_0000000);
+        assert_eq!(t2.delay_hours, DEFAULT_DELAY_HOURS);
+    } else {
+        panic!("r2 should be Active");
+    }
+
+    // Disable r1 — r2 unaffected.
+    client.disable_route(&owner, &r1.0, &r1.1, &r1.2);
+    assert_eq!(
+        client.route_status(&r1.0, &r1.1, &r1.2),
+        RouteStatus::Disabled
+    );
+    assert!(matches!(
+        client.route_status(&r2.0, &r2.1, &r2.2),
+        RouteStatus::Active(_)
+    ));
+}
+
+// =========================================================================
+// Re-whitelist overwrites previous terms
+// =========================================================================
+
+#[test]
+fn test_whitelist_existing_route_overwrites_terms() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &Some(75_0000000i128),
+        &None::<i128>,
+        &None::<u32>,
+    );
+
+    if let RouteStatus::Active(t) = client.route_status(&flight_id, &origin, &dest) {
+        assert_eq!(t.premium, 75_0000000);
+    } else {
+        panic!("expected Active");
+    }
 }
