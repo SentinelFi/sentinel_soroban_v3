@@ -34,10 +34,10 @@ Phase slugs (Phase 3 — contract improvements, see `spec/dev_steps.md`):
 - 3  → phase-03-flight-pool-manager
 - 4  → phase-04-governance-routes-instance
 - 5  → phase-05-vault-withdrawal-queue
-- 6  → phase-06-vault-claimable-ttl
-- 7  → phase-07-vault-snapshot-temporary
-- 8  → phase-08-oracle-prune-ttl-miss
-- 9  → phase-09-controller-rewire
+- 6  → phase-06-oracle-active-list-prune
+- 7  → phase-07-controller-rewire
+- 8  → phase-08-vault-ttl-and-recovery
+- 9  → phase-09-oracle-ttl-miss-event
 - 10 → phase-10-integration-tests
 
 ### 3. Build the Context Manifest

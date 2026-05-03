@@ -45,10 +45,10 @@ This gives the agent just enough context to orient before diving into phase-spec
   - 3  → `spec/phases/phase-03-flight-pool-manager.md`
   - 4  → `spec/phases/phase-04-governance-routes-instance.md`
   - 5  → `spec/phases/phase-05-vault-withdrawal-queue.md`
-  - 6  → `spec/phases/phase-06-vault-claimable-ttl.md`
-  - 7  → `spec/phases/phase-07-vault-snapshot-temporary.md`
-  - 8  → `spec/phases/phase-08-oracle-prune-ttl-miss.md`
-  - 9  → `spec/phases/phase-09-controller-rewire.md`
+  - 6  → `spec/phases/phase-06-oracle-active-list-prune.md`
+  - 7  → `spec/phases/phase-07-controller-rewire.md`
+  - 8  → `spec/phases/phase-08-vault-ttl-and-recovery.md`
+  - 9  → `spec/phases/phase-09-oracle-ttl-miss-event.md`
   - 10 → `spec/phases/phase-10-integration-tests.md`
 
 - Read the full phase file — confirm Status is `planned`

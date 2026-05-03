@@ -1,8 +1,9 @@
 # Dev Steps — Phase 3 Contract Changes
 
 Contract-level changes only. One step per contract action (delete / add / modify).
-Order matters: deletions and the new contract come first so downstream contracts
-can be wired against the new addresses; tests are updated last.
+Order matters: deletions and the new contract come first; storage-tier moves
+that do not change TTL behaviour come next; explicit TTL work is grouped near
+the bottom (steps 8–9); integration tests are last as the green-build gate.
 
 `mock_usdc/` is unchanged in this phase and is not listed.
 
@@ -61,6 +62,37 @@ flight configs, all buyers, all premiums, and all swept balances.
 - `contracts/flight_pool_manager/src/test.rs`.
 - Add `flight_pool_manager` to workspace `members` in `contracts/Cargo.toml`.
 
+**Lockfile cleanup (cross-phase addendum, intentional):**
+
+Phases 1 and 2 left `contracts/Cargo.lock` with stale `flight_pool` and
+`recovery_pool` package entries because `controller/Cargo.toml` and
+`integration_tests/Cargo.toml` still hold path-deps to the deleted crates
+— so Cargo cannot resolve the workspace, and `cargo update` /
+`cargo generate-lockfile` both fail. To unblock the lockfile regen as part
+of this phase rather than waiting for Phases 7 + 10:
+
+- In `contracts/controller/Cargo.toml`, **delete** these dep lines:
+  - `flight_pool = { path = "../flight_pool" }`
+  - `recovery_pool = { path = "../recovery_pool" }`
+- In `contracts/integration_tests/Cargo.toml`, **delete** these dep lines:
+  - `flight_pool = { path = "../flight_pool" }`
+  - `recovery_pool = { path = "../recovery_pool" }`
+- Also **add** in both files: `flight_pool_manager = { path = "../flight_pool_manager" }`
+  (Phase 7 and Phase 10 will need it; landing it here means their Cargo.toml
+  edits are zero.)
+- Do **not** touch any `.rs` files in `controller/` or `integration_tests/` —
+  those still reference the deleted crates and will fail to build until
+  Phases 7 and 10 rewrite their imports. That is the expected and correct
+  state.
+
+**Effect:** the workspace now resolves. `cargo build -p flight_pool_manager`
+runs cleanly; `cargo update --workspace` regenerates `Cargo.lock` (the stale
+`flight_pool` / `recovery_pool` package entries drop out automatically).
+`cargo build -p controller` and `cargo build -p integration_tests` still
+fail (Rust-code references), but per-crate builds for everything else now
+work — which restores the ability to verify Phases 4–6 with normal `cargo
+build -p <name>` commands.
+
 **Storage layout (`PoolKey`):**
 - Instance: `Owner`, `Controller`, `UsdcToken`, `RiskVault`,
   `ActiveFlightList: Vec<(Symbol, u64)>`, `RecoveredBalance: i128`.
@@ -100,8 +132,13 @@ flight configs, all buyers, all premiums, and all swept balances.
 - Read functions: `get_flight_config`, `has_policy`, `has_claimed`,
   `get_active_flights`, `get_recovered_balance`.
 
-**Verification:** `cargo build -p flight_pool_manager` succeeds; unit tests in
-`src/test.rs` cover register → buy → settle → claim → sweep → withdraw paths.
+**Verification:**
+- `cargo build -p flight_pool_manager` succeeds.
+- `cargo update --workspace` regenerates `Cargo.lock`; the resulting file
+  contains no `[[package]] name = "flight_pool"` or `name = "recovery_pool"`
+  entries, and no `dependencies` lists reference them.
+- Unit tests in `src/test.rs` cover register → buy → settle → claim → sweep
+  → withdraw paths.
 
 ---
 
@@ -146,67 +183,19 @@ incorrect — Instance is the right tier and avoids archival rent.
 
 ---
 
-## Step 6 — MODIFY `contracts/risk_vault/` — ClaimableBalance TTL + recovery
+## Step 6 — MODIFY `contracts/oracle_aggregator/` — ActiveFlightList prune
 
-**Action:** Extend ClaimableBalance TTL on every credit, and add an owner-only
-`recover_uncollected` function (Improvement #3).
+**Action:** Move `ActiveFlightList` from Persistent to Instance and prune the
+list inside `set_settled` (Improvement #5).
 
-**Why:** Persistent entries can expire; a 60-day window matches the protocol's
-claim lifecycle, and the recovery function is the escape hatch when an entry
-does archive despite the extension.
-
-**Tasks:**
-- In `process_withdrawal_queue`, after every
-  `storage().persistent().set(&VaultKey::ClaimableBalance(addr.clone()), &amount)`,
-  call `extend_ttl(&VaultKey::ClaimableBalance(addr), 60*24*60*12, 60*24*60*12)`
-  (60 days at 5s/ledger).
-- Apply the same extension wherever `ClaimableBalance` is written (e.g., if
-  `recover_uncollected` re-credits it).
-- Add `fn recover_uncollected(env, owner, user, amount)`:
-  - `owner.require_auth()`.
-  - Assert `owner == storage().instance().get(VaultKey::Owner)`.
-  - Either re-credit `ClaimableBalance(user)` (with TTL extension) or transfer
-    USDC directly to `user`. Emit an event so an indexer can reconstruct.
-- Unit test: simulate expiry, call `recover_uncollected`, assert the user can
-  collect.
-
-**Verification:** `cargo build -p risk_vault` clean; new test passes.
-
----
-
-## Step 7 — MODIFY `contracts/risk_vault/` — SnapshotPrice tier
-
-**Action:** Move `SnapshotPrice(u64)` from Persistent to Temporary with a 30-day
-TTL (Improvement #7).
-
-**Why:** Snapshots are append-only informational data — no business logic
-restores them. Temporary avoids archival rent for entries that will never be
-read again on chain.
-
-**Tasks:**
-- Grep for `SnapshotPrice`. Every `storage().persistent()` access switches to
-  `storage().temporary()`.
-- After every write, call
-  `extend_ttl(&VaultKey::SnapshotPrice(day), 30*24*60*12, 30*24*60*12)`.
-- Update enum comment to mark `SnapshotPrice(u64)` as Temporary.
-
-**Verification:** `cargo build -p risk_vault` clean; snapshot test reads back a
-price written in the same ledger.
-
----
-
-## Step 8 — MODIFY `contracts/oracle_aggregator/`
-
-**Action:** Move `ActiveFlightList` to Instance and prune on settlement; emit a
-diagnostic event when `FlightData` is missing (Improvements #5 and #6).
-
-**Why:** The list never being pruned was an unbounded growth + wrong-tier bug.
-The diagnostic event makes the FlightData TTL miss observable so the off-chain
-TTL cron can be alerted.
+**Why:** Unbounded growth + wrong tier. The list is global shared state; it
+belongs in Instance. Pruning on settlement keeps it bounded by the count of
+in-flight flights at any moment.
 
 **Tasks:**
 - Switch every `ActiveFlightList` access from `storage().persistent()` to
-  `storage().instance()`. Remove any manual TTL extension for this key.
+  `storage().instance()`.
+- Remove any manual TTL extension for this key.
 - In `set_settled(...)`, after marking the flight as `Settled`, prune it from
   the list:
   ```
@@ -216,28 +205,30 @@ TTL cron can be alerted.
       storage().instance().set(&OracleKey::ActiveFlightList, &list);
   }
   ```
-- Add a `ttl_miss` event helper so `Controller::classify_flights` /
-  `execute_settlements` can emit when `get_flight_data` returns `NotInitiated`
-  for a flight expected to have data. (Either the Controller calls
-  `env.events().publish` directly, or expose a thin
-  `oracle.emit_ttl_miss(flight_id, date)` — emitting from the Controller is
-  simpler and keeps Oracle pure.)
 - Update enum comment to mark `ActiveFlightList` as Instance.
+
+**Note:** the FlightData TTL-miss diagnostic event is intentionally **not**
+done here — it is grouped with the other TTL work in Step 9.
 
 **Verification:** `cargo build -p oracle_aggregator` clean; new test:
 register → set_active → set_landed → set_settled → list is empty.
 
 ---
 
-## Step 9 — MODIFY `contracts/controller/`
+## Step 7 — MODIFY `contracts/controller/`
 
 **Action:** Rip out the deployer / per-flight FlightPool / RecoveryPool wiring,
-wire FlightPoolManager, add the per-traveler index (Improvements #1 and #8).
+wire `FlightPoolManager`, add the per-traveler index (Improvements #1 and #8).
 
 **Why:** With `flight_pool` and `recovery_pool` gone (Steps 1–2), the Controller
 must drop all references to them and route everything through the new
 FlightPoolManager. The per-traveler index unblocks the MyPolicies frontend
 without an off-chain indexer.
+
+**Cargo.toml note:** `controller/Cargo.toml`'s dep list was already updated in
+Phase 3 (dead `flight_pool` / `recovery_pool` lines removed,
+`flight_pool_manager` added) so the lockfile could regenerate. Verify the file
+still has the right deps; if not, fix here.
 
 **Tasks — `src/lib.rs`:**
 
@@ -271,8 +262,8 @@ Modify `buy_insurance(...)`:
 Modify `classify_flights(...)`:
 - Read `delay_hours` from `FlightPoolManager.get_flight_config(...).delay_hours`
   (no more per-pool client).
-- Where Oracle returns `NotInitiated` for a flight expected to have data, emit
-  the `ttl_miss` event from Step 8.
+- Where Oracle returns `NotInitiated` for a flight expected to have data, leave
+  a `TODO ttl_miss` for Step 9 to wire the diagnostic event.
 
 Modify `execute_settlements(...)`:
 - Call `FlightPoolManager.settle_on_time(flight_id, date)` /
@@ -290,16 +281,92 @@ the expected list after a purchase.
 
 ---
 
+> **Steps 8–9 — TTL work.** The remaining contract changes all touch
+> `extend_ttl` or TTL-related observability. They are grouped at the bottom so
+> the workspace can be brought to a clean storage-tier baseline first; TTL
+> tuning then lands as a focused pair of phases that share review patterns
+> (rent windows, cron coverage, diagnostic events).
+
+---
+
+## Step 8 — MODIFY `contracts/risk_vault/` — TTL & recovery
+
+**Action:** Two related TTL changes on the same file:
+1. ClaimableBalance — extend TTL on every credit, add owner-only
+   `recover_uncollected` function (Improvement #3).
+2. SnapshotPrice — move from Persistent to Temporary with a 30-day TTL
+   (Improvement #7).
+
+**Why combine:** both edits live in `risk_vault/src/lib.rs`, both are pure TTL
+tuning, and they share the same review concerns (rent windows, expiry
+behaviour). Landing them together avoids two near-identical PRs.
+
+**Tasks — ClaimableBalance:**
+- In `process_withdrawal_queue`, after every
+  `storage().persistent().set(&VaultKey::ClaimableBalance(addr.clone()), &amount)`,
+  call `extend_ttl(&VaultKey::ClaimableBalance(addr), 60*24*60*12, 60*24*60*12)`
+  (60 days at 5s/ledger).
+- Apply the same extension wherever `ClaimableBalance` is written (e.g., if
+  `recover_uncollected` re-credits it).
+- Add `fn recover_uncollected(env, owner, user, amount)`:
+  - `owner.require_auth()`.
+  - Assert `owner == storage().instance().get(VaultKey::Owner)`.
+  - Either re-credit `ClaimableBalance(user)` (with TTL extension) or transfer
+    USDC directly to `user`. Emit an event so an indexer can reconstruct.
+- Unit test: simulate expiry, call `recover_uncollected`, assert the user can
+  collect.
+
+**Tasks — SnapshotPrice:**
+- Grep for `SnapshotPrice`. Every `storage().persistent()` access switches to
+  `storage().temporary()`.
+- After every write, call
+  `extend_ttl(&VaultKey::SnapshotPrice(day), 30*24*60*12, 30*24*60*12)`.
+- Update enum comment to mark `SnapshotPrice(u64)` as Temporary.
+
+**Verification:** `cargo build -p risk_vault` clean; new tests pass for both
+the recovery flow and the temporary-tier snapshot read-back.
+
+---
+
+## Step 9 — MODIFY `contracts/oracle_aggregator/` — FlightData TTL miss
+
+**Action:** Add a diagnostic event when `FlightData` is missing for a flight
+that should have data (Improvement #6).
+
+**Why:** Surfaces TTL expiry of `FlightData` so the off-chain TTL-extender
+cron can be alerted and corrective action taken before settlement fails.
+Decoupled from Step 6 because it is purely a TTL/observability concern.
+
+**Tasks:**
+- Either expose a thin `oracle.emit_ttl_miss(flight_id, date)` helper, or have
+  the Controller emit `env.events().publish((symbol_short!("warn"),
+  symbol_short!("ttl_miss")), (flight_id, date))` directly. Emitting from the
+  Controller is simpler and keeps Oracle pure — pick that unless there is a
+  reason to centralize.
+- Wire the emission into the Controller `TODO ttl_miss` left in Step 7
+  (`classify_flights` / `execute_settlements` paths where
+  `get_flight_data` returns `NotInitiated`).
+- No on-chain `extend_ttl` is added here — the actual extension is performed
+  by the off-chain `ExtendFootprintTTLOp` cron (out of scope for this phase).
+
+**Verification:** `cargo build -p oracle_aggregator` and `cargo build -p
+controller` both clean; unit test that simulates a missing `FlightData` lookup
+asserts the `ttl_miss` event is emitted.
+
+---
+
 ## Step 10 — MODIFY `contracts/integration_tests/`
 
-**Action:** Update every test harness to the new contract topology.
+**Action:** Update every test harness to the new contract topology. This is
+the green-build gate for the whole phase.
 
 **Why:** All other steps shift contract surface area; integration tests must
 catch breakage end-to-end before any frontend / executor work begins.
 
 **Tasks:**
-- In `Cargo.toml`, drop `flight_pool` and `recovery_pool` deps; add
-  `flight_pool_manager`.
+- `integration_tests/Cargo.toml` deps were already fixed in Phase 3 (dead
+  `flight_pool` / `recovery_pool` lines removed, `flight_pool_manager` added).
+  Verify the file still has the right deps; if not, fix here.
 - In each test file under `src/tests/`:
   - Remove RecoveryPool from setup / fixture builders.
   - Remove the FlightPool WASM-install + deployer scaffolding.
@@ -312,7 +379,7 @@ catch breakage end-to-end before any frontend / executor work begins.
     `controller.get_flights_for_traveler(addr)`.
   - Add coverage for the new paths: `recover_uncollected` (RiskVault),
     `sweep_expired` + `withdraw_recovered` (FlightPoolManager), per-traveler
-    index population (Controller).
+    index population (Controller), and the `ttl_miss` event (Oracle/Controller).
 - Confirm `WithdrawalQueue` / `Route` / `ActiveFlightList` storage-tier moves
   do not break any fixture that introspects storage directly — switch
   introspection to `instance()` where needed.

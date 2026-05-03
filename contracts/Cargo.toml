@@ -2,11 +2,9 @@
 resolver = "2"
 members = [
     "mock_usdc",
-    "recovery_pool",
     "governance_module",
     "risk_vault",
     "oracle_aggregator",
-    "flight_pool",
     "controller",
     "integration_tests",
 ]
