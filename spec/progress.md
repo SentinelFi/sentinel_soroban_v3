@@ -3,7 +3,7 @@
 > Phase dashboard for the Phase 3 contract improvements.
 > Source of truth for subtasks: `spec/dev_steps.md`. Per-phase living docs: `spec/phases/phase-{NN}-{slug}.md` (created by `/plan-phase`).
 
-**Current Phase:** — (none in_progress; next up: Phase 5 — RiskVault `WithdrawalQueue` Persistent → Instance)
+**Current Phase:** — (all complete; Phase 3 contract reorg fully closed 2026-05-03 ✓)
 
 ---
 
@@ -15,12 +15,12 @@
 | 2  | Delete `recovery_pool/`                                               | complete | 2026-05-02 | 2026-05-02 |
 | 3  | Add `flight_pool_manager/`                                            | complete | 2026-05-02 | 2026-05-02 |
 | 4  | Governance routes — API redesign + events + TTL                       | complete | 2026-05-03 | 2026-05-03 |
-| 5  | RiskVault `WithdrawalQueue` — Persistent → Instance                   | planned  | —       | —         |
-| 6  | Oracle `ActiveFlightList` — Persistent → Instance + prune             | planned  | —       | —         |
-| 7  | Controller — wire `FlightPoolManager` + `TravelerFlights`             | planned  | —       | —         |
-| 8  | RiskVault TTL — `ClaimableBalance` 60d + recovery, `SnapshotPrice` 30d temp | planned  | —       | —   |
-| 9  | Oracle `FlightData` — `ttl_miss` diagnostic event                     | planned  | —       | —         |
-| 10 | Integration tests — rewrite for new topology                          | planned  | —       | —         |
+| 5  | RiskVault `WithdrawalQueue` — Persistent → Instance                   | complete | 2026-05-03 | 2026-05-03 |
+| 6  | Oracle `ActiveFlightList` — Persistent → Instance + prune             | complete | 2026-05-03 | 2026-05-03 |
+| 7  | Controller — wire `FlightPoolManager` + `TravelerFlights`             | complete | 2026-05-03 | 2026-05-03 |
+| 8  | RiskVault TTL — `ClaimableBalance` 60d + recovery, `SnapshotPrice` 30d temp | complete | 2026-05-03 | 2026-05-03 |
+| 9  | Oracle `FlightData` — `ttl_miss` diagnostic event                     | complete | 2026-05-03 | 2026-05-03 |
+| 10 | Integration tests — rewrite for new topology                          | complete | 2026-05-03 | 2026-05-03 |
 
 Status legend: `planned` → `in_progress` → `paused` (optional) → `complete`.
 

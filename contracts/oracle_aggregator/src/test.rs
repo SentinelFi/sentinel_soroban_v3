@@ -1,5 +1,8 @@
 use super::*;
-use soroban_sdk::{symbol_short, testutils::Address as _, testutils::Events as _, Env, IntoVal};
+use soroban_sdk::{
+    symbol_short, testutils::Address as _, testutils::Events as _, testutils::Ledger as _, Env,
+    IntoVal,
+};
 
 const FLIGHT_DATE: u64 = 1710400000; // arbitrary unix timestamp
 const EST_ARRIVAL: u64 = 1710410000;
@@ -390,6 +393,182 @@ fn test_active_flights_not_removed_on_settlement() {
     // But filterable as Settled
     let settled = client.get_flights_by_status(&FlightStatus::Settled);
     assert_eq!(settled.len(), 1);
+}
+
+// --- Delayed prune tests (Phase 6) ---
+
+const SECONDS_PER_DAY: u64 = 86_400;
+const RETENTION_SECONDS: u64 = 30 * SECONDS_PER_DAY;
+
+fn settle_full_lifecycle(env: &Env, client: &OracleAggregatorClient<'_>, oracle: &Address, controller: &Address, fid: &Symbol, date: u64) {
+    client.register_flight(controller, fid, &date);
+    client.set_estimated_arrival(oracle, fid, &date, &EST_ARRIVAL);
+    client.set_landed(oracle, fid, &date, &ACT_ARRIVAL);
+    client.set_to_be_settled(controller, fid, &date, &FlightStatus::ToBeSettledOnTime);
+    client.set_settled(controller, fid, &date);
+    let _ = env;
+}
+
+#[test]
+fn test_set_settled_records_settled_at() {
+    let (env, client, _owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+
+    // Pin the ledger timestamp so we can compare exactly.
+    env.ledger().with_mut(|li| li.timestamp = 1_710_500_000);
+
+    settle_full_lifecycle(&env, &client, &oracle, &controller, &fid, FLIGHT_DATE);
+
+    let data = client.get_flight_data(&fid, &FLIGHT_DATE);
+    assert_eq!(data.status, FlightStatus::Settled);
+    assert_eq!(data.settled_at, 1_710_500_000);
+}
+
+#[test]
+fn test_settled_at_zero_before_settle() {
+    let (env, client, _owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+    let data = client.get_flight_data(&fid, &FLIGHT_DATE);
+    assert_eq!(data.settled_at, 0);
+
+    client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);
+    let data = client.get_flight_data(&fid, &FLIGHT_DATE);
+    assert_eq!(data.settled_at, 0);
+
+    client.set_landed(&oracle, &fid, &FLIGHT_DATE, &ACT_ARRIVAL);
+    client.set_to_be_settled(
+        &controller,
+        &fid,
+        &FLIGHT_DATE,
+        &FlightStatus::ToBeSettledOnTime,
+    );
+    // Still not Settled — settled_at remains 0.
+    let data = client.get_flight_data(&fid, &FLIGHT_DATE);
+    assert_eq!(data.settled_at, 0);
+}
+
+#[test]
+fn test_prune_settled_after_retention_window() {
+    let (env, client, _owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+
+    env.ledger().with_mut(|li| li.timestamp = 1_710_500_000);
+    settle_full_lifecycle(&env, &client, &oracle, &controller, &fid, FLIGHT_DATE);
+
+    // Right after settle: flight stays in the active list.
+    let flights = client.get_active_flights();
+    assert_eq!(flights.len(), 1);
+
+    // Advance one second past the retention window.
+    env.ledger()
+        .with_mut(|li| li.timestamp = 1_710_500_000 + RETENTION_SECONDS + 1);
+
+    client.prune_settled();
+
+    // List is now empty.
+    let flights = client.get_active_flights();
+    assert_eq!(flights.len(), 0);
+
+    // Idempotent: re-call does not panic.
+    client.prune_settled();
+    let flights = client.get_active_flights();
+    assert_eq!(flights.len(), 0);
+}
+
+#[test]
+fn test_prune_settled_no_op_before_retention_window() {
+    let (env, client, _owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+
+    env.ledger().with_mut(|li| li.timestamp = 1_710_500_000);
+    settle_full_lifecycle(&env, &client, &oracle, &controller, &fid, FLIGHT_DATE);
+
+    // Advance only 29 days — still within retention window.
+    env.ledger()
+        .with_mut(|li| li.timestamp = 1_710_500_000 + (29 * SECONDS_PER_DAY));
+
+    client.prune_settled();
+
+    let flights = client.get_active_flights();
+    assert_eq!(flights.len(), 1);
+}
+
+#[test]
+fn test_prune_settled_no_op_when_no_flights_settled() {
+    let (env, client, _owner, _oracle, controller) = setup();
+    let fid = flight_id(&env);
+
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+    // Flight is NotInitiated — should never be pruned regardless of time.
+
+    env.ledger().with_mut(|li| li.timestamp = 9_999_999_999);
+    client.prune_settled();
+
+    let flights = client.get_active_flights();
+    assert_eq!(flights.len(), 1);
+}
+
+#[test]
+fn test_prune_settled_only_removes_aged_settled() {
+    // Mix: one settled-and-aged-out, one settled-and-recent, one unsettled.
+    let (env, client, _owner, oracle, controller) = setup();
+
+    let f1 = symbol_short!("AA100");  // will be settled long ago
+    let f2 = symbol_short!("UA200");  // will be settled recently
+    let f3 = symbol_short!("DL300");  // never settled
+    let date: u64 = FLIGHT_DATE;
+
+    // Settle f1 at t=1000
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+    settle_full_lifecycle(&env, &client, &oracle, &controller, &f1, date);
+
+    // Settle f2 at t = 1000 + 31 days
+    env.ledger()
+        .with_mut(|li| li.timestamp = 1000 + (31 * SECONDS_PER_DAY));
+    settle_full_lifecycle(
+        &env,
+        &client,
+        &oracle,
+        &controller,
+        &f2,
+        date + 1, // different date so the (id, date) key differs
+    );
+
+    // Register f3 (NotInitiated) at t = 1000 + 31d
+    client.register_flight(&controller, &f3, &(date + 2));
+
+    // Now at t = 1000 + 31d + a tiny bit later: f1 is 31d aged, f2 is brand new.
+    env.ledger()
+        .with_mut(|li| li.timestamp = 1000 + (31 * SECONDS_PER_DAY) + 1);
+
+    client.prune_settled();
+
+    // f1 should be evicted (31d > 30d retention).
+    // f2 stays (just settled).
+    // f3 stays (not settled).
+    let flights = client.get_active_flights();
+    assert_eq!(flights.len(), 2);
+    // Verify f1 is gone, f2 and f3 remain.
+    let mut has_f1 = false;
+    let mut has_f2 = false;
+    let mut has_f3 = false;
+    for i in 0..flights.len() {
+        let (id, _d) = flights.get(i).unwrap();
+        if id == f1 {
+            has_f1 = true;
+        }
+        if id == f2 {
+            has_f2 = true;
+        }
+        if id == f3 {
+            has_f3 = true;
+        }
+    }
+    assert!(!has_f1, "f1 (aged out) should have been pruned");
+    assert!(has_f2, "f2 (recent) should remain");
+    assert!(has_f3, "f3 (unsettled) should remain");
 }
 
 // --- Event emission tests ---

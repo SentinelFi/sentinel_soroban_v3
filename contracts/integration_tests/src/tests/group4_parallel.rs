@@ -1,79 +1,159 @@
+// Group 4 — Multi-actor / multi-flight scenarios.
+
 use super::setup::*;
-use soroban_sdk::{symbol_short, testutils::Address as _};
+use soroban_sdk::{symbol_short, testutils::Address as _, token, Address};
+
+// =========================================================================
+// Multiple buyers on the same flight
+// =========================================================================
 
 #[test]
-fn test_4a_two_flights_same_batch() {
+fn multiple_buyers_same_flight() {
+    let t = TestEnv::new();
+    let t1 = Address::generate(&t.env);
+    let t2 = Address::generate(&t.env);
+    let t3 = Address::generate(&t.env);
+
+    t.buy(&t1);
+    t.buy(&t2);
+    t.buy(&t3);
+
+    let cfg = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .unwrap();
+    assert_eq!(cfg.buyer_count, 3);
+
+    // Pool USDC = 3 × premium, vault locked = 3 × payoff.
+    assert_eq!(t.usdc.balance(&t.pool_addr), 3 * PREMIUM);
+    assert_eq!(t.vault.get_locked_capital(), 3 * PAYOFF);
+}
+
+// =========================================================================
+// Multiple flights, independent settlements
+// =========================================================================
+
+#[test]
+fn multiple_flights_independent_settlements() {
     let t = TestEnv::new();
 
-    // Whitelist second route
+    // Whitelist a second route.
     t.gov.whitelist_route(
         &t.owner,
         &symbol_short!("UA200"),
-        &symbol_short!("JFK"),
-        &symbol_short!("LAX"),
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
         &None::<i128>,
         &None::<i128>,
         &None::<u32>,
     );
 
-    let t1 = soroban_sdk::Address::generate(&t.env);
-    let t2 = soroban_sdk::Address::generate(&t.env);
+    let traveler_a = Address::generate(&t.env);
+    let traveler_b = Address::generate(&t.env);
 
-    // Buy on two different flights
-    t.buy(&t1); // AA100
-    t.buy_flight(&t2, &symbol_short!("UA200"), FLIGHT_DATE + 100);
+    // Buy on both flights.
+    t.buy(&traveler_a);
+    t.usdc_admin.mint(&traveler_b, &PREMIUM);
+    t.ctrl.buy_insurance(
+        &traveler_b,
+        &symbol_short!("UA200"),
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &(FLIGHT_DATE + 1),
+    );
 
-    assert_eq!(t.ctrl.get_active_pools().len(), 2);
-
-    // AA100: on-time
+    // Flight A → delayed; flight B → on-time.
+    t.oracle_delayed();
     t.oracle.set_estimated_arrival(
         &t.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
+        &symbol_short!("UA200"),
+        &(FLIGHT_DATE + 1),
         &EST_ARRIVAL,
     );
     t.oracle.set_landed(
         &t.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
+        &symbol_short!("UA200"),
+        &(FLIGHT_DATE + 1),
         &ACTUAL_ON_TIME,
     );
 
-    // UA200: delayed
-    t.oracle.set_estimated_arrival(
-        &t.oracle_account,
-        &symbol_short!("UA200"),
-        &(FLIGHT_DATE + 100),
-        &EST_ARRIVAL,
-    );
-    t.oracle.set_landed(
-        &t.oracle_account,
-        &symbol_short!("UA200"),
-        &(FLIGHT_DATE + 100),
-        &ACTUAL_DELAYED,
-    );
-
-    // Single classify + settle batch
     t.classify_and_settle();
 
-    // Both settled
-    assert_eq!(t.ctrl.get_active_pools().len(), 0);
+    // Flight A: pool holds payoff for traveler_a to claim.
+    assert!(t.usdc.balance(&t.pool_addr) > 0);
+    let cfg_a = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .unwrap();
+    assert_eq!(
+        cfg_a.status,
+        flight_pool_manager::SettlementStatus::SettledDelayed
+    );
 
-    // Stats: 2 sold, only UA200 had payout
-    let (sold, _, distributed) = t.ctrl.get_stats();
-    assert_eq!(sold, 2);
-    assert_eq!(distributed, PAYOFF); // Only UA200
+    // Flight B: settled on-time.
+    let cfg_b = t
+        .pool
+        .get_flight_config(&symbol_short!("UA200"), &(FLIGHT_DATE + 1))
+        .unwrap();
+    assert_eq!(
+        cfg_b.status,
+        flight_pool_manager::SettlementStatus::SettledOnTime
+    );
+}
+
+// =========================================================================
+// Per-traveler index across multiple flights
+// =========================================================================
+
+#[test]
+fn traveler_index_across_multiple_flights() {
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+
+    // Whitelist additional routes.
+    t.gov.whitelist_route(
+        &t.owner,
+        &symbol_short!("UA200"),
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+
+    t.buy(&traveler);
+    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("UA200"),
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &(FLIGHT_DATE + 1),
+    );
+
+    let flights = t.ctrl.get_flights_for_traveler(&traveler);
+    assert_eq!(flights.len(), 2);
+    assert_eq!(
+        flights.get(0).unwrap(),
+        (symbol_short!("AA100"), FLIGHT_DATE)
+    );
+    assert_eq!(
+        flights.get(1).unwrap(),
+        (symbol_short!("UA200"), FLIGHT_DATE + 1)
+    );
 }
 
 #[test]
-fn test_4b_staggered_flights() {
+fn traveler_with_multiple_routes() {
+    // Same traveler across 3 different routes — all show in their index.
     let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
 
     t.gov.whitelist_route(
         &t.owner,
         &symbol_short!("UA200"),
-        &symbol_short!("JFK"),
-        &symbol_short!("LAX"),
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
         &None::<i128>,
         &None::<i128>,
         &None::<u32>,
@@ -81,75 +161,99 @@ fn test_4b_staggered_flights() {
     t.gov.whitelist_route(
         &t.owner,
         &symbol_short!("DL300"),
-        &symbol_short!("JFK"),
-        &symbol_short!("LAX"),
+        &symbol_short!("ATL"),
+        &symbol_short!("BOS"),
         &None::<i128>,
         &None::<i128>,
         &None::<u32>,
     );
 
-    let t1 = soroban_sdk::Address::generate(&t.env);
-    let t2 = soroban_sdk::Address::generate(&t.env);
-    let t3 = soroban_sdk::Address::generate(&t.env);
+    t.buy(&traveler);
+    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("UA200"),
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &(FLIGHT_DATE + 1),
+    );
+    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("DL300"),
+        &symbol_short!("ATL"),
+        &symbol_short!("BOS"),
+        &(FLIGHT_DATE + 2),
+    );
 
-    t.buy(&t1); // AA100
-    t.buy_flight(&t2, &symbol_short!("UA200"), FLIGHT_DATE + 100);
-    t.buy_flight(&t3, &symbol_short!("DL300"), FLIGHT_DATE + 200);
-
-    assert_eq!(t.ctrl.get_active_pools().len(), 3);
-
-    // Only AA100 has oracle data (landed on time)
-    t.oracle_on_time();
-
-    // Classify + settle: only AA100 should settle
-    t.classify_and_settle();
-
-    // AA100 settled, UA200 + DL300 still active
-    assert_eq!(t.ctrl.get_active_pools().len(), 2);
-
-    // Buy more on UA200 (still active)
-    let t4 = soroban_sdk::Address::generate(&t.env);
-    t.buy_flight(&t4, &symbol_short!("UA200"), FLIGHT_DATE + 100);
-
-    // UA200 now has 2 buyers
-    let (sold, _, _) = t.ctrl.get_stats();
-    assert_eq!(sold, 4);
+    assert_eq!(t.ctrl.get_flights_for_traveler(&traveler).len(), 3);
 }
 
 #[test]
-fn test_4c_same_flight_five_travelers() {
+#[should_panic(expected = "already a buyer")]
+fn same_traveler_double_buy_same_flight_panics() {
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+    t.buy(&traveler);
+}
+
+#[test]
+fn concurrent_underwriters_share_payout_burden() {
+    let t = TestEnv::new();
+    let usdc_admin = token::StellarAssetClient::new(&t.env, &t.usdc_addr);
+
+    // Add a second underwriter with a smaller deposit.
+    let underwriter2 = Address::generate(&t.env);
+    usdc_admin.mint(&underwriter2, &500_0000000);
+    t.vault.deposit(&500_0000000, &underwriter2, &underwriter2, &underwriter2);
+
+    let tma_before = t.vault.get_total_managed_assets();
+    assert_eq!(tma_before, DEPOSIT_AMOUNT + 500_0000000);
+
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+    t.oracle_delayed();
+    t.classify_and_settle();
+
+    // Delayed settlement: vault sends (payoff - premium) × buyers to pool.
+    // Premium stays in pool. So TMA decreases by (payoff - premium) × 1.
+    // Both underwriters' shares are proportionally diluted in value.
+    assert_eq!(
+        t.vault.get_total_managed_assets(),
+        tma_before - (PAYOFF - PREMIUM)
+    );
+}
+
+#[test]
+fn five_travelers_same_flight_lifecycle() {
     let t = TestEnv::new();
 
-    let travelers: soroban_sdk::Vec<soroban_sdk::Address> = {
-        let mut v = soroban_sdk::Vec::new(&t.env);
-        for _ in 0..5u32 {
-            v.push_back(soroban_sdk::Address::generate(&t.env));
-        }
-        v
-    };
-
-    for i in 0..travelers.len() {
-        let tr = travelers.get(i).unwrap();
+    let mut travelers = Vec::new();
+    for _ in 0..5 {
+        let tr = Address::generate(&t.env);
         t.buy(&tr);
+        travelers.push(tr);
     }
 
-    let pool_addr = t.pool_addr();
-    assert_eq!(t.usdc.balance(&pool_addr), PREMIUM * 5);
+    let cfg = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .unwrap();
+    assert_eq!(cfg.buyer_count, 5);
+    assert_eq!(t.usdc.balance(&t.pool_addr), 5 * PREMIUM);
+    assert_eq!(t.vault.get_locked_capital(), 5 * PAYOFF);
 
     t.oracle_delayed();
     t.classify_and_settle();
 
-    // Pool holds payoff * 5
-    assert_eq!(t.usdc.balance(&pool_addr), PAYOFF * 5);
+    // Pool now has 5 × payoff for all 5 travelers to claim.
+    assert_eq!(t.usdc.balance(&t.pool_addr), 5 * PAYOFF);
 
-    // All 5 claim
-    let pool = t.pool_client(&pool_addr);
-    for i in 0..travelers.len() {
-        let tr = travelers.get(i).unwrap();
-        pool.claim(&tr);
-        assert_eq!(t.usdc.balance(&tr), PAYOFF);
+    // Each travels claims, balance increases by payoff.
+    for tr in &travelers {
+        t.pool.claim(tr, &symbol_short!("AA100"), &FLIGHT_DATE);
+        assert_eq!(t.usdc.balance(tr), PAYOFF);
     }
-
-    // Pool balance = 0
-    assert_eq!(t.usdc.balance(&pool_addr), 0);
+    assert_eq!(t.usdc.balance(&t.pool_addr), 0);
 }

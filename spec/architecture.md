@@ -227,9 +227,15 @@ vault is composable with any vault-aware tooling.
   Historical data lives off-chain via event indexing.
 - Only the Controller (set once via `set_controller()`) can call: `increase_locked`,
   `decrease_locked`, `send_payout`, `process_withdrawal_queue`, `record_premium_income`.
-- **`recover_uncollected(address, amount)`** — owner-only function that can re-credit or
-  transfer funds if a `ClaimableBalance` entry expires. Owner uses off-chain event logs to
-  reconstruct who is owed what.
+- **`recover_uncollected(user, amount, mode)`** — owner-only function that re-credits or
+  transfers funds if a `ClaimableBalance` entry expires. Single function with a
+  `RecoveryMode { Recredit, Transfer }` enum:
+  - `Recredit` — SET `ClaimableBalance(user) = amount` + extend TTL. Owner provides the
+    full owed amount reconstructed from event logs (SET, not ADD — assumes archival).
+  - `Transfer` — directly `usdc.transfer(vault, user, amount)`. No `ClaimableBalance`
+    storage write.
+  Owner uses off-chain event logs (`vault.credited` / `vault.collected`) to reconstruct
+  who is owed what.
 
 **Storage layout:**
 
@@ -260,11 +266,35 @@ pub struct WithdrawalRequest {
   Instance so it shares TTL with the contract instance. The queue is processed daily by cron
   and should not accumulate more than a handful of entries at a time.
 - **`ClaimableBalance(Address)`** is in **Persistent** storage (account-specific, not global).
-  TTL is extended to **60 days** when crediting the balance in `process_withdrawal_queue`.
-  If the entry expires despite TTL extension, `recover_uncollected()` provides a fallback.
+  Three-layer TTL defense (per Improvement #3):
+  1. **On-write extension** — Phase 8: `process_withdrawal_queue` and the Recredit path of
+     `recover_uncollected` extend TTL by 60 days every time the entry is written.
+  2. **Cron #4 secondary defense** — Phase 11 executor work: the off-chain TTL-extender
+     cron includes `ClaimableBalance(addr)` keys in its `ExtendFootprintTTLOp` footprint,
+     sourced from the off-chain indexer's `claimable_balances` table (Improvement #9, fed
+     by the `vault.credited` / `vault.collected` / `vault.recovered` events).
+  3. **Manual fallback** — owner-only `recover_uncollected()` if a balance archives anyway
+     despite layers 1+2.
 - **`SnapshotPrice(u64)`** is in **Temporary** storage with a 30-day TTL. Snapshots are
   historical, informational, append-only — no business logic depends on restoring archived
   snapshots. Temporary avoids archival rent for data that will never be restored.
+  `get_snapshot_price()` returns 0 (`unwrap_or(0)`) for entries that have aged out — that's
+  the desired behavior; stale snapshots aren't queryable on-chain.
+
+**Events emitted:**
+
+```
+("vault", "credited", <user>)    → Credited     (amount, new_balance)
+("vault", "collected", <user>)   → Collected    (amount)
+("vault", "recovered", <user>)   → Recovered    (amount, mode: RecoveryMode)
+```
+
+All three are 2-symbol topic prefix events with the user `Address` as the third indexed
+topic. They power the off-chain indexer (Improvement #9) which maintains a
+`claimable_balances(addr)` table for the Phase 11 cron's secondary TTL defense.
+`vault.credited` fires from `process_withdrawal_queue` on every credit;
+`vault.collected` fires from `collect()` on full drain (entry removed); `vault.recovered`
+fires from `recover_uncollected` with the `mode` enum carrying which path was taken.
 
 **Authorization:**
 
@@ -380,12 +410,18 @@ fn sweep_expired(env: Env, flight_id: Symbol, date: u64);
 fn withdraw_recovered(env: Env, owner: Address, amount: i128);
 
 // Read functions
-fn get_flight_config(env: Env, flight_id: Symbol, date: u64) -> FlightConfig;
+fn get_flight_config(env: Env, flight_id: Symbol, date: u64) -> Option<FlightConfig>;
 fn has_policy(env: Env, flight_id: Symbol, date: u64, traveler: Address) -> bool;
 fn has_claimed(env: Env, flight_id: Symbol, date: u64, traveler: Address) -> bool;
 fn get_active_flights(env: Env) -> Vec<(Symbol, u64)>;
 fn get_recovered_balance(env: Env) -> i128;
 ```
+
+`get_flight_config` returns `None` if the flight is not registered (matches
+oracle's `get_flight_data` style of returning a sentinel for missing entries
+rather than panicking). This lets the Controller's `buy_insurance` do
+"look up; if missing, register" in one cross-contract call without forcing
+a panic + restart.
 
 **USDC flow:**
 
@@ -452,6 +488,10 @@ everything: it calls functions on other contracts that change state and move mon
 10. Maintains a **per-traveler index** — `TravelerFlights(Address)` in Persistent storage —
     for efficient frontend queries. Appended on each `buy_insurance()` call.
 11. Exposes `get_flights_for_traveler(address)` for the frontend to show only a user's policies.
+12. **Emits `warn.ttl_miss(flight_id, date)`** from `classify_flights` when oracle returns
+    `NotInitiated` for a flight in the active list — diagnostic signal consumed by the
+    off-chain TTL-extender cron (Improvement #6) so it can detect archived `FlightData`
+    entries and react before settlement fails.
 
 **Two settlement-phase functions — called by the keeper at different rates:**
 
@@ -508,6 +548,22 @@ pool_client.register_flight(&controller_addr, &flight_id, &date,
                             &terms.premium, &terms.payoff, &terms.delay_hours);
 ```
 
+**Events emitted:**
+
+```
+("ctrl", <traveler addr>)               → InsuranceBought      (premium)
+("ctrl", <flight_id>, <date>)           → FlightClassified     (status)
+("ctrl", <flight_id>, <date>)           → FlightSettledEvent   (outcome)
+("warn", "ttl_miss", <flight_id>)       → TtlMiss              (date)
+```
+
+The first three are domain events covering the buy / classify / settle
+lifecycle. The fourth (`TtlMiss`) is a diagnostic warning emitted by
+`classify_flights` only — it fires once per `(flight_id, date)` per cron
+tick (every 1 hour) for any registered flight whose oracle status is still
+`NotInitiated`. Consumed by the off-chain TTL-extender cron via
+`rpc.getEvents` filtering on the `("warn", "ttl_miss")` topic prefix.
+
 **Storage layout:**
 
 ```rust
@@ -560,7 +616,9 @@ NotInitiated -> Active -> Landed --> ToBeSettledOnTime --> Settled
 
 - `estimated_arrival_time: u64` — set by oracle when transitioning `NotInitiated -> Active`
 - `actual_arrival_time: u64` — set by oracle when transitioning `Active -> Landed`
-- Both timestamps are unix epoch seconds.
+- `settled_at: u64` — set by controller when transitioning `ToBeSettled* -> Settled`
+  (`0` means not-yet-settled). Drives the delayed-prune logic on `ActiveFlightList`.
+- All timestamps are unix epoch seconds.
 
 **Key rules:**
 
@@ -571,19 +629,26 @@ NotInitiated -> Active -> Landed --> ToBeSettledOnTime --> Settled
   mark flights as `Settled`. Set once via `set_controller()`, immutable after.
 - `get_flight_data()` never panics — returns `NotInitiated` status as safe fallback
   for missing entries.
-- **`set_settled` prunes the settled flight from `ActiveFlightList`**, keeping the list
-  bounded to only active (unsettled) flights.
+- **Delayed prune.** `set_settled` records `settled_at` but does NOT remove the flight
+  from `ActiveFlightList`. A separate permissionless `prune_settled()` entry is what
+  evicts settled flights from the list, and only after they have been settled for at
+  least `SETTLED_RETENTION_DAYS = 30` days. This keeps freshly-settled flights visible
+  to off-chain monitoring / indexers / observability tooling for a window before they
+  disappear.
 
 **Storage layout:**
 
 ```rust
 #[contracttype]
 pub enum OracleKey {
-    Owner,                           // Address — Instance
-    AuthorizedOracle,                // Address — Instance (executor backend)
-    AuthorizedController,            // Address — Instance (set once)
-    FlightData(Symbol, u64),         // FlightData — Persistent
-    ActiveFlightList,                // Vec<(Symbol, u64)> — Instance
+    // Instance — global single-row state (auto-extended with contract instance TTL)
+    Owner,
+    AuthorizedOracle,
+    AuthorizedController,
+    ActiveFlightList,                // Vec<(Symbol, u64)>
+
+    // Persistent — keyed multi-row state
+    FlightData(Symbol, u64),         // FlightData
 }
 
 #[contracttype]
@@ -591,6 +656,7 @@ pub struct FlightData {
     pub status: FlightStatus,
     pub estimated_arrival_time: u64,   // 0 if not yet set
     pub actual_arrival_time: u64,      // 0 if not yet set
+    pub settled_at: u64,               // 0 if not yet settled
 }
 
 #[contracttype]
@@ -605,17 +671,22 @@ pub enum FlightStatus {
     ToBeSettledCancelled,
     Settled,
 }
+
+const SETTLED_RETENTION_DAYS: u64 = 30;
+const SECONDS_PER_DAY: u64 = 86_400;
 ```
 
 **Storage tier rationale:**
 
-- **`ActiveFlightList`** is in **Instance** storage. It is global shared state — per Soroban
-  best practice, it should be Instance so it shares TTL with the contract instance. With
-  pruning in `set_settled`, the list stays bounded to active flights and Instance is practical.
-- **`FlightData(Symbol, u64)`** is in **Persistent** storage (per-flight, unbounded entries —
-  can't move to Instance). TTL is managed via `ExtendFootprintTTLOp` cron — the same cron
-  that extends FlightPoolManager's `FlightConfig` entries iterates active flights and extends
-  each `FlightData` entry.
+- **`ActiveFlightList`** is in **Instance** storage. It is global single-row state — per
+  Soroban best practice, it shares TTL with the contract instance. The delayed-prune
+  scheme bounds the list to (active flights) + (settled-but-not-yet-evicted flights), the
+  latter capped by the 30-day retention window. List growth is bounded under realistic
+  traffic.
+- **`FlightData(Symbol, u64)`** is in **Persistent** storage (per-flight, unbounded
+  entries — can't move to Instance). TTL is managed via `ExtendFootprintTTLOp` cron —
+  the same cron that extends FlightPoolManager's `FlightConfig` entries iterates active
+  flights and extends each `FlightData` entry.
 
 **Key functions:**
 
@@ -638,13 +709,27 @@ fn set_to_be_settled(env: Env, controller: Address,
                      status: FlightStatus);                // Landed/Cancelled -> ToBeSettled*
 fn set_settled(env: Env, controller: Address,
                flight_id: Symbol, date: u64);              // ToBeSettled* -> Settled
-                                                           // also prunes from ActiveFlightList
+                                                           // records settled_at;
+                                                           // does NOT prune
+
+// Permissionless housekeeping (callable by anyone — matches sweep_expired pattern)
+fn prune_settled(env: Env);                                // evicts entries with
+                                                           //   status == Settled
+                                                           //   AND now - settled_at
+                                                           //     >= SETTLED_RETENTION_DAYS
 
 // Read functions
 fn get_flight_data(env: Env, flight_id: Symbol, date: u64) -> FlightData;
 fn get_active_flights(env: Env) -> Vec<(Symbol, u64)>;
 fn get_flights_by_status(env: Env, status: FlightStatus) -> Vec<(Symbol, u64)>;
 ```
+
+**Cross-contract mirror.** `controller/src/lib.rs` defines a mirror `FlightData` struct
+under its inline `OracleClient` trait (the "Solidity-interface" pattern — see
+`controller/src/lib.rs` for the rationale). The mirror **must** include `settled_at`
+in lockstep with this contract's struct, otherwise `oracle.get_flight_data()` calls in
+the controller panic on deserialization at runtime. Same fragility as Phase 4's
+`RouteStatus` mirror; integration tests (Phase 10) are the catch-all detector.
 
 ---
 

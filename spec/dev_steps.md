@@ -272,35 +272,83 @@ incorrect — Instance is the right tier and avoids archival rent.
 
 ---
 
-## Step 6 — MODIFY `contracts/oracle_aggregator/` — ActiveFlightList prune
+## Step 6 — MODIFY `contracts/oracle_aggregator/` (+ controller mirror) — Delayed prune + Instance
 
-**Action:** Move `ActiveFlightList` from Persistent to Instance and prune the
-list inside `set_settled` (Improvement #5).
+**Action:** Move `ActiveFlightList` from Persistent to Instance, widen
+`FlightData` with `settled_at: u64`, and add a permissionless `prune_settled`
+function that removes entries settled more than `SETTLED_RETENTION_DAYS = 30`
+days ago (Improvement #5).
 
-**Why:** Unbounded growth + wrong tier. The list is global shared state; it
-belongs in Instance. Pruning on settlement keeps it bounded by the count of
-in-flight flights at any moment.
+**Why:**
+- **Tier wrong + unbounded growth.** `ActiveFlightList` is global single-row
+  state — per Soroban best practice it belongs in Instance. The current
+  Persistent placement plus never-prune behaviour makes the list grow
+  forever; every read copies the full list into the tx footprint.
+- **Why delayed prune (not prune-on-settle):** off-chain monitoring,
+  indexers, and observability tooling need a window in which a freshly
+  settled flight is still visible in `ActiveFlightList` to record its final
+  state without race conditions. Pruning immediately removes the flight from
+  view the instant the on-chain state flips. A 30-day retention window
+  keeps it observable while still bounding list growth.
+- **Why both must land together.** A pure tier flip without pruning would
+  actually be *worse* than today: Instance is loaded into every tx
+  footprint, so an unbounded Instance entry is more dangerous than an
+  unbounded Persistent one. The two changes are coupled.
 
-**Tasks:**
+**Tasks (oracle_aggregator):**
 - Switch every `ActiveFlightList` access from `storage().persistent()` to
-  `storage().instance()`.
-- Remove any manual TTL extension for this key.
-- In `set_settled(...)`, after marking the flight as `Settled`, prune it from
-  the list:
+  `storage().instance()`. Remove any manual TTL extension for this key.
+- Add Instance / Persistent tier-grouping comments to the `OracleKey` enum
+  (matching the `flight_pool_manager::PoolKey` style — `WithdrawalQueue`
+  Phase 5 already established this pattern).
+- Widen `FlightData` with `settled_at: u64` (0 means not-yet-settled).
+- In `set_settled(...)`, record `settled_at = env.ledger().timestamp()`
+  along with the status flip. Do **not** prune the list here.
+- Add module-level constants:
+  ```rust
+  const SETTLED_RETENTION_DAYS: u64 = 30;
+  const SECONDS_PER_DAY: u64 = 86_400;
   ```
-  let mut list = storage().instance().get(&OracleKey::ActiveFlightList).unwrap_or(Vec::new(&env));
-  if let Some(idx) = list.iter().position(|(id, d)| id == flight_id && d == date) {
-      list.remove(idx);
-      storage().instance().set(&OracleKey::ActiveFlightList, &list);
-  }
-  ```
-- Update enum comment to mark `ActiveFlightList` as Instance.
+- Add permissionless `prune_settled(env)` entry. Scans
+  `ActiveFlightList`, looks up each entry's `FlightData`, and removes
+  entries where `data.status == Settled` AND `data.settled_at != 0` AND
+  `now - data.settled_at >= SETTLED_RETENTION_DAYS * SECONDS_PER_DAY`.
+  No auth (matches `flight_pool_manager::sweep_expired` pattern). Build
+  a fresh `Vec` of survivors and write it back if it differs from the
+  current list.
+
+**Tasks (controller — lockstep mirror):**
+- `controller/src/lib.rs` defines a mirror `FlightData` struct under its
+  inline `OracleClient` interface (the "Solidity-interface" pattern).
+  **Widen the mirror in lockstep** with oracle's struct — add
+  `settled_at: u64`. Without this, `oracle.get_flight_data()` calls panic
+  on deserialization at runtime. The compiler can't catch the drift.
+- This is the same shape as Phase 4's `RouteStatus` lockstep addition to
+  the `GovClient` mirror.
+- No `prune_settled` entry in controller's `OracleClient` trait — the
+  off-chain executor (eventually) calls oracle directly. Adding it to the
+  trait would imply controller needs to know about pruning, which it
+  doesn't.
 
 **Note:** the FlightData TTL-miss diagnostic event is intentionally **not**
 done here — it is grouped with the other TTL work in Step 9.
 
-**Verification:** `cargo build -p oracle_aggregator` clean; new test:
-register → set_active → set_landed → set_settled → list is empty.
+**Out of scope for Phase 6:** wiring `prune_settled` into a cron. Phase 6
+exposes the entry point only. Cron #3 `SettlementExecutor` (every 5 min)
+is the natural candidate, but Cron #4 (TTL extender, Improvement #6) is
+also a reasonable host. That wiring lives in `executor/`, which Phase 6
+does not touch.
+
+**Verification:**
+- `cargo build -p oracle_aggregator` clean.
+- `cargo test -p oracle_aggregator` passes existing tests + a new lifecycle
+  test: register → set_active → set_landed → set_settled (assert
+  `settled_at` recorded; list still has the flight) → fast-forward ledger
+  time by 30 days → `prune_settled()` → list is empty.
+- `cargo build -p controller` (lib) clean — confirms the widened `FlightData`
+  mirror compiles. Full `cargo test -p controller` is still blocked by the
+  Phase 7+10 cleanup (controller test references deleted crates), so the
+  build-only check is the realistic gate.
 
 ---
 
@@ -394,16 +442,25 @@ behaviour). Landing them together avoids two near-identical PRs.
 - In `process_withdrawal_queue`, after every
   `storage().persistent().set(&VaultKey::ClaimableBalance(addr.clone()), &amount)`,
   call `extend_ttl(&VaultKey::ClaimableBalance(addr), 60*24*60*12, 60*24*60*12)`
-  (60 days at 5s/ledger).
-- Apply the same extension wherever `ClaimableBalance` is written (e.g., if
-  `recover_uncollected` re-credits it).
+  (60 days at 5s/ledger). Emit `vault.credited(addr, amount, new_balance)`
+  immediately after.
+- Apply the same TTL extension wherever `ClaimableBalance` is written (e.g.,
+  if `recover_uncollected` re-credits it).
+- In `collect()`, after `usdc.transfer(...)` and `storage().persistent().remove(...)`,
+  emit `vault.collected(addr, amount)`.
 - Add `fn recover_uncollected(env, owner, user, amount)`:
   - `owner.require_auth()`.
   - Assert `owner == storage().instance().get(VaultKey::Owner)`.
   - Either re-credit `ClaimableBalance(user)` (with TTL extension) or transfer
-    USDC directly to `user`. Emit an event so an indexer can reconstruct.
-- Unit test: simulate expiry, call `recover_uncollected`, assert the user can
-  collect.
+    USDC directly to `user`.
+  - Emit `vault.recovered(addr, amount, mode)` where `mode` is `"recredit"`
+    or `"transfer"`.
+- **Event topic style:** 2-symbol prefix `["vault", <action>]` plus indexed
+  `addr` topic — matches the Phase 4 / Phase 6 event scheme. These events
+  are consumed by the off-chain indexer (Improvement #9) which maintains a
+  `claimable_balances(addr)` table for the Phase 9 cron to read.
+- Unit test: simulate expiry, call `recover_uncollected`, assert the user
+  can collect. Add event spot-checks for credited / collected / recovered.
 
 **Tasks — SnapshotPrice:**
 - Grep for `SnapshotPrice`. Every `storage().persistent()` access switches to
@@ -417,16 +474,21 @@ the recovery flow and the temporary-tier snapshot read-back.
 
 ---
 
-## Step 9 — MODIFY `contracts/oracle_aggregator/` — FlightData TTL miss
+## Step 9 — MODIFY `contracts/oracle_aggregator/` — FlightData TTL miss + cron footprint coverage
 
 **Action:** Add a diagnostic event when `FlightData` is missing for a flight
-that should have data (Improvement #6).
+that should have data (Improvement #6). Also confirm the off-chain
+`ExtendFootprintTTLOp` cron (Cron #4) covers all the keys it should — including
+the secondary TTL defense for `VaultKey::ClaimableBalance(addr)` introduced in
+Step 8.
 
-**Why:** Surfaces TTL expiry of `FlightData` so the off-chain TTL-extender
-cron can be alerted and corrective action taken before settlement fails.
-Decoupled from Step 6 because it is purely a TTL/observability concern.
+**Why:** Two related observability/TTL concerns: surface FlightData TTL expiry
+via a diagnostic event so the off-chain extender cron can react; and document
+that Cron #4's footprint includes ClaimableBalance keys (sourced from the
+Phase 8 `vault.credited` / `vault.collected` / `vault.recovered` event family
+via the off-chain indexer, Improvement #9).
 
-**Tasks:**
+**Tasks — diagnostic event:**
 - Either expose a thin `oracle.emit_ttl_miss(flight_id, date)` helper, or have
   the Controller emit `env.events().publish((symbol_short!("warn"),
   symbol_short!("ttl_miss")), (flight_id, date))` directly. Emitting from the
@@ -438,9 +500,21 @@ Decoupled from Step 6 because it is purely a TTL/observability concern.
 - No on-chain `extend_ttl` is added here — the actual extension is performed
   by the off-chain `ExtendFootprintTTLOp` cron (out of scope for this phase).
 
+**Tasks — Cron #4 footprint coverage (executor work, Improvement #6):**
+- The cron's footprint must cover: `PoolKey::FlightConfig(id, date)`,
+  `OracleKey::FlightData(id, date)`, `DataKey::Route(flight_id, origin, dest)`,
+  `CtrlKey::TravelerFlights(addr)`, AND
+  `VaultKey::ClaimableBalance(addr)`.
+- Address list for `ClaimableBalance(addr)` is sourced from the off-chain
+  indexer's `claimable_balances` table — populated by the `vault.credited` /
+  `vault.collected` / `vault.recovered` events emitted by Step 8. **This is
+  why Step 8 emits those events — they exist specifically to power this
+  step's secondary TTL defense for ClaimableBalance.**
+
 **Verification:** `cargo build -p oracle_aggregator` and `cargo build -p
 controller` both clean; unit test that simulates a missing `FlightData` lookup
-asserts the `ttl_miss` event is emitted.
+asserts the `ttl_miss` event is emitted. Spec-side: confirm `improvements.md`
+#6 + #9 reflect the ClaimableBalance footprint addition.
 
 ---
 

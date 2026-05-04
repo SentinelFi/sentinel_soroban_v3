@@ -1,101 +1,182 @@
+// Group 5 — Edge cases: prune_settled, sweep_expired, withdraw_recovered,
+// snapshot expiry, ttl_miss diagnostic.
+
 use super::setup::*;
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::{symbol_short, testutils::Address as _, testutils::Ledger as _, Address};
+
+const SECONDS_PER_DAY: u64 = 86_400;
+
+// =========================================================================
+// prune_settled (Phase 6)
+// =========================================================================
 
 #[test]
-#[should_panic]
-fn test_5a_buy_after_settlement_fails() {
+fn prune_settled_after_30d_evicts_aged_flights() {
     let t = TestEnv::new();
-    let t1 = soroban_sdk::Address::generate(&t.env);
-
-    t.buy(&t1);
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
     t.oracle_on_time();
     t.classify_and_settle();
 
-    // After settlement, Controller removes pool from active list.
-    // Buying again tries to deploy a new pool + register_flight in oracle,
-    // but oracle rejects ("flight already registered").
-    let t2 = soroban_sdk::Address::generate(&t.env);
-    t.buy(&t2);
+    // Flight is settled but still in the active list.
+    assert_eq!(t.oracle.get_active_flights().len(), 1);
+
+    // Advance past the 30-day retention window.
+    t.advance_time(30 * SECONDS_PER_DAY + 1);
+
+    t.oracle.prune_settled();
+    assert_eq!(t.oracle.get_active_flights().len(), 0);
 }
 
 #[test]
-#[should_panic]
-fn test_5b_claim_without_policy() {
+fn prune_settled_idempotent() {
     let t = TestEnv::new();
-    let traveler = soroban_sdk::Address::generate(&t.env);
-    let stranger = soroban_sdk::Address::generate(&t.env);
-
+    let traveler = Address::generate(&t.env);
     t.buy(&traveler);
-    let pool_addr = t.pool_addr();
+    t.oracle_on_time();
+    t.classify_and_settle();
 
+    t.advance_time(30 * SECONDS_PER_DAY + 1);
+    t.oracle.prune_settled();
+    t.oracle.prune_settled(); // second call is a no-op
+    assert_eq!(t.oracle.get_active_flights().len(), 0);
+}
+
+#[test]
+fn prune_settled_callable_by_anyone() {
+    // The function takes no caller arg — anyone with gas pays.
+    // Just confirm the call succeeds in the non-keeper context.
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+    t.oracle_on_time();
+    t.classify_and_settle();
+    t.advance_time(30 * SECONDS_PER_DAY + 1);
+    // No specific caller passed — same client, same env, no panic.
+    t.oracle.prune_settled();
+}
+
+#[test]
+fn prune_settled_no_op_before_retention_window() {
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+    t.oracle_on_time();
+    t.classify_and_settle();
+
+    // Only advance 29 days — flight stays in list.
+    t.advance_time(29 * SECONDS_PER_DAY);
+    t.oracle.prune_settled();
+    assert_eq!(t.oracle.get_active_flights().len(), 1);
+}
+
+// =========================================================================
+// sweep_expired + withdraw_recovered (Phase 3 surface)
+// =========================================================================
+
+#[test]
+fn sweep_expired_after_claim_window() {
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
     t.oracle_delayed();
     t.classify_and_settle();
 
-    // FlightPool deployed via WASM — panics as WasmVm error, not assert message
-    let pool = t.pool_client(&pool_addr);
-    pool.claim(&stranger);
+    // Skip the claim — wait out the claim window.
+    t.advance_time(CLAIM_EXPIRY_WINDOW + 1);
+
+    let recovered_before = t.pool.get_recovered_balance();
+    assert_eq!(recovered_before, 0);
+
+    t.pool.sweep_expired(&symbol_short!("AA100"), &FLIGHT_DATE);
+
+    // RecoveredBalance now holds the unclaimed payoff.
+    assert_eq!(t.pool.get_recovered_balance(), PAYOFF);
 }
 
 #[test]
-#[should_panic]
-fn test_5c_double_claim() {
+fn sweep_expired_idempotent() {
     let t = TestEnv::new();
-    let traveler = soroban_sdk::Address::generate(&t.env);
-
+    let traveler = Address::generate(&t.env);
     t.buy(&traveler);
-    let pool_addr = t.pool_addr();
-
     t.oracle_delayed();
     t.classify_and_settle();
 
-    let pool = t.pool_client(&pool_addr);
-    pool.claim(&traveler);
-    pool.claim(&traveler);
+    t.advance_time(CLAIM_EXPIRY_WINDOW + 1);
+
+    t.pool.sweep_expired(&symbol_short!("AA100"), &FLIGHT_DATE);
+    let after_first = t.pool.get_recovered_balance();
+
+    // Second sweep is a no-op.
+    t.pool.sweep_expired(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(t.pool.get_recovered_balance(), after_first);
 }
 
 #[test]
-#[should_panic]
-fn test_5d_sweep_before_expiry() {
+fn withdraw_recovered_by_owner() {
     let t = TestEnv::new();
-    let traveler = soroban_sdk::Address::generate(&t.env);
-    let sweeper = soroban_sdk::Address::generate(&t.env);
-
+    let traveler = Address::generate(&t.env);
     t.buy(&traveler);
-    let pool_addr = t.pool_addr();
-
     t.oracle_delayed();
     t.classify_and_settle();
 
-    let pool = t.pool_client(&pool_addr);
-    pool.sweep_expired(&sweeper);
+    t.advance_time(CLAIM_EXPIRY_WINDOW + 1);
+    t.pool.sweep_expired(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(t.pool.get_recovered_balance(), PAYOFF);
+
+    let owner_balance_before = t.usdc.balance(&t.owner);
+    t.pool.withdraw_recovered(&PAYOFF);
+
+    assert_eq!(t.usdc.balance(&t.owner), owner_balance_before + PAYOFF);
+    assert_eq!(t.pool.get_recovered_balance(), 0);
 }
 
+// =========================================================================
+// SnapshotPrice expiry (Phase 8)
+// =========================================================================
+
 #[test]
-fn test_5e_classify_no_ready_flights() {
+fn snapshot_expires_after_30d() {
     let t = TestEnv::new();
-    let traveler = soroban_sdk::Address::generate(&t.env);
-
+    // Trigger a snapshot via a settle pass.
+    let traveler = Address::generate(&t.env);
     t.buy(&traveler);
+    t.oracle_on_time();
+    t.classify_and_settle();
 
-    // Oracle has NOT reported any data yet (flight still NotInitiated in oracle)
-    // But wait — the oracle sets estimated arrival, not Controller.
-    // The flight is registered as NotInitiated. classify_flights should skip it.
+    let day = INITIAL_TIMESTAMP / SECONDS_PER_DAY;
+    let price_fresh = t.vault.get_snapshot_price(&day);
+    assert!(price_fresh > 0);
 
-    // This should be a no-op — no panic
+    // Advance time + ledger sequence past the 30-day TTL.
+    t.env.ledger().with_mut(|li| {
+        li.sequence_number += 30 * 24 * 60 * 12 + 1;
+        li.timestamp = INITIAL_TIMESTAMP + 31 * SECONDS_PER_DAY;
+    });
+    assert_eq!(t.vault.get_snapshot_price(&day), 0);
+}
+
+// =========================================================================
+// ttl_miss diagnostic (Phase 9)
+// =========================================================================
+
+#[test]
+fn ttl_miss_emitted_on_classify_with_missing_oracle_data() {
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+    // Flight is registered in oracle (NotInitiated) but no oracle data
+    // pushed — classify should emit ttl_miss.
+
     t.ctrl.classify_flights(&t.keeper);
 
-    // Flight still active
-    assert_eq!(t.ctrl.get_active_pools().len(), 1);
-
-    // Now set oracle to Active (estimated arrival set, but not yet landed)
-    t.oracle.set_estimated_arrival(
-        &t.oracle_account,
-        &soroban_sdk::symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &EST_ARRIVAL,
+    assert!(
+        count_events_with_topic(
+            &t.env,
+            &t.ctrl_addr,
+            symbol_short!("warn"),
+            symbol_short!("ttl_miss"),
+        ) >= 1,
+        "expected warn.ttl_miss event for NotInitiated flight"
     );
-
-    // Still a no-op — Active flights are not classified, only Landed/Cancelled
-    t.ctrl.classify_flights(&t.keeper);
-    assert_eq!(t.ctrl.get_active_pools().len(), 1);
 }

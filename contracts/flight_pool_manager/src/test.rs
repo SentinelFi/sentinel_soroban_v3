@@ -156,7 +156,7 @@ fn test_set_controller_no_auth_fails() {
 fn test_register_flight_success() {
     let t = setup();
     register(&t);
-    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE);
+    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.premium, PREMIUM);
     assert_eq!(cfg.payoff, PAYOFF);
     assert_eq!(cfg.delay_hours, DELAY_HOURS);
@@ -215,7 +215,7 @@ fn test_add_buyer_single() {
     let t = setup();
     register(&t);
     buy(&t, &t.buyer1);
-    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE);
+    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.buyer_count, 1);
     assert!(t.pool.has_policy(&flight_a(), &FLIGHT_DATE, &t.buyer1));
     assert!(!t.pool.has_policy(&flight_a(), &FLIGHT_DATE, &t.buyer2));
@@ -228,7 +228,7 @@ fn test_add_buyer_multiple() {
     register(&t);
     buy(&t, &t.buyer1);
     buy(&t, &t.buyer2);
-    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE);
+    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.buyer_count, 2);
     assert!(t.pool.has_policy(&flight_a(), &FLIGHT_DATE, &t.buyer1));
     assert!(t.pool.has_policy(&flight_a(), &FLIGHT_DATE, &t.buyer2));
@@ -290,7 +290,7 @@ fn test_settle_on_time_with_buyers_transfers_premium_to_vault() {
 
     t.pool.settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
 
-    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE);
+    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.status, SettlementStatus::SettledOnTime);
     assert_eq!(t.pool.get_active_flights().len(), 0);
     assert_eq!(t.usdc.balance(&t.pool_addr), 0);
@@ -306,7 +306,7 @@ fn test_settle_on_time_zero_buyers_no_transfer() {
     register(&t);
     let vault_tma_before = t.vault.get_total_managed_assets();
     t.pool.settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
-    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE);
+    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.status, SettlementStatus::SettledOnTime);
     assert_eq!(t.pool.get_active_flights().len(), 0);
     assert_eq!(t.vault.get_total_managed_assets(), vault_tma_before);
@@ -342,7 +342,7 @@ fn test_settle_delayed_success() {
     let claim_expiry = t.env.ledger().timestamp() + CLAIM_WINDOW_SEC;
     t.pool
         .settle_delayed(&t.controller, &flight_a(), &FLIGHT_DATE, &claim_expiry);
-    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE);
+    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.status, SettlementStatus::SettledDelayed);
     assert_eq!(cfg.claim_expiry, claim_expiry);
     assert_eq!(t.pool.get_active_flights().len(), 0);
@@ -356,7 +356,7 @@ fn test_settle_cancelled_success() {
     let claim_expiry = t.env.ledger().timestamp() + CLAIM_WINDOW_SEC;
     t.pool
         .settle_cancelled(&t.controller, &flight_a(), &FLIGHT_DATE, &claim_expiry);
-    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE);
+    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.status, SettlementStatus::SettledCancelled);
     assert_eq!(cfg.claim_expiry, claim_expiry);
 }
@@ -422,7 +422,7 @@ fn test_claim_after_delayed_success() {
         buyer1_balance_before + PAYOFF
     );
     assert!(t.pool.has_claimed(&flight_a(), &FLIGHT_DATE, &t.buyer1));
-    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE);
+    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.claimed_count, 1);
 }
 

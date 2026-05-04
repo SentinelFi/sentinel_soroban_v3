@@ -7,10 +7,13 @@ use stellar_macros::only_owner;
 
 #[contracttype]
 pub enum OracleKey {
+    // Instance — global single-row state (auto-extended with contract instance TTL)
     AuthorizedOracle,
     AuthorizedController,
-    FlightData(Symbol, u64),
     ActiveFlightList,
+
+    // Persistent — keyed multi-row state
+    FlightData(Symbol, u64),
 }
 
 // --- Domain types ---
@@ -34,6 +37,7 @@ pub struct FlightData {
     pub status: FlightStatus,
     pub estimated_arrival_time: u64,
     pub actual_arrival_time: u64,
+    pub settled_at: u64,                   // 0 means not-yet-settled
 }
 
 // --- Error types ---
@@ -55,6 +59,16 @@ const PERSISTENT_TTL_THRESHOLD: u32 = 120_960; // ~7 days
 const PERSISTENT_TTL_EXTEND: u32 = 535_680; // ~31 days
 const INSTANCE_TTL_THRESHOLD: u32 = 120_960;
 const INSTANCE_TTL_EXTEND: u32 = 535_680;
+
+// --- Prune retention ---
+//
+// Settled flights stay in `ActiveFlightList` for SETTLED_RETENTION_DAYS after
+// `set_settled` records their `settled_at` timestamp. Pruning is delegated to
+// the permissionless `prune_settled` entry — keeps freshly-settled flights
+// visible to off-chain monitoring / indexers / observability tooling for the
+// retention window before they disappear from the list.
+const SETTLED_RETENTION_DAYS: u64 = 30;
+const SECONDS_PER_DAY: u64 = 86_400;
 
 // --- Helpers ---
 
@@ -265,26 +279,22 @@ impl OracleAggregator {
             status: FlightStatus::NotInitiated,
             estimated_arrival_time: 0,
             actual_arrival_time: 0,
+            settled_at: 0,
         };
         e.storage().persistent().set(&key, &data);
 
-        // Append to active flight list
+        // Append to active flight list (Instance — auto-extended with contract instance TTL)
         let mut flights: Vec<(Symbol, u64)> = e
             .storage()
-            .persistent()
+            .instance()
             .get(&OracleKey::ActiveFlightList)
             .unwrap_or(Vec::new(e));
         flights.push_back((flight_id.clone(), date));
         e.storage()
-            .persistent()
+            .instance()
             .set(&OracleKey::ActiveFlightList, &flights);
 
         extend_flight_ttl(e, &flight_id, date);
-        e.storage().persistent().extend_ttl(
-            &OracleKey::ActiveFlightList,
-            PERSISTENT_TTL_THRESHOLD,
-            PERSISTENT_TTL_EXTEND,
-        );
         emit_status_event(e, &flight_id, date, &FlightStatus::NotInitiated);
     }
 
@@ -329,7 +339,11 @@ impl OracleAggregator {
     }
 
     /// Mark flight as settled. Transitions ToBeSettled* → Settled.
-    /// Does NOT renew TTL — entry will naturally expire.
+    /// Records `settled_at` so the delayed-prune window starts ticking.
+    /// Does NOT remove the flight from `ActiveFlightList` — eviction is
+    /// delegated to the permissionless `prune_settled` entry, which only
+    /// removes entries older than `SETTLED_RETENTION_DAYS`. Does NOT renew
+    /// flight TTL — settled entries naturally expire.
     pub fn set_settled(e: &Env, controller: Address, flight_id: Symbol, date: u64) {
         require_controller(e, &controller);
 
@@ -346,10 +360,50 @@ impl OracleAggregator {
         );
 
         data.status = FlightStatus::Settled;
+        data.settled_at = e.ledger().timestamp();
         e.storage().persistent().set(&key, &data);
 
-        // Intentionally NOT renewing flight TTL — settled entries naturally expire
         emit_status_event(e, &flight_id, date, &FlightStatus::Settled);
+    }
+
+    // --- Permissionless housekeeping ---
+
+    /// Remove settled flights from `ActiveFlightList` once they have been
+    /// settled for at least `SETTLED_RETENTION_DAYS`. Permissionless —
+    /// anyone may call (matches `flight_pool_manager::sweep_expired`
+    /// pattern). Idempotent: re-callable with no panic; no-op if nothing
+    /// has aged out.
+    pub fn prune_settled(e: &Env) {
+        let now = e.ledger().timestamp();
+        let list: Vec<(Symbol, u64)> = e
+            .storage()
+            .instance()
+            .get(&OracleKey::ActiveFlightList)
+            .unwrap_or(Vec::new(e));
+
+        let mut kept: Vec<(Symbol, u64)> = Vec::new(e);
+        for i in 0..list.len() {
+            let (flight_id, date) = list.get(i).unwrap();
+            let data: FlightData = e
+                .storage()
+                .persistent()
+                .get(&OracleKey::FlightData(flight_id.clone(), date))
+                .expect("flight data missing");
+            let age_seconds = now.saturating_sub(data.settled_at);
+            let aged_out = data.status == FlightStatus::Settled
+                && data.settled_at != 0
+                && age_seconds >= SETTLED_RETENTION_DAYS * SECONDS_PER_DAY;
+            if !aged_out {
+                kept.push_back((flight_id, date));
+            }
+        }
+
+        if kept.len() != list.len() {
+            e.storage()
+                .instance()
+                .set(&OracleKey::ActiveFlightList, &kept);
+        }
+        extend_instance_ttl(e);
     }
 
     // --- TTL management ---
@@ -369,13 +423,14 @@ impl OracleAggregator {
             status: FlightStatus::NotInitiated,
             estimated_arrival_time: 0,
             actual_arrival_time: 0,
+            settled_at: 0,
         })
     }
 
     /// Get all registered flights (active list).
     pub fn get_active_flights(e: &Env) -> Vec<(Symbol, u64)> {
         e.storage()
-            .persistent()
+            .instance()
             .get(&OracleKey::ActiveFlightList)
             .unwrap_or(Vec::new(e))
     }

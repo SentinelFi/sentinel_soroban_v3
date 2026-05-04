@@ -1,5 +1,8 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, MuxedAddress, String, Vec};
+use soroban_sdk::{
+    contract, contractevent, contractimpl, contracttype, token, Address, Env, MuxedAddress,
+    String, Vec,
+};
 use stellar_access::ownable::{self as ownable, Ownable};
 use stellar_macros::only_owner;
 use stellar_tokens::fungible::{Base, FungibleToken};
@@ -8,12 +11,17 @@ use stellar_tokens::vault::Vault;
 #[contracttype]
 #[derive(Clone)]
 pub enum VaultKey {
+    // Instance — global single-row state (auto-extended with contract instance TTL)
     Controller,
     TotalManagedAssets,
     LockedCapital,
     WithdrawalQueue,
-    ClaimableBalance(Address),
     LastSnapshotTime,
+
+    // Persistent — keyed multi-row state (TTL extended on write per Phase 8)
+    ClaimableBalance(Address),
+
+    // Temporary — short-lived keyed state (auto-deletes on TTL expiry; no archival rent)
     SnapshotPrice(u64),
 }
 
@@ -25,7 +33,74 @@ pub struct WithdrawalRequest {
     pub timestamp: u64,
 }
 
+/// Mode for `recover_uncollected` — owner-driven manual recovery of an
+/// archived `ClaimableBalance` entry. Carried on the wire via the
+/// `vault.recovered` event so the off-chain indexer (Improvement #9) can
+/// update its `claimable_balances` table accordingly.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum RecoveryMode {
+    /// Re-credit `ClaimableBalance(user) = amount`. Sets (not adds) so the
+    /// owner provides the full owed amount reconstructed from event logs.
+    /// Future `process_withdrawal_queue` credits ADD on top normally.
+    Recredit,
+    /// Transfer USDC directly from vault to user. No `ClaimableBalance`
+    /// storage write. Indexer DELETEs the address from its tracker.
+    Transfer,
+}
+
+// --- Events ---
+//
+// Three new events emitted on every `ClaimableBalance` state change.
+// Powers the off-chain indexer (Improvement #9) which maintains a list of
+// addresses with non-zero balances; that list feeds Phase 11's Cron #4
+// secondary TTL defense (footprint extension via `ExtendFootprintTTLOp`).
+// Topic prefix scheme `["vault", <action>]` matches Phase 4 / Phase 6
+// route-event family.
+
+#[contractevent(topics = ["vault", "credited"], data_format = "map")]
+pub struct Credited {
+    #[topic]
+    user: Address,
+    amount: i128,
+    new_balance: i128,
+}
+
+#[contractevent(topics = ["vault", "collected"], data_format = "single-value")]
+pub struct Collected {
+    #[topic]
+    user: Address,
+    amount: i128,
+}
+
+#[contractevent(topics = ["vault", "recovered"], data_format = "map")]
+pub struct Recovered {
+    #[topic]
+    user: Address,
+    amount: i128,
+    mode: RecoveryMode,
+}
+
 const SECONDS_PER_DAY: u64 = 86400;
+
+// --- TTL constants ---
+
+const INSTANCE_TTL_THRESHOLD: u32 = 120_960;
+const INSTANCE_TTL_EXTEND: u32 = 535_680;
+
+/// 60 days at 5s/ledger = 60 * 24 * 60 * 12 = 1_036_800.
+/// Applied on every `ClaimableBalance(addr)` write to prevent silent archival
+/// of per-user pending USDC. Layered defense (per Improvement #3):
+/// 1. On-write extension (this constant — Phase 8).
+/// 2. Cron #4 footprint extension via off-chain indexer (Phase 11).
+/// 3. `recover_uncollected` owner manual fallback (Phase 8).
+const CLAIMABLE_TTL_LEDGERS: u32 = 60 * 24 * 60 * 12;
+
+/// 30 days at 5s/ledger = 30 * 24 * 60 * 12 = 518_400.
+/// Applied on every `SnapshotPrice(day)` Temporary write. Snapshots are
+/// short-lived — recent ones queryable on-chain; older entries auto-delete
+/// with no archival rent. Historical analytics happen off-chain via events.
+const SNAPSHOT_TTL_LEDGERS: u32 = 30 * 24 * 60 * 12;
 
 #[contract]
 pub struct RiskVault;
@@ -231,7 +306,7 @@ impl RiskVault {
 
         let queue: Vec<WithdrawalRequest> = e
             .storage()
-            .persistent()
+            .instance()
             .get(&VaultKey::WithdrawalQueue)
             .unwrap_or(Vec::new(e));
 
@@ -256,15 +331,26 @@ impl RiskVault {
             Base::update(e, Some(&vault_addr), None, request.shares);
 
             // Credit claimable balance (pull-based)
-            let claimable: i128 = e
-                .storage()
-                .persistent()
-                .get(&VaultKey::ClaimableBalance(request.owner.clone()))
-                .unwrap_or(0);
-            e.storage().persistent().set(
-                &VaultKey::ClaimableBalance(request.owner),
-                &(claimable + assets),
+            let owner = request.owner.clone();
+            let key = VaultKey::ClaimableBalance(owner.clone());
+            let claimable: i128 = e.storage().persistent().get(&key).unwrap_or(0);
+            let new_balance = claimable + assets;
+            e.storage().persistent().set(&key, &new_balance);
+
+            // Phase 8 — extend TTL on every credit + emit indexer-feeding event
+            // so the off-chain TTL cron (Phase 11) can mirror the address into
+            // its `claimable_balances` table.
+            e.storage().persistent().extend_ttl(
+                &key,
+                CLAIMABLE_TTL_LEDGERS,
+                CLAIMABLE_TTL_LEDGERS,
             );
+            Credited {
+                user: owner,
+                amount: assets,
+                new_balance,
+            }
+            .publish(e);
 
             remaining_free -= assets;
             tma -= assets;
@@ -277,7 +363,7 @@ impl RiskVault {
                 new_queue.push_back(queue.get(i).unwrap());
             }
             e.storage()
-                .persistent()
+                .instance()
                 .set(&VaultKey::WithdrawalQueue, &new_queue);
             e.storage()
                 .instance()
@@ -296,7 +382,7 @@ impl RiskVault {
 
         let mut queue: Vec<WithdrawalRequest> = e
             .storage()
-            .persistent()
+            .instance()
             .get(&VaultKey::WithdrawalQueue)
             .unwrap_or(Vec::new(e));
 
@@ -307,7 +393,7 @@ impl RiskVault {
         });
 
         e.storage()
-            .persistent()
+            .instance()
             .set(&VaultKey::WithdrawalQueue, &queue);
     }
 
@@ -316,7 +402,7 @@ impl RiskVault {
 
         let mut queue: Vec<WithdrawalRequest> = e
             .storage()
-            .persistent()
+            .instance()
             .get(&VaultKey::WithdrawalQueue)
             .unwrap_or(Vec::new(e));
 
@@ -328,7 +414,7 @@ impl RiskVault {
 
         queue.remove(queue_index);
         e.storage()
-            .persistent()
+            .instance()
             .set(&VaultKey::WithdrawalQueue, &queue);
     }
 
@@ -343,6 +429,65 @@ impl RiskVault {
         usdc.transfer(&e.current_contract_address(), &caller, &claimable);
 
         e.storage().persistent().remove(&key);
+
+        // Phase 8 — signal balance drained so the off-chain indexer
+        // (Improvement #9) can DELETE this address from its
+        // `claimable_balances` tracker.
+        Collected {
+            user: caller,
+            amount: claimable,
+        }
+        .publish(e);
+    }
+
+    /// Owner-driven manual recovery of an archived `ClaimableBalance` entry
+    /// (or any user owed value the protocol couldn't deliver via
+    /// `process_withdrawal_queue` + `collect`). Uses event logs as the
+    /// audit trail for who is owed what.
+    ///
+    /// - `RecoveryMode::Recredit` — SET `ClaimableBalance(user) = amount`,
+    ///   extend TTL, emit `vault.recovered(.., Recredit)`. Use after
+    ///   archival recovery.
+    /// - `RecoveryMode::Transfer` — directly `usdc.transfer(vault → user,
+    ///   amount)`. No storage write. Use when user wants funds in hand.
+    ///
+    /// Layered defense (per Improvement #3):
+    /// 1. On-write 60-day TTL extension (`process_withdrawal_queue`).
+    /// 2. Cron #4 `ExtendFootprintTTLOp` covering `ClaimableBalance(addr)`
+    ///    keys (Phase 11 executor work).
+    /// 3. This function (`recover_uncollected`) is layer 3 — owner manual
+    ///    fallback if 1 + 2 fail.
+    #[only_owner]
+    pub fn recover_uncollected(
+        e: &Env,
+        user: Address,
+        amount: i128,
+        mode: RecoveryMode,
+    ) {
+        assert!(amount > 0, "amount must be positive");
+
+        match mode {
+            RecoveryMode::Recredit => {
+                let key = VaultKey::ClaimableBalance(user.clone());
+                e.storage().persistent().set(&key, &amount);
+                e.storage().persistent().extend_ttl(
+                    &key,
+                    CLAIMABLE_TTL_LEDGERS,
+                    CLAIMABLE_TTL_LEDGERS,
+                );
+            }
+            RecoveryMode::Transfer => {
+                let usdc = token::Client::new(e, &Vault::query_asset(e));
+                usdc.transfer(&e.current_contract_address(), &user, &amount);
+            }
+        }
+
+        Recovered {
+            user,
+            amount,
+            mode,
+        }
+        .publish(e);
     }
 
     // ─── Snapshot ───
@@ -368,9 +513,16 @@ impl RiskVault {
         };
 
         let day = now / SECONDS_PER_DAY;
-        e.storage()
-            .persistent()
-            .set(&VaultKey::SnapshotPrice(day), &price);
+        // Phase 8: SnapshotPrice moved to Temporary storage with a 30-day
+        // TTL — old snapshots auto-delete with no archival rent. Historical
+        // analytics are off-chain via events.
+        let snap_key = VaultKey::SnapshotPrice(day);
+        e.storage().temporary().set(&snap_key, &price);
+        e.storage().temporary().extend_ttl(
+            &snap_key,
+            SNAPSHOT_TTL_LEDGERS,
+            SNAPSHOT_TTL_LEDGERS,
+        );
         e.storage()
             .instance()
             .set(&VaultKey::LastSnapshotTime, &now);
@@ -382,7 +534,7 @@ impl RiskVault {
     pub fn extend_ttl(e: &Env) {
         e.storage()
             .instance()
-            .extend_ttl(120_960, 535_680);
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
     }
 
     // ─── Query functions ───
@@ -416,7 +568,7 @@ impl RiskVault {
 
     pub fn get_withdrawal_queue(e: &Env) -> Vec<WithdrawalRequest> {
         e.storage()
-            .persistent()
+            .instance()
             .get(&VaultKey::WithdrawalQueue)
             .unwrap_or(Vec::new(e))
     }
@@ -429,8 +581,11 @@ impl RiskVault {
     }
 
     pub fn get_snapshot_price(e: &Env, day: u64) -> i128 {
+        // Temporary storage post-Phase-8 — entries older than 30 days return
+        // None (= 0). That's the desired behavior: stale snapshots aren't
+        // queryable on-chain.
         e.storage()
-            .persistent()
+            .temporary()
             .get(&VaultKey::SnapshotPrice(day))
             .unwrap_or(0)
     }

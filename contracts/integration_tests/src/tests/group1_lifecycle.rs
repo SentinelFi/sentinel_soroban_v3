@@ -1,109 +1,224 @@
+// Group 1 — Flight lifecycle: three settlement outcomes (on-time / delayed
+// / cancelled) plus claim variants and panic guards.
+
 use super::setup::*;
-use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::{symbol_short, testutils::Address as _, Address};
+
+// =========================================================================
+// On-time lifecycle — premium → vault as yield, no payout
+// =========================================================================
 
 #[test]
-fn test_1a_on_time_lifecycle() {
+fn lifecycle_on_time() {
     let t = TestEnv::new();
-    let t1 = soroban_sdk::Address::generate(&t.env);
-    let t2 = soroban_sdk::Address::generate(&t.env);
+    let traveler = Address::generate(&t.env);
 
-    t.buy(&t1);
-    t.buy(&t2);
+    t.buy(&traveler);
+    let tma_before = t.vault.get_total_managed_assets();
+    assert_eq!(t.vault.get_locked_capital(), PAYOFF);
+
     t.oracle_on_time();
     t.classify_and_settle();
 
-    // Vault received premiums back, locked = 0
+    // Premium recorded as yield, collateral released.
+    assert_eq!(t.vault.get_total_managed_assets(), tma_before + PREMIUM);
     assert_eq!(t.vault.get_locked_capital(), 0);
+    assert_eq!(t.usdc.balance(&t.pool_addr), 0);
+    assert_eq!(t.usdc.balance(&traveler), 0);
 
-    // Premium income recorded: TMA increased by premiums
-    let tma = t.vault.get_total_managed_assets();
-    assert_eq!(tma, DEPOSIT_AMOUNT + PREMIUM * 2); // original deposit + premiums
-
-    // No active pools
-    assert_eq!(t.ctrl.get_active_pools().len(), 0);
-
-    // Stats
-    let (sold, collected, distributed) = t.ctrl.get_stats();
-    assert_eq!(sold, 2);
-    assert_eq!(collected, PREMIUM * 2);
-    assert_eq!(distributed, 0); // on-time = no payout
+    // Oracle settled.
+    let data = t.oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(data.status, oracle_aggregator::FlightStatus::Settled);
+    assert!(data.settled_at != 0);
 }
 
+// =========================================================================
+// Delayed lifecycle — vault funds payout, traveler claims
+// =========================================================================
+
 #[test]
-fn test_1b_delayed_lifecycle() {
+fn lifecycle_delayed() {
     let t = TestEnv::new();
-    let t1 = soroban_sdk::Address::generate(&t.env);
-    let t2 = soroban_sdk::Address::generate(&t.env);
+    let traveler = Address::generate(&t.env);
 
-    t.buy(&t1);
-    t.buy(&t2);
-
-    let pool_addr = t.pool_addr();
-
+    t.buy(&traveler);
     t.oracle_delayed();
     t.classify_and_settle();
 
-    // Pool holds payoff * 2 for travelers
-    assert_eq!(t.usdc.balance(&pool_addr), PAYOFF * 2);
-
-    // Both claim
-    let pool = t.pool_client(&pool_addr);
-    pool.claim(&t1);
-    pool.claim(&t2);
-
-    assert_eq!(t.usdc.balance(&t1), PAYOFF);
-    assert_eq!(t.usdc.balance(&t2), PAYOFF);
-    assert_eq!(t.usdc.balance(&pool_addr), 0);
-
-    // Vault locked = 0
+    // Pool now holds the full payoff for the traveler to claim.
+    assert_eq!(t.usdc.balance(&t.pool_addr), PAYOFF);
     assert_eq!(t.vault.get_locked_capital(), 0);
+
+    // Traveler claims.
+    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(t.usdc.balance(&traveler), PAYOFF);
 }
 
+// =========================================================================
+// Cancelled lifecycle — same money flow as delayed; oracle path differs
+// =========================================================================
+
 #[test]
-fn test_1c_cancelled_lifecycle() {
+fn lifecycle_cancelled() {
     let t = TestEnv::new();
-    let traveler = soroban_sdk::Address::generate(&t.env);
+    let traveler = Address::generate(&t.env);
 
     t.buy(&traveler);
-    let pool_addr = t.pool_addr();
-
     t.oracle_cancelled();
     t.classify_and_settle();
 
-    let pool = t.pool_client(&pool_addr);
-    pool.claim(&traveler);
+    assert_eq!(t.usdc.balance(&t.pool_addr), PAYOFF);
+    let cfg = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .unwrap();
+    assert_eq!(
+        cfg.status,
+        flight_pool_manager::SettlementStatus::SettledCancelled
+    );
 
+    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
     assert_eq!(t.usdc.balance(&traveler), PAYOFF);
-    assert_eq!(t.vault.get_locked_capital(), 0);
+}
+
+// =========================================================================
+// Boundary conditions on delay threshold
+// =========================================================================
+
+#[test]
+fn lifecycle_marginal_on_time() {
+    // delay = (3h - 1s) → on-time path
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+
+    t.buy(&traveler);
+
+    let est = EST_ARRIVAL;
+    let actual = est + (DELAY_HOURS as u64) * 3600 - 1;
+    t.oracle.set_estimated_arrival(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &est,
+    );
+    t.oracle.set_landed(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &actual,
+    );
+    t.classify_and_settle();
+
+    let cfg = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .unwrap();
+    assert_eq!(
+        cfg.status,
+        flight_pool_manager::SettlementStatus::SettledOnTime
+    );
 }
 
 #[test]
-fn test_1d_partial_claim_and_sweep() {
+fn lifecycle_marginal_delayed() {
+    // delay = exactly delay_hours → delayed path (>= threshold)
     let t = TestEnv::new();
-    let t1 = soroban_sdk::Address::generate(&t.env);
-    let t2 = soroban_sdk::Address::generate(&t.env);
-    let sweeper = soroban_sdk::Address::generate(&t.env);
+    let traveler = Address::generate(&t.env);
 
-    t.buy(&t1);
-    t.buy(&t2);
-    let pool_addr = t.pool_addr();
+    t.buy(&traveler);
 
+    let est = EST_ARRIVAL;
+    let actual = est + (DELAY_HOURS as u64) * 3600;
+    t.oracle.set_estimated_arrival(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &est,
+    );
+    t.oracle.set_landed(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &actual,
+    );
+    t.classify_and_settle();
+
+    let cfg = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .unwrap();
+    assert_eq!(
+        cfg.status,
+        flight_pool_manager::SettlementStatus::SettledDelayed
+    );
+}
+
+// =========================================================================
+// Claim happy paths and guards
+// =========================================================================
+
+#[test]
+fn claim_after_delayed_succeeds() {
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
     t.oracle_delayed();
     t.classify_and_settle();
 
-    // Only t1 claims
-    let pool = t.pool_client(&pool_addr);
-    pool.claim(&t1);
-    assert_eq!(t.usdc.balance(&t1), PAYOFF);
-    assert_eq!(t.usdc.balance(&pool_addr), PAYOFF); // t2's unclaimed
+    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+    assert!(t
+        .pool
+        .has_claimed(&symbol_short!("AA100"), &FLIGHT_DATE, &traveler));
+}
 
-    // Advance past claim expiry
-    let claim_expiry = pool.get_claim_expiry();
-    t.env.ledger().with_mut(|l| l.timestamp = claim_expiry + 1);
+#[test]
+fn claim_after_cancelled_succeeds() {
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+    t.oracle_cancelled();
+    t.classify_and_settle();
 
-    // Sweep
-    pool.sweep_expired(&sweeper);
+    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+    assert!(t
+        .pool
+        .has_claimed(&symbol_short!("AA100"), &FLIGHT_DATE, &traveler));
+}
 
-    assert_eq!(t.usdc.balance(&pool_addr), 0);
-    assert_eq!(t.usdc.balance(&t.recovery_addr), PAYOFF);
+#[test]
+#[should_panic(expected = "flight not in claimable status")]
+fn claim_panics_on_time() {
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+    t.oracle_on_time();
+    t.classify_and_settle();
+    // Status is SettledOnTime — claim must panic.
+    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+}
+
+#[test]
+#[should_panic(expected = "already claimed")]
+fn claim_panics_double_claim() {
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+    t.oracle_delayed();
+    t.classify_and_settle();
+    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+    // Second call panics.
+    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+}
+
+#[test]
+#[should_panic(expected = "claim window closed")]
+fn claim_panics_after_expiry() {
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+    t.oracle_delayed();
+    t.classify_and_settle();
+    // Advance past claim_expiry (60 days + 1 second).
+    t.advance_time(CLAIM_EXPIRY_WINDOW + 1);
+    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
 }

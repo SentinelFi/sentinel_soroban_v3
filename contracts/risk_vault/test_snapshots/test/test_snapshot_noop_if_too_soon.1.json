@@ -315,7 +315,7 @@
                 }
               ]
             },
-            "durability": "persistent"
+            "durability": "temporary"
           }
         },
         [
@@ -335,7 +335,7 @@
                     }
                   ]
                 },
-                "durability": "persistent",
+                "durability": "temporary",
                 "val": {
                   "i128": "10000"
                 }
@@ -343,7 +343,7 @@
             },
             "ext": "v0"
           },
-          4095
+          518400
         ]
       ],
       [

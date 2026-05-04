@@ -553,11 +553,18 @@ impl FlightPoolManager {
 
     // --- Read functions ---
 
-    pub fn get_flight_config(e: &Env, flight_id: Symbol, date: u64) -> FlightConfig {
+    /// Returns `Some(cfg)` if the flight is registered, `None` otherwise.
+    /// Caller decides how to handle missing entries — controllers use this
+    /// for the "look up; if missing, register" pattern in `buy_insurance`
+    /// without forcing a panic + restart.
+    pub fn get_flight_config(
+        e: &Env,
+        flight_id: Symbol,
+        date: u64,
+    ) -> Option<FlightConfig> {
         e.storage()
             .persistent()
             .get(&PoolKey::FlightConfig(flight_id, date))
-            .expect("flight not registered")
     }
 
     pub fn has_policy(e: &Env, flight_id: Symbol, date: u64, traveler: Address) -> bool {

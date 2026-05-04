@@ -12,7 +12,7 @@ For the reasoning behind each change, see `learn_soroban.md`.
 | 2 | RiskVault `WithdrawalQueue` wrong storage tier | CRITICAL | Persistent -> Instance |
 | 3 | RiskVault `ClaimableBalance` missing TTL | HIGH | Add 60-day TTL + recovery function |
 | 4 | Governance routes — silent archival, redundant read API, unbounded `RouteList` | HIGH | API redesign + events + TTL strategy |
-| 5 | Oracle `ActiveFlightList` never pruned | MEDIUM | Prune in `set_settled`, move to Instance |
+| 5 | Oracle `ActiveFlightList` never pruned | MEDIUM | Delayed prune (30d via `prune_settled`), move to Instance, widen `FlightData` |
 | 6 | Oracle `FlightData` expires before settlement | MEDIUM | `ExtendFootprintTTLOp` cron + detection |
 | 7 | RiskVault `SnapshotPrice` wrong tier | LOW | Persistent -> Temporary |
 | 8 | MyPolicies shows all policies | LOW | Add per-traveler index to Controller |
@@ -156,6 +156,14 @@ Grep for `WithdrawalQueue` and change every `persistent()` to `instance()`.
 
 **File:** `contracts/risk_vault/src/lib.rs`
 
+**Layered defense for archival rent.** `ClaimableBalance(addr)` is per-user pending USDC — silent archival would freeze underwriter payouts. Phase 8 lands the on-write primary defense + manual recovery escape hatch; Phase 9 adds the cron secondary defense layered on top:
+
+| Layer | Phase | Mechanism |
+|-------|-------|-----------|
+| Primary — TTL on every write | 8 | Extends 60d every time `ClaimableBalance` is set. Covers normal flow. |
+| Secondary — cron extension | 9 | Cron #4 includes `ClaimableBalance(addr)` keys in `ExtendFootprintTTLOp` footprint. Address list comes from off-chain indexer (Improvement #9). Belt-and-suspenders for idle balances with no recent credit. |
+| Manual fallback — `recover_uncollected` | 8 | Owner-only re-credit/transfer if balance archives despite layers 1+2. |
+
 **Action 1:** After setting `ClaimableBalance` in `process_withdrawal_queue`, extend TTL:
 ```rust
 env.storage().persistent().set(&VaultKey::ClaimableBalance(addr.clone()), &amount);
@@ -172,10 +180,22 @@ fn recover_uncollected(env: Env, owner: Address, user: Address, amount: i128) {
     owner.require_auth();
     let stored_owner = env.storage().instance().get(&VaultKey::Owner).unwrap();
     assert!(owner == stored_owner, "not owner");
-    // Re-credit user's claimable balance or transfer directly
-    // Owner uses off-chain event logs to reconstruct who is owed what
+    // Re-credit user's claimable balance (with TTL extension) or transfer directly.
+    // Owner uses off-chain event logs (vault.credited / vault.collected) to
+    // reconstruct who is owed what.
+    // Emits `vault.recovered` event so the indexer can reconcile.
 }
 ```
+
+**Action 3:** Emit two new events on every `ClaimableBalance` state change so the off-chain indexer (Improvement #9) can maintain a list of addresses with non-zero balances — that list feeds the Phase 9 cron's footprint:
+
+```
+("vault", "credited")  → (addr, amount, new_balance)
+("vault", "collected") → (addr, amount)
+("vault", "recovered") → (addr, amount, mode)   // mode: "recredit" | "transfer"
+```
+
+`vault.credited` is emitted by `process_withdrawal_queue` after every credit; `vault.collected` by `collect()` after the full drain; `vault.recovered` by `recover_uncollected`. Topics: 2-symbol prefix `["vault", <action>]` plus indexed `addr` (matches the Phase 4 / Phase 6 event style).
 
 ---
 
@@ -259,34 +279,100 @@ Indexer design, schema, and testing strategy live in **Improvement #9**.
 
 ---
 
-## 5. Oracle `ActiveFlightList` — Prune + Instance
+## 5. Oracle `ActiveFlightList` — Delayed Prune + Instance
 
-**File:** `contracts/oracle_aggregator/src/lib.rs`
+**Files:** `contracts/oracle_aggregator/src/lib.rs`, `contracts/controller/src/lib.rs`
 
-**Action 1:** Change ALL `ActiveFlightList` access from `persistent()` to `instance()`. Remove any manual TTL extension for this key.
+**Why delayed prune (not prune-on-settle):** Off-chain monitoring, indexers, and
+observability tooling need a window in which a freshly-settled flight is still
+visible in `ActiveFlightList` to record its final state without race conditions.
+Pruning immediately on `set_settled` removes the flight from view the instant
+the on-chain state flips. A 30-day retention window after settlement keeps the
+flight observable to off-chain consumers while still bounding list growth.
 
-**Action 2:** In `set_settled()`, prune the settled flight from the list:
+### Action 1 — Tier flip
+
+Change ALL `ActiveFlightList` access from `persistent()` to `instance()`.
+Remove any manual TTL extension for this key. Add Instance/Persistent
+tier-grouping comments to the `OracleKey` enum (matching the
+`flight_pool_manager::PoolKey` style).
+
+### Action 2 — Widen `FlightData` with `settled_at`
+
 ```rust
-// After setting status to Settled:
-let mut list: Vec<(Symbol, u64)> = env.storage().instance()
-    .get(&OracleKey::ActiveFlightList)
-    .unwrap_or(Vec::new(&env));
-if let Some(idx) = list.iter().position(|(id, d)| id == flight_id && d == date) {
-    list.remove(idx);
-    env.storage().instance().set(&OracleKey::ActiveFlightList, &list);
+#[contracttype]
+pub struct FlightData {
+    pub status: FlightStatus,
+    pub estimated_arrival_time: u64,
+    pub actual_arrival_time: u64,
+    pub settled_at: u64,            // 0 means not-yet-settled
 }
 ```
+
+`set_settled(...)` records `settled_at = env.ledger().timestamp()` along with
+the status flip. Does NOT prune the list.
+
+**Lockstep edit in controller:** `controller/src/lib.rs` defines a mirror
+`FlightData` struct under its inline `OracleClient` interface (the
+"Solidity-interface" pattern — see codebase notes). The mirror **must** widen
+in lockstep, otherwise `oracle.get_flight_data()` calls panic on
+deserialization at runtime. Same shape as Phase 4's `RouteStatus` lockstep
+addition.
+
+### Action 3 — Permissionless `prune_settled`
+
+```rust
+const SETTLED_RETENTION_DAYS: u64 = 30;
+const SECONDS_PER_DAY: u64 = 86_400;
+
+pub fn prune_settled(env: Env) {
+    let now = env.ledger().timestamp();
+    let mut list: Vec<(Symbol, u64)> = env.storage().instance()
+        .get(&OracleKey::ActiveFlightList)
+        .unwrap_or(Vec::new(&env));
+    let mut kept = Vec::new(&env);
+    for i in 0..list.len() {
+        let (flight_id, date) = list.get(i).unwrap();
+        let data: FlightData = env.storage().persistent()
+            .get(&OracleKey::FlightData(flight_id.clone(), date))
+            .expect("flight data missing");
+        let age_seconds = now.saturating_sub(data.settled_at);
+        let is_settled = matches!(data.status, FlightStatus::Settled);
+        let aged_out = is_settled
+            && data.settled_at != 0
+            && age_seconds >= SETTLED_RETENTION_DAYS * SECONDS_PER_DAY;
+        if !aged_out {
+            kept.push_back((flight_id, date));
+        }
+    }
+    if kept.len() != list.len() {
+        env.storage().instance().set(&OracleKey::ActiveFlightList, &kept);
+    }
+}
+```
+
+No auth required — matches `flight_pool_manager::sweep_expired` pattern
+(anyone pays gas for protocol housekeeping; idempotent; safe to retry).
+
+### Out of scope for Phase 6
+
+**Wiring `prune_settled` into a cron.** Phase 6 only exposes the entry point.
+The off-chain executor decides which cron tick calls it (Cron #3
+`SettlementExecutor` every 5 min is the natural candidate, but Cron #4 TTL
+extender — see Improvement #6 — is a reasonable alternative). That wiring
+lives in `executor/`, which Phase 6 does not touch.
 
 ---
 
 ## 6. Oracle `FlightData` — TTL Cron + Detection
 
 **Action 1 — Executor:** Create `executor/src/core/ttl_extender.ts`
-1. Call `FlightPoolManager.get_active_flights()` for all `(flight_id, date)` tuples; pull whitelisted route tuples from the off-chain indexer (Improvement #9)
+1. Call `FlightPoolManager.get_active_flights()` for all `(flight_id, date)` tuples; pull from the off-chain indexer (Improvement #9): whitelisted route tuples AND addresses with non-zero `ClaimableBalance` (vault).
 2. Build `ExtendFootprintTTLOp` transaction covering:
    - `PoolKey::FlightConfig(id, date)` in FlightPoolManager
    - `OracleKey::FlightData(id, date)` in OracleAggregator
    - `DataKey::Route(flight_id, origin, dest)` in GovernanceModule
+   - `VaultKey::ClaimableBalance(address)` in RiskVault — secondary TTL defense layered on top of the on-write extension landed in Phase 8 (Improvement #3). Address list sourced from the indexer's `claimable_balances` table.
 3. Also extend `TravelerFlights(address)` for active travelers
 4. Submit transaction
 
@@ -405,6 +491,11 @@ CREATE TABLE defaults (
   last_ledger INTEGER NOT NULL
 );
 
+CREATE TABLE claimable_balances (
+  addr        TEXT PRIMARY KEY,  -- contract addr with non-zero ClaimableBalance
+  last_ledger INTEGER NOT NULL
+);
+
 CREATE TABLE cursor (
   k TEXT PRIMARY KEY,            -- 'last_ledger'
   v INTEGER NOT NULL
@@ -414,25 +505,40 @@ CREATE TABLE cursor (
 `route.removed` is a hard delete on-chain; the indexer mirrors that with
 `DELETE FROM routes ...` rather than retaining a tombstone.
 
+`claimable_balances` only tracks **presence** (existence of a non-zero
+balance), not amount. The Phase 9 cron (Improvement #6) reads `SELECT addr
+FROM claimable_balances` to build the `VaultKey::ClaimableBalance(addr)`
+footprint for `ExtendFootprintTTLOp`. Amounts live on-chain; the indexer
+just needs to know which addresses to extend.
+
 ### Event handlers
 
 ```
-route.listed   → INSERT OR REPLACE row, status='active'
-route.disabled → UPDATE status='disabled'
-route.enabled  → UPDATE status='active'
-route.updated  → UPDATE premium / payoff / delay_hours
-route.removed  → DELETE row
-gov.defaults   → UPDATE defaults singleton
+route.listed     → INSERT OR REPLACE routes row, status='active'
+route.disabled   → UPDATE routes status='disabled'
+route.enabled    → UPDATE routes status='active'
+route.updated    → UPDATE routes premium / payoff / delay_hours
+route.removed    → DELETE FROM routes
+gov.defaults     → UPDATE defaults singleton
+vault.credited   → INSERT OR REPLACE claimable_balances row
+vault.collected  → DELETE FROM claimable_balances
+vault.recovered  → INSERT OR REPLACE claimable_balances row (mode=recredit)
+                   OR DELETE FROM claimable_balances (mode=transfer)
 ```
 
 `gov.admin_added` / `gov.admin_removed` are nice-to-have audit logs; no
 current consumer requires them.
 
+The `vault.*` events were added in Phase 8 (Improvement #3) specifically to
+power the Phase 9 cron's secondary TTL defense. Without them, the cron has no
+way to enumerate addresses with non-zero claimable balances.
+
 ### Consumers
 
 - **TTL cron (Improvement #6):** reads all rows, builds the
   `ExtendFootprintTTLOp` footprint covering
-  `DataKey::Route(flight_id, origin, dest)` per row.
+  `DataKey::Route(flight_id, origin, dest)` per route AND
+  `VaultKey::ClaimableBalance(addr)` per row in `claimable_balances`.
 - **Admin UI** (future): "list whitelisted routes" page resolves per-row
   optional fields against `defaults` to render `ResolvedTerms`.
 

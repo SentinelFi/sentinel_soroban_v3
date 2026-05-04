@@ -1,108 +1,110 @@
 use super::*;
 use soroban_sdk::{
-    symbol_short,
-    testutils::{Address as _, Events as _, Ledger},
-    Env,
+    symbol_short, testutils::Address as _, testutils::Ledger as _, token, Address, Env, Symbol,
 };
 
-// Import FlightPool WASM for deployer
-mod flight_pool_wasm {
-    soroban_sdk::contractimport!(
-        file = "../target/wasm32v1-none/release/flight_pool.wasm"
-    );
-}
-
-const PREMIUM: i128 = 10_0000000; // 10 USDC
+const PREMIUM: i128 = 10_0000000; // 10 USDC (7 decimals)
 const PAYOFF: i128 = 50_0000000; // 50 USDC
 const DELAY_HOURS: u32 = 3;
-const FLIGHT_DATE: u64 = 1710500000; // future date
-const MIN_LEAD_TIME: u64 = 3600; // 1 hour
+const FLIGHT_DATE: u64 = 1_710_500_000;
+const MIN_LEAD_TIME: u64 = 3_600;
 const CLAIM_EXPIRY_WINDOW: u64 = 5_184_000; // 60 days
-const DEPOSIT_AMOUNT: i128 = 1000_0000000; // 1000 USDC
+const DEPOSIT_AMOUNT: i128 = 1_000_0000000; // 1000 USDC
+const INITIAL_TIMESTAMP: u64 = 1_710_400_000;
+const EST_ARRIVAL: u64 = 1_710_500_000;
+const ACTUAL_ON_TIME: u64 = 1_710_501_800; // 30 min late (< 3h)
+const ACTUAL_DELAYED: u64 = 1_710_510_800; // 3h late (>= 3h)
 
-struct TestSetup {
+#[allow(dead_code)]
+struct TestEnv {
     env: Env,
-    controller: ControllerClient<'static>,
+    ctrl: ControllerClient<'static>,
+    ctrl_addr: Address,
+    vault: risk_vault::RiskVaultClient<'static>,
+    vault_addr: Address,
+    oracle: oracle_aggregator::OracleAggregatorClient<'static>,
+    oracle_addr: Address,
+    pool: flight_pool_manager::FlightPoolManagerClient<'static>,
+    pool_addr: Address,
+    gov: governance_module::GovernanceModuleClient<'static>,
+    usdc: token::Client<'static>,
+    usdc_admin: token::StellarAssetClient<'static>,
+    usdc_addr: Address,
     owner: Address,
     keeper: Address,
-    gov_addr: Address,
-    vault_addr: Address,
-    oracle_addr: Address,
-    _recovery_addr: Address,
-    usdc_addr: Address,
-    usdc_client: token::StellarAssetClient<'static>,
     oracle_account: Address,
+    underwriter: Address,
 }
 
-fn setup() -> TestSetup {
+fn setup() -> TestEnv {
     let env = Env::default();
-    env.mock_all_auths();
-    // Set current timestamp before flight date
-    env.ledger().with_mut(|l| l.timestamp = 1710400000);
+    // The controller orchestrates 3-deep call chains
+    // (keeper → controller → pool → vault) where the controller's address
+    // authorizes sub-invocations beyond the root frame. Use the non-root
+    // variant so contract auth flows through nested cross-contract calls.
+    env.mock_all_auths_allowing_non_root_auth();
+    env.ledger().with_mut(|l| l.timestamp = INITIAL_TIMESTAMP);
 
     let owner = Address::generate(&env);
     let keeper = Address::generate(&env);
-    let usdc_admin = Address::generate(&env);
+    let usdc_admin_addr = Address::generate(&env);
     let oracle_account = Address::generate(&env);
 
-    // Deploy USDC
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin.clone());
-    let usdc_client = token::StellarAssetClient::new(&env, &usdc_id.address());
+    // USDC (Stellar Asset Contract)
+    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin_addr.clone());
+    let usdc_admin = token::StellarAssetClient::new(&env, &usdc_id.address());
+    let usdc = token::Client::new(&env, &usdc_id.address());
 
-    // Deploy GovernanceModule
+    // GovernanceModule
     let gov_addr = env.register(
         governance_module::GovernanceModule,
         (&owner, &PREMIUM, &PAYOFF, &DELAY_HOURS),
     );
+    let gov = governance_module::GovernanceModuleClient::new(&env, &gov_addr);
 
-    // Deploy RiskVault
+    // RiskVault
     let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
+    let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
-    // Deploy OracleAggregator
+    // OracleAggregator
     let oracle_addr = env.register(
         oracle_aggregator::OracleAggregator,
         (&owner, &oracle_account),
     );
+    let oracle = oracle_aggregator::OracleAggregatorClient::new(&env, &oracle_addr);
 
-    // Deploy RecoveryPool
-    let recovery_addr = env.register(
-        recovery_pool::RecoveryPool,
-        (&owner, &usdc_id.address()),
+    // FlightPoolManager (Phase 3 singleton)
+    let pool_addr = env.register(
+        flight_pool_manager::FlightPoolManager,
+        (&owner, &usdc_id.address(), &vault_addr),
     );
+    let pool = flight_pool_manager::FlightPoolManagerClient::new(&env, &pool_addr);
 
-    // Upload FlightPool WASM and get hash
-    let pool_wasm_hash = env.deployer().upload_contract_wasm(flight_pool_wasm::WASM);
-
-    // Deploy Controller
-    let controller_addr = env.register(
+    // Controller (Phase 7 — new constructor signature, no recovery_pool, no
+    // flight_pool_wasm; flight_pool_manager passed in directly).
+    let ctrl_addr = env.register(
         Controller,
         (
             &owner,
             &gov_addr,
             &vault_addr,
             &oracle_addr,
-            &recovery_addr,
+            &pool_addr,
             &usdc_id.address(),
-            &pool_wasm_hash,
             &keeper,
             &MIN_LEAD_TIME,
             &CLAIM_EXPIRY_WINDOW,
         ),
     );
-    let controller = ControllerClient::new(&env, &controller_addr);
+    let ctrl = ControllerClient::new(&env, &ctrl_addr);
 
-    // Wire controller into vault and oracle
-    let vault_client = risk_vault::RiskVaultClient::new(&env, &vault_addr);
-    vault_client.set_controller(&controller_addr);
+    // Wire one-time controllers on each downstream contract.
+    vault.set_controller(&ctrl_addr);
+    oracle.set_controller(&ctrl_addr);
+    pool.set_controller(&ctrl_addr);
 
-    let oracle_client =
-        oracle_aggregator::OracleAggregatorClient::new(&env, &oracle_addr);
-    oracle_client.set_controller(&controller_addr);
-
-    // Whitelist a route
-    let gov_client =
-        governance_module::GovernanceModuleClient::new(&env, &gov_addr);
-    gov_client.whitelist_route(
+    // Whitelist the default test route.
+    gov.whitelist_route(
         &owner,
         &symbol_short!("AA100"),
         &symbol_short!("JFK"),
@@ -112,29 +114,35 @@ fn setup() -> TestSetup {
         &None::<u32>,
     );
 
-    // Deposit capital into vault (underwriter)
+    // Seed underwriter capital so solvency checks pass.
     let underwriter = Address::generate(&env);
-    usdc_client.mint(&underwriter, &DEPOSIT_AMOUNT);
-    vault_client.deposit(&DEPOSIT_AMOUNT, &underwriter, &underwriter, &underwriter);
+    usdc_admin.mint(&underwriter, &DEPOSIT_AMOUNT);
+    vault.deposit(&DEPOSIT_AMOUNT, &underwriter, &underwriter, &underwriter);
 
-    TestSetup {
+    TestEnv {
         env,
-        controller,
+        ctrl,
+        ctrl_addr,
+        vault,
+        vault_addr,
+        oracle,
+        oracle_addr,
+        pool,
+        pool_addr,
+        gov,
+        usdc,
+        usdc_admin,
+        usdc_addr: usdc_id.address(),
         owner,
         keeper,
-        gov_addr,
-        vault_addr,
-        oracle_addr,
-        _recovery_addr: recovery_addr,
-        usdc_addr: usdc_id.address(),
-        usdc_client,
         oracle_account,
+        underwriter,
     }
 }
 
-fn buy_policy(s: &TestSetup, traveler: &Address) {
-    s.usdc_client.mint(traveler, &PREMIUM);
-    s.controller.buy_insurance(
+fn buy(t: &TestEnv, traveler: &Address) {
+    t.usdc_admin.mint(traveler, &PREMIUM);
+    t.ctrl.buy_insurance(
         traveler,
         &symbol_short!("AA100"),
         &symbol_short!("JFK"),
@@ -143,464 +151,212 @@ fn buy_policy(s: &TestSetup, traveler: &Address) {
     );
 }
 
-// ─── Constructor & admin tests ───
+fn oracle_on_time(t: &TestEnv) {
+    t.oracle.set_estimated_arrival(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &EST_ARRIVAL,
+    );
+    t.oracle.set_landed(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &ACTUAL_ON_TIME,
+    );
+}
+
+fn oracle_delayed(t: &TestEnv) {
+    t.oracle.set_estimated_arrival(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &EST_ARRIVAL,
+    );
+    t.oracle.set_landed(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &ACTUAL_DELAYED,
+    );
+}
+
+fn oracle_cancelled(t: &TestEnv) {
+    t.oracle.set_estimated_arrival(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &EST_ARRIVAL,
+    );
+    t.oracle.set_cancelled(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+    );
+}
+
+// =========================================================================
+// Constructor & getters
+// =========================================================================
 
 #[test]
 fn test_constructor() {
-    let s = setup();
-    assert_eq!(s.controller.get_owner(), Some(s.owner));
-    assert_eq!(s.controller.get_keeper(), s.keeper);
-    assert_eq!(s.controller.get_solvency_ratio(), 100);
-    let (sold, collected, distributed) = s.controller.get_stats();
+    let t = setup();
+    assert_eq!(t.ctrl.get_owner(), Some(t.owner.clone()));
+    assert_eq!(t.ctrl.get_keeper(), t.keeper);
+    assert_eq!(t.ctrl.get_solvency_ratio(), 100);
+    assert_eq!(t.ctrl.get_flight_pool_manager(), t.pool_addr);
+    let (sold, collected, distributed) = t.ctrl.get_stats();
     assert_eq!(sold, 0);
     assert_eq!(collected, 0);
     assert_eq!(distributed, 0);
 }
 
+// =========================================================================
+// Owner-only setters
+// =========================================================================
+
 #[test]
 fn test_set_keeper() {
-    let s = setup();
-    let new_keeper = Address::generate(&s.env);
-    s.controller.set_keeper(&new_keeper);
-    assert_eq!(s.controller.get_keeper(), new_keeper);
+    let t = setup();
+    let new_keeper = Address::generate(&t.env);
+    t.ctrl.set_keeper(&new_keeper);
+    assert_eq!(t.ctrl.get_keeper(), new_keeper);
 }
 
 #[test]
 fn test_set_solvency_ratio() {
-    let s = setup();
-    s.controller.set_solvency_ratio(&150);
-    assert_eq!(s.controller.get_solvency_ratio(), 150);
+    let t = setup();
+    t.ctrl.set_solvency_ratio(&150);
+    assert_eq!(t.ctrl.get_solvency_ratio(), 150);
+}
+
+#[test]
+fn test_set_min_lead_time() {
+    let t = setup();
+    t.ctrl.set_min_lead_time(&7_200);
+    // Effect observable through buy_insurance lead-time gate (covered separately).
+}
+
+#[test]
+fn test_set_claim_expiry_window() {
+    let t = setup();
+    t.ctrl.set_claim_expiry_window(&86_400);
+    // Effect observable through execute_settlements paths.
 }
 
 #[test]
 #[should_panic]
 fn test_unauthorized_set_keeper() {
     let env = Env::default();
-    // No mock_all_auths
+    // No mock_all_auths — owner check fails.
     let owner = Address::generate(&env);
-    let keeper = Address::generate(&env);
-    let usdc_admin = Address::generate(&env);
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin);
-    let gov = Address::generate(&env);
-    let vault = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    let recovery = Address::generate(&env);
-    let wasm_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let stranger = Address::generate(&env);
+    let usdc_admin_addr = Address::generate(&env);
+    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin_addr);
 
+    let gov_addr = env.register(
+        governance_module::GovernanceModule,
+        (&owner, &PREMIUM, &PAYOFF, &DELAY_HOURS),
+    );
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
+    let oracle_addr = env.register(
+        oracle_aggregator::OracleAggregator,
+        (&owner, &Address::generate(&env)),
+    );
+    let pool_addr = env.register(
+        flight_pool_manager::FlightPoolManager,
+        (&owner, &usdc_id.address(), &vault_addr),
+    );
     let ctrl_addr = env.register(
         Controller,
         (
             &owner,
-            &gov,
-            &vault,
-            &oracle,
-            &recovery,
+            &gov_addr,
+            &vault_addr,
+            &oracle_addr,
+            &pool_addr,
             &usdc_id.address(),
-            &wasm_hash,
-            &keeper,
+            &Address::generate(&env), // keeper
             &MIN_LEAD_TIME,
             &CLAIM_EXPIRY_WINDOW,
         ),
     );
     let ctrl = ControllerClient::new(&env, &ctrl_addr);
-    let new_keeper = Address::generate(&env);
-    ctrl.set_keeper(&new_keeper);
+
+    ctrl.set_keeper(&stranger);
 }
 
-// ─── buy_insurance tests ───
+// =========================================================================
+// buy_insurance happy paths
+// =========================================================================
 
 #[test]
-fn test_buy_insurance_deploys_pool() {
-    let s = setup();
-    let traveler = Address::generate(&s.env);
+fn test_buy_insurance_first_traveler_registers_flight() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
 
-    buy_policy(&s, &traveler);
-
-    // Pool should exist
-    let pool_addr = s
-        .controller
-        .get_pool_address(&symbol_short!("AA100"), &FLIGHT_DATE);
-    assert!(pool_addr.is_some());
-
-    // Counters updated
-    let (sold, collected, _) = s.controller.get_stats();
+    let (sold, collected, _) = t.ctrl.get_stats();
     assert_eq!(sold, 1);
     assert_eq!(collected, PREMIUM);
 
-    // Active pools list
-    let pools = s.controller.get_active_pools();
-    assert_eq!(pools.len(), 1);
+    // Premium transferred from traveler to FlightPoolManager.
+    assert_eq!(t.usdc.balance(&traveler), 0);
+    assert_eq!(t.usdc.balance(&t.pool_addr), PREMIUM);
 
-    // Traveler USDC spent
-    let usdc = token::Client::new(&s.env, &s.usdc_addr);
-    assert_eq!(usdc.balance(&traveler), 0);
-}
+    // Vault collateral locked.
+    assert_eq!(t.vault.get_locked_capital(), PAYOFF);
 
-#[test]
-fn test_buy_insurance_existing_pool() {
-    let s = setup();
-    let t1 = Address::generate(&s.env);
-    let t2 = Address::generate(&s.env);
-
-    buy_policy(&s, &t1);
-    let pool1 = s
-        .controller
-        .get_pool_address(&symbol_short!("AA100"), &FLIGHT_DATE)
+    // FlightPoolManager has the registered flight.
+    let cfg = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
         .unwrap();
+    assert_eq!(cfg.premium, PREMIUM);
+    assert_eq!(cfg.payoff, PAYOFF);
+    assert_eq!(cfg.delay_hours, DELAY_HOURS);
+    assert_eq!(cfg.buyer_count, 1);
 
-    buy_policy(&s, &t2);
-    let pool2 = s
-        .controller
-        .get_pool_address(&symbol_short!("AA100"), &FLIGHT_DATE)
+    // Per-traveler index updated.
+    let flights = t.ctrl.get_flights_for_traveler(&traveler);
+    assert_eq!(flights.len(), 1);
+    assert_eq!(flights.get(0).unwrap(), (symbol_short!("AA100"), FLIGHT_DATE));
+}
+
+#[test]
+fn test_buy_insurance_second_traveler_skips_register() {
+    let t = setup();
+    let traveler1 = Address::generate(&t.env);
+    let traveler2 = Address::generate(&t.env);
+
+    buy(&t, &traveler1);
+    buy(&t, &traveler2);
+
+    // FlightPoolManager has both buyers on the same flight (single registration).
+    let cfg = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
         .unwrap();
+    assert_eq!(cfg.buyer_count, 2);
 
-    // Same pool address — no redeploy
-    assert_eq!(pool1, pool2);
+    // Pool USDC = 2 × premium, vault locked = 2 × payoff.
+    assert_eq!(t.usdc.balance(&t.pool_addr), 2 * PREMIUM);
+    assert_eq!(t.vault.get_locked_capital(), 2 * PAYOFF);
 
-    let (sold, collected, _) = s.controller.get_stats();
-    assert_eq!(sold, 2);
-    assert_eq!(collected, PREMIUM * 2);
-    assert_eq!(s.controller.get_active_pools().len(), 1);
+    // Each traveler has their own per-traveler index entry.
+    assert_eq!(t.ctrl.get_flights_for_traveler(&traveler1).len(), 1);
+    assert_eq!(t.ctrl.get_flights_for_traveler(&traveler2).len(), 1);
 }
 
 #[test]
-#[should_panic(expected = "route not whitelisted")]
-fn test_buy_insurance_invalid_route() {
-    let s = setup();
-    let traveler = Address::generate(&s.env);
-    s.usdc_client.mint(&traveler, &PREMIUM);
+fn test_buy_insurance_traveler_index_for_multiple_flights() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
 
-    s.controller.buy_insurance(
-        &traveler,
-        &symbol_short!("XX999"),
-        &symbol_short!("JFK"),
-        &symbol_short!("LAX"),
-        &FLIGHT_DATE,
-    );
-}
-
-#[test]
-#[should_panic(expected = "departure too soon")]
-fn test_buy_insurance_departure_too_soon() {
-    let s = setup();
-    let traveler = Address::generate(&s.env);
-    s.usdc_client.mint(&traveler, &PREMIUM);
-
-    let too_soon = s.env.ledger().timestamp() + 100;
-    s.controller.buy_insurance(
-        &traveler,
-        &symbol_short!("AA100"),
-        &symbol_short!("JFK"),
-        &symbol_short!("LAX"),
-        &too_soon,
-    );
-}
-
-#[test]
-#[should_panic(expected = "insufficient vault capital")]
-fn test_buy_insurance_solvency_rejection() {
-    let s = setup();
-
-    // Vault has 1000 USDC, each policy locks 50 USDC payoff → max 20 policies
-    // Use the same flight/date — all go into one pool, each locks 50
-    for _ in 0..20u32 {
-        let traveler = Address::generate(&s.env);
-        s.usdc_client.mint(&traveler, &PREMIUM);
-        s.controller.buy_insurance(
-            &traveler,
-            &symbol_short!("AA100"),
-            &symbol_short!("JFK"),
-            &symbol_short!("LAX"),
-            &FLIGHT_DATE,
-        );
-    }
-
-    // 21st should fail — vault at capacity
-    let traveler = Address::generate(&s.env);
-    s.usdc_client.mint(&traveler, &PREMIUM);
-    s.controller.buy_insurance(
-        &traveler,
-        &symbol_short!("AA100"),
-        &symbol_short!("JFK"),
-        &symbol_short!("LAX"),
-        &FLIGHT_DATE,
-    );
-}
-
-// ─── Classify flights tests ───
-
-fn setup_and_buy_and_get_oracle(
-    s: &TestSetup,
-) -> oracle_aggregator::OracleAggregatorClient<'static> {
-    let traveler = Address::generate(&s.env);
-    buy_policy(s, &traveler);
-    oracle_aggregator::OracleAggregatorClient::new(&s.env, &s.oracle_addr)
-}
-
-#[test]
-fn test_classify_on_time() {
-    let s = setup();
-    let oracle = setup_and_buy_and_get_oracle(&s);
-
-    oracle.set_estimated_arrival(
-        &s.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &1710500000,
-    );
-    // 30 min late (< 3h threshold)
-    oracle.set_landed(
-        &s.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &1710501800,
-    );
-
-    s.controller.classify_flights(&s.keeper);
-
-    let data = oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
-    assert_eq!(
-        data.status,
-        oracle_aggregator::FlightStatus::ToBeSettledOnTime
-    );
-}
-
-#[test]
-fn test_classify_delayed() {
-    let s = setup();
-    let oracle = setup_and_buy_and_get_oracle(&s);
-
-    oracle.set_estimated_arrival(
-        &s.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &1710500000,
-    );
-    // 3h late (>= 3h threshold)
-    oracle.set_landed(
-        &s.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &1710510800,
-    );
-
-    s.controller.classify_flights(&s.keeper);
-
-    let data = oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
-    assert_eq!(
-        data.status,
-        oracle_aggregator::FlightStatus::ToBeSettledDelayed
-    );
-}
-
-#[test]
-fn test_classify_cancelled() {
-    let s = setup();
-    let oracle = setup_and_buy_and_get_oracle(&s);
-
-    oracle.set_estimated_arrival(
-        &s.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &1710500000,
-    );
-    oracle.set_cancelled(&s.oracle_account, &symbol_short!("AA100"), &FLIGHT_DATE);
-
-    s.controller.classify_flights(&s.keeper);
-
-    let data = oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
-    assert_eq!(
-        data.status,
-        oracle_aggregator::FlightStatus::ToBeSettledCancelled
-    );
-}
-
-// ─── Execute settlements tests ───
-
-#[test]
-fn test_settle_on_time() {
-    let s = setup();
-    let oracle = setup_and_buy_and_get_oracle(&s);
-
-    oracle.set_estimated_arrival(
-        &s.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &1710500000,
-    );
-    oracle.set_landed(
-        &s.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &1710501800,
-    );
-
-    s.controller.classify_flights(&s.keeper);
-    s.controller.execute_settlements(&s.keeper);
-
-    let data = oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
-    assert_eq!(data.status, oracle_aggregator::FlightStatus::Settled);
-    assert_eq!(s.controller.get_active_pools().len(), 0);
-
-    let vault = risk_vault::RiskVaultClient::new(&s.env, &s.vault_addr);
-    assert_eq!(vault.get_locked_capital(), 0);
-}
-
-#[test]
-fn test_settle_delayed_and_claim() {
-    let s = setup();
-    let traveler = Address::generate(&s.env);
-    buy_policy(&s, &traveler);
-
-    let pool_addr = s
-        .controller
-        .get_pool_address(&symbol_short!("AA100"), &FLIGHT_DATE)
-        .unwrap();
-
-    let oracle =
-        oracle_aggregator::OracleAggregatorClient::new(&s.env, &s.oracle_addr);
-    oracle.set_estimated_arrival(
-        &s.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &1710500000,
-    );
-    oracle.set_landed(
-        &s.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &1710510800,
-    );
-
-    s.controller.classify_flights(&s.keeper);
-    s.controller.execute_settlements(&s.keeper);
-
-    let data = oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
-    assert_eq!(data.status, oracle_aggregator::FlightStatus::Settled);
-
-    // Pool holds payoff for traveler
-    let usdc = token::Client::new(&s.env, &s.usdc_addr);
-    assert_eq!(usdc.balance(&pool_addr), PAYOFF);
-
-    // Traveler claims
-    let pool = flight_pool::FlightPoolClient::new(&s.env, &pool_addr);
-    pool.claim(&traveler);
-    assert_eq!(usdc.balance(&traveler), PAYOFF);
-
-    let (_, _, distributed) = s.controller.get_stats();
-    assert_eq!(distributed, PAYOFF);
-}
-
-#[test]
-fn test_settle_cancelled_and_claim() {
-    let s = setup();
-    let traveler = Address::generate(&s.env);
-    buy_policy(&s, &traveler);
-
-    let pool_addr = s
-        .controller
-        .get_pool_address(&symbol_short!("AA100"), &FLIGHT_DATE)
-        .unwrap();
-
-    let oracle =
-        oracle_aggregator::OracleAggregatorClient::new(&s.env, &s.oracle_addr);
-    oracle.set_estimated_arrival(
-        &s.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &1710500000,
-    );
-    oracle.set_cancelled(&s.oracle_account, &symbol_short!("AA100"), &FLIGHT_DATE);
-
-    s.controller.classify_flights(&s.keeper);
-    s.controller.execute_settlements(&s.keeper);
-
-    let pool = flight_pool::FlightPoolClient::new(&s.env, &pool_addr);
-    pool.claim(&traveler);
-
-    let usdc = token::Client::new(&s.env, &s.usdc_addr);
-    assert_eq!(usdc.balance(&traveler), PAYOFF);
-}
-
-// ─── Keeper authorization ───
-
-#[test]
-#[should_panic(expected = "not authorized keeper")]
-fn test_classify_unauthorized() {
-    let s = setup();
-    let stranger = Address::generate(&s.env);
-    s.controller.classify_flights(&stranger);
-}
-
-#[test]
-#[should_panic(expected = "not authorized keeper")]
-fn test_settle_unauthorized() {
-    let s = setup();
-    let stranger = Address::generate(&s.env);
-    s.controller.execute_settlements(&stranger);
-}
-
-// ─── Full end-to-end ───
-
-#[test]
-fn test_e2e_buy_classify_settle_claim() {
-    let s = setup();
-    let t1 = Address::generate(&s.env);
-    let t2 = Address::generate(&s.env);
-
-    buy_policy(&s, &t1);
-    buy_policy(&s, &t2);
-
-    let pool_addr = s
-        .controller
-        .get_pool_address(&symbol_short!("AA100"), &FLIGHT_DATE)
-        .unwrap();
-
-    let oracle =
-        oracle_aggregator::OracleAggregatorClient::new(&s.env, &s.oracle_addr);
-    oracle.set_estimated_arrival(
-        &s.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &1710500000,
-    );
-    oracle.set_landed(
-        &s.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &1710510800,
-    ); // 3h late
-
-    s.controller.classify_flights(&s.keeper);
-    s.controller.execute_settlements(&s.keeper);
-
-    let pool = flight_pool::FlightPoolClient::new(&s.env, &pool_addr);
-    pool.claim(&t1);
-    pool.claim(&t2);
-
-    let usdc = token::Client::new(&s.env, &s.usdc_addr);
-    assert_eq!(usdc.balance(&t1), PAYOFF);
-    assert_eq!(usdc.balance(&t2), PAYOFF);
-
-    let (sold, collected, distributed) = s.controller.get_stats();
-    assert_eq!(sold, 2);
-    assert_eq!(collected, PREMIUM * 2);
-    assert_eq!(distributed, PAYOFF * 2);
-
-    let vault = risk_vault::RiskVaultClient::new(&s.env, &s.vault_addr);
-    assert_eq!(vault.get_locked_capital(), 0);
-}
-
-// ─── Multiple flights in parallel ───
-
-#[test]
-fn test_multiple_flights() {
-    let s = setup();
-
-    let gov =
-        governance_module::GovernanceModuleClient::new(&s.env, &s.gov_addr);
-    gov.whitelist_route(
-        &s.owner,
+    // Whitelist a second route.
+    t.gov.whitelist_route(
+        &t.owner,
         &symbol_short!("UA200"),
         &symbol_short!("SFO"),
         &symbol_short!("ORD"),
@@ -609,97 +365,434 @@ fn test_multiple_flights() {
         &None::<u32>,
     );
 
-    let t1 = Address::generate(&s.env);
-    let t2 = Address::generate(&s.env);
-    s.usdc_client.mint(&t1, &PREMIUM);
-    s.usdc_client.mint(&t2, &PREMIUM);
+    buy(&t, &traveler);
 
-    s.controller.buy_insurance(
-        &t1,
+    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("UA200"),
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &(FLIGHT_DATE + 1),
+    );
+
+    let flights = t.ctrl.get_flights_for_traveler(&traveler);
+    assert_eq!(flights.len(), 2);
+    assert_eq!(flights.get(0).unwrap(), (symbol_short!("AA100"), FLIGHT_DATE));
+    assert_eq!(flights.get(1).unwrap(), (symbol_short!("UA200"), FLIGHT_DATE + 1));
+}
+
+#[test]
+fn test_get_flights_for_traveler_empty_for_unknown_address() {
+    let t = setup();
+    let stranger = Address::generate(&t.env);
+    let flights = t.ctrl.get_flights_for_traveler(&stranger);
+    assert_eq!(flights.len(), 0);
+}
+
+// =========================================================================
+// buy_insurance gate panics
+// =========================================================================
+
+#[test]
+#[should_panic(expected = "route is disabled")]
+fn test_buy_insurance_panics_on_disabled_route() {
+    let t = setup();
+    t.gov.disable_route(
+        &t.owner,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+    );
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+}
+
+#[test]
+#[should_panic(expected = "route not whitelisted")]
+fn test_buy_insurance_panics_on_unknown_route() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("ZZ999"),
+        &symbol_short!("XXX"),
+        &symbol_short!("YYY"),
+        &FLIGHT_DATE,
+    );
+}
+
+#[test]
+#[should_panic(expected = "departure too soon")]
+fn test_buy_insurance_panics_on_short_lead_time() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &(INITIAL_TIMESTAMP + 100), // way under 3600s lead time
+    );
+}
+
+#[test]
+#[should_panic(expected = "insufficient vault capital")]
+fn test_buy_insurance_panics_on_solvency_gate() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = INITIAL_TIMESTAMP);
+
+    let owner = Address::generate(&env);
+    let keeper = Address::generate(&env);
+    let oracle_account = Address::generate(&env);
+    let usdc_admin_addr = Address::generate(&env);
+
+    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin_addr);
+    let usdc_admin = token::StellarAssetClient::new(&env, &usdc_id.address());
+
+    let gov_addr = env.register(
+        governance_module::GovernanceModule,
+        (&owner, &PREMIUM, &PAYOFF, &DELAY_HOURS),
+    );
+    let gov = governance_module::GovernanceModuleClient::new(&env, &gov_addr);
+
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
+    let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
+
+    let oracle_addr = env.register(
+        oracle_aggregator::OracleAggregator,
+        (&owner, &oracle_account),
+    );
+    let oracle = oracle_aggregator::OracleAggregatorClient::new(&env, &oracle_addr);
+
+    let pool_addr = env.register(
+        flight_pool_manager::FlightPoolManager,
+        (&owner, &usdc_id.address(), &vault_addr),
+    );
+    let pool = flight_pool_manager::FlightPoolManagerClient::new(&env, &pool_addr);
+
+    let ctrl_addr = env.register(
+        Controller,
+        (
+            &owner,
+            &gov_addr,
+            &vault_addr,
+            &oracle_addr,
+            &pool_addr,
+            &usdc_id.address(),
+            &keeper,
+            &MIN_LEAD_TIME,
+            &CLAIM_EXPIRY_WINDOW,
+        ),
+    );
+    let ctrl = ControllerClient::new(&env, &ctrl_addr);
+
+    vault.set_controller(&ctrl_addr);
+    oracle.set_controller(&ctrl_addr);
+    pool.set_controller(&ctrl_addr);
+
+    gov.whitelist_route(
+        &owner,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+
+    // NO underwriter capital — vault has 0 free capital.
+    let traveler = Address::generate(&env);
+    usdc_admin.mint(&traveler, &PREMIUM);
+    ctrl.buy_insurance(
+        &traveler,
         &symbol_short!("AA100"),
         &symbol_short!("JFK"),
         &symbol_short!("LAX"),
         &FLIGHT_DATE,
     );
-    s.controller.buy_insurance(
-        &t2,
-        &symbol_short!("UA200"),
-        &symbol_short!("SFO"),
-        &symbol_short!("ORD"),
-        &(FLIGHT_DATE + 100),
-    );
-
-    assert_eq!(s.controller.get_active_pools().len(), 2);
-
-    let oracle =
-        oracle_aggregator::OracleAggregatorClient::new(&s.env, &s.oracle_addr);
-    // AA100: on-time (30min late)
-    oracle.set_estimated_arrival(
-        &s.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &1710500000,
-    );
-    oracle.set_landed(
-        &s.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-        &1710501800,
-    );
-
-    // UA200: delayed (3h late)
-    oracle.set_estimated_arrival(
-        &s.oracle_account,
-        &symbol_short!("UA200"),
-        &(FLIGHT_DATE + 100),
-        &1710500100,
-    );
-    oracle.set_landed(
-        &s.oracle_account,
-        &symbol_short!("UA200"),
-        &(FLIGHT_DATE + 100),
-        &1710510900,
-    );
-
-    s.controller.classify_flights(&s.keeper);
-    s.controller.execute_settlements(&s.keeper);
-
-    assert_eq!(s.controller.get_active_pools().len(), 0);
-
-    let (sold, _, distributed) = s.controller.get_stats();
-    assert_eq!(sold, 2);
-    assert_eq!(distributed, PAYOFF); // Only UA200 had payout
 }
 
-// ─── Counter accuracy ───
+// =========================================================================
+// classify_flights
+// =========================================================================
 
 #[test]
-fn test_counter_accuracy() {
-    let s = setup();
-    let t1 = Address::generate(&s.env);
-    let t2 = Address::generate(&s.env);
-    let t3 = Address::generate(&s.env);
+fn test_classify_flights_on_time() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    oracle_on_time(&t);
 
-    buy_policy(&s, &t1);
-    buy_policy(&s, &t2);
-    buy_policy(&s, &t3);
+    t.ctrl.classify_flights(&t.keeper);
 
-    let (sold, collected, distributed) = s.controller.get_stats();
-    assert_eq!(sold, 3);
-    assert_eq!(collected, PREMIUM * 3);
-    assert_eq!(distributed, 0);
+    let data = t.oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(data.status, oracle_aggregator::FlightStatus::ToBeSettledOnTime);
 }
 
-// ─── Event emission ───
+#[test]
+fn test_classify_flights_delayed() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    oracle_delayed(&t);
+
+    t.ctrl.classify_flights(&t.keeper);
+
+    let data = t.oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(data.status, oracle_aggregator::FlightStatus::ToBeSettledDelayed);
+}
 
 #[test]
-fn test_event_on_buy() {
-    let s = setup();
-    let traveler = Address::generate(&s.env);
-    buy_policy(&s, &traveler);
+fn test_classify_flights_cancelled() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    oracle_cancelled(&t);
 
-    let events = s.env.events().all();
-    assert!(events.len() > 0);
-    let last = events.get(events.len() - 1).unwrap();
-    assert_eq!(last.0, s.controller.address);
+    t.ctrl.classify_flights(&t.keeper);
+
+    let data = t.oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(
+        data.status,
+        oracle_aggregator::FlightStatus::ToBeSettledCancelled
+    );
+}
+
+#[test]
+fn test_classify_flights_skips_unready_flights() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    // No oracle activity — flight is NotInitiated.
+
+    t.ctrl.classify_flights(&t.keeper);
+
+    let data = t.oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(data.status, oracle_aggregator::FlightStatus::NotInitiated);
+}
+
+#[test]
+fn test_classify_flights_emits_ttl_miss_for_not_initiated() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::TryFromVal;
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    // Skip oracle data push — flight stays NotInitiated.
+
+    t.ctrl.classify_flights(&t.keeper);
+
+    // Event log holds events from the most recent invocation only — assert
+    // immediately, before any subsequent contract call. Look for an event
+    // emitted by the controller with topic prefix ("warn", "ttl_miss") and
+    // a third indexed `flight_id` topic equal to AA100.
+    let mut found = false;
+    for (event_addr, topics, _data) in t.env.events().all().iter() {
+        if event_addr != t.ctrl_addr {
+            continue;
+        }
+        if topics.len() < 3 {
+            continue;
+        }
+        let t0 = Symbol::try_from_val(&t.env, &topics.get(0).unwrap()).ok();
+        let t1 = Symbol::try_from_val(&t.env, &topics.get(1).unwrap()).ok();
+        let t2 = Symbol::try_from_val(&t.env, &topics.get(2).unwrap()).ok();
+        if t0 == Some(symbol_short!("warn"))
+            && t1 == Some(symbol_short!("ttl_miss"))
+            && t2 == Some(symbol_short!("AA100"))
+        {
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "expected warn.ttl_miss event for AA100");
+}
+
+#[test]
+#[should_panic(expected = "not authorized keeper")]
+fn test_classify_flights_panics_on_non_keeper() {
+    let t = setup();
+    let stranger = Address::generate(&t.env);
+    t.ctrl.classify_flights(&stranger);
+}
+
+// =========================================================================
+// execute_settlements
+// =========================================================================
+
+#[test]
+fn test_execute_settlements_on_time_flow() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    oracle_on_time(&t);
+    t.ctrl.classify_flights(&t.keeper);
+
+    let tma_before = t.vault.get_total_managed_assets();
+    assert_eq!(t.vault.get_locked_capital(), PAYOFF);
+
+    t.ctrl.execute_settlements(&t.keeper);
+
+    // On-time settlement: premium transferred to vault as yield, collateral unlocked.
+    assert_eq!(t.vault.get_locked_capital(), 0);
+    assert_eq!(t.vault.get_total_managed_assets(), tma_before + PREMIUM);
+
+    // Pool's USDC drained to vault.
+    assert_eq!(t.usdc.balance(&t.pool_addr), 0);
+
+    // Oracle marks Settled with settled_at recorded.
+    let data = t.oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(data.status, oracle_aggregator::FlightStatus::Settled);
+    assert!(data.settled_at != 0);
+
+    // Pool's flight status is SettledOnTime.
+    let cfg = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .unwrap();
+    assert_eq!(cfg.status, flight_pool_manager::SettlementStatus::SettledOnTime);
+}
+
+#[test]
+fn test_execute_settlements_delayed_flow() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    oracle_delayed(&t);
+    t.ctrl.classify_flights(&t.keeper);
+
+    assert_eq!(t.usdc.balance(&t.pool_addr), PREMIUM);
+
+    t.ctrl.execute_settlements(&t.keeper);
+
+    // Delayed: vault sends (payoff - premium) to pool, collateral unlocked.
+    assert_eq!(t.vault.get_locked_capital(), 0);
+    // Pool now holds the full payoff for the buyer to claim.
+    assert_eq!(t.usdc.balance(&t.pool_addr), PAYOFF);
+
+    let (_, _, distributed) = t.ctrl.get_stats();
+    assert_eq!(distributed, PAYOFF);
+
+    let data = t.oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(data.status, oracle_aggregator::FlightStatus::Settled);
+
+    let cfg = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .unwrap();
+    assert_eq!(cfg.status, flight_pool_manager::SettlementStatus::SettledDelayed);
+    assert_eq!(cfg.claim_expiry, INITIAL_TIMESTAMP + CLAIM_EXPIRY_WINDOW);
+}
+
+#[test]
+fn test_execute_settlements_cancelled_flow() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    oracle_cancelled(&t);
+    t.ctrl.classify_flights(&t.keeper);
+
+    t.ctrl.execute_settlements(&t.keeper);
+
+    assert_eq!(t.vault.get_locked_capital(), 0);
+    assert_eq!(t.usdc.balance(&t.pool_addr), PAYOFF);
+
+    let cfg = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .unwrap();
+    assert_eq!(cfg.status, flight_pool_manager::SettlementStatus::SettledCancelled);
+}
+
+#[test]
+fn test_execute_settlements_skips_unclassified_flights() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    // No oracle activity — flight is NotInitiated. Skip classify.
+
+    let tma_before = t.vault.get_total_managed_assets();
+    t.ctrl.execute_settlements(&t.keeper);
+
+    // No money movement: flight wasn't classified.
+    assert_eq!(t.vault.get_locked_capital(), PAYOFF);
+    assert_eq!(t.vault.get_total_managed_assets(), tma_before);
+}
+
+#[test]
+fn test_execute_settlements_processes_withdrawal_queue() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+
+    let underwriter_shares = t.vault.balance(&t.underwriter);
+    let withdraw_shares = underwriter_shares / 2;
+    t.vault.request_withdrawal(&t.underwriter, &withdraw_shares);
+    assert_eq!(t.vault.get_withdrawal_queue().len(), 1);
+
+    oracle_on_time(&t);
+    t.ctrl.classify_flights(&t.keeper);
+    t.ctrl.execute_settlements(&t.keeper);
+
+    // Queue processed (free capital available after collateral release).
+    assert_eq!(t.vault.get_withdrawal_queue().len(), 0);
+    assert!(t.vault.get_claimable_balance(&t.underwriter) > 0);
+}
+
+#[test]
+#[should_panic(expected = "not authorized keeper")]
+fn test_execute_settlements_panics_on_non_keeper() {
+    let t = setup();
+    let stranger = Address::generate(&t.env);
+    t.ctrl.execute_settlements(&stranger);
+}
+
+// =========================================================================
+// End-to-end lifecycle
+// =========================================================================
+
+#[test]
+fn test_end_to_end_delayed_lifecycle() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+
+    buy(&t, &traveler);
+    assert_eq!(t.usdc.balance(&traveler), 0);
+
+    oracle_delayed(&t);
+    t.ctrl.classify_flights(&t.keeper);
+    t.ctrl.execute_settlements(&t.keeper);
+
+    // Traveler claims payoff from FlightPoolManager.
+    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+
+    assert_eq!(t.usdc.balance(&traveler), PAYOFF);
+    assert!(
+        t.pool
+            .has_claimed(&symbol_short!("AA100"), &FLIGHT_DATE, &traveler)
+    );
+}
+
+#[test]
+fn test_end_to_end_on_time_lifecycle_no_payout() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+
+    buy(&t, &traveler);
+    oracle_on_time(&t);
+    t.ctrl.classify_flights(&t.keeper);
+    t.ctrl.execute_settlements(&t.keeper);
+
+    // Traveler keeps no USDC (already paid premium); on-time = no claim.
+    assert_eq!(t.usdc.balance(&traveler), 0);
+
+    let cfg = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .unwrap();
+    assert_eq!(cfg.status, flight_pool_manager::SettlementStatus::SettledOnTime);
 }
