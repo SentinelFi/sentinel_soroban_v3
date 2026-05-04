@@ -1,5 +1,55 @@
 # Architecture
 
+## Table of Contents
+
+- [System Overview](#system-overview)
+- [Contracts (all Soroban / Rust)](#contracts-all-soroban--rust)
+  - [GovernanceModule](#governancemodule)
+  - [RiskVault](#riskvault)
+  - [FlightPoolManager](#flightpoolmanager)
+  - [Controller](#controller)
+  - [OracleAggregator](#oracleaggregator)
+- [Off-Chain Executor Layer (Modular)](#off-chain-executor-layer-modular)
+  - [Cron Job Summary](#cron-job-summary)
+  - [Cron #1 — FlightDataFetcher (Oracle, every 2 hours)](#cron-1--flightdatafetcher-oracle-every-2-hours)
+  - [Cron #2 — FlightClassifier (Keeper, every 1 hour)](#cron-2--flightclassifier-keeper-every-1-hour)
+  - [Cron #3 — SettlementExecutor (Keeper, every 5 minutes)](#cron-3--settlementexecutor-keeper-every-5-minutes)
+  - [Cron #4 — TTL Extender (ExtendFootprintTTLOp, every 24 hours)](#cron-4--ttl-extender-extendfootprintttlop-every-24-hours)
+  - [Why three separate crons?](#why-three-separate-crons)
+  - [The Executor Interface](#the-executor-interface)
+  - [Executor project structure](#executor-project-structure)
+  - [Backend migration](#backend-migration)
+- [Data Flow](#data-flow)
+  - [Whitelisting a Route](#whitelisting-a-route)
+  - [Buying Insurance](#buying-insurance)
+  - [Flight Data Collection (FlightDataFetcher, every 2 hours)](#flight-data-collection-flightdatafetcher-every-2-hours)
+  - [Flight Classification (FlightClassifier via Controller, every 1 hour)](#flight-classification-flightclassifier-via-controller-every-1-hour)
+  - [Settlement Execution (SettlementExecutor via Controller, every 5 minutes)](#settlement-execution-settlementexecutor-via-controller-every-5-minutes)
+  - [Traveler Claiming a Payout](#traveler-claiming-a-payout)
+  - [Sweeping Expired Claims](#sweeping-expired-claims)
+  - [Owner Withdrawing Recovered Funds](#owner-withdrawing-recovered-funds)
+  - [Underwriter Withdrawing Capital (FIFO)](#underwriter-withdrawing-capital-fifo)
+- [Solvency Invariant](#solvency-invariant)
+- [Contract Relationships](#contract-relationships)
+- [Access Control](#access-control)
+- [Security](#security)
+  - [Reentrancy](#reentrancy)
+  - [Share Price Manipulation (RiskVault)](#share-price-manipulation-riskvault)
+  - [Oracle Trust Model](#oracle-trust-model)
+  - [Soroban Storage Rent & Archival](#soroban-storage-rent--archival)
+  - [Known Limitations](#known-limitations)
+- [User Flows](#user-flows)
+  - [Traveler](#traveler)
+  - [Underwriter](#underwriter)
+  - [Function Reference](#function-reference)
+- [dApp Frontend — Scaffold Stellar](#dapp-frontend--scaffold-stellar)
+  - [Project Structure](#project-structure)
+  - [Auto-Generated TypeScript Bindings](#auto-generated-typescript-bindings)
+  - [Multi-Environment Configuration](#multi-environment-configuration)
+- [Deployment Order](#deployment-order)
+
+---
+
 ## System Overview
 
 Decentralised flight delay insurance on **Stellar**. **Underwriters** deposit capital to back
@@ -406,8 +456,9 @@ fn claim(env: Env, traveler: Address,
 // Called by anyone after claim expiry — credits RecoveredBalance internally
 fn sweep_expired(env: Env, flight_id: Symbol, date: u64);
 
-// Owner withdraws recovered (swept) funds
-fn withdraw_recovered(env: Env, owner: Address, amount: i128);
+// Owner withdraws recovered (swept) funds. Owner is implicit
+// (`#[only_owner]` reads from OZ ownable storage); no `owner` arg.
+fn withdraw_recovered(env: Env, amount: i128);
 
 // Read functions
 fn get_flight_config(env: Env, flight_id: Symbol, date: u64) -> Option<FlightConfig>;
@@ -975,8 +1026,8 @@ Migrating between executor backends is a **zero-downtime, no-redeployment operat
 3. Fund new executor account(s) with XLM
 4. Start new executor jobs (both old and new running — only old is authorized)
 5. Execute migration transactions:
-     owner -> OracleAggregator.set_authorized_oracle(new_oracle_address)
-     owner -> Controller.set_authorized_keeper(new_keeper_address)
+     owner -> OracleAggregator.set_oracle(new_oracle_address)
+     owner -> Controller.set_keeper(new_keeper_address)
 6. Verify new executor's txs are succeeding on-chain
 7. Shut down old executor backend
 ```
@@ -1144,11 +1195,12 @@ Anyone -> FlightPoolManager.sweep_expired(flight_id, date)
 ### Owner Withdrawing Recovered Funds
 
 ```
-Owner -> FlightPoolManager.withdraw_recovered(owner, amount)
-    +-> owner.require_auth()
-    +-> panic if amount > RecoveredBalance
+Owner -> FlightPoolManager.withdraw_recovered(amount)
+    +-> #[only_owner] guard (OZ ownable check)
+    +-> panic if amount <= 0 or amount > RecoveredBalance
     +-> RecoveredBalance -= amount
-    +-> usdc_client.transfer(contract_address, owner, amount)
+    +-> usdc_client.transfer(contract_address, ownable::get_owner(), amount)
+    +-> emit RecoveredWithdrawn { owner, amount }
 ```
 
 ### Underwriter Withdrawing Capital (FIFO)
@@ -1353,8 +1405,14 @@ inaccessible until restored" rather than "permanently lost."
 ### Traveler
 
 **Buy insurance:**
-1. Check `GovernanceModule.is_route_whitelisted(flight_id, origin, dest)` via frontend.
-2. Check `Controller.is_solvent_for_new_purchase(flight_id, date)` via frontend.
+1. Check `GovernanceModule.route_status(flight_id, origin, dest)` via frontend; match the
+   returned `RouteStatus` enum:
+   - `Active(ResolvedTerms)` — route is buyable; use `terms.payoff` for the solvency precheck.
+   - `Disabled` or `Unknown` — show an error; do not let the user submit.
+2. Solvency precheck: read `RiskVault.get_free_capital()` and compare against the
+   `payoff` from step 1 (multiplied by `Controller.get_solvency_ratio() / 100`). The
+   on-chain solvency gate enforces the same check on submit, so this is a UX optimisation
+   to avoid wasted signatures.
 3. Sign transaction that calls `Controller.buy_insurance(flight_id, origin, dest, date)`.
    Soroban auth framework handles USDC transfer authorization within the same signature.
 
@@ -1387,21 +1445,34 @@ to pull USDC.
 | Action | Who | Function |
 |---|---|---|
 | Set global defaults | Owner | `governance.set_defaults(premium, payoff, delay_hours)` |
-| Whitelist route | Owner / Admin | `governance.whitelist_route(...)` |
+| Whitelist route | Owner / Admin | `governance.whitelist_route(caller, flight_id, origin, dest, premium?, payoff?, delay_hours?)` |
+| Disable route (soft) | Owner / Admin | `governance.disable_route(caller, flight_id, origin, dest)` |
+| Enable route | Owner / Admin | `governance.enable_route(caller, flight_id, origin, dest)` |
+| Remove route (hard, must be disabled first) | Owner / Admin | `governance.remove_route(caller, flight_id, origin, dest)` |
+| Update route terms (partial) | Owner / Admin | `governance.update_route_terms(caller, flight_id, origin, dest, premium_op, payoff_op, delay_op)` |
+| Add admin | Owner | `governance.add_admin(admin)` |
+| Remove admin | Owner | `governance.remove_admin(admin)` |
+| Read route status | Anyone | `governance.route_status(flight_id, origin, dest) -> RouteStatus` |
 | Deposit capital | Underwriter | `risk_vault.deposit(assets, receiver, from, operator)` |
 | Withdraw immediately | Underwriter | `risk_vault.redeem(shares, receiver, owner, operator)` |
 | Withdraw (queued) | Underwriter | `risk_vault.request_withdrawal(caller, shares)` |
 | Collect credited USDC | Underwriter | `risk_vault.collect(caller)` |
 | Cancel queued withdrawal | Underwriter | `risk_vault.cancel_withdrawal(caller, index)` |
-| Recover uncollected | Owner | `risk_vault.recover_uncollected(address, amount)` |
+| Recover uncollected balance | Owner | `risk_vault.recover_uncollected(user, amount, mode: RecoveryMode)` (mode: `Recredit` or `Transfer`) |
+| Read free capital | Anyone | `risk_vault.get_free_capital()` |
 | Buy insurance | Traveler | `controller.buy_insurance(flight_id, origin, dest, date)` |
 | View my policies | Traveler | `controller.get_flights_for_traveler(address)` |
 | Claim payout | Traveler | `flight_pool_manager.claim(traveler, flight_id, date)` |
 | Sweep expired claims | Anyone | `flight_pool_manager.sweep_expired(flight_id, date)` |
-| Withdraw recovered | Owner | `flight_pool_manager.withdraw_recovered(owner, amount)` |
-| Check capacity | Anyone | `controller.is_solvent_for_new_purchase(flight_id, date)` |
-| Update keeper address | Owner | `controller.set_authorized_keeper(owner, new_keeper)` |
-| Update oracle address | Owner | `oracle.set_authorized_oracle(owner, new_oracle)` |
+| Withdraw recovered (swept) | Owner | `flight_pool_manager.withdraw_recovered(amount)` |
+| Push estimated arrival | Oracle | `oracle.set_estimated_arrival(oracle, flight_id, date, eta)` |
+| Push landed (with actual arrival) | Oracle | `oracle.set_landed(oracle, flight_id, date, actual)` |
+| Mark cancelled | Oracle | `oracle.set_cancelled(oracle, flight_id, date)` |
+| Classify flights | Keeper | `controller.classify_flights(keeper)` |
+| Execute settlements | Keeper | `controller.execute_settlements(keeper)` |
+| Prune aged-out settled flights | Anyone | `oracle.prune_settled()` |
+| Update keeper address | Owner | `controller.set_keeper(new_keeper)` |
+| Update oracle address | Owner | `oracle.set_oracle(new_oracle)` |
 
 ---
 
@@ -1591,8 +1662,8 @@ network_passphrase = "Public Global Stellar Network ; September 2015"
         npm run start:cron
 
 7. Register executor addresses on-chain:
-        OracleAggregator.set_authorized_oracle(ORACLE_EXECUTOR_ADDRESS)
-        Controller.set_authorized_keeper(KEEPER_EXECUTOR_ADDRESS)
+        OracleAggregator.set_oracle(ORACLE_EXECUTOR_ADDRESS)
+        Controller.set_keeper(KEEPER_EXECUTOR_ADDRESS)
 
 8. Fund executor accounts:
         Send XLM to ORACLE_EXECUTOR_ADDRESS (for Soroban tx fees)
