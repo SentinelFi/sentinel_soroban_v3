@@ -84,7 +84,7 @@ pub(crate) fn read_defaults(e: &Env) -> (i128, i128, u32) {
     (premium, payoff, delay_hours)
 }
 
-pub(crate) fn resolve(terms: &RouteTerms, defaults: (i128, i128, u32)) -> ResolvedTerms {
+pub(crate) fn resolve_terms(terms: &RouteTerms, defaults: (i128, i128, u32)) -> ResolvedTerms {
     let (default_premium, default_payoff, default_delay_hours) = defaults;
     ResolvedTerms {
         premium: terms.premium.unwrap_or(default_premium),

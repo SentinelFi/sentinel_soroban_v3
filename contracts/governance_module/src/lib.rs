@@ -13,7 +13,7 @@ use events::{
     GovAdminAdded, GovAdminRemoved, GovDefaults, RouteDisabled, RouteEnabled, RouteListed,
     RouteRemoved, RouteUpdated,
 };
-use storage::{extend_route_ttl, read_defaults, resolve, DataKey, RouteTerms};
+use storage::{extend_route_ttl, read_defaults, resolve_terms, DataKey, RouteTerms};
 
 pub use storage::{
     DelayHoursUpdate, PayoffUpdate, PremiumUpdate, ResolvedTerms, RouteStatus,
@@ -280,7 +280,7 @@ impl GovernanceModule {
         match terms {
             None => RouteStatus::Unknown,
             Some(t) if !t.approved => RouteStatus::Disabled,
-            Some(t) => RouteStatus::Active(resolve(&t, read_defaults(e))),
+            Some(t) => RouteStatus::Active(resolve_terms(&t, read_defaults(e))),
         }
     }
 
