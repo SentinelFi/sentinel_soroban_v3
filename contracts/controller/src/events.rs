@@ -6,6 +6,10 @@ use crate::interfaces::FlightStatus;
 pub struct InsuranceBought {
     #[topic]
     pub(crate) traveler: Address,
+    #[topic]
+    pub(crate) flight_id: Symbol,
+    #[topic]
+    pub(crate) date: u64,
     pub(crate) premium: i128,
 }
 

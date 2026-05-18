@@ -1866,6 +1866,12 @@
               },
               {
                 "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYRE5"
+              },
+              {
+                "symbol": "AA100"
+              },
+              {
+                "u64": "1710500000"
               }
             ],
             "data": {

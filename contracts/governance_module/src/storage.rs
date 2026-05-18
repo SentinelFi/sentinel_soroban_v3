@@ -92,3 +92,19 @@ pub(crate) fn resolve_terms(terms: &RouteTerms, defaults: (i128, i128, u32)) -> 
         delay_hours: terms.delay_hours.unwrap_or(default_delay_hours),
     }
 }
+
+// Enforce the invariants every economically-meaningful route must satisfy:
+// premium > 0, payoff > premium, delay_hours > 0. Called at write time after
+// defaults are folded in, so partial overrides cannot leave a route with a
+// non-paying or guaranteed-payout configuration.
+pub(crate) fn assert_terms_valid(premium: i128, payoff: i128, delay_hours: u32) {
+    assert!(premium > 0, "premium must be positive");
+    assert!(payoff > 0, "payoff must be positive");
+    assert!(payoff > premium, "payoff must exceed premium");
+    assert!(delay_hours > 0, "delay_hours must be positive");
+}
+
+pub(crate) fn assert_route_terms_valid(e: &Env, terms: &RouteTerms) {
+    let resolved = resolve_terms(terms, read_defaults(e));
+    assert_terms_valid(resolved.premium, resolved.payoff, resolved.delay_hours);
+}

@@ -107,6 +107,13 @@ impl OracleAggregator {
             is_valid_transition(&data.status, &FlightStatus::Landed),
             "invalid transition"
         );
+        // Reject implausible reports: arrival can't be earlier than estimate.
+        // Stops a buggy / adversarial oracle from misclassifying a delayed
+        // flight as on-time via an actual_arrival_time below estimate.
+        assert!(
+            actual_arrival_time >= data.estimated_arrival_time,
+            "actual_arrival_time must not precede estimated_arrival_time",
+        );
 
         data.status = FlightStatus::Landed;
         data.actual_arrival_time = actual_arrival_time;
@@ -257,15 +264,22 @@ impl OracleAggregator {
         let mut kept: Vec<(Symbol, u64)> = Vec::new(e);
         for i in 0..list.len() {
             let (flight_id, date) = list.get(i).unwrap();
-            let data: FlightData = e
+            // Missing FlightData (archived past its persistent TTL) is treated
+            // as evict — the entry is unrecoverable on-chain anyway, so
+            // keeping it in the active list would only block future pruning.
+            let aged_out = match e
                 .storage()
                 .persistent()
-                .get(&OracleKey::FlightData(flight_id.clone(), date))
-                .expect("flight data missing");
-            let age_seconds = now.saturating_sub(data.settled_at);
-            let aged_out = data.status == FlightStatus::Settled
-                && data.settled_at != 0
-                && age_seconds >= SETTLED_RETENTION_DAYS * SECONDS_PER_DAY;
+                .get::<_, FlightData>(&OracleKey::FlightData(flight_id.clone(), date))
+            {
+                None => true,
+                Some(data) => {
+                    let age_seconds = now.saturating_sub(data.settled_at);
+                    data.status == FlightStatus::Settled
+                        && data.settled_at != 0
+                        && age_seconds >= SETTLED_RETENTION_DAYS * SECONDS_PER_DAY
+                }
+            };
             if !aged_out {
                 kept.push_back((flight_id, date));
             }

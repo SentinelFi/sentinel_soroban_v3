@@ -12,12 +12,25 @@ use crate::{RecoveryMode, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalR
 
 #[contractimpl]
 impl RiskVault {
-    pub fn request_withdrawal(e: &Env, caller: Address, shares: i128) {
+    /// Submit a withdrawal request. Returns a monotonic request_id that the
+    /// caller can use to cancel the request later (immune to queue reorder
+    /// caused by intervening process_withdrawal_queue calls).
+    pub fn request_withdrawal(e: &Env, caller: Address, shares: i128) -> u64 {
         caller.require_auth();
         assert!(shares > 0, "shares must be positive");
 
         // Escrow shares: transfer from caller to vault
         Base::update(e, Some(&caller), Some(&e.current_contract_address()), shares);
+
+        let request_id: u64 = e
+            .storage()
+            .instance()
+            .get(&VaultKey::NextRequestId)
+            .unwrap_or(0);
+        let next_id = request_id.checked_add(1).expect("request_id overflow");
+        e.storage()
+            .instance()
+            .set(&VaultKey::NextRequestId, &next_id);
 
         let mut queue: Vec<WithdrawalRequest> = e
             .storage()
@@ -26,6 +39,7 @@ impl RiskVault {
             .unwrap_or(Vec::new(e));
 
         queue.push_back(WithdrawalRequest {
+            request_id,
             owner: caller,
             shares,
             timestamp: e.ledger().timestamp(),
@@ -34,9 +48,14 @@ impl RiskVault {
         e.storage()
             .instance()
             .set(&VaultKey::WithdrawalQueue, &queue);
+
+        request_id
     }
 
-    pub fn cancel_withdrawal(e: &Env, caller: Address, queue_index: u32) {
+    /// Cancel a queued withdrawal by request_id (NOT queue index).
+    /// Indices shift when process_withdrawal_queue drains earlier entries;
+    /// a stable id avoids cancelling the wrong request.
+    pub fn cancel_withdrawal(e: &Env, caller: Address, request_id: u64) {
         caller.require_auth();
 
         let mut queue: Vec<WithdrawalRequest> = e
@@ -45,13 +64,21 @@ impl RiskVault {
             .get(&VaultKey::WithdrawalQueue)
             .unwrap_or(Vec::new(e));
 
-        let request = queue.get(queue_index).expect("invalid queue index");
+        let mut found: Option<u32> = None;
+        for i in 0..queue.len() {
+            if queue.get(i).unwrap().request_id == request_id {
+                found = Some(i);
+                break;
+            }
+        }
+        let idx = found.expect("request_id not found");
+        let request = queue.get(idx).unwrap();
         assert!(request.owner == caller, "not your request");
 
         // Return escrowed shares to caller
         Base::update(e, Some(&e.current_contract_address()), Some(&caller), request.shares);
 
-        queue.remove(queue_index);
+        queue.remove(idx);
         e.storage()
             .instance()
             .set(&VaultKey::WithdrawalQueue, &queue);
@@ -64,10 +91,11 @@ impl RiskVault {
         let claimable: i128 = e.storage().persistent().get(&key).unwrap_or(0);
         assert!(claimable > 0, "nothing to collect");
 
+        // CEI: clear the entry before the external transfer.
+        e.storage().persistent().remove(&key);
+
         let usdc = token::Client::new(e, &Vault::query_asset(e));
         usdc.transfer(&e.current_contract_address(), &caller, &claimable);
-
-        e.storage().persistent().remove(&key);
 
         // Signal balance drained so the off-chain indexer can DELETE this
         // address from its claimable_balances tracker.
@@ -107,6 +135,16 @@ impl RiskVault {
         match mode {
             RecoveryMode::Recredit => {
                 let key = VaultKey::ClaimableBalance(user.clone());
+                // SETs the balance (does not add). To prevent silent underpay
+                // when an entry already exists, require the new amount to be
+                // at least the existing one — restoring an archived entry
+                // can only ever bring it back up to its prior value or
+                // higher, never down.
+                let existing: i128 = e.storage().persistent().get(&key).unwrap_or(0);
+                assert!(
+                    amount >= existing,
+                    "Recredit would underpay (amount < existing claimable)",
+                );
                 e.storage().persistent().set(&key, &amount);
                 e.storage().persistent().extend_ttl(
                     &key,

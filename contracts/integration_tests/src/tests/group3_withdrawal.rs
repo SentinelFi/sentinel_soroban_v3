@@ -93,10 +93,10 @@ fn cancel_withdrawal_returns_shares() {
     let t = TestEnv::new();
     let shares = t.vault.balance(&t.underwriter);
 
-    t.vault.request_withdrawal(&t.underwriter, &shares);
+    let request_id = t.vault.request_withdrawal(&t.underwriter, &shares);
     assert_eq!(t.vault.balance(&t.underwriter), 0); // shares escrowed
 
-    t.vault.cancel_withdrawal(&t.underwriter, &0u32);
+    t.vault.cancel_withdrawal(&t.underwriter, &request_id);
     assert_eq!(t.vault.balance(&t.underwriter), shares);
     assert_eq!(t.vault.get_withdrawal_queue().len(), 0);
 }

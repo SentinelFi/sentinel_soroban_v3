@@ -38,11 +38,22 @@ impl RiskVault {
     pub fn record_premium_income(e: &Env, controller: Address, amount: i128) {
         require_controller(e, &controller);
         assert!(amount > 0, "amount must be positive");
-        let tma = Self::get_total_managed_assets(e);
-        e.storage().instance().set(
-            &VaultKey::TotalManagedAssets,
-            &tma.checked_add(amount).expect("addition overflow"),
-        );
+        let old_tma = Self::get_total_managed_assets(e);
+        let new_tma = old_tma.checked_add(amount).expect("addition overflow");
+
+        // Defensive: the pool transfers USDC to the vault BEFORE calling this.
+        // Reject the credit if the vault's USDC balance can't cover the new
+        // TMA — catches the "controller called us but no USDC arrived" path
+        // (compromised or buggy caller). Note: outstanding ClaimableBalance
+        // entries are not part of TMA (they were decremented at credit
+        // time), so the check is a strict floor on managed assets.
+        let usdc = token::Client::new(e, &Vault::query_asset(e));
+        let balance = usdc.balance(&e.current_contract_address());
+        assert!(balance >= new_tma, "premium not received");
+
+        e.storage()
+            .instance()
+            .set(&VaultKey::TotalManagedAssets, &new_tma);
     }
 
     pub fn send_payout(e: &Env, controller: Address, to: Address, amount: i128) {
@@ -51,13 +62,14 @@ impl RiskVault {
         let tma = Self::get_total_managed_assets(e);
         assert!(amount <= tma, "insufficient managed assets");
 
-        let usdc = token::Client::new(e, &Vault::query_asset(e));
-        usdc.transfer(&e.current_contract_address(), &to, &amount);
-
+        // CEI: decrement TMA before the external transfer.
         e.storage().instance().set(
             &VaultKey::TotalManagedAssets,
             &tma.checked_sub(amount).expect("subtraction underflow"),
         );
+
+        let usdc = token::Client::new(e, &Vault::query_asset(e));
+        usdc.transfer(&e.current_contract_address(), &to, &amount);
     }
 
     pub fn process_withdrawal_queue(e: &Env, controller: Address) {
@@ -114,6 +126,14 @@ impl RiskVault {
                 .checked_sub(assets)
                 .expect("subtraction underflow");
             tma = tma.checked_sub(assets).expect("subtraction underflow");
+            // Persist TMA each iteration so OZ Vault::preview_redeem in the
+            // NEXT iteration sees a consistent (total_assets, total_supply)
+            // pair — both decremented in lockstep. Otherwise share price
+            // drifts upward across the loop and later-in-queue requests
+            // get more assets per share than earlier ones.
+            e.storage()
+                .instance()
+                .set(&VaultKey::TotalManagedAssets, &tma);
             processed = processed.checked_add(1).expect("addition overflow");
         }
 
@@ -125,9 +145,6 @@ impl RiskVault {
             e.storage()
                 .instance()
                 .set(&VaultKey::WithdrawalQueue, &new_queue);
-            e.storage()
-                .instance()
-                .set(&VaultKey::TotalManagedAssets, &tma);
         }
     }
 }

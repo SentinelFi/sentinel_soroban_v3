@@ -119,15 +119,29 @@ fn test_redeem_exceeds_free_capital() {
 
 #[test]
 fn test_record_premium_income() {
-    let (_env, client, _owner, controller, depositor) = setup();
+    let (env, client, _owner, controller, depositor) = setup();
 
     client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
     assert_eq!(client.get_total_managed_assets(), 1_000_0000000);
 
-    // Record premium income — TMA increases but raw balance stays the same
-    // (In real flow, FlightPool transfers USDC to vault first, then controller calls this)
+    // Real flow: pool transfers USDC to vault FIRST, then controller calls.
+    // The balance floor check inside record_premium_income enforces this.
+    let usdc_admin = token::StellarAssetClient::new(&env, &client.asset());
+    usdc_admin.mint(&client.address, &50_0000000);
+
     client.record_premium_income(&controller, &50_0000000);
     assert_eq!(client.get_total_managed_assets(), 1_050_0000000);
+}
+
+#[test]
+#[should_panic(expected = "premium not received")]
+fn test_record_premium_income_rejects_when_usdc_not_received() {
+    // Regression for M-06: caller-stated amount must be backed by actual USDC.
+    let (_env, client, _owner, controller, depositor) = setup();
+    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+
+    // No USDC was transferred to the vault — credit must fail.
+    client.record_premium_income(&controller, &50_0000000);
 }
 
 #[test]
@@ -204,13 +218,50 @@ fn test_cancel_withdrawal() {
     let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
     client.increase_locked(&controller, &1_000_0000000);
 
-    client.request_withdrawal(&depositor, &shares);
+    let request_id = client.request_withdrawal(&depositor, &shares);
     assert_eq!(client.balance(&depositor), 0);
 
-    // Cancel — shares returned
-    client.cancel_withdrawal(&depositor, &0);
+    // Cancel — shares returned (by stable request_id, not queue index)
+    client.cancel_withdrawal(&depositor, &request_id);
     assert_eq!(client.balance(&depositor), shares);
     assert_eq!(client.get_withdrawal_queue().len(), 0);
+}
+
+#[test]
+fn test_cancel_withdrawal_by_request_id_is_index_independent() {
+    // Regression for M-04: cancelling the FIRST request after a later one
+    // has been processed must still cancel the right request, even though
+    // queue indices shifted.
+    let (env, client, _owner, controller, depositor) = setup();
+    let other = Address::generate(&env);
+    let usdc_admin = token::StellarAssetClient::new(&env, &client.asset());
+    usdc_admin.mint(&other, &500_0000000);
+
+    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let other_shares = client.deposit(&500_0000000, &other, &other, &other);
+    client.increase_locked(&controller, &500_0000000);
+
+    let depositor_id = client.request_withdrawal(&depositor, &shares);
+    let _other_id = client.request_withdrawal(&other, &other_shares);
+    assert_eq!(client.get_withdrawal_queue().len(), 2);
+
+    // Cancel depositor's request (the FIRST one — index 0).
+    client.cancel_withdrawal(&depositor, &depositor_id);
+    assert_eq!(client.get_withdrawal_queue().len(), 1);
+    assert_eq!(client.balance(&depositor), shares);
+
+    // The remaining queued request still belongs to `other`.
+    assert_eq!(
+        client.get_withdrawal_queue().get(0).unwrap().owner,
+        other,
+    );
+}
+
+#[test]
+#[should_panic(expected = "request_id not found")]
+fn test_cancel_withdrawal_with_unknown_request_id_panics() {
+    let (_env, client, _owner, _controller, depositor) = setup();
+    client.cancel_withdrawal(&depositor, &9999u64);
 }
 
 #[test]
@@ -407,16 +458,27 @@ fn test_recover_uncollected_recredit_sets_balance() {
 }
 
 #[test]
-fn test_recover_uncollected_recredit_overwrites_existing() {
+#[should_panic(expected = "Recredit would underpay")]
+fn test_recover_uncollected_recredit_rejects_underpay() {
     let (env, client, _owner, controller, depositor) = setup();
     run_credit_flow(&env, &client, &controller, &depositor);
 
     let prior = client.get_claimable_balance(&depositor);
     assert!(prior > 0);
 
-    // Owner recredit replaces (SET, not ADD).
+    // Underpay attempt: 123 < prior → must panic, not silently overwrite.
     client.recover_uncollected(&depositor, &123_0000000, &RecoveryMode::Recredit);
-    assert_eq!(client.get_claimable_balance(&depositor), 123_0000000);
+}
+
+#[test]
+fn test_recover_uncollected_recredit_can_increase_existing() {
+    let (env, client, _owner, controller, depositor) = setup();
+    run_credit_flow(&env, &client, &controller, &depositor);
+
+    let prior = client.get_claimable_balance(&depositor);
+    let bumped = prior + 100_0000000;
+    client.recover_uncollected(&depositor, &bumped, &RecoveryMode::Recredit);
+    assert_eq!(client.get_claimable_balance(&depositor), bumped);
 }
 
 #[test]

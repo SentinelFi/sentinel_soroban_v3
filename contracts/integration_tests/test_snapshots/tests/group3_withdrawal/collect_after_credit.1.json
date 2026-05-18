@@ -991,6 +991,18 @@
                       "key": {
                         "vec": [
                           {
+                            "symbol": "NextRequestId"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "u64": "1"
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
                             "symbol": "Owner"
                           }
                         ]

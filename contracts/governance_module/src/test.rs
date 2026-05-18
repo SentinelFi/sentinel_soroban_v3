@@ -125,6 +125,109 @@ fn test_set_defaults_unauthorized() {
     client.set_defaults(&100_0000000, &1000_0000000, &3);
 }
 
+#[test]
+#[should_panic(expected = "premium must be positive")]
+fn test_constructor_rejects_zero_premium() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    env.register(
+        GovernanceModule,
+        (&owner, &0i128, &DEFAULT_PAYOFF, &DEFAULT_DELAY_HOURS),
+    );
+}
+
+#[test]
+#[should_panic(expected = "payoff must exceed premium")]
+fn test_constructor_rejects_payoff_le_premium() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    env.register(
+        GovernanceModule,
+        (&owner, &DEFAULT_PAYOFF, &DEFAULT_PREMIUM, &DEFAULT_DELAY_HOURS),
+    );
+}
+
+#[test]
+#[should_panic(expected = "delay_hours must be positive")]
+fn test_constructor_rejects_zero_delay_hours() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    env.register(
+        GovernanceModule,
+        (&owner, &DEFAULT_PREMIUM, &DEFAULT_PAYOFF, &0u32),
+    );
+}
+
+#[test]
+#[should_panic(expected = "delay_hours must be positive")]
+fn test_set_defaults_rejects_zero_delay_hours() {
+    let (_env, client, _owner, _addr) = setup();
+    client.set_defaults(&DEFAULT_PREMIUM, &DEFAULT_PAYOFF, &0u32);
+}
+
+#[test]
+#[should_panic(expected = "payoff must exceed premium")]
+fn test_set_defaults_rejects_payoff_le_premium() {
+    let (_env, client, _owner, _addr) = setup();
+    client.set_defaults(&DEFAULT_PAYOFF, &DEFAULT_PREMIUM, &DEFAULT_DELAY_HOURS);
+}
+
+#[test]
+#[should_panic(expected = "payoff must exceed premium")]
+fn test_whitelist_route_rejects_payoff_le_premium() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &Some(100_0000000i128),
+        &Some(50_0000000i128),
+        &None::<u32>,
+    );
+}
+
+#[test]
+#[should_panic(expected = "delay_hours must be positive")]
+fn test_whitelist_route_rejects_zero_delay_hours() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &Some(0u32),
+    );
+}
+
+#[test]
+#[should_panic(expected = "payoff must exceed premium")]
+fn test_update_route_terms_rejects_invalid_resolved() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+    client.whitelist_route(
+        &owner, &flight_id, &origin, &dest,
+        &None::<i128>, &None::<i128>, &None::<u32>,
+    );
+    // After update: premium=1000 (Set), payoff=defaults=500 → 500 < 1000.
+    client.update_route_terms(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &PremiumUpdate::Set(1000_0000000i128),
+        &PayoffUpdate::UseDefault,
+        &DelayHoursUpdate::Keep,
+    );
+}
+
 // =========================================================================
 // Admin management
 // =========================================================================

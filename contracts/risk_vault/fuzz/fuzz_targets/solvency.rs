@@ -29,7 +29,7 @@ pub enum Op {
     MintShares { user: u8, shares: i128 },
     Redeem { user: u8, shares: i128 },
     RequestWithdrawal { user: u8, shares: i128 },
-    CancelWithdrawal { user: u8, index: u32 },
+    CancelWithdrawal { user: u8, request_id: u64 },
     ProcessQueue,
     Collect { user: u8 },
     IncreaseLocked { amount: i128 },
@@ -95,9 +95,9 @@ fuzz_target!(|input: Input| {
                 let u = pick(user);
                 let _ = client.try_request_withdrawal(&u, &shares);
             }
-            Op::CancelWithdrawal { user, index } => {
+            Op::CancelWithdrawal { user, request_id } => {
                 let u = pick(user);
-                let _ = client.try_cancel_withdrawal(&u, &index);
+                let _ = client.try_cancel_withdrawal(&u, &request_id);
             }
             Op::ProcessQueue => {
                 let _ = client.try_process_withdrawal_queue(&controller);

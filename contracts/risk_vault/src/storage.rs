@@ -8,6 +8,7 @@ pub enum VaultKey {
     TotalManagedAssets,
     LockedCapital,
     WithdrawalQueue,
+    NextRequestId,
     LastSnapshotTime,
 
     // Persistent — TTL extended on every write to prevent silent archival
@@ -20,6 +21,7 @@ pub enum VaultKey {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct WithdrawalRequest {
+    pub request_id: u64,
     pub owner: Address,
     pub shares: i128,
     pub timestamp: u64,

@@ -3,8 +3,32 @@ use stellar_access::ownable::{self as ownable};
 use stellar_macros::only_owner;
 
 use crate::auth::extend_instance_ttl;
-use crate::storage::CtrlKey;
+use crate::storage::{
+    CtrlKey, MAX_CLAIM_EXPIRY_WINDOW_SECS, MAX_MIN_LEAD_TIME_SECS, MAX_SOLVENCY_RATIO,
+    MIN_CLAIM_EXPIRY_WINDOW_SECS, MIN_SOLVENCY_RATIO,
+};
 use crate::{Controller, ControllerArgs, ControllerClient};
+
+fn assert_solvency_ratio(ratio: u32) {
+    assert!(
+        ratio >= MIN_SOLVENCY_RATIO && ratio <= MAX_SOLVENCY_RATIO,
+        "solvency_ratio out of bounds",
+    );
+}
+
+fn assert_min_lead_time(seconds: u64) {
+    assert!(
+        seconds <= MAX_MIN_LEAD_TIME_SECS,
+        "min_lead_time exceeds maximum",
+    );
+}
+
+fn assert_claim_expiry_window(seconds: u64) {
+    assert!(
+        seconds >= MIN_CLAIM_EXPIRY_WINDOW_SECS && seconds <= MAX_CLAIM_EXPIRY_WINDOW_SECS,
+        "claim_expiry_window out of bounds",
+    );
+}
 
 #[contractimpl]
 impl Controller {
@@ -20,6 +44,8 @@ impl Controller {
         min_lead_time: u64,
         claim_expiry_window: u64,
     ) {
+        assert_min_lead_time(min_lead_time);
+        assert_claim_expiry_window(claim_expiry_window);
         ownable::set_owner(e, &owner);
         e.storage()
             .instance()
@@ -67,6 +93,7 @@ impl Controller {
 
     #[only_owner]
     pub fn set_solvency_ratio(e: &Env, ratio: u32) {
+        assert_solvency_ratio(ratio);
         e.storage()
             .instance()
             .set(&CtrlKey::SolvencyRatio, &ratio);
@@ -75,6 +102,7 @@ impl Controller {
 
     #[only_owner]
     pub fn set_min_lead_time(e: &Env, seconds: u64) {
+        assert_min_lead_time(seconds);
         e.storage()
             .instance()
             .set(&CtrlKey::MinLeadTime, &seconds);
@@ -83,6 +111,7 @@ impl Controller {
 
     #[only_owner]
     pub fn set_claim_expiry_window(e: &Env, seconds: u64) {
+        assert_claim_expiry_window(seconds);
         e.storage()
             .instance()
             .set(&CtrlKey::ClaimExpiryWindow, &seconds);

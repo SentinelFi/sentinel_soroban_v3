@@ -13,7 +13,10 @@ use events::{
     GovAdminAdded, GovAdminRemoved, GovDefaults, RouteDisabled, RouteEnabled, RouteListed,
     RouteRemoved, RouteUpdated,
 };
-use storage::{extend_route_ttl, read_defaults, resolve_terms, DataKey, RouteTerms};
+use storage::{
+    assert_route_terms_valid, assert_terms_valid, extend_route_ttl, read_defaults,
+    resolve_terms, DataKey, RouteTerms,
+};
 
 pub use storage::{
     DelayHoursUpdate, PayoffUpdate, PremiumUpdate, ResolvedTerms, RouteStatus,
@@ -31,6 +34,7 @@ impl GovernanceModule {
         default_payoff: i128,
         default_delay_hours: u32,
     ) {
+        assert_terms_valid(default_premium, default_payoff, default_delay_hours);
         ownable::set_owner(e, &owner);
         e.storage()
             .instance()
@@ -47,6 +51,7 @@ impl GovernanceModule {
 
     #[only_owner]
     pub fn set_defaults(e: &Env, premium: i128, payoff: i128, delay_hours: u32) {
+        assert_terms_valid(premium, payoff, delay_hours);
         e.storage()
             .instance()
             .set(&DataKey::DefaultPremium, &premium);
@@ -102,6 +107,7 @@ impl GovernanceModule {
             delay_hours,
             approved: true,
         };
+        assert_route_terms_valid(e, &terms);
         e.storage().persistent().set(&key, &terms);
         extend_route_ttl(e, &key);
 
@@ -236,6 +242,7 @@ impl GovernanceModule {
             DelayHoursUpdate::UseDefault => terms.delay_hours = None,
         }
 
+        assert_route_terms_valid(e, &terms);
         e.storage().persistent().set(&key, &terms);
         extend_route_ttl(e, &key);
 

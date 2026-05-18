@@ -122,6 +122,8 @@ impl Controller {
 
         InsuranceBought {
             traveler,
+            flight_id,
+            date,
             premium: terms.premium,
         }
         .publish(e);

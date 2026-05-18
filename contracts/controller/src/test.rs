@@ -268,6 +268,48 @@ fn test_set_claim_expiry_window() {
 }
 
 #[test]
+#[should_panic(expected = "solvency_ratio out of bounds")]
+fn test_set_solvency_ratio_below_100_panics() {
+    let t = setup();
+    t.ctrl.set_solvency_ratio(&99);
+}
+
+#[test]
+#[should_panic(expected = "solvency_ratio out of bounds")]
+fn test_set_solvency_ratio_above_max_panics() {
+    let t = setup();
+    t.ctrl.set_solvency_ratio(&10_001);
+}
+
+#[test]
+#[should_panic(expected = "min_lead_time exceeds maximum")]
+fn test_set_min_lead_time_above_max_panics() {
+    let t = setup();
+    t.ctrl.set_min_lead_time(&7_776_001);
+}
+
+#[test]
+#[should_panic(expected = "claim_expiry_window out of bounds")]
+fn test_set_claim_expiry_window_zero_panics() {
+    let t = setup();
+    t.ctrl.set_claim_expiry_window(&0);
+}
+
+#[test]
+#[should_panic(expected = "claim_expiry_window out of bounds")]
+fn test_set_claim_expiry_window_below_min_panics() {
+    let t = setup();
+    t.ctrl.set_claim_expiry_window(&86_399);
+}
+
+#[test]
+#[should_panic(expected = "claim_expiry_window out of bounds")]
+fn test_set_claim_expiry_window_above_max_panics() {
+    let t = setup();
+    t.ctrl.set_claim_expiry_window(&15_552_001);
+}
+
+#[test]
 #[should_panic]
 fn test_unauthorized_set_keeper() {
     let env = Env::default();

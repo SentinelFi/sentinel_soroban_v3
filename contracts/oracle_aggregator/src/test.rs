@@ -274,14 +274,30 @@ fn test_invalid_transition_landed_to_settled() {
 }
 
 #[test]
-#[should_panic(expected = "invalid transition")]
-fn test_invalid_transition_not_initiated_to_cancelled() {
+#[should_panic(expected = "actual_arrival_time must not precede estimated_arrival_time")]
+fn test_set_landed_rejects_actual_before_estimated() {
     let (env, client, _owner, oracle, controller) = setup();
     let fid = flight_id(&env);
 
     client.register_flight(&controller, &fid, &FLIGHT_DATE);
-    // Can't cancel from NotInitiated — must be Active first
+    client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);
+    // actual = EST_ARRIVAL - 1 < estimated → must reject.
+    client.set_landed(&oracle, &fid, &FLIGHT_DATE, &(EST_ARRIVAL - 1));
+}
+
+#[test]
+fn test_not_initiated_to_cancelled_short_notice() {
+    // Short-notice cancellation: oracle may learn the flight is cancelled
+    // before set_estimated_arrival fires.
+    let (env, client, _owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
     client.set_cancelled(&oracle, &fid, &FLIGHT_DATE);
+    assert_eq!(
+        client.get_flight_data(&fid, &FLIGHT_DATE).status,
+        FlightStatus::Cancelled
+    );
 }
 
 #[test]
@@ -515,6 +531,34 @@ fn test_prune_settled_no_op_before_retention_window() {
 
     let flights = client.get_active_flights();
     assert_eq!(flights.len(), 1);
+}
+
+#[test]
+fn test_prune_settled_evicts_missing_flight_data() {
+    // Regression for H-02: a single archived FlightData entry must not panic
+    // prune_settled. The entry is dropped from the active list and the call
+    // succeeds; remaining entries are processed normally.
+    let (env, client, _owner, _oracle, controller) = setup();
+    let fid_a = flight_id(&env);
+    let fid_b = symbol_short!("BB200");
+
+    client.register_flight(&controller, &fid_a, &FLIGHT_DATE);
+    client.register_flight(&controller, &fid_b, &FLIGHT_DATE);
+    assert_eq!(client.get_active_flights().len(), 2);
+
+    // Simulate TTL archival of fid_a's persistent FlightData entry.
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&OracleKey::FlightData(fid_a.clone(), FLIGHT_DATE));
+    });
+
+    // Prune must not panic; fid_a is evicted, fid_b stays.
+    client.prune_settled();
+
+    let remaining = client.get_active_flights();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining.get(0).unwrap(), (fid_b, FLIGHT_DATE));
 }
 
 #[test]

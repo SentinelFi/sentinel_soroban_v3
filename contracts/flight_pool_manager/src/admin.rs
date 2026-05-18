@@ -47,17 +47,18 @@ impl FlightPoolManager {
             .unwrap_or(0);
         assert!(amount <= recovered, "exceeds recovered balance");
 
-        let owner = ownable::get_owner(e).expect("owner not set");
-        let usdc_addr: Address = e.storage().instance().get(&PoolKey::UsdcToken).unwrap();
-        let usdc = token::Client::new(e, &usdc_addr);
-        usdc.transfer(&e.current_contract_address(), &owner, &amount);
-
+        // CEI: decrement balance before the external transfer.
         e.storage().instance().set(
             &PoolKey::RecoveredBalance,
             &recovered
                 .checked_sub(amount)
                 .expect("subtraction underflow"),
         );
+
+        let owner = ownable::get_owner(e).expect("owner not set");
+        let usdc_addr: Address = e.storage().instance().get(&PoolKey::UsdcToken).unwrap();
+        let usdc = token::Client::new(e, &usdc_addr);
+        usdc.transfer(&e.current_contract_address(), &owner, &amount);
 
         RecoveredWithdrawn { owner, amount }.publish(e);
     }
