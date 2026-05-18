@@ -1,116 +1,25 @@
 #![no_std]
-use soroban_sdk::{
-    contract, contractevent, contractimpl, contracttype, token, Address, Env, MuxedAddress,
-    String, Vec,
-};
+
+mod auth;
+mod events;
+mod storage;
+
+use soroban_sdk::{contract, contractimpl, token, Address, Env, MuxedAddress, String, Vec};
 use stellar_access::ownable::{self as ownable, Ownable};
 use stellar_macros::only_owner;
 use stellar_tokens::fungible::{Base, FungibleToken};
 use stellar_tokens::vault::Vault;
 
-#[contracttype]
-#[derive(Clone)]
-pub enum VaultKey {
-    // Instance — global single-row state (auto-extended with contract instance TTL)
-    Controller,
-    TotalManagedAssets,
-    LockedCapital,
-    WithdrawalQueue,
-    LastSnapshotTime,
+use auth::{require_controller, INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
+use events::{Collected, Credited, Recovered};
+use storage::{
+    VaultKey, CLAIMABLE_TTL_LEDGERS, SECONDS_PER_DAY, SNAPSHOT_TTL_LEDGERS,
+};
 
-    // Persistent — TTL extended on every write to prevent silent archival
-    ClaimableBalance(Address),
-
-    // Temporary — auto-deletes on TTL expiry, no archival rent
-    SnapshotPrice(u64),
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct WithdrawalRequest {
-    pub owner: Address,
-    pub shares: i128,
-    pub timestamp: u64,
-}
-
-/// Mode for `recover_uncollected` — owner-driven manual recovery of an
-/// archived `ClaimableBalance` entry. Carried on the wire via the
-/// `vault.recovered` event so the off-chain indexer can update its
-/// `claimable_balances` table accordingly.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum RecoveryMode {
-    /// Re-credit `ClaimableBalance(user) = amount`. Sets (not adds) so the
-    /// owner provides the full owed amount reconstructed from event logs.
-    /// Future `process_withdrawal_queue` credits ADD on top normally.
-    Recredit,
-    /// Transfer USDC directly from vault to user. No `ClaimableBalance`
-    /// storage write. Indexer DELETEs the address from its tracker.
-    Transfer,
-}
-
-// --- Events ---
-//
-// Emitted on every `ClaimableBalance` state change. Powers the off-chain
-// indexer which maintains a list of addresses with non-zero balances; that
-// list feeds the off-chain TTL cron's `ExtendFootprintTTLOp` extensions.
-
-#[contractevent(topics = ["vault", "credited"], data_format = "map")]
-pub struct Credited {
-    #[topic]
-    user: Address,
-    amount: i128,
-    new_balance: i128,
-}
-
-#[contractevent(topics = ["vault", "collected"], data_format = "single-value")]
-pub struct Collected {
-    #[topic]
-    user: Address,
-    amount: i128,
-}
-
-#[contractevent(topics = ["vault", "recovered"], data_format = "map")]
-pub struct Recovered {
-    #[topic]
-    user: Address,
-    amount: i128,
-    mode: RecoveryMode,
-}
-
-const SECONDS_PER_DAY: u64 = 86400;
-
-// --- TTL constants ---
-
-const INSTANCE_TTL_THRESHOLD: u32 = 120_960;
-const INSTANCE_TTL_EXTEND: u32 = 535_680;
-
-/// 60 days at 5s/ledger = 60 * 24 * 60 * 12 = 1_036_800.
-/// Applied on every `ClaimableBalance(addr)` write to prevent silent archival
-/// of per-user pending USDC. Layered defense:
-/// 1. On-write extension (this constant).
-/// 2. Off-chain TTL cron footprint extension via the indexer.
-/// 3. `recover_uncollected` owner manual fallback.
-const CLAIMABLE_TTL_LEDGERS: u32 = 60 * 24 * 60 * 12;
-
-/// 30 days at 5s/ledger = 30 * 24 * 60 * 12 = 518_400.
-/// Applied on every `SnapshotPrice(day)` Temporary write. Snapshots are
-/// short-lived — recent ones queryable on-chain; older entries auto-delete
-/// with no archival rent. Historical analytics happen off-chain via events.
-const SNAPSHOT_TTL_LEDGERS: u32 = 30 * 24 * 60 * 12;
+pub use storage::{RecoveryMode, WithdrawalRequest};
 
 #[contract]
 pub struct RiskVault;
-
-fn require_controller(e: &Env, controller: &Address) {
-    controller.require_auth();
-    let stored: Address = e
-        .storage()
-        .instance()
-        .get(&VaultKey::Controller)
-        .expect("controller not set");
-    assert!(controller == &stored, "not controller");
-}
 
 #[contractimpl]
 impl RiskVault {

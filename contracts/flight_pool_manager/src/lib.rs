@@ -1,174 +1,20 @@
 #![no_std]
-use soroban_sdk::{
-    contract, contractevent, contractimpl, contracttype, token, Address, Env, Symbol, Vec,
-};
+
+mod auth;
+mod events;
+mod storage;
+
+use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol, Vec};
 use stellar_access::ownable::{self as ownable, Ownable};
 use stellar_macros::only_owner;
 
-// --- Storage keys ---
+use auth::{extend_instance_ttl, require_controller};
+use events::{
+    BuyerAdded, ExpiredSwept, FlightRegistered, FlightSettled, PayoutClaimed, RecoveredWithdrawn,
+};
+use storage::{extend_flight_ttl, prune_active_list, PoolKey, BUYER_TTL_LEDGERS};
 
-#[contracttype]
-#[derive(Clone)]
-pub enum PoolKey {
-    // Instance — global config & accounting
-    Controller,
-    UsdcToken,
-    RiskVault,
-    ActiveFlightList,
-    RecoveredBalance,
-
-    // Persistent — keyed by (flight_id, date)
-    FlightConfig(Symbol, u64),
-
-    // Persistent — keyed by (flight_id, date, address)
-    Buyer(Symbol, u64, Address),
-    Claimed(Symbol, u64, Address),
-}
-
-// --- Domain types ---
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum SettlementStatus {
-    Active,
-    SettledOnTime,
-    SettledDelayed,
-    SettledCancelled,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct FlightConfig {
-    pub premium: i128,
-    pub payoff: i128,
-    pub delay_hours: u32,
-    pub buyer_count: u32,
-    pub claimed_count: u32,
-    pub status: SettlementStatus,
-    pub claim_expiry: u64,
-}
-
-// --- TTL constants ---
-
-const PERSISTENT_TTL_THRESHOLD: u32 = 120_960; // ~7 days
-const PERSISTENT_TTL_EXTEND: u32 = 535_680; // ~31 days
-const INSTANCE_TTL_THRESHOLD: u32 = 120_960;
-const INSTANCE_TTL_EXTEND: u32 = 535_680;
-
-// Buyer key TTL: 180 days at add_buyer time.
-// Architecture says "claim_expiry + 30d on write" but add_buyer runs before
-// settlement, so claim_expiry is unknown at write time. 180 days covers worst
-// case 90d flight book-ahead + 60d claim window + 30d safety. No re-extension
-// needed because the contract cannot iterate buyers after settlement.
-// 180 days at 5s/ledger = 180 * 24 * 60 * 12 = 3,110,400.
-const BUYER_TTL_LEDGERS: u32 = 3_110_400;
-
-// --- Helpers ---
-
-fn require_controller(e: &Env, caller: &Address) {
-    caller.require_auth();
-    let controller: Address = e
-        .storage()
-        .instance()
-        .get(&PoolKey::Controller)
-        .expect("controller not set");
-    assert!(caller == &controller, "not controller");
-}
-
-fn extend_instance_ttl(e: &Env) {
-    e.storage()
-        .instance()
-        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
-}
-
-fn extend_flight_ttl(e: &Env, flight_id: &Symbol, date: u64) {
-    let key = PoolKey::FlightConfig(flight_id.clone(), date);
-    e.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND);
-}
-
-fn prune_active_list(e: &Env, flight_id: &Symbol, date: u64) {
-    let mut list: Vec<(Symbol, u64)> = e
-        .storage()
-        .instance()
-        .get(&PoolKey::ActiveFlightList)
-        .unwrap_or(Vec::new(e));
-    let target = (flight_id.clone(), date);
-    let mut idx: Option<u32> = None;
-    for i in 0..list.len() {
-        if list.get(i) == Some(target.clone()) {
-            idx = Some(i);
-            break;
-        }
-    }
-    if let Some(i) = idx {
-        list.remove(i);
-        e.storage()
-            .instance()
-            .set(&PoolKey::ActiveFlightList, &list);
-    }
-}
-
-// --- Events ---
-
-#[contractevent(topics = ["register"], data_format = "map")]
-pub struct FlightRegistered {
-    #[topic]
-    flight_id: Symbol,
-    #[topic]
-    date: u64,
-    premium: i128,
-    payoff: i128,
-    delay_hours: u32,
-}
-
-#[contractevent(topics = ["buyer"], data_format = "single-value")]
-pub struct BuyerAdded {
-    #[topic]
-    flight_id: Symbol,
-    #[topic]
-    date: u64,
-    buyer: Address,
-}
-
-#[contractevent(topics = ["settle"], data_format = "map")]
-pub struct FlightSettled {
-    #[topic]
-    flight_id: Symbol,
-    #[topic]
-    date: u64,
-    status: SettlementStatus,
-    claim_expiry: u64,
-}
-
-#[contractevent(topics = ["claim"], data_format = "map")]
-pub struct PayoutClaimed {
-    #[topic]
-    flight_id: Symbol,
-    #[topic]
-    date: u64,
-    traveler: Address,
-    amount: i128,
-}
-
-#[contractevent(topics = ["sweep"], data_format = "single-value")]
-pub struct ExpiredSwept {
-    #[topic]
-    flight_id: Symbol,
-    #[topic]
-    date: u64,
-    unclaimed: i128,
-}
-
-#[contractevent(topics = ["withdraw"], data_format = "single-value")]
-pub struct RecoveredWithdrawn {
-    #[topic]
-    owner: Address,
-    amount: i128,
-}
-
-// --- Contract ---
+pub use storage::{FlightConfig, SettlementStatus};
 
 #[contract]
 pub struct FlightPoolManager;
@@ -402,7 +248,6 @@ impl FlightPoolManager {
         Self::settle_with_claim_window(e, flight_id, date, claim_expiry, SettlementStatus::SettledCancelled);
     }
 
-    // Internal helper for delayed/cancelled paths.
     fn settle_with_claim_window(
         e: &Env,
         flight_id: Symbol,

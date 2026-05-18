@@ -1,145 +1,20 @@
 #![no_std]
-use soroban_sdk::{contract, contractevent, contractimpl, contracttype, Address, Env, Symbol, Vec};
+
+mod auth;
+mod events;
+mod storage;
+
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
 use stellar_access::ownable::{self as ownable, Ownable};
 use stellar_macros::only_owner;
 
-// --- Storage keys ---
+use auth::{extend_instance_ttl, require_controller, require_oracle};
+use events::emit_status_event;
+use storage::{
+    extend_flight_ttl, is_valid_transition, OracleKey, SECONDS_PER_DAY, SETTLED_RETENTION_DAYS,
+};
 
-#[contracttype]
-pub enum OracleKey {
-    // Instance — global single-row state (auto-extended with contract instance TTL)
-    AuthorizedOracle,
-    AuthorizedController,
-    ActiveFlightList,
-
-    // Persistent — keyed multi-row state
-    FlightData(Symbol, u64),
-}
-
-// --- Domain types ---
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum FlightStatus {
-    NotInitiated,
-    Active,
-    Landed,
-    Cancelled,
-    ToBeSettledOnTime,
-    ToBeSettledDelayed,
-    ToBeSettledCancelled,
-    Settled,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct FlightData {
-    pub status: FlightStatus,
-    pub estimated_arrival_time: u64,
-    pub actual_arrival_time: u64,
-    pub settled_at: u64,                   // 0 means not-yet-settled
-}
-
-// --- Error types ---
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum OracleError {
-    AlreadyInitialized,
-    NotAuthorizedOracle,
-    NotAuthorizedController,
-    ControllerAlreadySet,
-    InvalidTransition,
-    InvalidSettlementStatus,
-}
-
-// --- TTL constants ---
-
-const PERSISTENT_TTL_THRESHOLD: u32 = 120_960; // ~7 days
-const PERSISTENT_TTL_EXTEND: u32 = 535_680; // ~31 days
-const INSTANCE_TTL_THRESHOLD: u32 = 120_960;
-const INSTANCE_TTL_EXTEND: u32 = 535_680;
-
-// --- Prune retention ---
-//
-// Settled flights stay in `ActiveFlightList` for SETTLED_RETENTION_DAYS after
-// `set_settled` records their `settled_at` timestamp. Pruning is delegated to
-// the permissionless `prune_settled` entry — keeps freshly-settled flights
-// visible to off-chain monitoring / indexers / observability tooling for the
-// retention window before they disappear from the list.
-const SETTLED_RETENTION_DAYS: u64 = 30;
-const SECONDS_PER_DAY: u64 = 86_400;
-
-// --- Helpers ---
-
-fn require_oracle(e: &Env, caller: &Address) {
-    caller.require_auth();
-    let oracle: Address = e
-        .storage()
-        .instance()
-        .get(&OracleKey::AuthorizedOracle)
-        .expect("oracle not set");
-    assert!(caller == &oracle, "not authorized oracle");
-}
-
-fn require_controller(e: &Env, caller: &Address) {
-    caller.require_auth();
-    let controller: Address = e
-        .storage()
-        .instance()
-        .get(&OracleKey::AuthorizedController)
-        .expect("controller not set");
-    assert!(caller == &controller, "not authorized controller");
-}
-
-fn extend_instance_ttl(e: &Env) {
-    e.storage()
-        .instance()
-        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
-}
-
-fn extend_flight_ttl(e: &Env, flight_id: &Symbol, date: u64) {
-    let key = OracleKey::FlightData(flight_id.clone(), date);
-    e.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND);
-}
-
-#[contractevent(topics = ["flight"], data_format = "single-value")]
-pub struct FlightStatusChange {
-    #[topic]
-    flight_id: Symbol,
-    #[topic]
-    date: u64,
-    new_status: FlightStatus,
-}
-
-fn emit_status_event(e: &Env, flight_id: &Symbol, date: u64, new_status: &FlightStatus) {
-    FlightStatusChange {
-        flight_id: flight_id.clone(),
-        date,
-        new_status: new_status.clone(),
-    }
-    .publish(e);
-}
-
-/// Check that a state transition is valid (forward-only state machine).
-fn is_valid_transition(from: &FlightStatus, to: &FlightStatus) -> bool {
-    matches!(
-        (from, to),
-        (FlightStatus::NotInitiated, FlightStatus::Active)
-            | (FlightStatus::Active, FlightStatus::Landed)
-            | (FlightStatus::Active, FlightStatus::Cancelled)
-            | (FlightStatus::Landed, FlightStatus::ToBeSettledOnTime)
-            | (FlightStatus::Landed, FlightStatus::ToBeSettledDelayed)
-            | (FlightStatus::Cancelled, FlightStatus::ToBeSettledCancelled)
-            | (FlightStatus::ToBeSettledOnTime, FlightStatus::Settled)
-            | (FlightStatus::ToBeSettledDelayed, FlightStatus::Settled)
-            | (FlightStatus::ToBeSettledCancelled, FlightStatus::Settled)
-    )
-}
-
-// --- Contract ---
+pub use storage::{FlightData, FlightStatus};
 
 #[contract]
 pub struct OracleAggregator;
@@ -271,7 +146,6 @@ impl OracleAggregator {
         require_controller(e, &controller);
 
         let key = OracleKey::FlightData(flight_id.clone(), date);
-        // Must not already exist
         let existing: Option<FlightData> = e.storage().persistent().get(&key);
         assert!(existing.is_none(), "flight already registered");
 
@@ -308,7 +182,6 @@ impl OracleAggregator {
     ) {
         require_controller(e, &controller);
 
-        // Validate the target status is a ToBeSettled variant
         assert!(
             matches!(
                 status,
