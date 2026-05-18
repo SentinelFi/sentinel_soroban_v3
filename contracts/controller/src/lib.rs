@@ -357,10 +357,12 @@ impl Controller {
 
         // 3. Enforce minimum lead time.
         let min_lead: u64 = e.storage().instance().get(&CtrlKey::MinLeadTime).unwrap();
-        assert!(
-            date > e.ledger().timestamp() + min_lead,
-            "departure too soon"
-        );
+        let earliest_allowed = e
+            .ledger()
+            .timestamp()
+            .checked_add(min_lead)
+            .expect("addition overflow");
+        assert!(date > earliest_allowed, "departure too soon");
 
         // 4. Look up flight in the singleton FlightPoolManager. If missing,
         //    register it (locks terms) AND register the same (flight_id, date)
@@ -388,7 +390,12 @@ impl Controller {
             .instance()
             .get(&CtrlKey::SolvencyRatio)
             .unwrap();
-        let required = terms.payoff * (solvency_ratio as i128) / 100;
+        let required = terms
+            .payoff
+            .checked_mul(solvency_ratio as i128)
+            .expect("multiplication overflow")
+            .checked_div(100)
+            .expect("division by zero");
         assert!(free_capital >= required, "insufficient vault capital");
 
         // 6. Transfer premium directly from traveler to FlightPoolManager.
@@ -412,18 +419,22 @@ impl Controller {
             .instance()
             .get(&CtrlKey::TotalPoliciesSold)
             .unwrap_or(0);
-        e.storage()
-            .instance()
-            .set(&CtrlKey::TotalPoliciesSold, &(sold + 1));
+        e.storage().instance().set(
+            &CtrlKey::TotalPoliciesSold,
+            &sold.checked_add(1).expect("addition overflow"),
+        );
 
         let collected: i128 = e
             .storage()
             .instance()
             .get(&CtrlKey::TotalPremiumsCollected)
             .unwrap_or(0);
-        e.storage()
-            .instance()
-            .set(&CtrlKey::TotalPremiumsCollected, &(collected + terms.premium));
+        e.storage().instance().set(
+            &CtrlKey::TotalPremiumsCollected,
+            &collected
+                .checked_add(terms.premium)
+                .expect("addition overflow"),
+        );
 
         extend_instance_ttl(e);
 
@@ -472,12 +483,13 @@ impl Controller {
                         .expect("flight in oracle but missing in FlightPoolManager");
                     let delay_hours = cfg.delay_hours;
 
-                    let delay_seconds = if data.actual_arrival_time > data.estimated_arrival_time {
-                        data.actual_arrival_time - data.estimated_arrival_time
-                    } else {
-                        0
-                    };
-                    let delay_hours_actual = delay_seconds / 3600;
+                    let delay_seconds = data
+                        .actual_arrival_time
+                        .checked_sub(data.estimated_arrival_time)
+                        .unwrap_or(0);
+                    let delay_hours_actual = delay_seconds
+                        .checked_div(3600)
+                        .expect("division by zero");
 
                     if delay_hours_actual >= (delay_hours as u64) {
                         Some(FlightStatus::ToBeSettledDelayed)
@@ -542,7 +554,11 @@ impl Controller {
             .instance()
             .get(&CtrlKey::ClaimExpiryWindow)
             .unwrap();
-        let claim_expiry = e.ledger().timestamp() + claim_window;
+        let claim_expiry = e
+            .ledger()
+            .timestamp()
+            .checked_add(claim_window)
+            .expect("addition overflow");
 
         let flights = oracle.get_active_flights();
 
@@ -557,7 +573,10 @@ impl Controller {
                     let cfg = pool
                         .get_flight_config(&flight_id, &date)
                         .expect("flight not registered in pool");
-                    let total_payoff = cfg.payoff * (cfg.buyer_count as i128);
+                    let total_payoff = cfg
+                        .payoff
+                        .checked_mul(cfg.buyer_count as i128)
+                        .expect("multiplication overflow");
 
                     // Pool transfers premiums to vault and records as income.
                     pool.settle_on_time(&controller_addr, &flight_id, &date);
@@ -578,8 +597,17 @@ impl Controller {
                     let cfg = pool
                         .get_flight_config(&flight_id, &date)
                         .expect("flight not registered in pool");
-                    let payout_from_vault = (cfg.payoff - cfg.premium) * (cfg.buyer_count as i128);
-                    let total_payoff = cfg.payoff * (cfg.buyer_count as i128);
+                    let buyer_count_i128 = cfg.buyer_count as i128;
+                    let payout_from_vault = cfg
+                        .payoff
+                        .checked_sub(cfg.premium)
+                        .expect("subtraction underflow")
+                        .checked_mul(buyer_count_i128)
+                        .expect("multiplication overflow");
+                    let total_payoff = cfg
+                        .payoff
+                        .checked_mul(buyer_count_i128)
+                        .expect("multiplication overflow");
 
                     // Vault sends payout funds to FlightPoolManager (it now
                     // holds all per-flight USDC).
@@ -604,7 +632,9 @@ impl Controller {
                         .unwrap_or(0);
                     e.storage().instance().set(
                         &CtrlKey::TotalPayoutsDistributed,
-                        &(paid + total_payoff),
+                        &paid
+                            .checked_add(total_payoff)
+                            .expect("addition overflow"),
                     );
 
                     FlightSettledEvent {

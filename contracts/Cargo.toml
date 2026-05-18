@@ -12,11 +12,11 @@ members = [
 exclude = ["target"]
 
 [workspace.dependencies]
-soroban-sdk = "23"
-stellar-tokens = "0.6.0"
-stellar-access = "0.6.0"
-stellar-macros = "0.6.0"
-stellar-contract-utils = "0.6.0"
+soroban-sdk = "25.3.1"
+stellar-tokens = "0.7.1"
+stellar-access = "0.7.1"
+stellar-macros = "0.7.1"
+stellar-contract-utils = "0.7.1"
 
 [profile.release]
 opt-level = "z"

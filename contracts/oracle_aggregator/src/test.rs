@@ -1,8 +1,30 @@
 use super::*;
 use soroban_sdk::{
     symbol_short, testutils::Address as _, testutils::Events as _, testutils::Ledger as _, Env,
-    IntoVal,
+    IntoVal, TryFromVal, Val,
 };
+
+// Decode the testutils ContractEvents wrapper (soroban-sdk 25+) back into the
+// pre-25 `(Address, Vec<Val>, Val)` tuple shape the assertions below rely on.
+fn collect_events(env: &Env) -> Vec<(Address, Vec<Val>, Val)> {
+    use soroban_sdk::xdr::{ContractEventBody, ScAddress, ScVal};
+    let mut out: Vec<(Address, Vec<Val>, Val)> = Vec::new(env);
+    for e in env.events().all().events() {
+        let cid = e.contract_id.clone().unwrap();
+        let addr =
+            Address::try_from_val(env, &ScVal::Address(ScAddress::Contract(cid))).unwrap();
+        let body = match &e.body {
+            ContractEventBody::V0(b) => b,
+        };
+        let mut topics: Vec<Val> = Vec::new(env);
+        for sv in body.topics.iter() {
+            topics.push_back(Val::try_from_val(env, sv).unwrap());
+        }
+        let data = Val::try_from_val(env, &body.data).unwrap();
+        out.push_back((addr, topics, data));
+    }
+    out
+}
 
 const FLIGHT_DATE: u64 = 1710400000; // arbitrary unix timestamp
 const EST_ARRIVAL: u64 = 1710410000;
@@ -580,7 +602,7 @@ fn test_event_emitted_on_register() {
 
     client.register_flight(&controller, &fid, &FLIGHT_DATE);
 
-    let events = env.events().all();
+    let events = collect_events(&env);
     let last = events.get(events.len() - 1).unwrap();
     assert_eq!(last.0, client.address);
     let expected_topics = (symbol_short!("flight"), fid.clone(), FLIGHT_DATE).into_val(&env);
@@ -594,18 +616,18 @@ fn test_event_emitted_on_each_transition() {
 
     // Register → check event
     client.register_flight(&controller, &fid, &FLIGHT_DATE);
-    let events = env.events().all();
+    let events = collect_events(&env);
     assert!(events.len() > 0);
 
     // Active → check event
     client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);
-    let events = env.events().all();
+    let events = collect_events(&env);
     let last = events.get(events.len() - 1).unwrap();
     assert_eq!(last.0, client.address);
 
     // Landed → check event
     client.set_landed(&oracle, &fid, &FLIGHT_DATE, &ACT_ARRIVAL);
-    let events = env.events().all();
+    let events = collect_events(&env);
     let last = events.get(events.len() - 1).unwrap();
     assert_eq!(last.0, client.address);
 
@@ -616,13 +638,13 @@ fn test_event_emitted_on_each_transition() {
         &FLIGHT_DATE,
         &FlightStatus::ToBeSettledOnTime,
     );
-    let events = env.events().all();
+    let events = collect_events(&env);
     let last = events.get(events.len() - 1).unwrap();
     assert_eq!(last.0, client.address);
 
     // Settled → check event
     client.set_settled(&controller, &fid, &FLIGHT_DATE);
-    let events = env.events().all();
+    let events = collect_events(&env);
     let last = events.get(events.len() - 1).unwrap();
     assert_eq!(last.0, client.address);
 }

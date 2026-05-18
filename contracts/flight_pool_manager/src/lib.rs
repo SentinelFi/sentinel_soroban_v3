@@ -220,9 +220,12 @@ impl FlightPoolManager {
         let usdc = token::Client::new(e, &usdc_addr);
         usdc.transfer(&e.current_contract_address(), &owner, &amount);
 
-        e.storage()
-            .instance()
-            .set(&PoolKey::RecoveredBalance, &(recovered - amount));
+        e.storage().instance().set(
+            &PoolKey::RecoveredBalance,
+            &recovered
+                .checked_sub(amount)
+                .expect("subtraction underflow"),
+        );
 
         RecoveredWithdrawn { owner, amount }.publish(e);
     }
@@ -311,7 +314,10 @@ impl FlightPoolManager {
             .persistent()
             .extend_ttl(&buyer_key, BUYER_TTL_LEDGERS, BUYER_TTL_LEDGERS);
 
-        cfg.buyer_count += 1;
+        cfg.buyer_count = cfg
+            .buyer_count
+            .checked_add(1)
+            .expect("addition overflow");
         e.storage().persistent().set(&cfg_key, &cfg);
         extend_flight_ttl(e, &flight_id, date);
 
@@ -345,7 +351,10 @@ impl FlightPoolManager {
         prune_active_list(e, &flight_id, date);
 
         if cfg.buyer_count > 0 {
-            let total_premium = cfg.premium * (cfg.buyer_count as i128);
+            let total_premium = cfg
+                .premium
+                .checked_mul(cfg.buyer_count as i128)
+                .expect("multiplication overflow");
             let usdc_addr: Address = e.storage().instance().get(&PoolKey::UsdcToken).unwrap();
             let vault_addr: Address = e.storage().instance().get(&PoolKey::RiskVault).unwrap();
 
@@ -476,7 +485,10 @@ impl FlightPoolManager {
             .persistent()
             .extend_ttl(&claimed_key, BUYER_TTL_LEDGERS, BUYER_TTL_LEDGERS);
 
-        cfg.claimed_count += 1;
+        cfg.claimed_count = cfg
+            .claimed_count
+            .checked_add(1)
+            .expect("addition overflow");
         e.storage().persistent().set(&cfg_key, &cfg);
         extend_flight_ttl(e, &flight_id, date);
 
@@ -516,8 +528,14 @@ impl FlightPoolManager {
             "claim window still open"
         );
 
-        let unclaimed_buyers = (cfg.buyer_count - cfg.claimed_count) as i128;
-        let unclaimed = cfg.payoff * unclaimed_buyers;
+        let unclaimed_buyers = cfg
+            .buyer_count
+            .checked_sub(cfg.claimed_count)
+            .expect("subtraction underflow") as i128;
+        let unclaimed = cfg
+            .payoff
+            .checked_mul(unclaimed_buyers)
+            .expect("multiplication overflow");
         if unclaimed == 0 {
             return;
         }
@@ -527,9 +545,12 @@ impl FlightPoolManager {
             .instance()
             .get(&PoolKey::RecoveredBalance)
             .unwrap_or(0);
-        e.storage()
-            .instance()
-            .set(&PoolKey::RecoveredBalance, &(recovered + unclaimed));
+        e.storage().instance().set(
+            &PoolKey::RecoveredBalance,
+            &recovered
+                .checked_add(unclaimed)
+                .expect("addition overflow"),
+        );
 
         // Mark fully-swept by setting claimed_count = buyer_count so re-entry
         // computes unclaimed = 0. No separate Swept flag needed.

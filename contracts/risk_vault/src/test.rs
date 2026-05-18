@@ -1,5 +1,30 @@
 use super::*;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, Env, Symbol};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Events as _, testutils::Ledger, Env, Symbol, TryFromVal,
+    Val, Vec as SVec,
+};
+
+// Decode the testutils ContractEvents wrapper (soroban-sdk 25+) back into the
+// pre-25 `(Address, Vec<Val>, Val)` tuple shape the assertions below rely on.
+fn collect_events(env: &Env) -> SVec<(Address, SVec<Val>, Val)> {
+    use soroban_sdk::xdr::{ContractEventBody, ScAddress, ScVal};
+    let mut out: SVec<(Address, SVec<Val>, Val)> = SVec::new(env);
+    for e in env.events().all().events() {
+        let cid = e.contract_id.clone().unwrap();
+        let addr =
+            Address::try_from_val(env, &ScVal::Address(ScAddress::Contract(cid))).unwrap();
+        let body = match &e.body {
+            ContractEventBody::V0(b) => b,
+        };
+        let mut topics: SVec<Val> = SVec::new(env);
+        for sv in body.topics.iter() {
+            topics.push_back(Val::try_from_val(env, sv).unwrap());
+        }
+        let data = Val::try_from_val(env, &body.data).unwrap();
+        out.push_back((addr, topics, data));
+    }
+    out
+}
 
 fn setup() -> (Env, RiskVaultClient<'static>, Address, Address, Address) {
     let env = Env::default();
@@ -301,10 +326,8 @@ fn count_events_with_topic(
     prefix0: Symbol,
     prefix1: Symbol,
 ) -> u32 {
-    use soroban_sdk::testutils::Events as _;
-    use soroban_sdk::TryFromVal;
     let mut count: u32 = 0;
-    for (event_addr, topics, _data) in env.events().all().iter() {
+    for (event_addr, topics, _data) in collect_events(env).iter() {
         if event_addr != *contract_addr {
             continue;
         }
@@ -495,7 +518,6 @@ fn test_snapshot_expires_after_30_days() {
 
 #[test]
 fn test_snapshot_emits_no_event() {
-    use soroban_sdk::testutils::Events as _;
     let (env, client, _owner, _controller, depositor) = setup();
     client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
 
@@ -506,7 +528,7 @@ fn test_snapshot_emits_no_event() {
     // event family for snapshots (they're not in the indexer pipeline).
     // The most-recent invocation's event log should be empty for the
     // snapshot path.
-    let events = env.events().all();
+    let events = collect_events(&env);
     let mut snapshot_events = 0u32;
     for (event_addr, _topics, _data) in events.iter() {
         if event_addr == client.address {

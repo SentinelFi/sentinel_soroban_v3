@@ -55,7 +55,7 @@ fn buy_path_emits_full_chain() {
 // =========================================================================
 
 #[test]
-fn classify_emits_FlightClassified_and_oracle_status_event() {
+fn classify_emits_flight_classified_and_oracle_status_event() {
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);
     t.buy(&traveler);

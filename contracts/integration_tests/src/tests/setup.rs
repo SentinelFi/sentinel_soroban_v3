@@ -1,7 +1,29 @@
 use soroban_sdk::{
-    symbol_short, testutils::Address as _, testutils::Ledger as _, token, Address, Env, Symbol,
-    TryFromVal,
+    symbol_short, testutils::Address as _, testutils::Events as _, testutils::Ledger as _, token,
+    Address, Env, Symbol, TryFromVal, Val, Vec as SVec,
 };
+
+// Decode the testutils ContractEvents wrapper (soroban-sdk 25+) back into the
+// pre-25 `(Address, Vec<Val>, Val)` tuple shape the helpers below rely on.
+fn collect_events(env: &Env) -> SVec<(Address, SVec<Val>, Val)> {
+    use soroban_sdk::xdr::{ContractEventBody, ScAddress, ScVal};
+    let mut out: SVec<(Address, SVec<Val>, Val)> = SVec::new(env);
+    for e in env.events().all().events() {
+        let cid = e.contract_id.clone().unwrap();
+        let addr =
+            Address::try_from_val(env, &ScVal::Address(ScAddress::Contract(cid))).unwrap();
+        let body = match &e.body {
+            ContractEventBody::V0(b) => b,
+        };
+        let mut topics: SVec<Val> = SVec::new(env);
+        for sv in body.topics.iter() {
+            topics.push_back(Val::try_from_val(env, sv).unwrap());
+        }
+        let data = Val::try_from_val(env, &body.data).unwrap();
+        out.push_back((addr, topics, data));
+    }
+    out
+}
 
 pub const PREMIUM: i128 = 10_0000000; // 10 USDC (7 decimals)
 pub const PAYOFF: i128 = 50_0000000; // 50 USDC
@@ -247,9 +269,8 @@ pub fn count_events_with_topic(
     prefix0: Symbol,
     prefix1: Symbol,
 ) -> u32 {
-    use soroban_sdk::testutils::Events as _;
     let mut count: u32 = 0;
-    for (event_addr, topics, _data) in env.events().all().iter() {
+    for (event_addr, topics, _data) in collect_events(env).iter() {
         if event_addr != *addr {
             continue;
         }
@@ -271,9 +292,8 @@ pub fn count_events_with_topic(
 /// topic prefix (Phase 3-style: `topics = ["register"]` etc.).
 #[allow(dead_code)]
 pub fn count_events_with_single_prefix(env: &Env, addr: &Address, prefix: Symbol) -> u32 {
-    use soroban_sdk::testutils::Events as _;
     let mut count: u32 = 0;
-    for (event_addr, topics, _data) in env.events().all().iter() {
+    for (event_addr, topics, _data) in collect_events(env).iter() {
         if event_addr != *addr {
             continue;
         }

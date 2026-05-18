@@ -156,9 +156,10 @@ impl RiskVault {
     pub fn deposit(e: &Env, assets: i128, receiver: Address, from: Address, operator: Address) -> i128 {
         let shares = Vault::deposit(e, assets, receiver, from, operator);
         let tma = Self::get_total_managed_assets(e);
-        e.storage()
-            .instance()
-            .set(&VaultKey::TotalManagedAssets, &(tma + assets));
+        e.storage().instance().set(
+            &VaultKey::TotalManagedAssets,
+            &tma.checked_add(assets).expect("addition overflow"),
+        );
         shares
     }
 
@@ -166,18 +167,20 @@ impl RiskVault {
         assert!(assets <= Self::get_free_capital(e), "exceeds free capital");
         let shares = Vault::withdraw(e, assets, receiver, owner, operator);
         let tma = Self::get_total_managed_assets(e);
-        e.storage()
-            .instance()
-            .set(&VaultKey::TotalManagedAssets, &(tma - assets));
+        e.storage().instance().set(
+            &VaultKey::TotalManagedAssets,
+            &tma.checked_sub(assets).expect("subtraction underflow"),
+        );
         shares
     }
 
     pub fn mint_shares(e: &Env, shares: i128, receiver: Address, from: Address, operator: Address) -> i128 {
         let assets = Vault::mint(e, shares, receiver, from, operator);
         let tma = Self::get_total_managed_assets(e);
-        e.storage()
-            .instance()
-            .set(&VaultKey::TotalManagedAssets, &(tma + assets));
+        e.storage().instance().set(
+            &VaultKey::TotalManagedAssets,
+            &tma.checked_add(assets).expect("addition overflow"),
+        );
         assets
     }
 
@@ -186,9 +189,11 @@ impl RiskVault {
         assert!(assets <= Self::get_free_capital(e), "exceeds free capital");
         let actual_assets = Vault::redeem(e, shares, receiver, owner, operator);
         let tma = Self::get_total_managed_assets(e);
-        e.storage()
-            .instance()
-            .set(&VaultKey::TotalManagedAssets, &(tma - actual_assets));
+        e.storage().instance().set(
+            &VaultKey::TotalManagedAssets,
+            &tma.checked_sub(actual_assets)
+                .expect("subtraction underflow"),
+        );
         actual_assets
     }
 
@@ -262,10 +267,11 @@ impl RiskVault {
         assert!(amount > 0, "amount must be positive");
         let locked = Self::get_locked_capital(e);
         let tma = Self::get_total_managed_assets(e);
-        assert!(locked + amount <= tma, "would exceed total managed assets");
+        let new_locked = locked.checked_add(amount).expect("addition overflow");
+        assert!(new_locked <= tma, "would exceed total managed assets");
         e.storage()
             .instance()
-            .set(&VaultKey::LockedCapital, &(locked + amount));
+            .set(&VaultKey::LockedCapital, &new_locked);
     }
 
     pub fn decrease_locked(e: &Env, controller: Address, amount: i128) {
@@ -273,18 +279,20 @@ impl RiskVault {
         assert!(amount > 0, "amount must be positive");
         let locked = Self::get_locked_capital(e);
         assert!(amount <= locked, "would go negative");
-        e.storage()
-            .instance()
-            .set(&VaultKey::LockedCapital, &(locked - amount));
+        e.storage().instance().set(
+            &VaultKey::LockedCapital,
+            &locked.checked_sub(amount).expect("subtraction underflow"),
+        );
     }
 
     pub fn record_premium_income(e: &Env, controller: Address, amount: i128) {
         require_controller(e, &controller);
         assert!(amount > 0, "amount must be positive");
         let tma = Self::get_total_managed_assets(e);
-        e.storage()
-            .instance()
-            .set(&VaultKey::TotalManagedAssets, &(tma + amount));
+        e.storage().instance().set(
+            &VaultKey::TotalManagedAssets,
+            &tma.checked_add(amount).expect("addition overflow"),
+        );
     }
 
     pub fn send_payout(e: &Env, controller: Address, to: Address, amount: i128) {
@@ -296,9 +304,10 @@ impl RiskVault {
         let usdc = token::Client::new(e, &Vault::query_asset(e));
         usdc.transfer(&e.current_contract_address(), &to, &amount);
 
-        e.storage()
-            .instance()
-            .set(&VaultKey::TotalManagedAssets, &(tma - amount));
+        e.storage().instance().set(
+            &VaultKey::TotalManagedAssets,
+            &tma.checked_sub(amount).expect("subtraction underflow"),
+        );
     }
 
     pub fn process_withdrawal_queue(e: &Env, controller: Address) {
@@ -334,7 +343,7 @@ impl RiskVault {
             let owner = request.owner.clone();
             let key = VaultKey::ClaimableBalance(owner.clone());
             let claimable: i128 = e.storage().persistent().get(&key).unwrap_or(0);
-            let new_balance = claimable + assets;
+            let new_balance = claimable.checked_add(assets).expect("addition overflow");
             e.storage().persistent().set(&key, &new_balance);
 
             // Phase 8 — extend TTL on every credit + emit indexer-feeding event
@@ -352,9 +361,11 @@ impl RiskVault {
             }
             .publish(e);
 
-            remaining_free -= assets;
-            tma -= assets;
-            processed += 1;
+            remaining_free = remaining_free
+                .checked_sub(assets)
+                .expect("subtraction underflow");
+            tma = tma.checked_sub(assets).expect("subtraction underflow");
+            processed = processed.checked_add(1).expect("addition overflow");
         }
 
         if processed > 0 {
@@ -501,18 +512,26 @@ impl RiskVault {
             .unwrap_or(0);
 
         // No-op if already snapshotted today (safe to call repeatedly)
-        if last != 0 && now < last + SECONDS_PER_DAY {
+        if last != 0
+            && now < last
+                .checked_add(SECONDS_PER_DAY)
+                .expect("addition overflow")
+        {
             return;
         }
 
         let total_supply = Base::total_supply(e);
         let price = if total_supply > 0 {
-            Vault::total_assets(e) * 10_000_000i128 / total_supply
+            Vault::total_assets(e)
+                .checked_mul(10_000_000i128)
+                .expect("multiplication overflow")
+                .checked_div(total_supply)
+                .expect("division by zero")
         } else {
             10_000_000i128
         };
 
-        let day = now / SECONDS_PER_DAY;
+        let day = now.checked_div(SECONDS_PER_DAY).expect("division by zero");
         // Phase 8: SnapshotPrice moved to Temporary storage with a 30-day
         // TTL — old snapshots auto-delete with no archival rent. Historical
         // analytics are off-chain via events.
@@ -556,7 +575,7 @@ impl RiskVault {
     pub fn get_free_capital(e: &Env) -> i128 {
         let tma = Self::get_total_managed_assets(e);
         let locked = Self::get_locked_capital(e);
-        tma - locked
+        tma.checked_sub(locked).expect("subtraction underflow")
     }
 
     pub fn get_controller(e: &Env) -> Address {
