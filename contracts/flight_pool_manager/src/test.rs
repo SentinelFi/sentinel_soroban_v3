@@ -734,3 +734,9 @@ fn test_sweep_emits_event_only_when_unclaimed() {
     t.pool.sweep_expired(&flight_a(), &FLIGHT_DATE);
     assert_eq!(count_pool_events(&t, symbol_short!("sweep")), 1);
 }
+
+#[test]
+fn test_extend_ttl_is_callable() {
+    let t = setup();
+    t.pool.extend_ttl();
+}

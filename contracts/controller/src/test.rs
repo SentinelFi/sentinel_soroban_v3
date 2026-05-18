@@ -816,3 +816,9 @@ fn test_end_to_end_on_time_lifecycle_no_payout() {
         .unwrap();
     assert_eq!(cfg.status, flight_pool_manager::SettlementStatus::SettledOnTime);
 }
+
+#[test]
+fn test_extend_ttl_is_callable() {
+    let t = setup();
+    t.ctrl.extend_ttl();
+}

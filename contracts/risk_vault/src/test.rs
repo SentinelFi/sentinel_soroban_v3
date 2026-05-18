@@ -536,3 +536,68 @@ fn test_snapshot_emits_no_event() {
     }
     assert_eq!(snapshot_events, 0);
 }
+
+// =========================================================================
+// OZ Vault wrapper coverage (preview_*, convert_*, max_*, mint_shares)
+// =========================================================================
+
+#[test]
+fn test_vault_views_before_and_after_deposit() {
+    let (_env, client, _owner, _controller, depositor) = setup();
+
+    // Empty vault — initial price is 1:1 modulo decimals_offset.
+    assert_eq!(client.max_deposit(&depositor), i128::MAX);
+    assert_eq!(client.max_mint(&depositor), i128::MAX);
+    assert_eq!(client.max_withdraw(&depositor), 0);
+    assert_eq!(client.max_redeem(&depositor), 0);
+    assert_eq!(client.convert_to_shares(&1_000_0000000), 1_000_0000000_000);
+    assert_eq!(client.convert_to_assets(&1_000_0000000_000), 1_000_0000000);
+    assert_eq!(client.preview_deposit(&1_000_0000000), 1_000_0000000_000);
+    assert_eq!(client.preview_mint(&1_000_0000000_000), 1_000_0000000);
+    assert_eq!(client.preview_withdraw(&500_0000000), 500_0000000_000);
+    assert_eq!(client.preview_redeem(&500_0000000_000), 500_0000000);
+
+    // After deposit, max_withdraw / max_redeem reflect the depositor's stake.
+    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    assert!(client.max_withdraw(&depositor) > 0);
+    assert_eq!(client.max_redeem(&depositor), shares);
+}
+
+#[test]
+fn test_mint_shares_pulls_assets_from_caller() {
+    let (env, client, _owner, _controller, depositor) = setup();
+    let usdc = token::Client::new(&env, &client.asset());
+
+    let initial_usdc = usdc.balance(&depositor);
+    let target_shares = 100_0000000_000i128;
+    let assets_in = client.mint_shares(&target_shares, &depositor, &depositor, &depositor);
+
+    assert!(assets_in > 0, "mint_shares should pull non-zero assets");
+    assert_eq!(usdc.balance(&depositor), initial_usdc - assets_in);
+    assert_eq!(client.balance(&depositor), target_shares);
+    assert_eq!(client.get_total_managed_assets(), assets_in);
+}
+
+#[test]
+fn test_max_withdraw_clamped_by_locked_capital() {
+    let (_env, client, _owner, controller, depositor) = setup();
+
+    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    // Before locking, max_withdraw == full deposit.
+    assert_eq!(client.max_withdraw(&depositor), 1_000_0000000);
+
+    // Lock 600 USDC; max_withdraw clamps to remaining free capital.
+    client.increase_locked(&controller, &600_0000000);
+    assert_eq!(client.max_withdraw(&depositor), 400_0000000);
+    assert_eq!(client.get_free_capital(), 400_0000000);
+}
+
+// =========================================================================
+// extend_ttl (cron safety net)
+// =========================================================================
+
+#[test]
+fn test_extend_ttl_is_callable() {
+    let (_env, client, _owner, _controller, _depositor) = setup();
+    client.extend_ttl();
+}

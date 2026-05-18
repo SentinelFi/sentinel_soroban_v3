@@ -858,3 +858,9 @@ fn test_whitelist_existing_route_overwrites_terms() {
         panic!("expected Active");
     }
 }
+
+#[test]
+fn test_extend_ttl_is_callable() {
+    let (_env, client, _owner, _addr) = setup();
+    client.extend_ttl();
+}

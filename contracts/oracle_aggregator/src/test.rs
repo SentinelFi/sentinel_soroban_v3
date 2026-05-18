@@ -648,3 +648,9 @@ fn test_event_emitted_on_each_transition() {
     let last = events.get(events.len() - 1).unwrap();
     assert_eq!(last.0, client.address);
 }
+
+#[test]
+fn test_extend_ttl_is_callable() {
+    let (_env, client, _owner, _oracle, _controller) = setup();
+    client.extend_ttl();
+}
