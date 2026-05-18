@@ -115,6 +115,24 @@ impl RiskVault {
                 );
             }
             RecoveryMode::Transfer => {
+                // Gate: user must have a current ClaimableBalance >= amount.
+                // The credit was recorded at process_withdrawal_queue time
+                // (which already decremented TMA), so Transfer just settles
+                // an existing obligation — it must not exceed it.
+                let key = VaultKey::ClaimableBalance(user.clone());
+                let existing: i128 = e.storage().persistent().get(&key).unwrap_or(0);
+                assert!(amount <= existing, "amount exceeds claimable balance");
+
+                // CEI: write state before the external transfer.
+                let remaining = existing
+                    .checked_sub(amount)
+                    .expect("subtraction underflow");
+                if remaining == 0 {
+                    e.storage().persistent().remove(&key);
+                } else {
+                    e.storage().persistent().set(&key, &remaining);
+                }
+
                 let usdc = token::Client::new(e, &Vault::query_asset(e));
                 usdc.transfer(&e.current_contract_address(), &user, &amount);
             }

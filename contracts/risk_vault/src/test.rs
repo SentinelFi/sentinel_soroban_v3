@@ -428,6 +428,10 @@ fn test_recover_uncollected_transfer_moves_usdc() {
 
     // Seed vault with USDC so the transfer has funds to move.
     usdc_admin.mint(&client.address, &200_0000000);
+
+    // Seed a claimable balance via Recredit; Transfer is now gated on this.
+    client.recover_uncollected(&depositor, &50_0000000, &RecoveryMode::Recredit);
+
     let vault_balance_before = usdc.balance(&client.address);
     let user_balance_before = usdc.balance(&depositor);
 
@@ -444,10 +448,33 @@ fn test_recover_uncollected_transfer_moves_usdc() {
         ) >= 1
     );
 
-    // Vault USDC down by 50, user up by 50, no `ClaimableBalance` storage write.
+    // Vault USDC down by 50, user up by 50, claimable cleared.
     assert_eq!(usdc.balance(&client.address), vault_balance_before - 50_0000000);
     assert_eq!(usdc.balance(&depositor), user_balance_before + 50_0000000);
     assert_eq!(client.get_claimable_balance(&depositor), 0);
+}
+
+#[test]
+#[should_panic(expected = "amount exceeds claimable balance")]
+fn test_recover_uncollected_transfer_without_prior_credit_panics() {
+    let (env, client, _owner, _controller, depositor) = setup();
+    let usdc_admin = token::StellarAssetClient::new(&env, &client.asset());
+
+    // Vault has USDC but the user was never credited — Transfer must refuse.
+    usdc_admin.mint(&client.address, &200_0000000);
+    client.recover_uncollected(&depositor, &50_0000000, &RecoveryMode::Transfer);
+}
+
+#[test]
+#[should_panic(expected = "amount exceeds claimable balance")]
+fn test_recover_uncollected_transfer_exceeding_credit_panics() {
+    let (env, client, _owner, _controller, depositor) = setup();
+    let usdc_admin = token::StellarAssetClient::new(&env, &client.asset());
+    usdc_admin.mint(&client.address, &200_0000000);
+
+    // Credit is 50, attempt to transfer 51 must refuse.
+    client.recover_uncollected(&depositor, &50_0000000, &RecoveryMode::Recredit);
+    client.recover_uncollected(&depositor, &51_0000000, &RecoveryMode::Transfer);
 }
 
 #[test]

@@ -137,12 +137,18 @@ fn recover_uncollected_transfer_path() {
     let usdc_admin = token::StellarAssetClient::new(&t.env, &t.usdc_addr);
     usdc_admin.mint(&t.vault_addr, &200_0000000);
 
+    // Transfer is gated on a prior credit; seed via Recredit first.
+    t.vault.recover_uncollected(
+        &user,
+        &50_0000000,
+        &risk_vault::RecoveryMode::Recredit,
+    );
     t.vault.recover_uncollected(
         &user,
         &50_0000000,
         &risk_vault::RecoveryMode::Transfer,
     );
-    // Direct transfer; no claimable balance.
+    // Credit settled; balance cleared.
     assert_eq!(t.vault.get_claimable_balance(&user), 0);
     assert_eq!(t.usdc.balance(&user), 50_0000000);
 }

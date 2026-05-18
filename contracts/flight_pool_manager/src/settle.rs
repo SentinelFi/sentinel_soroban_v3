@@ -2,7 +2,7 @@ use soroban_sdk::{contractimpl, token, Address, Env, Symbol};
 
 use crate::auth::require_controller;
 use crate::events::FlightSettled;
-use crate::storage::{extend_flight_ttl, prune_active_list, PoolKey};
+use crate::storage::{extend_flight_ttl_to, prune_active_list, PoolKey};
 use crate::{FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient, SettlementStatus};
 
 #[contractimpl]
@@ -104,7 +104,7 @@ fn settle_with_claim_window(
     cfg.status = new_status.clone();
     cfg.claim_expiry = claim_expiry;
     e.storage().persistent().set(&cfg_key, &cfg);
-    extend_flight_ttl(e, &flight_id, date);
+    extend_flight_ttl_to(e, &flight_id, date, claim_expiry);
     prune_active_list(e, &flight_id, date);
 
     FlightSettled {

@@ -170,9 +170,14 @@ fn vault_recovered_recredit_and_transfer_modes_emit_correct_topics() {
         "expected vault.recovered event for Recredit mode"
     );
 
-    // Transfer path (seed vault with USDC first)
+    // Transfer path (seed vault with USDC and prior credit first)
     let usdc_admin = token::StellarAssetClient::new(&t.env, &t.usdc_addr);
     usdc_admin.mint(&t.vault_addr, &50_0000000);
+    t.vault.recover_uncollected(
+        &user_b,
+        &50_0000000,
+        &risk_vault::RecoveryMode::Recredit,
+    );
     t.vault.recover_uncollected(
         &user_b,
         &50_0000000,
