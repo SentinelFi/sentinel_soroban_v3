@@ -9,7 +9,7 @@ members = [
     "controller",
     "integration_tests",
 ]
-exclude = ["target"]
+exclude = ["target", "risk_vault/fuzz", "oracle_aggregator/fuzz"]
 
 [workspace.dependencies]
 soroban-sdk = "25.3.1"

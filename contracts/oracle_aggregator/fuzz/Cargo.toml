@@ -1,0 +1,22 @@
+[package]
+name = "oracle_aggregator-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+oracle_aggregator = { path = ".." }
+soroban-sdk = { version = "25.3.1", features = ["testutils"] }
+
+[[bin]]
+name = "state_machine"
+path = "fuzz_targets/state_machine.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
