@@ -1,4 +1,4 @@
-// Group 7 — Governance flows (Phase 4 surface, end-to-end).
+// Group 7 — Governance flows (end-to-end).
 
 use super::setup::*;
 use soroban_sdk::{symbol_short, testutils::Address as _, Address};

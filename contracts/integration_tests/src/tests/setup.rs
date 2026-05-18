@@ -62,7 +62,7 @@ pub struct TestEnv {
 impl TestEnv {
     pub fn new() -> Self {
         let env = Env::default();
-        // Phase 7 / Phase 10 — required for the 3-deep contract auth chain
+        // Required for the 3-deep contract auth chain
         // (keeper -> controller -> pool -> vault). Plain mock_all_auths only
         // handles root-frame auth.
         env.mock_all_auths_allowing_non_root_auth();
@@ -103,7 +103,7 @@ impl TestEnv {
         );
         let pool = flight_pool_manager::FlightPoolManagerClient::new(&env, &pool_addr);
 
-        // Controller — Phase 7 9-arg constructor
+        // Controller
         let ctrl_addr = env.register(
             controller::Controller,
             (
@@ -289,7 +289,7 @@ pub fn count_events_with_topic(
 }
 
 /// Same as `count_events_with_topic` but for events with a single-symbol
-/// topic prefix (Phase 3-style: `topics = ["register"]` etc.).
+/// topic prefix (e.g. `topics = ["register"]`).
 #[allow(dead_code)]
 pub fn count_events_with_single_prefix(env: &Env, addr: &Address, prefix: Symbol) -> u32 {
     let mut count: u32 = 0;

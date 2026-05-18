@@ -7,7 +7,7 @@ use soroban_sdk::{symbol_short, testutils::Address as _, testutils::Ledger as _,
 const SECONDS_PER_DAY: u64 = 86_400;
 
 // =========================================================================
-// prune_settled (Phase 6)
+// prune_settled
 // =========================================================================
 
 #[test]
@@ -71,7 +71,7 @@ fn prune_settled_no_op_before_retention_window() {
 }
 
 // =========================================================================
-// sweep_expired + withdraw_recovered (Phase 3 surface)
+// sweep_expired + withdraw_recovered
 // =========================================================================
 
 #[test]
@@ -132,7 +132,7 @@ fn withdraw_recovered_by_owner() {
 }
 
 // =========================================================================
-// SnapshotPrice expiry (Phase 8)
+// SnapshotPrice expiry
 // =========================================================================
 
 #[test]
@@ -157,7 +157,7 @@ fn snapshot_expires_after_30d() {
 }
 
 // =========================================================================
-// ttl_miss diagnostic (Phase 9)
+// ttl_miss diagnostic
 // =========================================================================
 
 #[test]

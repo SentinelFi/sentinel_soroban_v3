@@ -203,8 +203,8 @@ impl FlightPoolManager {
         extend_instance_ttl(e);
     }
 
-    /// Owner withdraws funds previously credited to RecoveredBalance via
-    /// sweep_expired. Transfers USDC from the contract to the owner.
+    /// Owner withdraws funds credited to RecoveredBalance via sweep_expired.
+    /// Transfers USDC from the contract to the owner.
     #[only_owner]
     pub fn withdraw_recovered(e: &Env, amount: i128) {
         assert!(amount > 0, "amount must be positive");

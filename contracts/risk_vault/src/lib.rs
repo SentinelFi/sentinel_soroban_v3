@@ -18,10 +18,10 @@ pub enum VaultKey {
     WithdrawalQueue,
     LastSnapshotTime,
 
-    // Persistent — keyed multi-row state (TTL extended on write per Phase 8)
+    // Persistent — TTL extended on every write to prevent silent archival
     ClaimableBalance(Address),
 
-    // Temporary — short-lived keyed state (auto-deletes on TTL expiry; no archival rent)
+    // Temporary — auto-deletes on TTL expiry, no archival rent
     SnapshotPrice(u64),
 }
 
@@ -35,8 +35,8 @@ pub struct WithdrawalRequest {
 
 /// Mode for `recover_uncollected` — owner-driven manual recovery of an
 /// archived `ClaimableBalance` entry. Carried on the wire via the
-/// `vault.recovered` event so the off-chain indexer (Improvement #9) can
-/// update its `claimable_balances` table accordingly.
+/// `vault.recovered` event so the off-chain indexer can update its
+/// `claimable_balances` table accordingly.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub enum RecoveryMode {
@@ -51,12 +51,9 @@ pub enum RecoveryMode {
 
 // --- Events ---
 //
-// Three new events emitted on every `ClaimableBalance` state change.
-// Powers the off-chain indexer (Improvement #9) which maintains a list of
-// addresses with non-zero balances; that list feeds Phase 11's Cron #4
-// secondary TTL defense (footprint extension via `ExtendFootprintTTLOp`).
-// Topic prefix scheme `["vault", <action>]` matches Phase 4 / Phase 6
-// route-event family.
+// Emitted on every `ClaimableBalance` state change. Powers the off-chain
+// indexer which maintains a list of addresses with non-zero balances; that
+// list feeds the off-chain TTL cron's `ExtendFootprintTTLOp` extensions.
 
 #[contractevent(topics = ["vault", "credited"], data_format = "map")]
 pub struct Credited {
@@ -90,10 +87,10 @@ const INSTANCE_TTL_EXTEND: u32 = 535_680;
 
 /// 60 days at 5s/ledger = 60 * 24 * 60 * 12 = 1_036_800.
 /// Applied on every `ClaimableBalance(addr)` write to prevent silent archival
-/// of per-user pending USDC. Layered defense (per Improvement #3):
-/// 1. On-write extension (this constant — Phase 8).
-/// 2. Cron #4 footprint extension via off-chain indexer (Phase 11).
-/// 3. `recover_uncollected` owner manual fallback (Phase 8).
+/// of per-user pending USDC. Layered defense:
+/// 1. On-write extension (this constant).
+/// 2. Off-chain TTL cron footprint extension via the indexer.
+/// 3. `recover_uncollected` owner manual fallback.
 const CLAIMABLE_TTL_LEDGERS: u32 = 60 * 24 * 60 * 12;
 
 /// 30 days at 5s/ledger = 30 * 24 * 60 * 12 = 518_400.
@@ -346,9 +343,8 @@ impl RiskVault {
             let new_balance = claimable.checked_add(assets).expect("addition overflow");
             e.storage().persistent().set(&key, &new_balance);
 
-            // Phase 8 — extend TTL on every credit + emit indexer-feeding event
-            // so the off-chain TTL cron (Phase 11) can mirror the address into
-            // its `claimable_balances` table.
+            // Extend TTL on every credit and emit an event so the off-chain
+            // TTL cron can mirror the address into its claimable_balances table.
             e.storage().persistent().extend_ttl(
                 &key,
                 CLAIMABLE_TTL_LEDGERS,
@@ -441,9 +437,8 @@ impl RiskVault {
 
         e.storage().persistent().remove(&key);
 
-        // Phase 8 — signal balance drained so the off-chain indexer
-        // (Improvement #9) can DELETE this address from its
-        // `claimable_balances` tracker.
+        // Signal balance drained so the off-chain indexer can DELETE this
+        // address from its claimable_balances tracker.
         Collected {
             user: caller,
             amount: claimable,
@@ -462,12 +457,12 @@ impl RiskVault {
     /// - `RecoveryMode::Transfer` — directly `usdc.transfer(vault → user,
     ///   amount)`. No storage write. Use when user wants funds in hand.
     ///
-    /// Layered defense (per Improvement #3):
+    /// Layered defense:
     /// 1. On-write 60-day TTL extension (`process_withdrawal_queue`).
-    /// 2. Cron #4 `ExtendFootprintTTLOp` covering `ClaimableBalance(addr)`
-    ///    keys (Phase 11 executor work).
-    /// 3. This function (`recover_uncollected`) is layer 3 — owner manual
-    ///    fallback if 1 + 2 fail.
+    /// 2. Off-chain TTL cron `ExtendFootprintTTLOp` covering
+    ///    `ClaimableBalance(addr)` keys.
+    /// 3. This function (`recover_uncollected`) — owner manual fallback if
+    ///    layers 1 and 2 fail.
     #[only_owner]
     pub fn recover_uncollected(
         e: &Env,
@@ -532,9 +527,9 @@ impl RiskVault {
         };
 
         let day = now.checked_div(SECONDS_PER_DAY).expect("division by zero");
-        // Phase 8: SnapshotPrice moved to Temporary storage with a 30-day
-        // TTL — old snapshots auto-delete with no archival rent. Historical
-        // analytics are off-chain via events.
+        // SnapshotPrice lives in Temporary storage with a 30-day TTL — old
+        // snapshots auto-delete with no archival rent. Historical analytics
+        // are off-chain via events.
         let snap_key = VaultKey::SnapshotPrice(day);
         e.storage().temporary().set(&snap_key, &price);
         e.storage().temporary().extend_ttl(
@@ -600,9 +595,8 @@ impl RiskVault {
     }
 
     pub fn get_snapshot_price(e: &Env, day: u64) -> i128 {
-        // Temporary storage post-Phase-8 — entries older than 30 days return
-        // None (= 0). That's the desired behavior: stale snapshots aren't
-        // queryable on-chain.
+        // Temporary storage — entries older than 30 days return None (= 0).
+        // Stale snapshots are intentionally not queryable on-chain.
         e.storage()
             .temporary()
             .get(&VaultKey::SnapshotPrice(day))

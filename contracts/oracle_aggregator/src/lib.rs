@@ -409,7 +409,7 @@ impl OracleAggregator {
     // --- TTL management ---
 
     /// Extend instance TTL. Called by cron as a safety net — write functions
-    /// no longer touch instance storage, so TTL must be renewed externally.
+    /// don't touch instance storage, so TTL must be renewed externally.
     pub fn extend_ttl(e: &Env) {
         extend_instance_ttl(e);
     }

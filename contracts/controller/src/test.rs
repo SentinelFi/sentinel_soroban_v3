@@ -96,15 +96,14 @@ fn setup() -> TestEnv {
     );
     let oracle = oracle_aggregator::OracleAggregatorClient::new(&env, &oracle_addr);
 
-    // FlightPoolManager (Phase 3 singleton)
+    // FlightPoolManager
     let pool_addr = env.register(
         flight_pool_manager::FlightPoolManager,
         (&owner, &usdc_id.address(), &vault_addr),
     );
     let pool = flight_pool_manager::FlightPoolManagerClient::new(&env, &pool_addr);
 
-    // Controller (Phase 7 — new constructor signature, no recovery_pool, no
-    // flight_pool_wasm; flight_pool_manager passed in directly).
+    // Controller
     let ctrl_addr = env.register(
         Controller,
         (

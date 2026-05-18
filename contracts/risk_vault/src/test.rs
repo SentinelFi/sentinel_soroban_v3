@@ -299,13 +299,13 @@ fn test_multiple_depositors() {
 }
 
 // =========================================================================
-// Phase 8: ClaimableBalance events + recover_uncollected
+// ClaimableBalance events + recover_uncollected
 // =========================================================================
 
 const SECONDS_PER_DAY_TEST: u64 = 86_400;
 
 // Drive the standard "deposit, lock all, request withdrawal, unlock, process"
-// flow used across the Phase 8 tests below.
+// flow used across the tests below.
 fn run_credit_flow(
     env: &Env,
     client: &RiskVaultClient<'static>,
@@ -474,7 +474,7 @@ fn test_recover_uncollected_rejects_zero_amount() {
 }
 
 // =========================================================================
-// Phase 8: SnapshotPrice Persistent → Temporary
+// SnapshotPrice
 // =========================================================================
 
 #[test]
@@ -524,10 +524,9 @@ fn test_snapshot_emits_no_event() {
     env.ledger().with_mut(|li| li.timestamp = 200_000);
     client.snapshot();
 
-    // `snapshot()` is intentionally event-free — Phase 8 didn't add an
-    // event family for snapshots (they're not in the indexer pipeline).
-    // The most-recent invocation's event log should be empty for the
-    // snapshot path.
+    // `snapshot()` is intentionally event-free — snapshots aren't in the
+    // indexer pipeline. The most-recent invocation's event log should be
+    // empty for the snapshot path.
     let events = collect_events(&env);
     let mut snapshot_events = 0u32;
     for (event_addr, _topics, _data) in events.iter() {

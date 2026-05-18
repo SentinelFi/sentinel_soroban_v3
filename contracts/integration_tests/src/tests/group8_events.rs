@@ -1,8 +1,8 @@
 // Group 8 — End-to-end event chain verification.
 //
 // Each test exercises a complete protocol path and asserts the full event
-// chain that the off-chain indexer (Improvement #9) consumes. Topic-level
-// assertions only — payload deserialization is the indexer's job.
+// chain that the off-chain indexer consumes. Topic-level assertions only —
+// payload deserialization is the indexer's job.
 
 use super::setup::*;
 use soroban_sdk::{symbol_short, testutils::Address as _, token, Address};

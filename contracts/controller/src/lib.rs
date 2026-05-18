@@ -184,8 +184,7 @@ pub struct FlightSettledEvent {
 // Diagnostic warning emitted by `classify_flights` when oracle returns
 // NotInitiated for a flight in the active list — signals that FlightData
 // may have archived (or oracle hasn't fetched data yet for an overdue
-// flight). Consumed by the off-chain TTL-extender cron (Improvement #6 /
-// Phase 11 executor work).
+// flight). Consumed by the off-chain TTL-extender cron.
 #[contractevent(topics = ["warn", "ttl_miss"], data_format = "map")]
 pub struct TtlMiss {
     #[topic]
@@ -200,8 +199,8 @@ const INSTANCE_TTL_EXTEND: u32 = 535_680;
 
 // 60 days at 5s/ledger = 60 * 24 * 60 * 12 = 1_036_800. Applied on every
 // `TravelerFlights(addr)` write to keep the per-traveler index alive without
-// special cron coverage; the off-chain TTL cron (Improvement #6 / Cron #4)
-// will extend idle entries for active travelers.
+// special cron coverage; the off-chain TTL cron extends idle entries for
+// active travelers.
 const TRAVELER_FLIGHTS_TTL_LEDGERS: u32 = 60 * 24 * 60 * 12;
 
 // ─── Helpers ───
@@ -447,11 +446,11 @@ impl Controller {
 
     // ─── Classify flights (keeper-only) ───
 
-    /// Iterate the oracle's active-flight list (post-Phase-6, this is the
-    /// canonical source of in-flight registrations + a 30-day retention
-    /// window of recently-settled flights). For each Landed/Cancelled flight,
-    /// compute the settlement outcome from FlightPoolManager's locked terms
-    /// and write `ToBeSettled*` back to the oracle.
+    /// Iterate the oracle's active-flight list (the canonical source of
+    /// in-flight registrations plus a 30-day retention window of recently-
+    /// settled flights). For each Landed/Cancelled flight, compute the
+    /// settlement outcome from FlightPoolManager's locked terms and write
+    /// `ToBeSettled*` back to the oracle.
     pub fn classify_flights(e: &Env, keeper: Address) {
         require_keeper(e, &keeper);
 
@@ -501,9 +500,9 @@ impl Controller {
                     // Oracle has no data for a flight that's already in the
                     // active list — registered via buy_insurance, but oracle
                     // either hasn't fetched yet or the FlightData entry has
-                    // archived. Emit a diagnostic for the off-chain
-                    // TTL-extender cron (Improvement #6) to act on. No state
-                    // change; just a warning signal.
+                    // archived. Emit a diagnostic for the off-chain TTL-
+                    // extender cron to act on. No state change; just a
+                    // warning signal.
                     TtlMiss {
                         flight_id: flight_id.clone(),
                         date,

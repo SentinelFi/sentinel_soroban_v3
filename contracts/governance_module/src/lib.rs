@@ -128,7 +128,7 @@ fn resolve(terms: &RouteTerms, defaults: (i128, i128, u32)) -> ResolvedTerms {
 // --- Events ---
 //
 // Topic prefix scheme: ["route", <action>] for route-lifecycle events,
-// ["gov", <action>] for governance-meta events. Matches Improvement #4.
+// ["gov", <action>] for governance-meta events.
 //
 // route.listed / route.updated carry Option<T> values (NOT resolved):
 // indexers mirror option-ness in their schema (NULL = UseDefault) and

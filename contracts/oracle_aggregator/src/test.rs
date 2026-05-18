@@ -417,7 +417,7 @@ fn test_active_flights_not_removed_on_settlement() {
     assert_eq!(settled.len(), 1);
 }
 
-// --- Delayed prune tests (Phase 6) ---
+// --- Delayed prune tests ---
 
 const SECONDS_PER_DAY: u64 = 86_400;
 const RETENTION_SECONDS: u64 = 30 * SECONDS_PER_DAY;
