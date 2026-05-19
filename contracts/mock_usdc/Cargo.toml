@@ -19,3 +19,6 @@ soroban-sdk = { workspace = true, features = ["testutils"] }
 
 [package.metadata.stellar]
 cargo_inherit = true
+
+[lints]
+workspace = true

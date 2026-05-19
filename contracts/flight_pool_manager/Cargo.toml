@@ -22,3 +22,6 @@ mock_usdc = { path = "../mock_usdc" }
 
 [package.metadata.stellar]
 cargo_inherit = true
+
+[lints]
+workspace = true

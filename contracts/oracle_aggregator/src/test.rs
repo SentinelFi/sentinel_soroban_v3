@@ -13,9 +13,7 @@ fn collect_events(env: &Env) -> Vec<(Address, Vec<Val>, Val)> {
         let cid = e.contract_id.clone().unwrap();
         let addr =
             Address::try_from_val(env, &ScVal::Address(ScAddress::Contract(cid))).unwrap();
-        let body = match &e.body {
-            ContractEventBody::V0(b) => b,
-        };
+        let ContractEventBody::V0(body) = &e.body;
         let mut topics: Vec<Val> = Vec::new(env);
         for sv in body.topics.iter() {
             topics.push_back(Val::try_from_val(env, sv).unwrap());
@@ -661,7 +659,7 @@ fn test_event_emitted_on_each_transition() {
     // Register → check event
     client.register_flight(&controller, &fid, &FLIGHT_DATE);
     let events = collect_events(&env);
-    assert!(events.len() > 0);
+    assert!(!events.is_empty());
 
     // Active → check event
     client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);

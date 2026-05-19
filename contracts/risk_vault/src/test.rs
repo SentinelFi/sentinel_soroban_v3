@@ -13,9 +13,7 @@ fn collect_events(env: &Env) -> SVec<(Address, SVec<Val>, Val)> {
         let cid = e.contract_id.clone().unwrap();
         let addr =
             Address::try_from_val(env, &ScVal::Address(ScAddress::Contract(cid))).unwrap();
-        let body = match &e.body {
-            ContractEventBody::V0(b) => b,
-        };
+        let ContractEventBody::V0(body) = &e.body;
         let mut topics: SVec<Val> = SVec::new(env);
         for sv in body.topics.iter() {
             topics.push_back(Val::try_from_val(env, sv).unwrap());
@@ -215,7 +213,7 @@ fn test_withdrawal_queue_request_process_collect() {
 fn test_pause_and_unpause_gate_state_mutations() {
     // Regression for H-03: paused contract rejects deposit / withdrawal /
     // queue ops; unpausing restores normal flow. Owner-only gate.
-    let (env, client, owner, controller, depositor) = setup();
+    let (_env, client, owner, controller, depositor) = setup();
 
     assert!(!client.paused());
     client.pause(&owner);

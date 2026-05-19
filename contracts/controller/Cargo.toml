@@ -24,3 +24,6 @@ flight_pool_manager = { path = "../flight_pool_manager" }
 
 [package.metadata.stellar]
 cargo_inherit = true
+
+[lints]
+workspace = true

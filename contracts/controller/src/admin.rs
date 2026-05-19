@@ -11,7 +11,7 @@ use crate::{Controller, ControllerArgs, ControllerClient};
 
 fn assert_solvency_ratio(ratio: u32) {
     assert!(
-        ratio >= MIN_SOLVENCY_RATIO && ratio <= MAX_SOLVENCY_RATIO,
+        (MIN_SOLVENCY_RATIO..=MAX_SOLVENCY_RATIO).contains(&ratio),
         "solvency_ratio out of bounds",
     );
 }
@@ -25,7 +25,7 @@ fn assert_min_lead_time(seconds: u64) {
 
 fn assert_claim_expiry_window(seconds: u64) {
     assert!(
-        seconds >= MIN_CLAIM_EXPIRY_WINDOW_SECS && seconds <= MAX_CLAIM_EXPIRY_WINDOW_SECS,
+        (MIN_CLAIM_EXPIRY_WINDOW_SECS..=MAX_CLAIM_EXPIRY_WINDOW_SECS).contains(&seconds),
         "claim_expiry_window out of bounds",
     );
 }

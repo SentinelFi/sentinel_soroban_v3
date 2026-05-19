@@ -12,9 +12,7 @@ fn collect_events(env: &Env) -> SVec<(Address, SVec<Val>, Val)> {
         let cid = e.contract_id.clone().unwrap();
         let addr =
             Address::try_from_val(env, &ScVal::Address(ScAddress::Contract(cid))).unwrap();
-        let body = match &e.body {
-            ContractEventBody::V0(b) => b,
-        };
+        let ContractEventBody::V0(body) = &e.body;
         let mut topics: SVec<Val> = SVec::new(env);
         for sv in body.topics.iter() {
             topics.push_back(Val::try_from_val(env, sv).unwrap());

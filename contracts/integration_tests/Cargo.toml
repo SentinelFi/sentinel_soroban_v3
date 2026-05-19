@@ -16,3 +16,6 @@ governance_module = { path = "../governance_module" }
 risk_vault = { path = "../risk_vault" }
 oracle_aggregator = { path = "../oracle_aggregator" }
 flight_pool_manager = { path = "../flight_pool_manager" }
+
+[lints]
+workspace = true
