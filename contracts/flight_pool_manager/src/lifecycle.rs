@@ -8,7 +8,11 @@ use crate::{FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolMa
 
 #[contractimpl]
 impl FlightPoolManager {
-    /// Register a new flight on first purchase. Stores locked terms.
+    /// Register a flight. Idempotent: re-registering the same
+    /// `(flight_id, date)` is a no-op when the new terms match the existing
+    /// entry, and panics when they would diverge. This lets two travelers
+    /// race to the first purchase of a new route in the same ledger without
+    /// the second tx reverting (audit M-05).
     #[when_not_paused]
     pub fn register_flight(
         e: &Env,
@@ -24,8 +28,19 @@ impl FlightPoolManager {
         assert!(payoff > 0, "payoff must be positive");
 
         let key = PoolKey::FlightConfig(flight_id.clone(), date);
-        let existing: Option<FlightConfig> = e.storage().persistent().get(&key);
-        assert!(existing.is_none(), "flight already registered");
+        if let Some(existing) = e.storage().persistent().get::<_, FlightConfig>(&key) {
+            // Terms must match — protects against admin route updates between
+            // a buyer's tx submission and inclusion changing locked terms
+            // under their feet.
+            assert!(
+                existing.premium == premium
+                    && existing.payoff == payoff
+                    && existing.delay_hours == delay_hours,
+                "flight already registered with different terms",
+            );
+            extend_flight_ttl(e, &flight_id, date);
+            return;
+        }
 
         let cfg = FlightConfig {
             premium,

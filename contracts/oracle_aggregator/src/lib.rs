@@ -152,14 +152,18 @@ impl OracleAggregator {
 
     // --- Controller-only write functions ---
 
-    /// Register a new flight. Creates entry as NotInitiated and adds to active list.
+    /// Register a flight. Idempotent: re-registering the same
+    /// `(flight_id, date)` is a no-op (audit M-05) — only the TTL is
+    /// extended, no event is re-emitted.
     #[when_not_paused]
     pub fn register_flight(e: &Env, controller: Address, flight_id: Symbol, date: u64) {
         require_controller(e, &controller);
 
         let key = OracleKey::FlightData(flight_id.clone(), date);
-        let existing: Option<FlightData> = e.storage().persistent().get(&key);
-        assert!(existing.is_none(), "flight already registered");
+        if e.storage().persistent().has(&key) {
+            extend_flight_ttl(e, &flight_id, date);
+            return;
+        }
 
         let data = FlightData {
             status: FlightStatus::NotInitiated,

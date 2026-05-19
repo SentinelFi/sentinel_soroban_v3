@@ -48,23 +48,20 @@ impl Controller {
             .expect("addition overflow");
         assert!(date > earliest_allowed, "departure too soon");
 
-        // 4. Look up flight in the singleton FlightPoolManager. If missing,
-        //    register it (locks terms) AND register the same (flight_id, date)
-        //    in the oracle so the off-chain fetcher can populate
-        //    estimated/actual arrival times.
+        // 4. Register flight on the pool + oracle. Both calls are idempotent
+        //    (audit M-05): no precheck needed, no revert if a parallel buyer
+        //    in the same ledger registered first.
         let pool = FlightPoolManagerClient::new(e, &pool_addr);
-        if pool.get_flight_config(&flight_id, &date).is_none() {
-            pool.register_flight(
-                &controller_addr,
-                &flight_id,
-                &date,
-                &terms.premium,
-                &terms.payoff,
-                &terms.delay_hours,
-            );
-            let oracle = OracleClient::new(e, &oracle_addr);
-            oracle.register_flight(&controller_addr, &flight_id, &date);
-        }
+        pool.register_flight(
+            &controller_addr,
+            &flight_id,
+            &date,
+            &terms.premium,
+            &terms.payoff,
+            &terms.delay_hours,
+        );
+        let oracle = OracleClient::new(e, &oracle_addr);
+        oracle.register_flight(&controller_addr, &flight_id, &date);
 
         // 5. Solvency check.
         let vault = VaultClient::new(e, &vault_addr);

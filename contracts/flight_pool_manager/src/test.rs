@@ -190,11 +190,31 @@ fn test_register_flight_success() {
 }
 
 #[test]
-#[should_panic(expected = "flight already registered")]
-fn test_register_flight_duplicate_fails() {
+fn test_register_flight_duplicate_is_idempotent() {
+    // M-05: re-registering with matching terms is a no-op so two travelers
+    // racing to the first purchase don't both have their txs revert.
     let t = setup();
     register(&t);
     register(&t);
+    // Flight is still registered, only one entry in the active list.
+    let active = t.pool.get_active_flights();
+    assert_eq!(active.len(), 1);
+}
+
+#[test]
+#[should_panic(expected = "flight already registered with different terms")]
+fn test_register_flight_duplicate_with_diff_terms_panics() {
+    let t = setup();
+    register(&t);
+    // Second call with the same id+date but a different payoff.
+    t.pool.register_flight(
+        &t.controller,
+        &flight_a(),
+        &FLIGHT_DATE,
+        &PREMIUM,
+        &(PAYOFF + 1),
+        &DELAY_HOURS,
+    );
 }
 
 #[test]

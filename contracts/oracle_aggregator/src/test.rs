@@ -330,13 +330,19 @@ fn test_set_to_be_settled_with_non_settlement_status() {
 }
 
 #[test]
-#[should_panic(expected = "flight already registered")]
-fn test_register_flight_twice() {
+fn test_register_flight_twice_is_idempotent() {
+    // M-05: re-registering the same flight is a no-op so a parallel
+    // buyer doesn't have their tx revert.
     let (env, client, _owner, _oracle, controller) = setup();
     let fid = flight_id(&env);
 
     client.register_flight(&controller, &fid, &FLIGHT_DATE);
     client.register_flight(&controller, &fid, &FLIGHT_DATE);
+
+    // Still NotInitiated, single entry in active list.
+    let data = client.get_flight_data(&fid, &FLIGHT_DATE);
+    assert_eq!(data.status, FlightStatus::NotInitiated);
+    assert_eq!(client.get_active_flights().len(), 1);
 }
 
 // --- Read function tests ---
