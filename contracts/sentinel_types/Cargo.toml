@@ -10,5 +10,11 @@ doctest = false
 [dependencies]
 soroban-sdk = { workspace = true }
 
+[features]
+# `testutils` re-exposes the shared test helpers (ContractEvents decoder)
+# behind a feature flag so production builds of dependent contracts don't
+# pull in soroban-sdk's testutils. Each contract opts in via dev-dependencies.
+testutils = ["soroban-sdk/testutils"]
+
 [lints]
 workspace = true

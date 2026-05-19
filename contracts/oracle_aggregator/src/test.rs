@@ -1,28 +1,9 @@
 use super::*;
+use sentinel_types::test_support::collect_events;
 use soroban_sdk::{
-    symbol_short, testutils::Address as _, testutils::Events as _, testutils::Ledger as _, Env,
-    IntoVal, TryFromVal, Val,
+    symbol_short, testutils::Address as _, testutils::Ledger as _,
+    IntoVal,
 };
-
-// Decode the testutils ContractEvents wrapper (soroban-sdk 25+) back into the
-// pre-25 `(Address, Vec<Val>, Val)` tuple shape the assertions below rely on.
-fn collect_events(env: &Env) -> Vec<(Address, Vec<Val>, Val)> {
-    use soroban_sdk::xdr::{ContractEventBody, ScAddress, ScVal};
-    let mut out: Vec<(Address, Vec<Val>, Val)> = Vec::new(env);
-    for e in env.events().all().events() {
-        let cid = e.contract_id.clone().unwrap();
-        let addr =
-            Address::try_from_val(env, &ScVal::Address(ScAddress::Contract(cid))).unwrap();
-        let ContractEventBody::V0(body) = &e.body;
-        let mut topics: Vec<Val> = Vec::new(env);
-        for sv in body.topics.iter() {
-            topics.push_back(Val::try_from_val(env, sv).unwrap());
-        }
-        let data = Val::try_from_val(env, &body.data).unwrap();
-        out.push_back((addr, topics, data));
-    }
-    out
-}
 
 const FLIGHT_DATE: u64 = 1710400000; // arbitrary unix timestamp
 const EST_ARRIVAL: u64 = 1710410000;

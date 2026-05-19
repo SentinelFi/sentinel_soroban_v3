@@ -11,6 +11,20 @@
 
 use soroban_sdk::contracttype;
 
+#[cfg(feature = "testutils")]
+pub mod test_support;
+
+/// Instance-storage TTL constants. Every contract extends its instance entry
+/// (the root single-row state the SDK auto-attaches to) on each
+/// `extend_ttl` / `extend_instance_ttl` call. Values are the same across
+/// contracts so they live here to avoid drift.
+pub mod ttl {
+    /// ~7 days at 5s/ledger (60 * 24 * 60 * 12 / 5).
+    pub const INSTANCE_TTL_THRESHOLD: u32 = 120_960;
+    /// ~31 days at 5s/ledger (31 * 24 * 60 * 12).
+    pub const INSTANCE_TTL_EXTEND: u32 = 535_680;
+}
+
 // =========================================================================
 // governance_module
 // =========================================================================

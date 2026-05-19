@@ -2,8 +2,7 @@ use soroban_sdk::{Address, Env};
 
 use crate::storage::VaultKey;
 
-pub(crate) const INSTANCE_TTL_THRESHOLD: u32 = 120_960;
-pub(crate) const INSTANCE_TTL_EXTEND: u32 = 535_680;
+pub(crate) use sentinel_types::ttl::{INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND};
 
 pub(crate) fn require_controller(e: &Env, controller: &Address) {
     controller.require_auth();

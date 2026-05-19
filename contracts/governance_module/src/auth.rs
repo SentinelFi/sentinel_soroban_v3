@@ -3,8 +3,7 @@ use stellar_access::ownable::{self as ownable};
 
 use crate::storage::DataKey;
 
-pub(crate) const INSTANCE_TTL_THRESHOLD: u32 = 120_960;
-pub(crate) const INSTANCE_TTL_EXTEND: u32 = 535_680;
+pub(crate) use sentinel_types::ttl::{INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND};
 
 pub(crate) fn require_owner_or_admin(e: &Env, caller: &Address) {
     caller.require_auth();

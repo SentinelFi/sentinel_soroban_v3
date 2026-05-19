@@ -17,6 +17,7 @@ sentinel_types = { path = "../sentinel_types" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+sentinel_types = { path = "../sentinel_types", features = ["testutils"] }
 
 [package.metadata.stellar]
 cargo_inherit = true

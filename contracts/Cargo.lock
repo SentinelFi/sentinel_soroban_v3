@@ -830,6 +830,7 @@ dependencies = [
  "governance_module",
  "oracle_aggregator",
  "risk_vault",
+ "sentinel_types",
  "soroban-sdk",
 ]
 
@@ -1130,6 +1131,7 @@ dependencies = [
 name = "risk_vault"
 version = "0.0.0"
 dependencies = [
+ "sentinel_types",
  "soroban-sdk",
  "stellar-access",
  "stellar-contract-utils",

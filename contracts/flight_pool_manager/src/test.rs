@@ -1,28 +1,9 @@
 use super::*;
+use sentinel_types::test_support::collect_events;
 use soroban_sdk::{
-    symbol_short, testutils::Address as _, testutils::Events as _, testutils::Ledger, token,
-    Address, Env, Symbol, TryFromVal, Val, Vec as SVec,
+    symbol_short, testutils::Address as _, testutils::Ledger, token,
+    Address, Env, Symbol,
 };
-
-// Decode the testutils ContractEvents wrapper (soroban-sdk 25+) back into the
-// pre-25 `(Address, Vec<Val>, Val)` tuple shape the assertions below rely on.
-fn collect_events(env: &Env) -> SVec<(Address, SVec<Val>, Val)> {
-    use soroban_sdk::xdr::{ContractEventBody, ScAddress, ScVal};
-    let mut out: SVec<(Address, SVec<Val>, Val)> = SVec::new(env);
-    for e in env.events().all().events() {
-        let cid = e.contract_id.clone().unwrap();
-        let addr =
-            Address::try_from_val(env, &ScVal::Address(ScAddress::Contract(cid))).unwrap();
-        let ContractEventBody::V0(body) = &e.body;
-        let mut topics: SVec<Val> = SVec::new(env);
-        for sv in body.topics.iter() {
-            topics.push_back(Val::try_from_val(env, sv).unwrap());
-        }
-        let data = Val::try_from_val(env, &body.data).unwrap();
-        out.push_back((addr, topics, data));
-    }
-    out
-}
 
 const PREMIUM: i128 = 10_0000000; // 10 USDC (7 decimals)
 const PAYOFF: i128 = 50_0000000; // 50 USDC

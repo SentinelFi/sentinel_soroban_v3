@@ -11,6 +11,7 @@ doctest = false
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+sentinel_types = { path = "../sentinel_types", features = ["testutils"] }
 controller = { path = "../controller" }
 governance_module = { path = "../governance_module" }
 risk_vault = { path = "../risk_vault" }
