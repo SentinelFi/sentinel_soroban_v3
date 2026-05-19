@@ -3,6 +3,7 @@
 // reason about free vs. locked capital.
 
 use soroban_sdk::{contractimpl, Address, Env};
+use stellar_macros::when_not_paused;
 use stellar_tokens::vault::Vault;
 
 use crate::storage::VaultKey;
@@ -10,6 +11,7 @@ use crate::{RiskVault, RiskVaultArgs, RiskVaultClient};
 
 #[contractimpl]
 impl RiskVault {
+    #[when_not_paused]
     pub fn deposit(e: &Env, assets: i128, receiver: Address, from: Address, operator: Address) -> i128 {
         let shares = Vault::deposit(e, assets, receiver, from, operator);
         let tma = Self::get_total_managed_assets(e);
@@ -20,6 +22,7 @@ impl RiskVault {
         shares
     }
 
+    #[when_not_paused]
     pub fn withdraw(e: &Env, assets: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
         assert!(assets <= Self::get_free_capital(e), "exceeds free capital");
         let shares = Vault::withdraw(e, assets, receiver, owner, operator);
@@ -31,6 +34,7 @@ impl RiskVault {
         shares
     }
 
+    #[when_not_paused]
     pub fn mint_shares(e: &Env, shares: i128, receiver: Address, from: Address, operator: Address) -> i128 {
         let assets = Vault::mint(e, shares, receiver, from, operator);
         let tma = Self::get_total_managed_assets(e);
@@ -41,6 +45,7 @@ impl RiskVault {
         assets
     }
 
+    #[when_not_paused]
     pub fn redeem(e: &Env, shares: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
         let assets = Vault::preview_redeem(e, shares);
         assert!(assets <= Self::get_free_capital(e), "exceeds free capital");

@@ -2,6 +2,7 @@
 // income, send payouts, drain the withdrawal queue into ClaimableBalance.
 
 use soroban_sdk::{contractimpl, token, Address, Env, Vec};
+use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
 
@@ -12,6 +13,7 @@ use crate::{RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
 #[contractimpl]
 impl RiskVault {
+    #[when_not_paused]
     pub fn increase_locked(e: &Env, controller: Address, amount: i128) {
         require_controller(e, &controller);
         assert!(amount > 0, "amount must be positive");
@@ -24,6 +26,7 @@ impl RiskVault {
             .set(&VaultKey::LockedCapital, &new_locked);
     }
 
+    #[when_not_paused]
     pub fn decrease_locked(e: &Env, controller: Address, amount: i128) {
         require_controller(e, &controller);
         assert!(amount > 0, "amount must be positive");
@@ -35,6 +38,7 @@ impl RiskVault {
         );
     }
 
+    #[when_not_paused]
     pub fn record_premium_income(e: &Env, controller: Address, amount: i128) {
         require_controller(e, &controller);
         assert!(amount > 0, "amount must be positive");
@@ -56,6 +60,7 @@ impl RiskVault {
             .set(&VaultKey::TotalManagedAssets, &new_tma);
     }
 
+    #[when_not_paused]
     pub fn send_payout(e: &Env, controller: Address, to: Address, amount: i128) {
         require_controller(e, &controller);
         assert!(amount > 0, "amount must be positive");
@@ -72,6 +77,7 @@ impl RiskVault {
         usdc.transfer(&e.current_contract_address(), &to, &amount);
     }
 
+    #[when_not_paused]
     pub fn process_withdrawal_queue(e: &Env, controller: Address) {
         require_controller(e, &controller);
 

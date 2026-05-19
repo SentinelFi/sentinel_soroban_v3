@@ -6,7 +6,8 @@ mod storage;
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
 use stellar_access::ownable::{self as ownable, Ownable};
-use stellar_macros::only_owner;
+use stellar_contract_utils::pausable::{self as pausable, Pausable};
+use stellar_macros::{only_owner, when_not_paused};
 
 use auth::{extend_instance_ttl, require_controller, require_oracle};
 use events::emit_status_event;
@@ -57,6 +58,7 @@ impl OracleAggregator {
     // --- Oracle-only write functions ---
 
     /// Set estimated arrival time. Transitions NotInitiated → Active.
+    #[when_not_paused]
     pub fn set_estimated_arrival(
         e: &Env,
         oracle: Address,
@@ -87,6 +89,7 @@ impl OracleAggregator {
     }
 
     /// Set actual arrival time. Transitions Active → Landed.
+    #[when_not_paused]
     pub fn set_landed(
         e: &Env,
         oracle: Address,
@@ -124,6 +127,7 @@ impl OracleAggregator {
     }
 
     /// Mark flight as cancelled. Transitions Active → Cancelled.
+    #[when_not_paused]
     pub fn set_cancelled(e: &Env, oracle: Address, flight_id: Symbol, date: u64) {
         require_oracle(e, &oracle);
 
@@ -149,6 +153,7 @@ impl OracleAggregator {
     // --- Controller-only write functions ---
 
     /// Register a new flight. Creates entry as NotInitiated and adds to active list.
+    #[when_not_paused]
     pub fn register_flight(e: &Env, controller: Address, flight_id: Symbol, date: u64) {
         require_controller(e, &controller);
 
@@ -180,6 +185,7 @@ impl OracleAggregator {
     }
 
     /// Classify a flight for settlement. Transitions Landed/Cancelled → ToBeSettled*.
+    #[when_not_paused]
     pub fn set_to_be_settled(
         e: &Env,
         controller: Address,
@@ -224,6 +230,7 @@ impl OracleAggregator {
     /// delegated to the permissionless `prune_settled` entry, which only
     /// removes entries older than `SETTLED_RETENTION_DAYS`. Does NOT renew
     /// flight TTL — settled entries naturally expire.
+    #[when_not_paused]
     pub fn set_settled(e: &Env, controller: Address, flight_id: Symbol, date: u64) {
         require_controller(e, &controller);
 
@@ -357,6 +364,22 @@ impl OracleAggregator {
 
 #[contractimpl(contracttrait)]
 impl Ownable for OracleAggregator {}
+
+#[contractimpl(contracttrait)]
+impl Pausable for OracleAggregator {
+    fn pause(e: &Env, caller: Address) {
+        let _ = caller;
+        let owner = ownable::get_owner(e).expect("owner not set");
+        owner.require_auth();
+        pausable::pause(e);
+    }
+    fn unpause(e: &Env, caller: Address) {
+        let _ = caller;
+        let owner = ownable::get_owner(e).expect("owner not set");
+        owner.require_auth();
+        pausable::unpause(e);
+    }
+}
 
 #[cfg(test)]
 mod test;

@@ -6,7 +6,8 @@ mod storage;
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
 use stellar_access::ownable::{self as ownable, Ownable};
-use stellar_macros::only_owner;
+use stellar_contract_utils::pausable::{self as pausable, Pausable};
+use stellar_macros::{only_owner, when_not_paused};
 
 use auth::{require_owner_or_admin, INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
 use events::{
@@ -50,6 +51,7 @@ impl GovernanceModule {
     // --- Owner-only ---
 
     #[only_owner]
+    #[when_not_paused]
     pub fn set_defaults(e: &Env, premium: i128, payoff: i128, delay_hours: u32) {
         assert_terms_valid(premium, payoff, delay_hours);
         e.storage()
@@ -71,6 +73,7 @@ impl GovernanceModule {
     }
 
     #[only_owner]
+    #[when_not_paused]
     pub fn add_admin(e: &Env, admin: Address) {
         e.storage()
             .instance()
@@ -80,6 +83,7 @@ impl GovernanceModule {
     }
 
     #[only_owner]
+    #[when_not_paused]
     pub fn remove_admin(e: &Env, admin: Address) {
         e.storage().instance().remove(&DataKey::Admin(admin.clone()));
 
@@ -88,6 +92,7 @@ impl GovernanceModule {
 
     // --- Owner or Admin: route lifecycle ---
 
+    #[when_not_paused]
     pub fn whitelist_route(
         e: &Env,
         caller: Address,
@@ -122,6 +127,7 @@ impl GovernanceModule {
         .publish(e);
     }
 
+    #[when_not_paused]
     pub fn disable_route(
         e: &Env,
         caller: Address,
@@ -150,6 +156,7 @@ impl GovernanceModule {
         .publish(e);
     }
 
+    #[when_not_paused]
     pub fn enable_route(
         e: &Env,
         caller: Address,
@@ -181,6 +188,7 @@ impl GovernanceModule {
     /// Hard-delete a route entry. Strict: requires the route to be disabled
     /// first (approved == false). Prevents fat-finger removal of an
     /// actively-purchasable route.
+    #[when_not_paused]
     pub fn remove_route(
         e: &Env,
         caller: Address,
@@ -207,6 +215,7 @@ impl GovernanceModule {
         .publish(e);
     }
 
+    #[when_not_paused]
     pub fn update_route_terms(
         e: &Env,
         caller: Address,
@@ -301,6 +310,22 @@ impl GovernanceModule {
 
 #[contractimpl(contracttrait)]
 impl Ownable for GovernanceModule {}
+
+#[contractimpl(contracttrait)]
+impl Pausable for GovernanceModule {
+    fn pause(e: &Env, caller: Address) {
+        let _ = caller;
+        let owner = ownable::get_owner(e).expect("owner not set");
+        owner.require_auth();
+        pausable::pause(e);
+    }
+    fn unpause(e: &Env, caller: Address) {
+        let _ = caller;
+        let owner = ownable::get_owner(e).expect("owner not set");
+        owner.require_auth();
+        pausable::unpause(e);
+    }
+}
 
 #[cfg(test)]
 mod test;

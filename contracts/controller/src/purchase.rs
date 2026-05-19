@@ -1,4 +1,5 @@
 use soroban_sdk::{contractimpl, token, Address, Env, Symbol};
+use stellar_macros::when_not_paused;
 
 use crate::auth::extend_instance_ttl;
 use crate::events::InsuranceBought;
@@ -8,6 +9,7 @@ use crate::{Controller, ControllerArgs, ControllerClient};
 
 #[contractimpl]
 impl Controller {
+    #[when_not_paused]
     pub fn buy_insurance(
         e: &Env,
         traveler: Address,

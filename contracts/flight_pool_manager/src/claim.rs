@@ -1,4 +1,5 @@
 use soroban_sdk::{contractimpl, token, Address, Env, Symbol};
+use stellar_macros::when_not_paused;
 
 use crate::events::{ExpiredSwept, PayoutClaimed};
 use crate::storage::{extend_flight_ttl, PoolKey, BUYER_TTL_LEDGERS};
@@ -7,6 +8,7 @@ use crate::{FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolMa
 #[contractimpl]
 impl FlightPoolManager {
     /// Buyer claims their payoff after delayed/cancelled settlement.
+    #[when_not_paused]
     pub fn claim(e: &Env, traveler: Address, flight_id: Symbol, date: u64) {
         traveler.require_auth();
 
@@ -71,6 +73,7 @@ impl FlightPoolManager {
 
     /// After claim_expiry, credit unclaimed payouts to RecoveredBalance.
     /// Idempotent: subsequent calls find unclaimed == 0 and return.
+    #[when_not_paused]
     pub fn sweep_expired(e: &Env, flight_id: Symbol, date: u64) {
         let cfg_key = PoolKey::FlightConfig(flight_id.clone(), date);
         let mut cfg: FlightConfig = e

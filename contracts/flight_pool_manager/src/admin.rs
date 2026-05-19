@@ -1,6 +1,6 @@
 use soroban_sdk::{contractimpl, token, Address, Env};
 use stellar_access::ownable::{self as ownable};
-use stellar_macros::only_owner;
+use stellar_macros::{only_owner, when_not_paused};
 
 use crate::auth::extend_instance_ttl;
 use crate::events::RecoveredWithdrawn;
@@ -38,6 +38,7 @@ impl FlightPoolManager {
     /// Owner withdraws funds credited to RecoveredBalance via sweep_expired.
     /// Transfers USDC from the contract to the owner.
     #[only_owner]
+    #[when_not_paused]
     pub fn withdraw_recovered(e: &Env, amount: i128) {
         assert!(amount > 0, "amount must be positive");
         let recovered: i128 = e

@@ -1,4 +1,5 @@
 use soroban_sdk::{contractimpl, token, Address, Env, Symbol};
+use stellar_macros::when_not_paused;
 
 use crate::auth::require_controller;
 use crate::events::FlightSettled;
@@ -8,6 +9,7 @@ use crate::{FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolMa
 #[contractimpl]
 impl FlightPoolManager {
     /// Settle on time: transfer premium*buyer_count to RiskVault as yield.
+    #[when_not_paused]
     pub fn settle_on_time(e: &Env, controller: Address, flight_id: Symbol, date: u64) {
         require_controller(e, &controller);
 
@@ -55,6 +57,7 @@ impl FlightPoolManager {
 
     /// Settle delayed: open the claim window. RiskVault top-up handled by
     /// Controller separately (it calls vault.send_payout(self_addr, ...)).
+    #[when_not_paused]
     pub fn settle_delayed(
         e: &Env,
         controller: Address,
@@ -67,6 +70,7 @@ impl FlightPoolManager {
     }
 
     /// Settle cancelled: identical state shape to settle_delayed.
+    #[when_not_paused]
     pub fn settle_cancelled(
         e: &Env,
         controller: Address,

@@ -1,4 +1,5 @@
 use soroban_sdk::{contractimpl, Address, Env, Symbol, Vec};
+use stellar_macros::when_not_paused;
 
 use crate::auth::require_controller;
 use crate::events::{BuyerAdded, FlightRegistered};
@@ -8,6 +9,7 @@ use crate::{FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolMa
 #[contractimpl]
 impl FlightPoolManager {
     /// Register a new flight on first purchase. Stores locked terms.
+    #[when_not_paused]
     pub fn register_flight(
         e: &Env,
         controller: Address,
@@ -60,6 +62,7 @@ impl FlightPoolManager {
     /// Record a buyer for an active flight. Called by Controller during
     /// buy_insurance. Premium USDC is expected to have arrived separately
     /// (Controller transfers from traveler before calling this).
+    #[when_not_paused]
     pub fn add_buyer(
         e: &Env,
         controller: Address,

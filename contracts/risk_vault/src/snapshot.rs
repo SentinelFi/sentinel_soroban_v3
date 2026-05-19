@@ -1,4 +1,5 @@
 use soroban_sdk::{contractimpl, Env};
+use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
 
@@ -7,6 +8,7 @@ use crate::{RiskVault, RiskVaultArgs, RiskVaultClient};
 
 #[contractimpl]
 impl RiskVault {
+    #[when_not_paused]
     pub fn snapshot(e: &Env) {
         let now = e.ledger().timestamp();
         let last: u64 = e

@@ -212,6 +212,49 @@ fn test_withdrawal_queue_request_process_collect() {
 }
 
 #[test]
+fn test_pause_and_unpause_gate_state_mutations() {
+    // Regression for H-03: paused contract rejects deposit / withdrawal /
+    // queue ops; unpausing restores normal flow. Owner-only gate.
+    let (env, client, owner, controller, depositor) = setup();
+
+    assert!(!client.paused());
+    client.pause(&owner);
+    assert!(client.paused());
+
+    // Mutation paths reject while paused.
+    assert!(client
+        .try_deposit(&1_0000000, &depositor, &depositor, &depositor)
+        .is_err());
+    assert!(client.try_increase_locked(&controller, &1).is_err());
+    assert!(client.try_snapshot().is_err());
+
+    // Recover_uncollected is intentionally NOT gated so the owner can
+    // settle archived entries during a pause.
+    client.recover_uncollected(&depositor, &1_0000000, &RecoveryMode::Recredit);
+
+    client.unpause(&owner);
+    assert!(!client.paused());
+
+    // Mutation flow resumes.
+    client.deposit(&1_0000000, &depositor, &depositor, &depositor);
+}
+
+#[test]
+#[should_panic]
+fn test_pause_by_non_owner_panics() {
+    let env = Env::default();
+    // No mock_all_auths — owner auth will fail under stranger.
+    let owner = Address::generate(&env);
+    let usdc_admin = Address::generate(&env);
+    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin);
+    let contract_id = env.register(RiskVault, (&owner, usdc_id.address()));
+    let client = RiskVaultClient::new(&env, &contract_id);
+
+    let stranger = Address::generate(&env);
+    client.pause(&stranger);
+}
+
+#[test]
 fn test_cancel_withdrawal() {
     let (_env, client, _owner, controller, depositor) = setup();
 

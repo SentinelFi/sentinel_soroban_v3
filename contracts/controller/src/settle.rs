@@ -1,4 +1,5 @@
 use soroban_sdk::{contractimpl, Address, Env};
+use stellar_macros::when_not_paused;
 
 use crate::auth::{extend_instance_ttl, require_keeper};
 use crate::events::{FlightClassified, FlightSettledEvent, TtlMiss};
@@ -13,6 +14,7 @@ impl Controller {
     /// settled flights). For each Landed/Cancelled flight, compute the
     /// settlement outcome from FlightPoolManager's locked terms and write
     /// `ToBeSettled*` back to the oracle.
+    #[when_not_paused]
     pub fn classify_flights(e: &Env, keeper: Address) {
         require_keeper(e, &keeper);
 
@@ -93,6 +95,7 @@ impl Controller {
     /// in a `ToBeSettled*` status: move money between FlightPoolManager and
     /// RiskVault, then mark the oracle entry as `Settled`. After looping,
     /// process the underwriter withdrawal queue and snapshot share price.
+    #[when_not_paused]
     pub fn execute_settlements(e: &Env, keeper: Address) {
         require_keeper(e, &keeper);
 

@@ -2,7 +2,7 @@
 // owner-driven manual recovery for entries archived past their TTL.
 
 use soroban_sdk::{contractimpl, token, Address, Env, Vec};
-use stellar_macros::only_owner;
+use stellar_macros::{only_owner, when_not_paused};
 use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
 
@@ -15,6 +15,7 @@ impl RiskVault {
     /// Submit a withdrawal request. Returns a monotonic request_id that the
     /// caller can use to cancel the request later (immune to queue reorder
     /// caused by intervening process_withdrawal_queue calls).
+    #[when_not_paused]
     pub fn request_withdrawal(e: &Env, caller: Address, shares: i128) -> u64 {
         caller.require_auth();
         assert!(shares > 0, "shares must be positive");
@@ -55,6 +56,7 @@ impl RiskVault {
     /// Cancel a queued withdrawal by request_id (NOT queue index).
     /// Indices shift when process_withdrawal_queue drains earlier entries;
     /// a stable id avoids cancelling the wrong request.
+    #[when_not_paused]
     pub fn cancel_withdrawal(e: &Env, caller: Address, request_id: u64) {
         caller.require_auth();
 
@@ -84,6 +86,7 @@ impl RiskVault {
             .set(&VaultKey::WithdrawalQueue, &queue);
     }
 
+    #[when_not_paused]
     pub fn collect(e: &Env, caller: Address) {
         caller.require_auth();
 
