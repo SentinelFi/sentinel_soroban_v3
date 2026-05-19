@@ -784,7 +784,10 @@ fn test_execute_settlements_skips_unclassified_flights() {
 }
 
 #[test]
-fn test_execute_settlements_processes_withdrawal_queue() {
+fn test_run_queue_maintenance_processes_withdrawal_queue() {
+    // M-03: queue drain is no longer coupled to execute_settlements.
+    // After settlements free up capital, the keeper calls
+    // run_queue_maintenance to actually drain the queue.
     let t = setup();
     let traveler = Address::generate(&t.env);
     buy(&t, &traveler);
@@ -797,10 +800,20 @@ fn test_execute_settlements_processes_withdrawal_queue() {
     oracle_on_time(&t);
     t.ctrl.classify_flights(&t.keeper);
     t.ctrl.execute_settlements(&t.keeper);
+    // Settlement alone does NOT drain the queue.
+    assert_eq!(t.vault.get_withdrawal_queue().len(), 1);
 
-    // Queue processed (free capital available after collateral release).
+    t.ctrl.run_queue_maintenance(&t.keeper);
     assert_eq!(t.vault.get_withdrawal_queue().len(), 0);
     assert!(t.vault.get_claimable_balance(&t.underwriter) > 0);
+}
+
+#[test]
+#[should_panic(expected = "not authorized keeper")]
+fn test_run_queue_maintenance_panics_on_non_keeper() {
+    let t = setup();
+    let stranger = Address::generate(&t.env);
+    t.ctrl.run_queue_maintenance(&stranger);
 }
 
 #[test]

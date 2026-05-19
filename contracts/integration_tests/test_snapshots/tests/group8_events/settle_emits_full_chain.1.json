@@ -774,33 +774,6 @@
             "contract_data": {
               "ext": "v0",
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "SnapshotPrice"
-                  },
-                  {
-                    "u64": "19796"
-                  }
-                ]
-              },
-              "durability": "temporary",
-              "val": {
-                "i128": "9600"
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 518400
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
               "key": "ledger_key_contract_instance",
               "durability": "persistent",
               "val": {
@@ -842,7 +815,7 @@
                         ]
                       },
                       "val": {
-                        "u64": "1710400000"
+                        "u64": "0"
                       }
                     },
                     {
@@ -2044,41 +2017,6 @@
               "vec": [
                 {
                   "symbol": "ToBeSettledDelayed"
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
-        "type_": "contract",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "sentinel"
-              },
-              {
-                "symbol": "snapshot"
-              },
-              {
-                "u64": "19796"
-              }
-            ],
-            "data": {
-              "map": [
-                {
-                  "key": {
-                    "symbol": "price"
-                  },
-                  "val": {
-                    "i128": "9600"
-                  }
                 }
               ]
             }

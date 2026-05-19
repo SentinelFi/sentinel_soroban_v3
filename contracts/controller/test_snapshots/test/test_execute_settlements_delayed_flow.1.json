@@ -780,33 +780,6 @@
             "contract_data": {
               "ext": "v0",
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "SnapshotPrice"
-                  },
-                  {
-                    "u64": "19796"
-                  }
-                ]
-              },
-              "durability": "temporary",
-              "val": {
-                "i128": "9600"
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 518400
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
               "key": "ledger_key_contract_instance",
               "durability": "persistent",
               "val": {
@@ -848,7 +821,7 @@
                         ]
                       },
                       "val": {
-                        "u64": "1710400000"
+                        "u64": "0"
                       }
                     },
                     {

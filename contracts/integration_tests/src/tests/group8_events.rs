@@ -122,8 +122,10 @@ fn vault_credited_collected_chain_via_underwriter_lifecycle() {
     t.oracle_on_time();
     t.ctrl.classify_flights(&t.keeper);
     t.ctrl.execute_settlements(&t.keeper);
+    // M-03: queue drain is now a separate keeper entry point.
+    t.ctrl.run_queue_maintenance(&t.keeper);
 
-    // execute_settlements is the most-recent invocation. It triggered
+    // run_queue_maintenance is the most-recent invocation. It triggered
     // process_withdrawal_queue → Credited event.
     assert!(
         count_events_with_single_prefix(
@@ -131,7 +133,7 @@ fn vault_credited_collected_chain_via_underwriter_lifecycle() {
             &t.vault_addr,
             symbol_short!("credited"),
         ) >= 1,
-        "expected vault.credited event"
+        "expected sentinel.credited event"
     );
 
     // Now collect — this is the next most-recent invocation.

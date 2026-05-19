@@ -93,8 +93,12 @@ impl Controller {
 
     /// Iterate the oracle's active-flight list and process every flight that's
     /// in a `ToBeSettled*` status: move money between FlightPoolManager and
-    /// RiskVault, then mark the oracle entry as `Settled`. After looping,
-    /// process the underwriter withdrawal queue and snapshot share price.
+    /// RiskVault, then mark the oracle entry as `Settled`.
+    ///
+    /// Queue drain and share-price snapshot are NOT done here — see
+    /// `run_queue_maintenance` (audit M-03). Splitting them ensures
+    /// underwriter withdrawals can still be processed when the settlement
+    /// loop runs near the resource budget.
     #[when_not_paused]
     pub fn execute_settlements(e: &Env, keeper: Address) {
         require_keeper(e, &keeper);
@@ -209,7 +213,21 @@ impl Controller {
             }
         }
 
-        // Process underwriter withdrawal queue and take share-price snapshot.
+        extend_instance_ttl(e);
+    }
+
+    /// Drain the underwriter withdrawal queue and refresh the share-price
+    /// snapshot. Keeper-only. Decoupled from `execute_settlements` so the
+    /// queue cannot be blocked by gas exhaustion in the settlement loop
+    /// (audit M-03); keeper can run this on its own cadence.
+    #[when_not_paused]
+    pub fn run_queue_maintenance(e: &Env, keeper: Address) {
+        require_keeper(e, &keeper);
+
+        let vault_addr: Address = e.storage().instance().get(&CtrlKey::RiskVault).unwrap();
+        let vault = VaultClient::new(e, &vault_addr);
+        let controller_addr = e.current_contract_address();
+
         vault.process_withdrawal_queue(&controller_addr);
         vault.snapshot();
 

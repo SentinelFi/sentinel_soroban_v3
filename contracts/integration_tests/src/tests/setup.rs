@@ -238,11 +238,13 @@ impl TestEnv {
         );
     }
 
-    /// Run the full classify + execute settlement cycle (Crons #2 + #3).
+    /// Run the full classify + execute settlement cycle (Crons #2 + #3) plus
+    /// the queue/snapshot maintenance pass (split out by audit M-03).
     #[allow(dead_code)]
     pub fn classify_and_settle(&self) {
         self.ctrl.classify_flights(&self.keeper);
         self.ctrl.execute_settlements(&self.keeper);
+        self.ctrl.run_queue_maintenance(&self.keeper);
     }
 
     /// Advance ledger time by `seconds`.
