@@ -1074,6 +1074,9 @@
           "v0": {
             "topics": [
               {
+                "symbol": "sentinel"
+              },
+              {
                 "symbol": "register"
               },
               {
@@ -1124,6 +1127,9 @@
         "body": {
           "v0": {
             "topics": [
+              {
+                "symbol": "sentinel"
+              },
               {
                 "symbol": "flight"
               },

@@ -1765,7 +1765,7 @@
           "v0": {
             "topics": [
               {
-                "symbol": "warn"
+                "symbol": "sentinel"
               },
               {
                 "symbol": "ttl_miss"

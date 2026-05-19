@@ -56,8 +56,11 @@ fn route_ids() -> (Symbol, Symbol, Symbol) {
 // IMPORTANT: `env.events().all()` returns events only from the MOST RECENT
 // contract invocation. Call this helper IMMEDIATELY after the emitting call,
 // before any other contract call (including reads like `route_status()`).
-fn count_events(env: &Env, addr: &Address, prefix0: Symbol, prefix1: Symbol) -> u32 {
+// Match against the post-`"sentinel"` topic verb (L-03 namespace, 2-item prefix).
+// Callers pass a single combined verb like `Symbol::new(env, "route_listed")`.
+fn count_events_with_verb(env: &Env, addr: &Address, verb: Symbol) -> u32 {
     use soroban_sdk::TryFromVal;
+    let sentinel = symbol_short!("sentinel");
     let mut count: u32 = 0;
     for (event_addr, topics, _data) in collect_events(env).iter() {
         if event_addr != *addr {
@@ -71,7 +74,7 @@ fn count_events(env: &Env, addr: &Address, prefix0: Symbol, prefix1: Symbol) -> 
         let s0 = Symbol::try_from_val(env, &t0);
         let s1 = Symbol::try_from_val(env, &t1);
         if let (Ok(s0), Ok(s1)) = (s0, s1) {
-            if s0 == prefix0 && s1 == prefix1 {
+            if s0 == sentinel && s1 == verb {
                 count += 1;
             }
         }
@@ -100,7 +103,7 @@ fn test_set_defaults_emits_event() {
 
     client.set_defaults(&100_0000000, &1000_0000000, &4);
     // Event check FIRST — the next contract call clears the event log.
-    assert!(count_events(&env, &addr, symbol_short!("gov"), symbol_short!("defaults")) >= 1);
+    assert!(count_events_with_verb(&env, &addr, Symbol::new(&env, "gov_defaults")) >= 1);
 
     let (premium, payoff, delay_hours) = client.get_defaults();
     assert_eq!(premium, 100_0000000);
@@ -237,7 +240,7 @@ fn test_add_admin_emits_event() {
 
     client.add_admin(&admin);
     assert!(
-        count_events(&env, &addr, Symbol::new(&env, "gov"), Symbol::new(&env, "admin_added"))
+        count_events_with_verb(&env, &addr, Symbol::new(&env, "gov_admin_added"))
             >= 1
     );
     assert!(client.is_admin(&admin));
@@ -251,7 +254,7 @@ fn test_remove_admin_emits_event() {
     client.add_admin(&admin);
     client.remove_admin(&admin);
     assert!(
-        count_events(&env, &addr, Symbol::new(&env, "gov"), Symbol::new(&env, "admin_removed"))
+        count_events_with_verb(&env, &addr, Symbol::new(&env, "gov_admin_removed"))
             >= 1
     );
     assert!(!client.is_admin(&admin));
@@ -275,7 +278,7 @@ fn test_whitelist_with_defaults_route_status_active() {
         &None::<i128>,
         &None::<u32>,
     );
-    assert!(count_events(&env, &addr, symbol_short!("route"), symbol_short!("listed")) >= 1);
+    assert!(count_events_with_verb(&env, &addr, Symbol::new(&env, "route_listed")) >= 1);
 
     match client.route_status(&flight_id, &origin, &dest) {
         RouteStatus::Active(t) => {
@@ -385,7 +388,7 @@ fn test_disable_route_status_disabled_event_fires() {
         &None::<u32>,
     );
     client.disable_route(&owner, &flight_id, &origin, &dest);
-    assert!(count_events(&env, &addr, symbol_short!("route"), symbol_short!("disabled")) >= 1);
+    assert!(count_events_with_verb(&env, &addr, Symbol::new(&env, "route_disabled")) >= 1);
 
     assert_eq!(
         client.route_status(&flight_id, &origin, &dest),
@@ -436,7 +439,7 @@ fn test_enable_after_disable_returns_to_active() {
     );
     client.disable_route(&owner, &flight_id, &origin, &dest);
     client.enable_route(&owner, &flight_id, &origin, &dest);
-    assert!(count_events(&env, &addr, symbol_short!("route"), symbol_short!("enabled")) >= 1);
+    assert!(count_events_with_verb(&env, &addr, Symbol::new(&env, "route_enabled")) >= 1);
 
     match client.route_status(&flight_id, &origin, &dest) {
         RouteStatus::Active(t) => {
@@ -493,7 +496,7 @@ fn test_remove_route_after_disable() {
     );
     client.disable_route(&owner, &flight_id, &origin, &dest);
     client.remove_route(&owner, &flight_id, &origin, &dest);
-    assert!(count_events(&env, &addr, symbol_short!("route"), symbol_short!("removed")) >= 1);
+    assert!(count_events_with_verb(&env, &addr, Symbol::new(&env, "route_removed")) >= 1);
 
     // After remove, status is Unknown.
     assert_eq!(
@@ -628,7 +631,7 @@ fn test_update_set_set_set_emits_event() {
         &PayoffUpdate::Set(800_0000000),
         &DelayHoursUpdate::Set(4),
     );
-    assert!(count_events(&env, &addr, symbol_short!("route"), symbol_short!("updated")) >= 1);
+    assert!(count_events_with_verb(&env, &addr, Symbol::new(&env, "route_updated")) >= 1);
 
     match client.route_status(&flight_id, &origin, &dest) {
         RouteStatus::Active(t) => {

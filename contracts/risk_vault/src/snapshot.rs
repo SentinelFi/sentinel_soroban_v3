@@ -1,8 +1,9 @@
-use soroban_sdk::{contractimpl, Env};
+use soroban_sdk::{contractimpl, token, Env};
 use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
 
+use crate::events::SharePriceSnapshot;
 use crate::storage::{VaultKey, SECONDS_PER_DAY, SNAPSHOT_TTL_LEDGERS};
 use crate::{RiskVault, RiskVaultArgs, RiskVaultClient};
 
@@ -26,15 +27,23 @@ impl RiskVault {
             return;
         }
 
+        // Derive the price scale from the underlying asset's decimals so
+        // the snapshot is meaningful regardless of stablecoin precision
+        // (L-04 — audit). For 7-decimal USDC this is still 10^7.
+        let asset = token::Client::new(e, &Vault::query_asset(e));
+        let scale = 10i128
+            .checked_pow(asset.decimals())
+            .expect("decimals power overflow");
+
         let total_supply = Base::total_supply(e);
         let price = if total_supply > 0 {
             Vault::total_assets(e)
-                .checked_mul(10_000_000i128)
+                .checked_mul(scale)
                 .expect("multiplication overflow")
                 .checked_div(total_supply)
                 .expect("division by zero")
         } else {
-            10_000_000i128
+            scale
         };
 
         let day = now.checked_div(SECONDS_PER_DAY).expect("division by zero");
@@ -51,6 +60,9 @@ impl RiskVault {
         e.storage()
             .instance()
             .set(&VaultKey::LastSnapshotTime, &now);
+
+        // L-05: emit so off-chain analytics can subscribe instead of polling.
+        SharePriceSnapshot { day, price }.publish(e);
     }
 
     pub fn get_snapshot_price(e: &Env, day: u64) -> i128 {

@@ -647,7 +647,13 @@ fn test_event_emitted_on_register() {
     let events = collect_events(&env);
     let last = events.get(events.len() - 1).unwrap();
     assert_eq!(last.0, client.address);
-    let expected_topics = (symbol_short!("flight"), fid.clone(), FLIGHT_DATE).into_val(&env);
+    let expected_topics = (
+        symbol_short!("sentinel"),
+        symbol_short!("flight"),
+        fid.clone(),
+        FLIGHT_DATE,
+    )
+        .into_val(&env);
     assert_eq!(last.1, expected_topics);
 }
 

@@ -2,7 +2,7 @@ use soroban_sdk::{contractevent, Address, Symbol};
 
 use crate::interfaces::FlightStatus;
 
-#[contractevent(topics = ["ctrl"], data_format = "single-value")]
+#[contractevent(topics = ["sentinel", "ctrl"], data_format = "single-value")]
 pub struct InsuranceBought {
     #[topic]
     pub(crate) traveler: Address,
@@ -13,7 +13,7 @@ pub struct InsuranceBought {
     pub(crate) premium: i128,
 }
 
-#[contractevent(topics = ["ctrl"], data_format = "single-value")]
+#[contractevent(topics = ["sentinel", "ctrl"], data_format = "single-value")]
 pub struct FlightClassified {
     #[topic]
     pub(crate) flight_id: Symbol,
@@ -22,7 +22,7 @@ pub struct FlightClassified {
     pub(crate) status: FlightStatus,
 }
 
-#[contractevent(topics = ["ctrl"], data_format = "single-value")]
+#[contractevent(topics = ["sentinel", "ctrl"], data_format = "single-value")]
 pub struct FlightSettledEvent {
     #[topic]
     pub(crate) flight_id: Symbol,
@@ -35,7 +35,7 @@ pub struct FlightSettledEvent {
 // NotInitiated for a flight in the active list — signals that FlightData
 // may have archived (or oracle hasn't fetched data yet for an overdue
 // flight). Consumed by the off-chain TTL-extender cron.
-#[contractevent(topics = ["warn", "ttl_miss"], data_format = "map")]
+#[contractevent(topics = ["sentinel", "ttl_miss"], data_format = "map")]
 pub struct TtlMiss {
     #[topic]
     pub(crate) flight_id: Symbol,

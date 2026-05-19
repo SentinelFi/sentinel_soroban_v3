@@ -2,7 +2,7 @@ use soroban_sdk::{contractevent, Env, Symbol};
 
 use crate::storage::FlightStatus;
 
-#[contractevent(topics = ["flight"], data_format = "single-value")]
+#[contractevent(topics = ["sentinel", "flight"], data_format = "single-value")]
 pub struct FlightStatusChange {
     #[topic]
     pub(crate) flight_id: Symbol,

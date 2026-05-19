@@ -2,7 +2,10 @@ use soroban_sdk::{contractevent, Address, Symbol};
 
 use crate::storage::SettlementStatus;
 
-#[contractevent(topics = ["register"], data_format = "map")]
+// Topics prefix scheme (L-03 — audit): every Sentinel-protocol event leads
+// with `"sentinel"` so off-chain indexers can subscribe once and discriminate
+// across the 5 contracts via the second prefix (`register`, `settle`, etc.).
+#[contractevent(topics = ["sentinel", "register"], data_format = "map")]
 pub struct FlightRegistered {
     #[topic]
     pub(crate) flight_id: Symbol,
@@ -13,7 +16,7 @@ pub struct FlightRegistered {
     pub(crate) delay_hours: u32,
 }
 
-#[contractevent(topics = ["buyer"], data_format = "single-value")]
+#[contractevent(topics = ["sentinel", "buyer"], data_format = "single-value")]
 pub struct BuyerAdded {
     #[topic]
     pub(crate) flight_id: Symbol,
@@ -22,7 +25,7 @@ pub struct BuyerAdded {
     pub(crate) buyer: Address,
 }
 
-#[contractevent(topics = ["settle"], data_format = "map")]
+#[contractevent(topics = ["sentinel", "settle"], data_format = "map")]
 pub struct FlightSettled {
     #[topic]
     pub(crate) flight_id: Symbol,
@@ -32,7 +35,7 @@ pub struct FlightSettled {
     pub(crate) claim_expiry: u64,
 }
 
-#[contractevent(topics = ["claim"], data_format = "map")]
+#[contractevent(topics = ["sentinel", "claim"], data_format = "map")]
 pub struct PayoutClaimed {
     #[topic]
     pub(crate) flight_id: Symbol,
@@ -42,7 +45,7 @@ pub struct PayoutClaimed {
     pub(crate) amount: i128,
 }
 
-#[contractevent(topics = ["sweep"], data_format = "single-value")]
+#[contractevent(topics = ["sentinel", "sweep"], data_format = "single-value")]
 pub struct ExpiredSwept {
     #[topic]
     pub(crate) flight_id: Symbol,
@@ -51,7 +54,7 @@ pub struct ExpiredSwept {
     pub(crate) unclaimed: i128,
 }
 
-#[contractevent(topics = ["withdraw"], data_format = "single-value")]
+#[contractevent(topics = ["sentinel", "withdraw"], data_format = "single-value")]
 pub struct RecoveredWithdrawn {
     #[topic]
     pub(crate) owner: Address,

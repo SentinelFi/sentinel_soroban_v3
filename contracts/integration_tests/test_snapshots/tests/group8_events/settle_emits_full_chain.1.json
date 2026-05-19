@@ -1945,6 +1945,9 @@
           "v0": {
             "topics": [
               {
+                "symbol": "sentinel"
+              },
+              {
                 "symbol": "settle"
               },
               {
@@ -1992,6 +1995,9 @@
           "v0": {
             "topics": [
               {
+                "symbol": "sentinel"
+              },
+              {
                 "symbol": "flight"
               },
               {
@@ -2022,6 +2028,9 @@
           "v0": {
             "topics": [
               {
+                "symbol": "sentinel"
+              },
+              {
                 "symbol": "ctrl"
               },
               {
@@ -2035,6 +2044,41 @@
               "vec": [
                 {
                   "symbol": "ToBeSettledDelayed"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "sentinel"
+              },
+              {
+                "symbol": "snapshot"
+              },
+              {
+                "u64": "19796"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "price"
+                  },
+                  "val": {
+                    "i128": "9600"
+                  }
                 }
               ]
             }

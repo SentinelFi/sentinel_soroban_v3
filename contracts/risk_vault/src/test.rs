@@ -412,12 +412,10 @@ fn run_credit_flow(
     let _ = env;
 }
 
-fn count_events_with_topic(
-    env: &Env,
-    contract_addr: &Address,
-    prefix0: Symbol,
-    prefix1: Symbol,
-) -> u32 {
+// Match against the post-`"sentinel"` topic verb (L-03 namespace, 2-item prefix).
+fn count_events_with_verb(env: &Env, contract_addr: &Address, verb: Symbol) -> u32 {
+    use soroban_sdk::symbol_short;
+    let sentinel = symbol_short!("sentinel");
     let mut count: u32 = 0;
     for (event_addr, topics, _data) in collect_events(env).iter() {
         if event_addr != *contract_addr {
@@ -429,7 +427,7 @@ fn count_events_with_topic(
         let t0: Result<Symbol, _> = Symbol::try_from_val(env, &topics.get(0).unwrap());
         let t1: Result<Symbol, _> = Symbol::try_from_val(env, &topics.get(1).unwrap());
         if let (Ok(s0), Ok(s1)) = (t0, t1) {
-            if s0 == prefix0 && s1 == prefix1 {
+            if s0 == sentinel && s1 == verb {
                 count += 1;
             }
         }
@@ -447,12 +445,7 @@ fn test_claimable_balance_credited_event_fires() {
     // process_withdrawal_queue is the most recent invocation that emits
     // the event log. Assert the Credited event appeared.
     assert!(
-        count_events_with_topic(
-            &env,
-            &client.address,
-            symbol_short!("vault"),
-            symbol_short!("credited"),
-        ) >= 1
+        count_events_with_verb(&env, &client.address, symbol_short!("credited")) >= 1
     );
 }
 
@@ -466,12 +459,7 @@ fn test_claimable_balance_collected_event_fires() {
     client.collect(&depositor);
 
     assert!(
-        count_events_with_topic(
-            &env,
-            &client.address,
-            symbol_short!("vault"),
-            symbol_short!("collected"),
-        ) >= 1
+        count_events_with_verb(&env, &client.address, symbol_short!("collected")) >= 1
     );
 }
 
@@ -486,12 +474,7 @@ fn test_recover_uncollected_recredit_sets_balance() {
     // Event check FIRST — env.events().all() returns only the most-recent
     // invocation's events; any subsequent client call clears the log.
     assert!(
-        count_events_with_topic(
-            &env,
-            &client.address,
-            symbol_short!("vault"),
-            symbol_short!("recovered"),
-        ) >= 1
+        count_events_with_verb(&env, &client.address, symbol_short!("recovered")) >= 1
     );
 
     // SET semantics: balance is now 500.
@@ -543,12 +526,7 @@ fn test_recover_uncollected_transfer_moves_usdc() {
     // Event check FIRST — env.events().all() returns only the most-recent
     // invocation's events.
     assert!(
-        count_events_with_topic(
-            &env,
-            &client.address,
-            symbol_short!("vault"),
-            symbol_short!("recovered"),
-        ) >= 1
+        count_events_with_verb(&env, &client.address, symbol_short!("recovered")) >= 1
     );
 
     // Vault USDC down by 50, user up by 50, claimable cleared.
@@ -647,24 +625,20 @@ fn test_snapshot_expires_after_30_days() {
 }
 
 #[test]
-fn test_snapshot_emits_no_event() {
+fn test_snapshot_emits_share_price_event() {
+    use soroban_sdk::symbol_short;
+    // L-05: snapshot() now emits SharePriceSnapshot so off-chain analytics
+    // can subscribe instead of polling.
     let (env, client, _owner, _controller, depositor) = setup();
     client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
 
     env.ledger().with_mut(|li| li.timestamp = 200_000);
     client.snapshot();
 
-    // `snapshot()` is intentionally event-free — snapshots aren't in the
-    // indexer pipeline. The most-recent invocation's event log should be
-    // empty for the snapshot path.
-    let events = collect_events(&env);
-    let mut snapshot_events = 0u32;
-    for (event_addr, _topics, _data) in events.iter() {
-        if event_addr == client.address {
-            snapshot_events += 1;
-        }
-    }
-    assert_eq!(snapshot_events, 0);
+    assert!(
+        count_events_with_verb(&env, &client.address, symbol_short!("snapshot")) >= 1,
+        "expected sentinel.snapshot event"
+    );
 }
 
 // =========================================================================

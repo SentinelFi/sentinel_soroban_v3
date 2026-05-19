@@ -1861,6 +1861,9 @@
           "v0": {
             "topics": [
               {
+                "symbol": "sentinel"
+              },
+              {
                 "symbol": "flight"
               },
               {
@@ -1890,6 +1893,9 @@
         "body": {
           "v0": {
             "topics": [
+              {
+                "symbol": "sentinel"
+              },
               {
                 "symbol": "ctrl"
               },

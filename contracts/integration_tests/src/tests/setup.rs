@@ -253,8 +253,10 @@ impl TestEnv {
     }
 }
 
-/// Count events emitted on `addr` whose first two topics match
-/// `(prefix0, prefix1)`. Reused across all integration test groups.
+/// Count events emitted on `addr` whose protocol-prefix topics match
+/// `["sentinel", prefix0, prefix1]`. Reused across all integration test
+/// groups. The leading `"sentinel"` symbol is implicit — callers pass the
+/// post-namespace prefixes they care about.
 ///
 /// IMPORTANT: `env.events().all()` returns events from the MOST RECENT
 /// contract invocation only. Subsequent contract calls (even read-only)
@@ -268,6 +270,32 @@ pub fn count_events_with_topic(
     prefix1: Symbol,
 ) -> u32 {
     let mut count: u32 = 0;
+    let sentinel = symbol_short!("sentinel");
+    for (event_addr, topics, _data) in collect_events(env).iter() {
+        if event_addr != *addr {
+            continue;
+        }
+        if topics.len() < 3 {
+            continue;
+        }
+        let t0: Result<Symbol, _> = Symbol::try_from_val(env, &topics.get(0).unwrap());
+        let t1: Result<Symbol, _> = Symbol::try_from_val(env, &topics.get(1).unwrap());
+        let t2: Result<Symbol, _> = Symbol::try_from_val(env, &topics.get(2).unwrap());
+        if let (Ok(s0), Ok(s1), Ok(s2)) = (t0, t1, t2) {
+            if s0 == sentinel && s1 == prefix0 && s2 == prefix1 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Same as `count_events_with_topic` but for events with a single-symbol
+/// post-namespace prefix (e.g. `topics = ["sentinel", "register"]`).
+#[allow(dead_code)]
+pub fn count_events_with_single_prefix(env: &Env, addr: &Address, prefix: Symbol) -> u32 {
+    let mut count: u32 = 0;
+    let sentinel = symbol_short!("sentinel");
     for (event_addr, topics, _data) in collect_events(env).iter() {
         if event_addr != *addr {
             continue;
@@ -278,28 +306,8 @@ pub fn count_events_with_topic(
         let t0: Result<Symbol, _> = Symbol::try_from_val(env, &topics.get(0).unwrap());
         let t1: Result<Symbol, _> = Symbol::try_from_val(env, &topics.get(1).unwrap());
         if let (Ok(s0), Ok(s1)) = (t0, t1) {
-            if s0 == prefix0 && s1 == prefix1 {
+            if s0 == sentinel && s1 == prefix {
                 count += 1;
-            }
-        }
-    }
-    count
-}
-
-/// Same as `count_events_with_topic` but for events with a single-symbol
-/// topic prefix (e.g. `topics = ["register"]`).
-#[allow(dead_code)]
-pub fn count_events_with_single_prefix(env: &Env, addr: &Address, prefix: Symbol) -> u32 {
-    let mut count: u32 = 0;
-    for (event_addr, topics, _data) in collect_events(env).iter() {
-        if event_addr != *addr {
-            continue;
-        }
-        if let Some(t0) = topics.get(0) {
-            if let Ok(sym) = Symbol::try_from_val(env, &t0) {
-                if sym == prefix {
-                    count += 1;
-                }
             }
         }
     }

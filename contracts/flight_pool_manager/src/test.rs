@@ -685,21 +685,24 @@ fn test_has_policy_and_has_claimed_flow() {
 // Events (spot checks)
 // =========================================================================
 
-// Helper: count how many emitted events on the pool match the given topic symbol.
-fn count_pool_events(t: &TestEnv, topic: Symbol) -> u32 {
-    use soroban_sdk::TryFromVal;
+// Helper: count emitted events on the pool whose topic prefix is
+// `["sentinel", <verb>]` for the given verb. L-03 namespace.
+fn count_pool_events(t: &TestEnv, verb: Symbol) -> u32 {
+    use soroban_sdk::{symbol_short, TryFromVal};
     let pool_addr = t.pool_addr.clone();
+    let sentinel = symbol_short!("sentinel");
     let mut count: u32 = 0;
     for (addr, topics, _data) in collect_events(&t.env).iter() {
         if addr != pool_addr {
             continue;
         }
-        if let Some(first) = topics.get(0) {
-            if let Ok(sym) = Symbol::try_from_val(&t.env, &first) {
-                if sym == topic {
-                    count += 1;
-                }
-            }
+        if topics.len() < 2 {
+            continue;
+        }
+        let t0 = Symbol::try_from_val(&t.env, &topics.get(0).unwrap()).ok();
+        let t1 = Symbol::try_from_val(&t.env, &topics.get(1).unwrap()).ok();
+        if t0 == Some(sentinel.clone()) && t1 == Some(verb.clone()) {
+            count += 1;
         }
     }
     count

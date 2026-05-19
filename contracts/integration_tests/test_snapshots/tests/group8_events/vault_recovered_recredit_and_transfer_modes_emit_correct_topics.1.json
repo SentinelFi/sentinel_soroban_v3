@@ -1530,7 +1530,7 @@
           "v0": {
             "topics": [
               {
-                "symbol": "vault"
+                "symbol": "sentinel"
               },
               {
                 "symbol": "recovered"

@@ -126,10 +126,9 @@ fn vault_credited_collected_chain_via_underwriter_lifecycle() {
     // execute_settlements is the most-recent invocation. It triggered
     // process_withdrawal_queue → Credited event.
     assert!(
-        count_events_with_topic(
+        count_events_with_single_prefix(
             &t.env,
             &t.vault_addr,
-            symbol_short!("vault"),
             symbol_short!("credited"),
         ) >= 1,
         "expected vault.credited event"
@@ -138,10 +137,9 @@ fn vault_credited_collected_chain_via_underwriter_lifecycle() {
     // Now collect — this is the next most-recent invocation.
     t.vault.collect(&t.underwriter);
     assert!(
-        count_events_with_topic(
+        count_events_with_single_prefix(
             &t.env,
             &t.vault_addr,
-            symbol_short!("vault"),
             symbol_short!("collected"),
         ) >= 1,
         "expected vault.collected event"
@@ -161,10 +159,9 @@ fn vault_recovered_recredit_and_transfer_modes_emit_correct_topics() {
         &risk_vault::RecoveryMode::Recredit,
     );
     assert!(
-        count_events_with_topic(
+        count_events_with_single_prefix(
             &t.env,
             &t.vault_addr,
-            symbol_short!("vault"),
             symbol_short!("recovered"),
         ) >= 1,
         "expected vault.recovered event for Recredit mode"
@@ -184,10 +181,9 @@ fn vault_recovered_recredit_and_transfer_modes_emit_correct_topics() {
         &risk_vault::RecoveryMode::Transfer,
     );
     assert!(
-        count_events_with_topic(
+        count_events_with_single_prefix(
             &t.env,
             &t.vault_addr,
-            symbol_short!("vault"),
             symbol_short!("recovered"),
         ) >= 1,
         "expected vault.recovered event for Transfer mode"
@@ -207,14 +203,13 @@ fn ttl_miss_warn_event_topic_shape() {
 
     t.ctrl.classify_flights(&t.keeper);
 
-    // The TtlMiss event has 2-symbol prefix ["warn", "ttl_miss"].
+    // The TtlMiss event has 2-symbol prefix ["sentinel", "ttl_miss"].
     assert!(
-        count_events_with_topic(
+        count_events_with_single_prefix(
             &t.env,
             &t.ctrl_addr,
-            symbol_short!("warn"),
             symbol_short!("ttl_miss"),
         ) >= 1,
-        "expected warn.ttl_miss event"
+        "expected sentinel.ttl_miss event"
     );
 }

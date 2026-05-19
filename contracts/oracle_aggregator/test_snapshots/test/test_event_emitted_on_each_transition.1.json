@@ -470,6 +470,9 @@
           "v0": {
             "topics": [
               {
+                "symbol": "sentinel"
+              },
+              {
                 "symbol": "flight"
               },
               {

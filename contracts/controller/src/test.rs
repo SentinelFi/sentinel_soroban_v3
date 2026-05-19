@@ -648,8 +648,8 @@ fn test_classify_flights_emits_ttl_miss_for_not_initiated() {
 
     // Event log holds events from the most recent invocation only — assert
     // immediately, before any subsequent contract call. Look for an event
-    // emitted by the controller with topic prefix ("warn", "ttl_miss") and
-    // a third indexed `flight_id` topic equal to AA100.
+    // emitted by the controller with topic prefix ["sentinel", "ttl_miss"]
+    // and a third indexed `flight_id` topic equal to AA100.
     let mut found = false;
     for (event_addr, topics, _data) in collect_events(&t.env).iter() {
         if event_addr != t.ctrl_addr {
@@ -661,7 +661,7 @@ fn test_classify_flights_emits_ttl_miss_for_not_initiated() {
         let t0 = Symbol::try_from_val(&t.env, &topics.get(0).unwrap()).ok();
         let t1 = Symbol::try_from_val(&t.env, &topics.get(1).unwrap()).ok();
         let t2 = Symbol::try_from_val(&t.env, &topics.get(2).unwrap()).ok();
-        if t0 == Some(symbol_short!("warn"))
+        if t0 == Some(symbol_short!("sentinel"))
             && t1 == Some(symbol_short!("ttl_miss"))
             && t2 == Some(symbol_short!("AA100"))
         {
@@ -669,7 +669,7 @@ fn test_classify_flights_emits_ttl_miss_for_not_initiated() {
             break;
         }
     }
-    assert!(found, "expected warn.ttl_miss event for AA100");
+    assert!(found, "expected sentinel.ttl_miss event for AA100");
 }
 
 #[test]
