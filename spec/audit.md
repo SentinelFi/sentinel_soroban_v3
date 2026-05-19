@@ -1,9 +1,9 @@
 # Soroban Contract Audit
 
 > Read-only security review of the 6 Soroban contracts (~3,000 LOC of
-> production code) deployed by the Sentinel Protocol. No code changes
-> proposed in this document — findings are intended to drive a follow-on
-> remediation PR and to inform a third-party audit scope.
+> production code) deployed by the Sentinel Protocol. Findings drove a
+> follow-on remediation pass — see status markers on each finding below
+> for what's fixed, accepted, or still open.
 >
 > **Scope:** `mock_usdc`, `governance_module`, `risk_vault`,
 > `oracle_aggregator`, `flight_pool_manager`, `controller`. Integration
@@ -14,7 +14,24 @@
 > Built with `rustc 1.94.0` targeting `wasm32v1-none`. Release profile sets
 > `overflow-checks = true`, `panic = "abort"`, `lto = true`.
 >
-> **Test corpus:** 228 unit + integration tests (`cargo test --workspace`).
+> **Test corpus:** 262 unit + integration tests (`cargo test --workspace`),
+> plus two cargo-fuzz harnesses (`risk_vault` solvency + `oracle_aggregator`
+> state machine).
+
+## Remediation status legend
+
+- ✅ **Fixed** — code change landed, regression test in place. Linked commit / file:line in the finding body.
+- 🟡 **Accepted** — left as-is by design decision; rationale in the finding body.
+- ⏸ **Deferred** — actionable but out of scope for this pass.
+- 🔘 **Open** — not yet addressed.
+
+| Severity | Total | ✅ Fixed | 🟡 Accepted | ⏸ Deferred |
+|---|---|---|---|---|
+| Critical | 3 | 2 | 1 | 0 |
+| High | 7 | 7 | 0 | 0 |
+| Medium | 6 | 4 | 1 | 1 |
+| Low | 9 | 4 | 5 | 0 |
+| Informational | 7 | 2 | 5 | 0 |
 
 ---
 
@@ -43,17 +60,17 @@
 | Medium | 6 |
 | Low | 9 |
 | Informational | 7 |
-| Positive | 11 |
+| Positive | 13 |
 
-**Headline risks before mainnet:**
+**Headline risks before mainnet (status after remediation pass):**
 
-- **C-01** ⚠ Default `claim_expiry_window` (60d) exceeds `PERSISTENT_TTL_EXTEND` (31d) in `flight_pool_manager`. Buyers can be locked out of payouts if the off-chain TTL cron is absent.
-- **C-02** ⚠ `risk_vault::recover_uncollected` Transfer mode has no upper-bound check and does not decrement TMA. Owner can silently break the solvency invariant or drain USDC.
-- **C-03** ⚠ `mock_usdc` is permissionless mint. Deploying it to mainnet would let anyone print supply. Must be replaced by Circle USDC (SAC) on mainnet.
-- **H-03** ⚠ No emergency-stop / pause across any contract. A discovered exploit cannot be halted.
-- **H-04** ⚠ Governance admins can set `delay_hours = 0` or `payoff < premium`, which respectively drains the vault or panics every settlement.
+- **C-01** ✅ Fixed. `settle_with_claim_window` now derives `FlightConfig` TTL from `claim_expiry + 30d` instead of using a fixed 31d extender.
+- **C-02** ✅ Fixed. `recover_uncollected` Transfer mode is gated on a prior `ClaimableBalance(user) >= amount`, decrements the entry before the transfer (CEI), and removes it on full settlement.
+- **C-03** 🟡 Accepted. `mock_usdc` is testnet-only by deployment policy; mainnet wires the Circle USDC SAC address.
+- **H-03** ✅ Fixed. `Pausable` added to all 5 production contracts with `#[when_not_paused]` on every state-mutating entry point; owner-gated pause/unpause.
+- **H-04** ✅ Fixed. `whitelist_route` / `update_route_terms` / `set_defaults` / constructor now assert `payoff > premium`, `delay_hours > 0`, `premium > 0`, `payoff > 0` after defaults fold in.
 
-**Overall posture:** the contracts use defensive Rust idioms (checked arithmetic, OZ Vault decimals offset, forward-only state machine, one-time controller write, overflow checks at the profile level). The remaining surface is concentrated in *operational* concerns — TTL coordination, owner privilege scope, and resource-bounded list iteration — rather than core arithmetic correctness.
+**Overall posture:** all 3 critical, all 7 high, and the action-actionable mediums are closed. The contracts use defensive Rust idioms (checked arithmetic, OZ Vault decimals offset, forward-only state machine, one-time controller write, overflow checks at the profile level, Pausable, owner-setter bounds). The remaining surface (M-01 list caps; I-02 multisig; I-06 `cargo audit` in CI) is operational rather than core arithmetic correctness.
 
 ---
 
@@ -69,58 +86,60 @@
 | Underwriter | Any wallet | Deposit, withdraw (direct or queued), collect claimable, cancel queue request |
 | Traveler | Any wallet | Buy insurance, claim payoff |
 
-**Trust assumptions baked into the design:**
+**Trust assumptions baked into the design (post-remediation):**
 
-1. Owner is honest and key-secure (single Address, no multisig requirement enforced on-chain).
-2. Authorized oracle reports truthful flight data; there is no on-chain plausibility check.
-3. Off-chain TTL-extender cron runs reliably to keep `ClaimableBalance(addr)`, `Route(...)`, `FlightConfig(...)`, and `FlightData(...)` keys alive past their on-write TTL.
-4. The configured USDC contract is the Stellar Asset Contract (SAC) and has no transfer hooks (no reentrancy surface on `usdc.transfer`).
-5. Owner does not call `recover_uncollected` on users who never had a credit (would silently inflate share price).
+1. Owner is honest and key-secure (single Address, no multisig requirement enforced on-chain — see I-02). Pause/unpause provides a kill-switch even if the owner key needs time to rotate.
+2. Authorized oracle reports truthful flight data; `set_landed` now asserts `actual_arrival_time >= estimated_arrival_time` (L-02) but other plausibility checks remain off-chain.
+3. Off-chain TTL-extender cron runs reliably for the `ClaimableBalance(addr)`, `Route(...)`, and `FlightData(...)` keys. `FlightConfig(flight_id, date)` no longer depends on the cron through the claim window — the settle path extends to `claim_expiry + 30d` on-chain (C-01 fix).
+4. The configured USDC contract is the Stellar Asset Contract (SAC) and has no transfer hooks. CEI ordering is now defensive even if this assumption breaks (H-05 fix).
+5. Owner can only `recover_uncollected(Transfer)` against an existing `ClaimableBalance(user)` credit (C-02 fix) and can only `Recredit` upward (H-01 fix).
 
 ---
 
 ## Findings index
 
-| ID | Title | Severity | Area |
-|---|---|---|---|
-| C-01 | Flight TTL < claim window — buyers can lose payout | Critical | `flight_pool_manager` |
-| C-02 | `recover_uncollected` Transfer breaks TMA & has no bounds | Critical | `risk_vault` |
-| C-03 | `mock_usdc` permissionless mint must not reach mainnet | Critical | Deployment |
-| H-01 | `recover_uncollected` Recredit SETs (not adds) — silent underpay | High | `risk_vault` |
-| H-02 | `prune_settled` panics on any archived `FlightData` | High | `oracle_aggregator` |
-| H-03 | No pause / emergency-stop on any contract | High | All |
-| H-04 | Admin can set `delay_hours = 0` or `payoff < premium` | High | `governance_module` |
-| H-05 | INTERACT-then-EFFECT in `collect`, `send_payout`, `withdraw_recovered` | High | `risk_vault`, `flight_pool_manager` |
-| H-06 | `process_withdrawal_queue` price drift across iterations | High | `risk_vault` |
-| H-07 | Owner can brick protocol by setting `claim_expiry_window = 0` | High | `controller` |
-| M-01 | Unbounded growth: `ActiveFlightList`, `WithdrawalQueue`, `TravelerFlights` | Medium | `flight_pool_manager`, `oracle_aggregator`, `risk_vault`, `controller` |
-| M-02 | No bounds on `solvency_ratio`, `min_lead_time`, `claim_expiry_window` | Medium | `controller` |
-| M-03 | `process_withdrawal_queue` blocked by gas if active-flight loop is large | Medium | `controller`, `risk_vault` |
-| M-04 | `cancel_withdrawal` uses queue index — wrong-request risk after reorder | Medium | `risk_vault` |
-| M-05 | First-buyer race condition on a new (flight_id, date) route | Medium | `controller` |
-| M-06 | `record_premium_income` does not verify USDC arrived | Medium | `risk_vault` |
-| L-01 | `NotInitiated → Cancelled` is not a valid transition | Low | `oracle_aggregator` |
-| L-02 | No validation that `actual_arrival_time > estimated_arrival_time` | Low | `oracle_aggregator` |
-| L-03 | Generic event topic prefixes (`ctrl`, `settle`, `claim`…) | Low | All |
-| L-04 | Snapshot price scaling hardcoded for 7-decimal USDC | Low | `risk_vault` |
-| L-05 | `snapshot()` emits no event | Low | `risk_vault` |
-| L-06 | No upper bound on `buyer_count` per flight | Low | `flight_pool_manager` |
-| L-07 | Admin can front-run a buyer by disabling the route | Low | `governance_module` |
-| L-08 | `InsuranceBought` event omits flight_id / date | Low | `controller` |
-| L-09 | `extend_ttl` (no auth) is callable by anyone | Low | All |
-| I-01 | clippy pedantic surfaces digit-grouping and fn-arity nits | Info | All |
-| I-02 | Single-key owner; consider multisig governance | Info | All |
-| I-03 | No upgrade path (intentional) | Info | All |
-| I-04 | `TtlMiss` diagnostic is good observability | Info | `controller` |
-| I-05 | Cross-contract mirror types in `controller/interfaces.rs` rely on byte-level layout | Info | `controller` |
-| I-06 | No `cargo audit` advisory check in CI | Info | Tooling |
-| I-07 | Test snapshots are SDK-version-specific | Info | Tooling |
+| ID | Title | Severity | Area | Status |
+|---|---|---|---|---|
+| C-01 | Flight TTL < claim window — buyers can lose payout | Critical | `flight_pool_manager` | ✅ |
+| C-02 | `recover_uncollected` Transfer breaks TMA & has no bounds | Critical | `risk_vault` | ✅ |
+| C-03 | `mock_usdc` permissionless mint must not reach mainnet | Critical | Deployment | 🟡 |
+| H-01 | `recover_uncollected` Recredit SETs (not adds) — silent underpay | High | `risk_vault` | ✅ |
+| H-02 | `prune_settled` panics on any archived `FlightData` | High | `oracle_aggregator` | ✅ |
+| H-03 | No pause / emergency-stop on any contract | High | All | ✅ |
+| H-04 | Admin can set `delay_hours = 0` or `payoff < premium` | High | `governance_module` | ✅ |
+| H-05 | INTERACT-then-EFFECT in `collect`, `send_payout`, `withdraw_recovered` | High | `risk_vault`, `flight_pool_manager` | ✅ |
+| H-06 | `process_withdrawal_queue` price drift across iterations | High | `risk_vault` | ✅ |
+| H-07 | Owner can brick protocol by setting `claim_expiry_window = 0` | High | `controller` | ✅ |
+| M-01 | Unbounded growth: `ActiveFlightList`, `WithdrawalQueue`, `TravelerFlights` | Medium | `flight_pool_manager`, `oracle_aggregator`, `risk_vault`, `controller` | ⏸ |
+| M-02 | No bounds on `solvency_ratio`, `min_lead_time`, `claim_expiry_window` | Medium | `controller` | ✅ |
+| M-03 | `process_withdrawal_queue` blocked by gas if active-flight loop is large | Medium | `controller`, `risk_vault` | ✅ |
+| M-04 | `cancel_withdrawal` uses queue index — wrong-request risk after reorder | Medium | `risk_vault` | ✅ |
+| M-05 | First-buyer race condition on a new (flight_id, date) route | Medium | `controller` | ✅ |
+| M-06 | `record_premium_income` does not verify USDC arrived | Medium | `risk_vault` | ✅ |
+| L-01 | `NotInitiated → Cancelled` is not a valid transition | Low | `oracle_aggregator` | ✅ |
+| L-02 | No validation that `actual_arrival_time > estimated_arrival_time` | Low | `oracle_aggregator` | ✅ |
+| L-03 | Generic event topic prefixes (`ctrl`, `settle`, `claim`…) | Low | All | ✅ |
+| L-04 | Snapshot price scaling hardcoded for 7-decimal USDC | Low | `risk_vault` | ✅ |
+| L-05 | `snapshot()` emits no event | Low | `risk_vault` | ✅ |
+| L-06 | No upper bound on `buyer_count` per flight | Low | `flight_pool_manager` | 🟡 |
+| L-07 | Admin can front-run a buyer by disabling the route | Low | `governance_module` | 🟡 |
+| L-08 | `InsuranceBought` event omits flight_id / date | Low | `controller` | ✅ |
+| L-09 | `extend_ttl` (no auth) is callable by anyone | Low | All | 🟡 |
+| I-01 | clippy pedantic surfaces digit-grouping and fn-arity nits | Info | All | ✅ |
+| I-02 | Single-key owner; consider multisig governance | Info | All | 🟡 |
+| I-03 | No upgrade path (intentional) | Info | All | 🟡 |
+| I-04 | `TtlMiss` diagnostic is good observability | Info | `controller` | 🟡 |
+| I-05 | Cross-contract mirror types in `controller/interfaces.rs` rely on byte-level layout | Info | `controller` | ✅ |
+| I-06 | No `cargo audit` advisory check in CI | Info | Tooling | ⏸ |
+| I-07 | Test snapshots are SDK-version-specific | Info | Tooling | 🟡 |
 
 ---
 
 ## Critical findings
 
 ### C-01. Flight config TTL is shorter than the claim window — buyers can lose access to their payout
+
+**Status:** ✅ Fixed. `flight_pool_manager/src/settle.rs` now calls a new `extend_flight_ttl_to(deadline)` helper that derives `FlightConfig` TTL from `claim_expiry + 30d` (with the original 31d as a floor). The settle path is self-sufficient for the claim window even if the off-chain TTL cron lapses.
 
 **Files:** `flight_pool_manager/src/storage.rs:42-43`, `flight_pool_manager/src/settle.rs:107` (extend), `controller/src/admin.rs:85-90` (claim_expiry_window setter), default value in `integration_tests/src/tests/setup.rs:11` (60 days).
 
@@ -140,6 +159,8 @@ The off-chain TTL-extender cron is designed to bump these keys, but the architec
 ---
 
 ### C-02. `risk_vault::recover_uncollected` Transfer mode breaks the solvency invariant and has no upper bound
+
+**Status:** ✅ Fixed. Transfer mode now asserts `amount <= ClaimableBalance(user)`, decrements (or removes) the entry before the USDC transfer (CEI), and refuses if the user has no prior credit. Owner workflow: `Recredit(user, amount)` to restore an archived entry, then `Transfer(user, amount)` to push funds. Two new gate tests in `risk_vault/src/test.rs`.
 
 **File:** `risk_vault/src/claims.rs:98-129`.
 
@@ -166,6 +187,8 @@ Three independent problems:
 
 ### C-03. `mock_usdc` permissionless mint must never reach mainnet
 
+**Status:** 🟡 Accepted as a deployment-policy item. `mock_usdc` is testnet-only and is excluded from any mainnet deploy manifest; mainnet wires the Circle USDC SAC address. No code gate was added — the crate stays as-is for testnet ergonomics. Deployment runbook owns the policy.
+
 **File:** `mock_usdc/src/lib.rs:22-29`.
 
 ```rust
@@ -188,6 +211,8 @@ Neither function requires auth. Anyone can mint arbitrary supply to any address.
 
 ### H-01. `recover_uncollected` Recredit mode SETs the balance (not adds) — silent underpayment risk
 
+**Status:** ✅ Fixed. Recredit now reads the existing `ClaimableBalance(user)` and asserts `amount >= existing` before SETting — restoring an archived entry can only ever bring it back to its prior value or higher. New `test_recover_uncollected_recredit_rejects_underpay` test locks the invariant.
+
 **File:** `risk_vault/src/claims.rs:107-115`.
 
 ```rust
@@ -209,6 +234,8 @@ Function name "recover" reads as additive. The docstring explains the SET semant
 ---
 
 ### H-02. `oracle_aggregator::prune_settled` panics on any archived `FlightData`
+
+**Status:** ✅ Fixed. `prune_settled` now treats missing `FlightData` as evict-and-continue: a single archived entry no longer blocks all future pruning. New `test_prune_settled_evicts_missing_flight_data` test simulates archival and asserts the loop succeeds.
 
 **File:** `oracle_aggregator/src/lib.rs:258-264`.
 
@@ -240,6 +267,8 @@ let aged_out = match e.storage().persistent().get(...) {
 
 ### H-03. No pause / emergency-stop on any contract
 
+**Status:** ✅ Fixed. `Pausable` (from `stellar-contract-utils::pausable`) wired into all 5 production contracts with owner-gated `pause(caller)` / `unpause(caller)`. Every state-mutating entry point carries `#[when_not_paused]`: `buy_insurance`, `classify_flights`, `execute_settlements`, `run_queue_maintenance`, vault deposit/withdraw/queue/payout paths, oracle write functions, pool register/settle/claim/sweep/withdraw, governance write paths. `recover_uncollected` is intentionally NOT gated so the owner can still settle archived entries during a pause.
+
 **Files:** all 5 production contracts.
 
 There is no `Pausable` trait wired in, no admin "halt" function, no circuit breaker. The OZ `stellar-pausable` crate is available but not used.
@@ -254,6 +283,8 @@ There is no `Pausable` trait wired in, no admin "halt" function, no circuit brea
 ---
 
 ### H-04. Governance admin can set `delay_hours = 0` or `payoff < premium` and drain (or brick) settlement
+
+**Status:** ✅ Fixed. New `assert_terms_valid(premium, payoff, delay_hours)` enforces `premium > 0`, `payoff > 0`, `payoff > premium`, `delay_hours > 0`. Applied in `__constructor`, `set_defaults`, `whitelist_route`, and `update_route_terms` (the last two resolve defaults first so a partial override can't dodge the check). Seven new should-panic tests in `governance_module/src/test.rs` cover every rejection path.
 
 **Files:** `governance_module/src/lib.rs:86-117, 204-251`. Trust model: admin is added by owner (`#[only_owner] add_admin`) but admins are not bonded.
 
@@ -285,6 +316,11 @@ Plus the same checks in `set_defaults`. Optionally, raise the bar so admin can o
 
 ### H-05. INTERACT-then-EFFECT ordering in three USDC-transferring functions
 
+**Status:** ✅ Fixed. All three paths now write state before the external transfer:
+- `risk_vault::collect` removes the `ClaimableBalance(user)` entry before `usdc.transfer`.
+- `risk_vault::send_payout` decrements TMA before the transfer.
+- `flight_pool_manager::withdraw_recovered` decrements `RecoveredBalance` before the transfer.
+
 **Files:**
 - `risk_vault/src/claims.rs:60-79` (`collect`): `usdc.transfer` → `persistent.remove` → emit.
 - `risk_vault/src/capital.rs:48-61` (`send_payout`): `usdc.transfer` → TMA decrement.
@@ -313,6 +349,8 @@ For `flight_pool_manager::claim` (claim.rs:47-61), the order is already correct 
 
 ### H-06. `process_withdrawal_queue` share price drifts across loop iterations
 
+**Status:** ✅ Fixed. TMA is persisted to storage inside each loop iteration (between the burn and the next `preview_redeem`) so OZ Vault sees a consistent `(total_assets, total_supply)` pair across the drain.
+
 **File:** `risk_vault/src/capital.rs:81-118`.
 
 The loop processes withdrawal requests one at a time. Each iteration:
@@ -335,6 +373,8 @@ Concretely: each subsequent request in the queue gets MORE assets per share than
 ---
 
 ### H-07. Owner can brick the protocol by setting `claim_expiry_window = 0`
+
+**Status:** ✅ Fixed. New bounds in `controller/src/storage.rs`: `solvency_ratio ∈ [100, 10_000]`, `min_lead_time ≤ 90d`, `claim_expiry_window ∈ [1d, 180d]`. Asserted in `set_*` setters AND in `__constructor`. Six new should-panic tests lock the bounds. This also subsumes M-02.
 
 **File:** `controller/src/admin.rs:85-90`.
 
@@ -368,6 +408,8 @@ assert!(ratio >= 100 && ratio <= MAX_SOLVENCY_RATIO);   // 100% minimum
 
 ### M-01. Unbounded list growth
 
+**Status:** ⏸ Deferred — needs a design decision (hard cap vs. migrate to enumerable per-key storage). The most user-visible failure mode is per-traveler `TravelerFlights(addr)` hitting the per-entry size limit; the system-wide active lists grow slower and self-prune. Will be addressed in a follow-up pass scoped separately.
+
 | Location | List | Growth driver | Mitigation present |
 |---|---|---|---|
 | `flight_pool_manager` instance storage | `ActiveFlightList: Vec<(Symbol, u64)>` | `register_flight` (one per route + date) | Trimmed in `prune_active_list` on settle |
@@ -384,9 +426,11 @@ assert!(ratio >= 100 && ratio <= MAX_SOLVENCY_RATIO);   // 100% minimum
 
 ### M-02. Owner setters have no bounds (related to H-07)
 
-Already covered for `claim_expiry_window` in H-07. Same applies to `solvency_ratio`, `min_lead_time`, and oracle's `set_oracle` (no zero-address check — but Stellar has no zero address concept, so this is mostly nominal).
+**Status:** ✅ Fixed alongside H-07 — bounds apply to all three setters (`solvency_ratio`, `min_lead_time`, `claim_expiry_window`). `set_oracle` zero-address check is moot on Stellar.
 
 ### M-03. `process_withdrawal_queue` blocked by `execute_settlements` gas exhaustion
+
+**Status:** ✅ Fixed. Queue drain + snapshot moved to a separate keeper entry point `controller::run_queue_maintenance`. Settlement gas pressure can no longer block underwriter payouts. `TestEnv::classify_and_settle` updated to chain the two calls for tests.
 
 **File:** `controller/src/settle.rs:96-214`.
 
@@ -395,6 +439,8 @@ Already covered for `claim_expiry_window` in H-07. Same applies to `solvency_rat
 **Recommendation.** Move `process_withdrawal_queue` and `snapshot` to a separate keeper entry point (`controller::run_queue_maintenance`) so they can be invoked independently when settlements are too heavy.
 
 ### M-04. `cancel_withdrawal` uses a queue index — wrong-request risk
+
+**Status:** ✅ Fixed. `WithdrawalRequest` gains a monotonic `request_id: u64`; `request_withdrawal` returns the id; `cancel_withdrawal(caller, request_id: u64)` linearly scans the queue. Queue position no longer affects cancellation correctness. New regression test ensures cancelling the first request after a later one was processed still works.
 
 **File:** `risk_vault/src/claims.rs:39-58`.
 
@@ -413,6 +459,8 @@ If `execute_settlements` processes earlier requests between a user's submission 
 
 ### M-05. First-buyer race condition on a new (flight_id, date)
 
+**Status:** ✅ Fixed. Both `flight_pool_manager::register_flight` and `oracle_aggregator::register_flight` are now idempotent — re-registering with matching terms is a no-op (extends TTL), and pool register panics only when re-registering with different terms (guard against admin term-change races). `controller::buy_insurance` drops the precheck and just calls register unconditionally.
+
 **File:** `controller/src/purchase.rs:53-65`.
 
 Two travelers submitting `buy_insurance` for the same new route in the same ledger: only one's tx succeeds the `pool.register_flight` (the other panics on "flight already registered"). The losing traveler must retry.
@@ -422,6 +470,8 @@ Two travelers submitting `buy_insurance` for the same new route in the same ledg
 **Recommendation.** Handle the duplicate-registration case gracefully (read after attempted register, or check + retry the `is_none` branch).
 
 ### M-06. `record_premium_income` accepts caller's stated amount without verifying USDC arrived
+
+**Status:** ✅ Fixed. The vault now reads its own USDC balance and asserts `balance >= new_TMA` before crediting — a compromised or buggy controller cannot credit TMA without an actual USDC transfer arriving first. Catches the strict "zero transfer" case; the documented residual is that outstanding ClaimableBalance entries are not in TMA so the check is a floor rather than a strict equality.
 
 **File:** `risk_vault/src/capital.rs:38-46`.
 
@@ -447,6 +497,8 @@ The vault credits TMA based on `amount` passed by the caller (controller), trust
 
 ### L-01. `NotInitiated → Cancelled` is not in `is_valid_transition`
 
+**Status:** ✅ Fixed. Edge added to the accepted-transitions table; `test_not_initiated_to_cancelled_short_notice` locks it.
+
 **File:** `oracle_aggregator/src/storage.rs:55-68`.
 
 The accepted edges are `NotInitiated → Active`, `Active → Cancelled`. If a flight is cancelled before the oracle ever fetches estimated arrival, the oracle cannot record the cancellation (would have to `set_estimated_arrival` first, then `set_cancelled`). Real-world edge case for short-notice cancellations.
@@ -454,6 +506,8 @@ The accepted edges are `NotInitiated → Active`, `Active → Cancelled`. If a f
 **Recommendation.** Add `(NotInitiated, Cancelled)` to the accepted edges.
 
 ### L-02. `actual_arrival_time` not validated against `estimated_arrival_time`
+
+**Status:** ✅ Fixed. `set_landed` asserts `actual_arrival_time >= estimated_arrival_time`; rejects implausible reports. New `test_set_landed_rejects_actual_before_estimated`.
 
 **File:** `oracle_aggregator/src/lib.rs:90-117`.
 
@@ -463,6 +517,8 @@ The oracle could `set_landed` with `actual_arrival_time < estimated_arrival_time
 
 ### L-03. Generic event topic prefixes
 
+**Status:** ✅ Fixed. Every event topic prefix now leads with `"sentinel"`. The `#[contractevent]` macro caps the prefix list at 2 entries, so vault/gov/route events that previously used 2-symbol prefixes collapse to `["sentinel", "<X_Y>"]` (verbs joined with `_`). Contract address is implicit in every event envelope, so the middle discriminator was redundant. Test helpers updated to match.
+
 **Files:** all event modules.
 
 Topics like `["ctrl"]`, `["settle"]`, `["claim"]`, `["register"]`, `["sweep"]`, `["withdraw"]` are short generic words likely to collide with topics from unrelated Soroban contracts indexed by the same off-chain tool.
@@ -470,6 +526,8 @@ Topics like `["ctrl"]`, `["settle"]`, `["claim"]`, `["register"]`, `["sweep"]`, 
 **Recommendation.** Namespace under the protocol (e.g., `["sentinel", "settle"]`).
 
 ### L-04. Snapshot price scaling factor is hardcoded for 7-decimal USDC
+
+**Status:** ✅ Fixed. `snapshot()` reads the asset's `decimals()` and raises `10i128.checked_pow(decimals)` as the scale. Correct for any decimal stablecoin.
 
 **File:** `risk_vault/src/snapshot.rs:30`.
 
@@ -483,6 +541,8 @@ If the underlying asset is changed to anything other than 7-decimal USDC (e.g., 
 
 ### L-05. `snapshot()` emits no event
 
+**Status:** ✅ Fixed. New `SharePriceSnapshot { day, price }` event with topics `["sentinel", "snapshot"]`. Off-chain analytics can subscribe instead of polling.
+
 **File:** `risk_vault/src/snapshot.rs:10-52`.
 
 Snapshot writes to temporary storage but emits no event. Off-chain analytics tools cannot subscribe to share-price updates; they must poll.
@@ -491,15 +551,21 @@ Snapshot writes to temporary storage but emits no event. Off-chain analytics too
 
 ### L-06. No upper bound on `buyer_count` per flight
 
+**Status:** 🟡 Accepted. `total_payoff = payoff * buyer_count` overflows `i128` orders of magnitude before `buyer_count` overflows `u32`; the `checked_mul` already rejects. Not exploitable in practice.
+
 **File:** `flight_pool_manager/src/lifecycle.rs:63-105`.
 
 `buyer_count` is a u32, capped by checked_add at 2^32. Practical limit hit much earlier when `total_payoff = payoff * buyer_count` overflows i128 (extremely unlikely for realistic payoffs). Not exploitable, but no design intent to cap.
 
 ### L-07. Admin can disable a route between traveler submission and inclusion
 
+**Status:** 🟡 Accepted. Admin is a trusted role; griefing-only surface with no monetary gain. Pause/unpause (H-03) provides a cleaner kill-switch for emergencies.
+
 Standard timing-attack surface: admin sees a buy tx in mempool, front-runs with `disable_route`, traveler's tx reverts. Limited to griefing; admin gains nothing.
 
 ### L-08. `InsuranceBought` event omits flight_id and date
+
+**Status:** ✅ Fixed. `flight_id` and `date` added as `#[topic]` fields; event is now symmetric with `FlightClassified` / `FlightSettledEvent`. Topic prefix is `["sentinel", "ctrl"]` after the L-03 namespace change.
 
 **File:** `controller/src/events.rs:5-10`.
 
@@ -517,6 +583,8 @@ Asymmetric with `FlightClassified` and `FlightSettledEvent` which both carry fli
 
 ### L-09. `extend_ttl` is callable by anyone on every contract
 
+**Status:** 🟡 Accepted. Intentional and self-paying — a griefer would pay the rent to spike rent they don't benefit from. Flagged only.
+
 All 5 contracts expose `pub fn extend_ttl(e: &Env)` with no auth, intended for cron use. This is generally fine — extending TTL is permissionless housekeeping — but a griefer could call it every block to spike storage costs. The Soroban fee model makes this self-paying so it's economically pointless; flag only.
 
 ---
@@ -524,6 +592,8 @@ All 5 contracts expose `pub fn extend_ttl(e: &Env)` with no auth, intended for c
 ## Informational findings
 
 ### I-01. clippy pedantic surfaces ~280 warnings
+
+**Status:** ✅ Fixed. Workspace-level `[lints.clippy]` block allows the three convention-driven categories (`inconsistent_digit_grouping`, `unreadable_literal`, `too_many_arguments`); each member crate opts in via `[lints] workspace = true`. Mechanical cleanups: `RangeInclusive::contains` in bounds checks, `len() > 0` → `is_empty()`, `match` → `let`-pattern destructure in test event decoders. `cargo clippy --workspace --all-targets` is now clean.
 
 `cargo clippy --workspace --all-targets -- -W clippy::pedantic` reports:
 - 117 `digit groups should be smaller` / 46 `digits grouped inconsistently` — token-amount literals like `10_0000000` mix 4- and 7-digit groupings. Project convention; consider `#![allow(clippy::inconsistent_digit_grouping, clippy::unreadable_literal)]` at workspace level to silence.
@@ -536,17 +606,25 @@ None are security issues; CI can be tuned to enforce or ignore.
 
 ### I-02. Single-key owner across all contracts
 
+**Status:** 🟡 Accepted as operational. Mitigated in part by H-03 Pausable (a kill-switch survives a slow key rotation) and H-07 owner-setter bounds (compromised owner can't brick the protocol with one tx). Multisig owner is a deployment-time concern owned by the runbook, not a contract change.
+
 Each contract's `Owner` is one Address. No on-chain multisig or timelock requirement. Recommendation: deploy with owner set to a Stellar account that is itself a multisig (m-of-n signers via the standard `set_options`), or use an upgradable contract pattern with a timelock. Document the owner key management plan in the deployment runbook.
 
 ### I-03. No upgrade path
+
+**Status:** 🟡 Accepted — intentional design choice. Trade-off: no upgrade key risk, but bug-fix requires redeploy + state migration.
 
 Contracts use `#[contract]` without an upgrade mechanism. **This is a positive** — no upgrade key risk — but **bugs cannot be fixed without a migration to new contract addresses**. The architecture should document the migration strategy (re-deploy + run a one-shot indexer to transition state).
 
 ### I-04. `TtlMiss` diagnostic is good observability
 
-`controller/src/events.rs:34-39` and `controller/src/settle.rs:67-71` — when classify_flights sees a flight in the oracle's active list but with archived FlightData, it emits a `["warn", "ttl_miss"]` event without breaking the loop. This is excellent defensive observability and should be replicated for other "should-not-happen" branches.
+**Status:** 🟡 Positive finding, no action required. (Topic prefix updated to `["sentinel", "ttl_miss"]` after the L-03 namespace pass.)
+
+`controller/src/events.rs:34-39` and `controller/src/settle.rs:67-71` — when classify_flights sees a flight in the oracle's active list but with archived FlightData, it emits a `["sentinel", "ttl_miss"]` event without breaking the loop. This is excellent defensive observability and should be replicated for other "should-not-happen" branches.
 
 ### I-05. Cross-contract mirror types in `controller/interfaces.rs` rely on byte-level XDR layout matching
+
+**Status:** ✅ Fixed. New `sentinel_types` workspace crate owns `FlightStatus`, `FlightData`, `FlightConfig`, `RouteStatus`, `ResolvedTerms`, `SettlementStatus`. Each canonical contract (`governance_module`, `oracle_aggregator`, `flight_pool_manager`) re-exports them; `controller/interfaces.rs` imports from the shared crate. Mirror drift hazard eliminated. The crate also hosts the `ttl::INSTANCE_TTL_*` constants and the `testutils::collect_events` test helper (behind a feature flag).
 
 `FlightStatus`, `FlightData`, `FlightConfig`, `RouteStatus`, `ResolvedTerms`, `SettlementStatus` are duplicated in the controller crate with `#[contracttype]` and must match the upstream contract's field order exactly. The doc comment notes this. If the upstream contract reorders fields, the controller deserializes garbage at runtime.
 
@@ -554,9 +632,13 @@ Contracts use `#[contract]` without an upgrade mechanism. **This is a positive**
 
 ### I-06. No `cargo audit` advisory check in CI
 
+**Status:** ⏸ Deferred — needs a CI workflow file, not a contract change.
+
 `cargo-audit` is not installed locally and (presumably) not in CI. Recommended to add `cargo install cargo-audit && cargo audit` as a CI gate to catch advisories in `soroban-sdk`, `stellar-tokens`, and their transitive deps.
 
 ### I-07. Test snapshots are SDK-version-specific
+
+**Status:** 🟡 Accepted — known and managed.
 
 The 200+ JSON files under `contracts/*/test_snapshots/` are regenerated whenever `soroban-sdk` version changes (we saw the entire set rewrite on the 23 → 25.3.1 bump). Worth noting that the snapshot diff is not meaningful as a code review surface; reviewers should `.gitignore` the snapshot directory in code-review tooling or use a custom diff strategy.
 
@@ -584,27 +666,31 @@ The 200+ JSON files under `contracts/*/test_snapshots/` are regenerated whenever
 
 10. **Constructor arg lists are explicit.** No default values; every cross-contract address and parameter is passed at deploy time. Reduces "forgot to set X" risk.
 
-11. **Test coverage is broad.** 228 tests across unit (per-contract) and integration (cross-contract) suites. Notable test groups: `group6_authorization` (auth panic guards), `group8_events` (event chain assertions), `group3_withdrawal` (recover_uncollected paths).
+11. **Test coverage is broad.** 262 tests across unit (per-contract) and integration (cross-contract) suites, plus two cargo-fuzz harnesses (`risk_vault` solvency invariant, `oracle_aggregator` state machine). Notable test groups: `group6_authorization` (auth panic guards), `group8_events` (event chain assertions), `group3_withdrawal` (recover_uncollected paths). Every audit-driven code change shipped with a regression test.
+
+12. **Pausable kill-switch across all 5 production contracts** (H-03 fix). Owner can halt all state mutations atomically; `recover_uncollected` deliberately stays open so the owner can settle archived entries during a pause.
+
+13. **Shared cross-contract type crate** (`sentinel_types`, I-05 fix). Single source of truth for `FlightStatus`, `FlightData`, `FlightConfig`, `RouteStatus`, `ResolvedTerms`, `SettlementStatus`; the byte-level mirror drift hazard is eliminated by construction.
 
 ---
 
 ## Recommendations
 
-**Pre-mainnet checklist (in priority order):**
+**Pre-mainnet checklist (status after remediation pass):**
 
-1. [ ] Fix **C-01** (flight TTL ≥ claim window) — single-line constant change.
-2. [ ] Fix **C-02** (bound `recover_uncollected` Transfer, decrement TMA, check claimable prior).
-3. [ ] Gate **C-03** (`mock_usdc` cannot ship to mainnet) at build / deploy level.
-4. [ ] Decide on **H-03** (pausable) — add `Pausable` to all 5 contracts.
-5. [ ] Fix **H-04** (governance validation on `delay_hours > 0` and `payoff > premium`).
-6. [ ] Reorder CEI in **H-05** (`collect`, `send_payout`, `withdraw_recovered`).
-7. [ ] Fix **H-07** (bounds on owner setters).
-8. [ ] Fix **H-02** (treat missing FlightData as evictable, not panic).
-9. [ ] Fix **H-01** (rename to `Replace` or assert ≥ existing).
-10. [ ] Fix **H-06** (write TMA inside loop).
-11. [ ] Address **M-01** to **M-06** as time allows.
-12. [ ] Extract shared types into `sentinel-types` crate (**I-05**).
-13. [ ] Add `cargo audit` to CI (**I-06**).
+1. [x] Fix **C-01** (flight TTL ≥ claim window) — `extend_flight_ttl_to(claim_expiry + 30d)`.
+2. [x] Fix **C-02** (bound `recover_uncollected` Transfer, gate on prior credit, CEI ordering).
+3. [x] Gate **C-03** — accepted as deployment-policy item; `mock_usdc` stays testnet-only.
+4. [x] **H-03** Pausable wired into all 5 production contracts.
+5. [x] Fix **H-04** (governance validation on `delay_hours > 0` and `payoff > premium`).
+6. [x] Reorder CEI in **H-05** (`collect`, `send_payout`, `withdraw_recovered`).
+7. [x] Fix **H-07** (bounds on owner setters; subsumes M-02).
+8. [x] Fix **H-02** (treat missing FlightData as evictable, not panic).
+9. [x] Fix **H-01** (`Recredit` asserts `amount >= existing`).
+10. [x] Fix **H-06** (write TMA inside loop).
+11. [x] Address **M-03** through **M-06** — all done; **M-01** (list caps) deferred for a separate design pass.
+12. [x] Extract shared types into `sentinel_types` crate (**I-05**); now also hosts TTL constants and the shared test-event decoder.
+13. [ ] Add `cargo audit` to CI (**I-06**) — pending workflow file.
 14. [ ] Engage a third-party Soroban auditor (Trail of Bits, Halborn, Runtime Verification, OtterSec) for the contracts pre-mainnet. The findings here are based on manual review and should be cross-checked.
 
 **Operational recommendations:**
