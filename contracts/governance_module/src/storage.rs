@@ -1,5 +1,10 @@
 use soroban_sdk::{contracttype, Address, Env, Symbol};
 
+// Cross-contract types live in the shared `sentinel_types` crate so the
+// governance contract and the controller's mirror reference the same XDR
+// layout. Re-exported below for downstream-compatibility.
+pub use sentinel_types::{ResolvedTerms, RouteStatus};
+
 #[contracttype]
 pub enum DataKey {
     Admin(Address),                // bool — Instance
@@ -16,22 +21,6 @@ pub struct RouteTerms {
     pub payoff: Option<i128>,
     pub delay_hours: Option<u32>,
     pub approved: bool,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct ResolvedTerms {
-    pub premium: i128,
-    pub payoff: i128,
-    pub delay_hours: u32,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum RouteStatus {
-    Active(ResolvedTerms),
-    Disabled,
-    Unknown,
 }
 
 // Partial-update enums for update_route_terms.

@@ -987,6 +987,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 name = "oracle_aggregator"
 version = "0.0.0"
 dependencies = [
+ "sentinel_types",
  "soroban-sdk",
  "stellar-access",
  "stellar-contract-utils",
@@ -1222,6 +1223,13 @@ name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
+
+[[package]]
+name = "sentinel_types"
+version = "0.0.0"
+dependencies = [
+ "soroban-sdk",
+]
 
 [[package]]
 name = "serde"

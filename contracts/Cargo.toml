@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "sentinel_types",
     "mock_usdc",
     "governance_module",
     "risk_vault",

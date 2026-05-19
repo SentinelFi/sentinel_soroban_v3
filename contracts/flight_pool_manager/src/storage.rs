@@ -1,5 +1,8 @@
 use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
 
+// Cross-contract types live in the shared `sentinel_types` crate.
+pub use sentinel_types::{FlightConfig, SettlementStatus};
+
 #[contracttype]
 #[derive(Clone)]
 pub enum PoolKey {
@@ -16,27 +19,6 @@ pub enum PoolKey {
     // Persistent — keyed by (flight_id, date, address)
     Buyer(Symbol, u64, Address),
     Claimed(Symbol, u64, Address),
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum SettlementStatus {
-    Active,
-    SettledOnTime,
-    SettledDelayed,
-    SettledCancelled,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct FlightConfig {
-    pub premium: i128,
-    pub payoff: i128,
-    pub delay_hours: u32,
-    pub buyer_count: u32,
-    pub claimed_count: u32,
-    pub status: SettlementStatus,
-    pub claim_expiry: u64,
 }
 
 pub(crate) const PERSISTENT_TTL_THRESHOLD: u32 = 120_960; // ~7 days

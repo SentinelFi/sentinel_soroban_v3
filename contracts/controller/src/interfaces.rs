@@ -1,30 +1,16 @@
-// Cross-contract interfaces (inline trait + mirror types). Mirror struct/enum
-// field order MUST match the upstream contract — drift causes runtime
-// deserialization panics. The trait names exist only as input to the
-// `#[contractclient]` macro that generates the actual `XClient` types.
+// Cross-contract interfaces. The trait names are input to `#[contractclient]`
+// which generates the actual `XClient` types. The data types live in the
+// shared `sentinel_types` crate so this file no longer mirrors them — single
+// source of truth, no byte-layout drift hazard (audit I-05).
 #![allow(dead_code)]
 
-use soroban_sdk::{contractclient, contracttype, Address, Env, Symbol, Vec};
+use soroban_sdk::{contractclient, Address, Env, Symbol, Vec};
+
+pub use sentinel_types::{FlightConfig, FlightData, FlightStatus, RouteStatus};
 
 #[contractclient(name = "GovClient")]
 pub trait GovernanceInterface {
     fn route_status(env: &Env, flight_id: Symbol, origin: Symbol, dest: Symbol) -> RouteStatus;
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct ResolvedTerms {
-    pub premium: i128,
-    pub payoff: i128,
-    pub delay_hours: u32,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum RouteStatus {
-    Active(ResolvedTerms),
-    Disabled,
-    Unknown,
 }
 
 #[contractclient(name = "VaultClient")]
@@ -36,28 +22,6 @@ pub trait VaultInterface {
     fn send_payout(env: &Env, controller: Address, to: Address, amount: i128);
     fn process_withdrawal_queue(env: &Env, controller: Address);
     fn snapshot(env: &Env);
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum FlightStatus {
-    NotInitiated,
-    Active,
-    Landed,
-    Cancelled,
-    ToBeSettledOnTime,
-    ToBeSettledDelayed,
-    ToBeSettledCancelled,
-    Settled,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct FlightData {
-    pub status: FlightStatus,
-    pub estimated_arrival_time: u64,
-    pub actual_arrival_time: u64,
-    pub settled_at: u64, // 0 means not-yet-settled — must match oracle's struct field order
 }
 
 #[contractclient(name = "OracleClient")]
@@ -73,27 +37,6 @@ pub trait OracleInterface {
         status: FlightStatus,
     );
     fn set_settled(env: &Env, controller: Address, flight_id: Symbol, date: u64);
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum SettlementStatus {
-    Active,
-    SettledOnTime,
-    SettledDelayed,
-    SettledCancelled,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct FlightConfig {
-    pub premium: i128,
-    pub payoff: i128,
-    pub delay_hours: u32,
-    pub buyer_count: u32,
-    pub claimed_count: u32,
-    pub status: SettlementStatus,
-    pub claim_expiry: u64,
 }
 
 #[contractclient(name = "FlightPoolManagerClient")]

@@ -1,5 +1,8 @@
 use soroban_sdk::{contracttype, Env, Symbol};
 
+// Cross-contract types live in the shared `sentinel_types` crate.
+pub use sentinel_types::{FlightData, FlightStatus};
+
 #[contracttype]
 pub enum OracleKey {
     // Instance — global single-row state (auto-extended with contract instance TTL)
@@ -9,28 +12,6 @@ pub enum OracleKey {
 
     // Persistent — keyed multi-row state
     FlightData(Symbol, u64),
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum FlightStatus {
-    NotInitiated,
-    Active,
-    Landed,
-    Cancelled,
-    ToBeSettledOnTime,
-    ToBeSettledDelayed,
-    ToBeSettledCancelled,
-    Settled,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct FlightData {
-    pub status: FlightStatus,
-    pub estimated_arrival_time: u64,
-    pub actual_arrival_time: u64,
-    pub settled_at: u64, // 0 means not-yet-settled
 }
 
 pub(crate) const PERSISTENT_TTL_THRESHOLD: u32 = 120_960; // ~7 days
