@@ -21,7 +21,12 @@ impl RiskVault {
         assert!(shares > 0, "shares must be positive");
 
         // Escrow shares: transfer from caller to vault
-        Base::update(e, Some(&caller), Some(&e.current_contract_address()), shares);
+        Base::update(
+            e,
+            Some(&caller),
+            Some(&e.current_contract_address()),
+            shares,
+        );
 
         let request_id: u64 = e
             .storage()
@@ -78,7 +83,12 @@ impl RiskVault {
         assert!(request.owner == caller, "not your request");
 
         // Return escrowed shares to caller
-        Base::update(e, Some(&e.current_contract_address()), Some(&caller), request.shares);
+        Base::update(
+            e,
+            Some(&e.current_contract_address()),
+            Some(&caller),
+            request.shares,
+        );
 
         queue.remove(idx);
         e.storage()
@@ -127,12 +137,7 @@ impl RiskVault {
     /// 3. This function (`recover_uncollected`) — owner manual fallback if
     ///    layers 1 and 2 fail.
     #[only_owner]
-    pub fn recover_uncollected(
-        e: &Env,
-        user: Address,
-        amount: i128,
-        mode: RecoveryMode,
-    ) {
+    pub fn recover_uncollected(e: &Env, user: Address, amount: i128, mode: RecoveryMode) {
         assert!(amount > 0, "amount must be positive");
 
         match mode {
@@ -165,9 +170,7 @@ impl RiskVault {
                 assert!(amount <= existing, "amount exceeds claimable balance");
 
                 // CEI: write state before the external transfer.
-                let remaining = existing
-                    .checked_sub(amount)
-                    .expect("subtraction underflow");
+                let remaining = existing.checked_sub(amount).expect("subtraction underflow");
                 if remaining == 0 {
                     e.storage().persistent().remove(&key);
                 } else {
@@ -179,11 +182,6 @@ impl RiskVault {
             }
         }
 
-        Recovered {
-            user,
-            amount,
-            mode,
-        }
-        .publish(e);
+        Recovered { user, amount, mode }.publish(e);
     }
 }

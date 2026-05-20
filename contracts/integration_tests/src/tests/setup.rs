@@ -1,7 +1,7 @@
 use sentinel_types::test_support::collect_events;
 use soroban_sdk::{
-    symbol_short, testutils::Address as _, testutils::Ledger as _, token,
-    Address, Env, Symbol, TryFromVal,
+    symbol_short, testutils::Address as _, testutils::Ledger as _, token, Address, Env, Symbol,
+    TryFromVal,
 };
 
 pub const PREMIUM: i128 = 10_0000000; // 10 USDC (7 decimals)
@@ -210,11 +210,8 @@ impl TestEnv {
             &FLIGHT_DATE,
             &EST_ARRIVAL,
         );
-        self.oracle.set_cancelled(
-            &self.oracle_account,
-            &symbol_short!("AA100"),
-            &FLIGHT_DATE,
-        );
+        self.oracle
+            .set_cancelled(&self.oracle_account, &symbol_short!("AA100"), &FLIGHT_DATE);
     }
 
     /// Run the full classify + execute settlement cycle (Crons #2 + #3) plus
@@ -244,12 +241,7 @@ impl TestEnv {
 /// clear the event log. Call this helper IMMEDIATELY after the emitting
 /// invocation, before any further client method calls.
 #[allow(dead_code)]
-pub fn count_events_with_topic(
-    env: &Env,
-    addr: &Address,
-    prefix0: Symbol,
-    prefix1: Symbol,
-) -> u32 {
+pub fn count_events_with_topic(env: &Env, addr: &Address, prefix0: Symbol, prefix1: Symbol) -> u32 {
     let mut count: u32 = 0;
     let sentinel = symbol_short!("sentinel");
     for (event_addr, topics, _data) in collect_events(env).iter() {

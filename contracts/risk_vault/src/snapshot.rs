@@ -20,9 +20,10 @@ impl RiskVault {
 
         // No-op if already snapshotted today (safe to call repeatedly)
         if last != 0
-            && now < last
-                .checked_add(SECONDS_PER_DAY)
-                .expect("addition overflow")
+            && now
+                < last
+                    .checked_add(SECONDS_PER_DAY)
+                    .expect("addition overflow")
         {
             return;
         }
@@ -52,11 +53,9 @@ impl RiskVault {
         // are off-chain via events.
         let snap_key = VaultKey::SnapshotPrice(day);
         e.storage().temporary().set(&snap_key, &price);
-        e.storage().temporary().extend_ttl(
-            &snap_key,
-            SNAPSHOT_TTL_LEDGERS,
-            SNAPSHOT_TTL_LEDGERS,
-        );
+        e.storage()
+            .temporary()
+            .extend_ttl(&snap_key, SNAPSHOT_TTL_LEDGERS, SNAPSHOT_TTL_LEDGERS);
         e.storage()
             .instance()
             .set(&VaultKey::LastSnapshotTime, &now);

@@ -34,10 +34,8 @@ impl OracleAggregator {
     /// Set the authorized controller address. Can only be called once.
     #[only_owner]
     pub fn set_controller(e: &Env, controller: Address) {
-        let existing: Option<Address> = e
-            .storage()
-            .instance()
-            .get(&OracleKey::AuthorizedController);
+        let existing: Option<Address> =
+            e.storage().instance().get(&OracleKey::AuthorizedController);
         assert!(existing.is_none(), "controller already set");
 
         e.storage()
@@ -360,9 +358,7 @@ impl OracleAggregator {
     }
 
     pub fn get_authorized_controller(e: &Env) -> Option<Address> {
-        e.storage()
-            .instance()
-            .get(&OracleKey::AuthorizedController)
+        e.storage().instance().get(&OracleKey::AuthorizedController)
     }
 }
 

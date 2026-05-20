@@ -1,8 +1,6 @@
 use super::*;
 use sentinel_types::test_support::collect_events;
-use soroban_sdk::{
-    testutils::Address as _, testutils::Ledger, Env, Symbol, TryFromVal,
-};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger, Env, Symbol, TryFromVal};
 
 fn setup() -> (Env, RiskVaultClient<'static>, Address, Address, Address) {
     let env = Env::default();
@@ -272,10 +270,7 @@ fn test_cancel_withdrawal_by_request_id_is_index_independent() {
     assert_eq!(client.balance(&depositor), shares);
 
     // The remaining queued request still belongs to `other`.
-    assert_eq!(
-        client.get_withdrawal_queue().get(0).unwrap().owner,
-        other,
-    );
+    assert_eq!(client.get_withdrawal_queue().get(0).unwrap().owner, other,);
 }
 
 #[test]
@@ -424,9 +419,7 @@ fn test_claimable_balance_credited_event_fires() {
 
     // process_withdrawal_queue is the most recent invocation that emits
     // the event log. Assert the Credited event appeared.
-    assert!(
-        count_events_with_verb(&env, &client.address, symbol_short!("credited")) >= 1
-    );
+    assert!(count_events_with_verb(&env, &client.address, symbol_short!("credited")) >= 1);
 }
 
 #[test]
@@ -438,9 +431,7 @@ fn test_claimable_balance_collected_event_fires() {
     // Now collect — `Collected` event fires on this most-recent call.
     client.collect(&depositor);
 
-    assert!(
-        count_events_with_verb(&env, &client.address, symbol_short!("collected")) >= 1
-    );
+    assert!(count_events_with_verb(&env, &client.address, symbol_short!("collected")) >= 1);
 }
 
 #[test]
@@ -453,9 +444,7 @@ fn test_recover_uncollected_recredit_sets_balance() {
 
     // Event check FIRST — env.events().all() returns only the most-recent
     // invocation's events; any subsequent client call clears the log.
-    assert!(
-        count_events_with_verb(&env, &client.address, symbol_short!("recovered")) >= 1
-    );
+    assert!(count_events_with_verb(&env, &client.address, symbol_short!("recovered")) >= 1);
 
     // SET semantics: balance is now 500.
     assert_eq!(client.get_claimable_balance(&user), 500_0000000);
@@ -505,12 +494,13 @@ fn test_recover_uncollected_transfer_moves_usdc() {
 
     // Event check FIRST — env.events().all() returns only the most-recent
     // invocation's events.
-    assert!(
-        count_events_with_verb(&env, &client.address, symbol_short!("recovered")) >= 1
-    );
+    assert!(count_events_with_verb(&env, &client.address, symbol_short!("recovered")) >= 1);
 
     // Vault USDC down by 50, user up by 50, claimable cleared.
-    assert_eq!(usdc.balance(&client.address), vault_balance_before - 50_0000000);
+    assert_eq!(
+        usdc.balance(&client.address),
+        vault_balance_before - 50_0000000
+    );
     assert_eq!(usdc.balance(&depositor), user_balance_before + 50_0000000);
     assert_eq!(client.get_claimable_balance(&depositor), 0);
 }

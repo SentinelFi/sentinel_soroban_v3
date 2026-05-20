@@ -2,7 +2,7 @@ use soroban_sdk::{Address, Env};
 
 use crate::storage::CtrlKey;
 
-pub(crate) use sentinel_types::ttl::{INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND};
+pub(crate) use sentinel_types::ttl::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
 
 pub(crate) fn require_keeper(e: &Env, caller: &Address) {
     caller.require_auth();

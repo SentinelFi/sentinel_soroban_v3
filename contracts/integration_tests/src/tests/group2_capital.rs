@@ -177,10 +177,7 @@ fn total_managed_assets_invariant_through_lifecycle() {
     t.oracle_on_time();
     t.classify_and_settle();
     // On-time settlement records premium income.
-    assert_eq!(
-        t.vault.get_total_managed_assets(),
-        initial_tma + PREMIUM
-    );
+    assert_eq!(t.vault.get_total_managed_assets(), initial_tma + PREMIUM);
 }
 
 #[test]

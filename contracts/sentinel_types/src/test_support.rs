@@ -14,8 +14,7 @@ pub fn collect_events(env: &Env) -> Vec<(Address, Vec<Val>, Val)> {
     let mut out: Vec<(Address, Vec<Val>, Val)> = Vec::new(env);
     for e in env.events().all().events() {
         let cid = e.contract_id.clone().unwrap();
-        let addr =
-            Address::try_from_val(env, &ScVal::Address(ScAddress::Contract(cid))).unwrap();
+        let addr = Address::try_from_val(env, &ScVal::Address(ScAddress::Contract(cid))).unwrap();
         let ContractEventBody::V0(body) = &e.body;
         let mut topics: Vec<Val> = Vec::new(env);
         for sv in body.topics.iter() {

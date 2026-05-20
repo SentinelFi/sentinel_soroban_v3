@@ -128,22 +128,14 @@ fn vault_credited_collected_chain_via_underwriter_lifecycle() {
     // run_queue_maintenance is the most-recent invocation. It triggered
     // process_withdrawal_queue → Credited event.
     assert!(
-        count_events_with_single_prefix(
-            &t.env,
-            &t.vault_addr,
-            symbol_short!("credited"),
-        ) >= 1,
+        count_events_with_single_prefix(&t.env, &t.vault_addr, symbol_short!("credited"),) >= 1,
         "expected sentinel.credited event"
     );
 
     // Now collect — this is the next most-recent invocation.
     t.vault.collect(&t.underwriter);
     assert!(
-        count_events_with_single_prefix(
-            &t.env,
-            &t.vault_addr,
-            symbol_short!("collected"),
-        ) >= 1,
+        count_events_with_single_prefix(&t.env, &t.vault_addr, symbol_short!("collected"),) >= 1,
         "expected vault.collected event"
     );
 }
@@ -155,39 +147,22 @@ fn vault_recovered_recredit_and_transfer_modes_emit_correct_topics() {
     let user_b = Address::generate(&t.env);
 
     // Recredit path
-    t.vault.recover_uncollected(
-        &user_a,
-        &100_0000000,
-        &risk_vault::RecoveryMode::Recredit,
-    );
+    t.vault
+        .recover_uncollected(&user_a, &100_0000000, &risk_vault::RecoveryMode::Recredit);
     assert!(
-        count_events_with_single_prefix(
-            &t.env,
-            &t.vault_addr,
-            symbol_short!("recovered"),
-        ) >= 1,
+        count_events_with_single_prefix(&t.env, &t.vault_addr, symbol_short!("recovered"),) >= 1,
         "expected vault.recovered event for Recredit mode"
     );
 
     // Transfer path (seed vault with USDC and prior credit first)
     let usdc_admin = token::StellarAssetClient::new(&t.env, &t.usdc_addr);
     usdc_admin.mint(&t.vault_addr, &50_0000000);
-    t.vault.recover_uncollected(
-        &user_b,
-        &50_0000000,
-        &risk_vault::RecoveryMode::Recredit,
-    );
-    t.vault.recover_uncollected(
-        &user_b,
-        &50_0000000,
-        &risk_vault::RecoveryMode::Transfer,
-    );
+    t.vault
+        .recover_uncollected(&user_b, &50_0000000, &risk_vault::RecoveryMode::Recredit);
+    t.vault
+        .recover_uncollected(&user_b, &50_0000000, &risk_vault::RecoveryMode::Transfer);
     assert!(
-        count_events_with_single_prefix(
-            &t.env,
-            &t.vault_addr,
-            symbol_short!("recovered"),
-        ) >= 1,
+        count_events_with_single_prefix(&t.env, &t.vault_addr, symbol_short!("recovered"),) >= 1,
         "expected vault.recovered event for Transfer mode"
     );
 }
@@ -207,11 +182,7 @@ fn ttl_miss_warn_event_topic_shape() {
 
     // The TtlMiss event has 2-symbol prefix ["sentinel", "ttl_miss"].
     assert!(
-        count_events_with_single_prefix(
-            &t.env,
-            &t.ctrl_addr,
-            symbol_short!("ttl_miss"),
-        ) >= 1,
+        count_events_with_single_prefix(&t.env, &t.ctrl_addr, symbol_short!("ttl_miss"),) >= 1,
         "expected sentinel.ttl_miss event"
     );
 }

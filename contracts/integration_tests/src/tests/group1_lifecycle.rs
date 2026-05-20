@@ -27,7 +27,9 @@ fn lifecycle_on_time() {
     assert_eq!(t.usdc.balance(&traveler), 0);
 
     // Oracle settled.
-    let data = t.oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    let data = t
+        .oracle
+        .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
     assert_eq!(data.status, oracle_aggregator::FlightStatus::Settled);
     assert!(data.settled_at != 0);
 }
@@ -50,7 +52,8 @@ fn lifecycle_delayed() {
     assert_eq!(t.vault.get_locked_capital(), 0);
 
     // Traveler claims.
-    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+    t.pool
+        .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
     assert_eq!(t.usdc.balance(&traveler), PAYOFF);
 }
 
@@ -77,7 +80,8 @@ fn lifecycle_cancelled() {
         flight_pool_manager::SettlementStatus::SettledCancelled
     );
 
-    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+    t.pool
+        .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
     assert_eq!(t.usdc.balance(&traveler), PAYOFF);
 }
 
@@ -165,7 +169,8 @@ fn claim_after_delayed_succeeds() {
     t.oracle_delayed();
     t.classify_and_settle();
 
-    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+    t.pool
+        .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
     assert!(t
         .pool
         .has_claimed(&symbol_short!("AA100"), &FLIGHT_DATE, &traveler));
@@ -179,7 +184,8 @@ fn claim_after_cancelled_succeeds() {
     t.oracle_cancelled();
     t.classify_and_settle();
 
-    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+    t.pool
+        .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
     assert!(t
         .pool
         .has_claimed(&symbol_short!("AA100"), &FLIGHT_DATE, &traveler));
@@ -194,7 +200,8 @@ fn claim_panics_on_time() {
     t.oracle_on_time();
     t.classify_and_settle();
     // Status is SettledOnTime — claim must panic.
-    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+    t.pool
+        .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
 }
 
 #[test]
@@ -205,9 +212,11 @@ fn claim_panics_double_claim() {
     t.buy(&traveler);
     t.oracle_delayed();
     t.classify_and_settle();
-    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+    t.pool
+        .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
     // Second call panics.
-    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+    t.pool
+        .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
 }
 
 #[test]
@@ -220,5 +229,6 @@ fn claim_panics_after_expiry() {
     t.classify_and_settle();
     // Advance past claim_expiry (60 days + 1 second).
     t.advance_time(CLAIM_EXPIRY_WINDOW + 1);
-    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+    t.pool
+        .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
 }

@@ -53,9 +53,8 @@ pub(crate) fn extend_flight_ttl(e: &Env, flight_id: &Symbol, date: u64) {
 pub(crate) fn extend_flight_ttl_to(e: &Env, flight_id: &Symbol, date: u64, deadline_secs: u64) {
     let now = e.ledger().timestamp();
     let secs_remaining = deadline_secs.saturating_sub(now);
-    let ledgers_remaining = secs_remaining
-        .saturating_mul(LEDGERS_PER_SECOND_NUM)
-        / LEDGERS_PER_SECOND_DEN;
+    let ledgers_remaining =
+        secs_remaining.saturating_mul(LEDGERS_PER_SECOND_NUM) / LEDGERS_PER_SECOND_DEN;
     let ledgers_remaining_u32 = u32::try_from(ledgers_remaining).unwrap_or(u32::MAX);
     let extend_to = ledgers_remaining_u32
         .saturating_add(TTL_BUFFER_LEDGERS)

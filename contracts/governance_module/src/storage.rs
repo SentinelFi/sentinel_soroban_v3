@@ -63,7 +63,11 @@ pub(crate) fn extend_route_ttl(e: &Env, key: &DataKey) {
 }
 
 pub(crate) fn read_defaults(e: &Env) -> (i128, i128, u32) {
-    let premium: i128 = e.storage().instance().get(&DataKey::DefaultPremium).unwrap();
+    let premium: i128 = e
+        .storage()
+        .instance()
+        .get(&DataKey::DefaultPremium)
+        .unwrap();
     let payoff: i128 = e.storage().instance().get(&DataKey::DefaultPayoff).unwrap();
     let delay_hours: u32 = e
         .storage()

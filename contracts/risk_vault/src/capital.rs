@@ -116,11 +116,9 @@ impl RiskVault {
 
             // Extend TTL on every credit and emit an event so the off-chain
             // TTL cron can mirror the address into its claimable_balances table.
-            e.storage().persistent().extend_ttl(
-                &key,
-                CLAIMABLE_TTL_LEDGERS,
-                CLAIMABLE_TTL_LEDGERS,
-            );
+            e.storage()
+                .persistent()
+                .extend_ttl(&key, CLAIMABLE_TTL_LEDGERS, CLAIMABLE_TTL_LEDGERS);
             Credited {
                 user: owner,
                 amount: assets,

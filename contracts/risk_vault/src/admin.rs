@@ -23,9 +23,7 @@ impl RiskVault {
         e.storage()
             .instance()
             .set(&VaultKey::TotalManagedAssets, &0i128);
-        e.storage()
-            .instance()
-            .set(&VaultKey::LockedCapital, &0i128);
+        e.storage().instance().set(&VaultKey::LockedCapital, &0i128);
         e.storage()
             .instance()
             .set(&VaultKey::LastSnapshotTime, &0u64);

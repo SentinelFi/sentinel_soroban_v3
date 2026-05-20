@@ -50,16 +50,12 @@ impl Controller {
         e.storage()
             .instance()
             .set(&CtrlKey::Governance, &governance);
-        e.storage()
-            .instance()
-            .set(&CtrlKey::RiskVault, &risk_vault);
+        e.storage().instance().set(&CtrlKey::RiskVault, &risk_vault);
         e.storage().instance().set(&CtrlKey::Oracle, &oracle);
         e.storage()
             .instance()
             .set(&CtrlKey::FlightPoolManager, &flight_pool_manager);
-        e.storage()
-            .instance()
-            .set(&CtrlKey::UsdcToken, &usdc_token);
+        e.storage().instance().set(&CtrlKey::UsdcToken, &usdc_token);
         e.storage()
             .instance()
             .set(&CtrlKey::AuthorizedKeeper, &authorized_keeper);
@@ -69,9 +65,7 @@ impl Controller {
         e.storage()
             .instance()
             .set(&CtrlKey::ClaimExpiryWindow, &claim_expiry_window);
-        e.storage()
-            .instance()
-            .set(&CtrlKey::SolvencyRatio, &100u32);
+        e.storage().instance().set(&CtrlKey::SolvencyRatio, &100u32);
         e.storage()
             .instance()
             .set(&CtrlKey::TotalPoliciesSold, &0u64);
@@ -94,18 +88,14 @@ impl Controller {
     #[only_owner]
     pub fn set_solvency_ratio(e: &Env, ratio: u32) {
         assert_solvency_ratio(ratio);
-        e.storage()
-            .instance()
-            .set(&CtrlKey::SolvencyRatio, &ratio);
+        e.storage().instance().set(&CtrlKey::SolvencyRatio, &ratio);
         extend_instance_ttl(e);
     }
 
     #[only_owner]
     pub fn set_min_lead_time(e: &Env, seconds: u64) {
         assert_min_lead_time(seconds);
-        e.storage()
-            .instance()
-            .set(&CtrlKey::MinLeadTime, &seconds);
+        e.storage().instance().set(&CtrlKey::MinLeadTime, &seconds);
         extend_instance_ttl(e);
     }
 

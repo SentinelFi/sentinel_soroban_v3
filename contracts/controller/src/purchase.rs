@@ -3,7 +3,9 @@ use stellar_macros::when_not_paused;
 
 use crate::auth::extend_instance_ttl;
 use crate::events::InsuranceBought;
-use crate::interfaces::{FlightPoolManagerClient, GovClient, OracleClient, RouteStatus, VaultClient};
+use crate::interfaces::{
+    FlightPoolManagerClient, GovClient, OracleClient, RouteStatus, VaultClient,
+};
 use crate::storage::{append_traveler_flight, CtrlKey};
 use crate::{Controller, ControllerArgs, ControllerClient};
 
@@ -66,11 +68,7 @@ impl Controller {
         // 5. Solvency check.
         let vault = VaultClient::new(e, &vault_addr);
         let free_capital = vault.get_free_capital();
-        let solvency_ratio: u32 = e
-            .storage()
-            .instance()
-            .get(&CtrlKey::SolvencyRatio)
-            .unwrap();
+        let solvency_ratio: u32 = e.storage().instance().get(&CtrlKey::SolvencyRatio).unwrap();
         let required = terms
             .payoff
             .checked_mul(solvency_ratio as i128)

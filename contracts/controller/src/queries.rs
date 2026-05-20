@@ -42,10 +42,7 @@ impl Controller {
     }
 
     pub fn get_solvency_ratio(e: &Env) -> u32 {
-        e.storage()
-            .instance()
-            .get(&CtrlKey::SolvencyRatio)
-            .unwrap()
+        e.storage().instance().get(&CtrlKey::SolvencyRatio).unwrap()
     }
 
     pub fn get_flight_pool_manager(e: &Env) -> Address {

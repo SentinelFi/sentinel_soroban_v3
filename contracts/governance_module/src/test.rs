@@ -13,7 +13,12 @@ fn setup() -> (Env, GovernanceModuleClient<'static>, Address, Address) {
     let owner = Address::generate(&env);
     let contract_id = env.register(
         GovernanceModule,
-        (&owner, &DEFAULT_PREMIUM, &DEFAULT_PAYOFF, &DEFAULT_DELAY_HOURS),
+        (
+            &owner,
+            &DEFAULT_PREMIUM,
+            &DEFAULT_PAYOFF,
+            &DEFAULT_DELAY_HOURS,
+        ),
     );
     let client = GovernanceModuleClient::new(&env, &contract_id);
 
@@ -97,7 +102,12 @@ fn test_set_defaults_unauthorized() {
     let owner = Address::generate(&env);
     let contract_id = env.register(
         GovernanceModule,
-        (&owner, &DEFAULT_PREMIUM, &DEFAULT_PAYOFF, &DEFAULT_DELAY_HOURS),
+        (
+            &owner,
+            &DEFAULT_PREMIUM,
+            &DEFAULT_PAYOFF,
+            &DEFAULT_DELAY_HOURS,
+        ),
     );
     let client = GovernanceModuleClient::new(&env, &contract_id);
 
@@ -124,7 +134,12 @@ fn test_constructor_rejects_payoff_le_premium() {
     let owner = Address::generate(&env);
     env.register(
         GovernanceModule,
-        (&owner, &DEFAULT_PAYOFF, &DEFAULT_PREMIUM, &DEFAULT_DELAY_HOURS),
+        (
+            &owner,
+            &DEFAULT_PAYOFF,
+            &DEFAULT_PREMIUM,
+            &DEFAULT_DELAY_HOURS,
+        ),
     );
 }
 
@@ -192,8 +207,13 @@ fn test_update_route_terms_rejects_invalid_resolved() {
     let (_env, client, owner, _addr) = setup();
     let (flight_id, origin, dest) = route_ids();
     client.whitelist_route(
-        &owner, &flight_id, &origin, &dest,
-        &None::<i128>, &None::<i128>, &None::<u32>,
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
     );
     // After update: premium=1000 (Set), payoff=defaults=500 → 500 < 1000.
     client.update_route_terms(
@@ -217,10 +237,7 @@ fn test_add_admin_emits_event() {
     let admin = Address::generate(&env);
 
     client.add_admin(&admin);
-    assert!(
-        count_events_with_verb(&env, &addr, Symbol::new(&env, "gov_admin_added"))
-            >= 1
-    );
+    assert!(count_events_with_verb(&env, &addr, Symbol::new(&env, "gov_admin_added")) >= 1);
     assert!(client.is_admin(&admin));
 }
 
@@ -231,10 +248,7 @@ fn test_remove_admin_emits_event() {
 
     client.add_admin(&admin);
     client.remove_admin(&admin);
-    assert!(
-        count_events_with_verb(&env, &addr, Symbol::new(&env, "gov_admin_removed"))
-            >= 1
-    );
+    assert!(count_events_with_verb(&env, &addr, Symbol::new(&env, "gov_admin_removed")) >= 1);
     assert!(!client.is_admin(&admin));
 }
 
@@ -651,8 +665,8 @@ fn test_update_use_default_clears_override() {
     match client.route_status(&flight_id, &origin, &dest) {
         RouteStatus::Active(t) => {
             assert_eq!(t.premium, DEFAULT_PREMIUM); // resolved from default
-            assert_eq!(t.payoff, 750_0000000);      // custom kept
-            assert_eq!(t.delay_hours, 2);            // custom kept
+            assert_eq!(t.payoff, 750_0000000); // custom kept
+            assert_eq!(t.delay_hours, 2); // custom kept
         }
         _ => panic!("expected Active"),
     }
@@ -685,8 +699,8 @@ fn test_update_set_keep_use_default_mixed() {
 
     match client.route_status(&flight_id, &origin, &dest) {
         RouteStatus::Active(t) => {
-            assert_eq!(t.premium, 99_0000000);             // Set
-            assert_eq!(t.payoff, 750_0000000);              // Keep (was custom)
+            assert_eq!(t.premium, 99_0000000); // Set
+            assert_eq!(t.payoff, 750_0000000); // Keep (was custom)
             assert_eq!(t.delay_hours, DEFAULT_DELAY_HOURS); // UseDefault
         }
         _ => panic!("expected Active"),

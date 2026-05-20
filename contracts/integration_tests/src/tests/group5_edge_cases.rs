@@ -171,11 +171,7 @@ fn ttl_miss_emitted_on_classify_with_missing_oracle_data() {
     t.ctrl.classify_flights(&t.keeper);
 
     assert!(
-        count_events_with_single_prefix(
-            &t.env,
-            &t.ctrl_addr,
-            symbol_short!("ttl_miss"),
-        ) >= 1,
+        count_events_with_single_prefix(&t.env, &t.ctrl_addr, symbol_short!("ttl_miss"),) >= 1,
         "expected sentinel.ttl_miss event for NotInitiated flight"
     );
 }

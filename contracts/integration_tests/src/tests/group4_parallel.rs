@@ -206,7 +206,8 @@ fn concurrent_underwriters_share_payout_burden() {
     // Add a second underwriter with a smaller deposit.
     let underwriter2 = Address::generate(&t.env);
     usdc_admin.mint(&underwriter2, &500_0000000);
-    t.vault.deposit(&500_0000000, &underwriter2, &underwriter2, &underwriter2);
+    t.vault
+        .deposit(&500_0000000, &underwriter2, &underwriter2, &underwriter2);
 
     let tma_before = t.vault.get_total_managed_assets();
     assert_eq!(tma_before, DEPOSIT_AMOUNT + 500_0000000);

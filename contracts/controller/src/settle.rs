@@ -49,9 +49,8 @@ impl Controller {
                     let delay_seconds = data
                         .actual_arrival_time
                         .saturating_sub(data.estimated_arrival_time);
-                    let delay_hours_actual = delay_seconds
-                        .checked_div(3600)
-                        .expect("division by zero");
+                    let delay_hours_actual =
+                        delay_seconds.checked_div(3600).expect("division by zero");
 
                     if delay_hours_actual >= (delay_hours as u64) {
                         Some(FlightStatus::ToBeSettledDelayed)
@@ -197,9 +196,7 @@ impl Controller {
                         .unwrap_or(0);
                     e.storage().instance().set(
                         &CtrlKey::TotalPayoutsDistributed,
-                        &paid
-                            .checked_add(total_payoff)
-                            .expect("addition overflow"),
+                        &paid.checked_add(total_payoff).expect("addition overflow"),
                     );
 
                     FlightSettledEvent {

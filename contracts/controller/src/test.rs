@@ -1,8 +1,8 @@
 use super::*;
 use sentinel_types::test_support::collect_events;
 use soroban_sdk::{
-    symbol_short, testutils::Address as _, testutils::Ledger as _, token,
-    Address, Env, Symbol, TryFromVal,
+    symbol_short, testutils::Address as _, testutils::Ledger as _, token, Address, Env, Symbol,
+    TryFromVal,
 };
 
 const PREMIUM: i128 = 10_0000000; // 10 USDC (7 decimals)
@@ -183,11 +183,8 @@ fn oracle_cancelled(t: &TestEnv) {
         &FLIGHT_DATE,
         &EST_ARRIVAL,
     );
-    t.oracle.set_cancelled(
-        &t.oracle_account,
-        &symbol_short!("AA100"),
-        &FLIGHT_DATE,
-    );
+    t.oracle
+        .set_cancelled(&t.oracle_account, &symbol_short!("AA100"), &FLIGHT_DATE);
 }
 
 // =========================================================================
@@ -358,7 +355,10 @@ fn test_buy_insurance_first_traveler_registers_flight() {
     // Per-traveler index updated.
     let flights = t.ctrl.get_flights_for_traveler(&traveler);
     assert_eq!(flights.len(), 1);
-    assert_eq!(flights.get(0).unwrap(), (symbol_short!("AA100"), FLIGHT_DATE));
+    assert_eq!(
+        flights.get(0).unwrap(),
+        (symbol_short!("AA100"), FLIGHT_DATE)
+    );
 }
 
 #[test]
@@ -415,8 +415,14 @@ fn test_buy_insurance_traveler_index_for_multiple_flights() {
 
     let flights = t.ctrl.get_flights_for_traveler(&traveler);
     assert_eq!(flights.len(), 2);
-    assert_eq!(flights.get(0).unwrap(), (symbol_short!("AA100"), FLIGHT_DATE));
-    assert_eq!(flights.get(1).unwrap(), (symbol_short!("UA200"), FLIGHT_DATE + 1));
+    assert_eq!(
+        flights.get(0).unwrap(),
+        (symbol_short!("AA100"), FLIGHT_DATE)
+    );
+    assert_eq!(
+        flights.get(1).unwrap(),
+        (symbol_short!("UA200"), FLIGHT_DATE + 1)
+    );
 }
 
 #[test]
@@ -566,8 +572,13 @@ fn test_classify_flights_on_time() {
 
     t.ctrl.classify_flights(&t.keeper);
 
-    let data = t.oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
-    assert_eq!(data.status, oracle_aggregator::FlightStatus::ToBeSettledOnTime);
+    let data = t
+        .oracle
+        .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(
+        data.status,
+        oracle_aggregator::FlightStatus::ToBeSettledOnTime
+    );
 }
 
 #[test]
@@ -579,8 +590,13 @@ fn test_classify_flights_delayed() {
 
     t.ctrl.classify_flights(&t.keeper);
 
-    let data = t.oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
-    assert_eq!(data.status, oracle_aggregator::FlightStatus::ToBeSettledDelayed);
+    let data = t
+        .oracle
+        .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(
+        data.status,
+        oracle_aggregator::FlightStatus::ToBeSettledDelayed
+    );
 }
 
 #[test]
@@ -592,7 +608,9 @@ fn test_classify_flights_cancelled() {
 
     t.ctrl.classify_flights(&t.keeper);
 
-    let data = t.oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    let data = t
+        .oracle
+        .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
     assert_eq!(
         data.status,
         oracle_aggregator::FlightStatus::ToBeSettledCancelled
@@ -608,7 +626,9 @@ fn test_classify_flights_skips_unready_flights() {
 
     t.ctrl.classify_flights(&t.keeper);
 
-    let data = t.oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    let data = t
+        .oracle
+        .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
     assert_eq!(data.status, oracle_aggregator::FlightStatus::NotInitiated);
 }
 
@@ -680,7 +700,9 @@ fn test_execute_settlements_on_time_flow() {
     assert_eq!(t.usdc.balance(&t.pool_addr), 0);
 
     // Oracle marks Settled with settled_at recorded.
-    let data = t.oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    let data = t
+        .oracle
+        .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
     assert_eq!(data.status, oracle_aggregator::FlightStatus::Settled);
     assert!(data.settled_at != 0);
 
@@ -689,7 +711,10 @@ fn test_execute_settlements_on_time_flow() {
         .pool
         .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
         .unwrap();
-    assert_eq!(cfg.status, flight_pool_manager::SettlementStatus::SettledOnTime);
+    assert_eq!(
+        cfg.status,
+        flight_pool_manager::SettlementStatus::SettledOnTime
+    );
 }
 
 #[test]
@@ -712,14 +737,19 @@ fn test_execute_settlements_delayed_flow() {
     let (_, _, distributed) = t.ctrl.get_stats();
     assert_eq!(distributed, PAYOFF);
 
-    let data = t.oracle.get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    let data = t
+        .oracle
+        .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
     assert_eq!(data.status, oracle_aggregator::FlightStatus::Settled);
 
     let cfg = t
         .pool
         .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
         .unwrap();
-    assert_eq!(cfg.status, flight_pool_manager::SettlementStatus::SettledDelayed);
+    assert_eq!(
+        cfg.status,
+        flight_pool_manager::SettlementStatus::SettledDelayed
+    );
     assert_eq!(cfg.claim_expiry, INITIAL_TIMESTAMP + CLAIM_EXPIRY_WINDOW);
 }
 
@@ -740,7 +770,10 @@ fn test_execute_settlements_cancelled_flow() {
         .pool
         .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
         .unwrap();
-    assert_eq!(cfg.status, flight_pool_manager::SettlementStatus::SettledCancelled);
+    assert_eq!(
+        cfg.status,
+        flight_pool_manager::SettlementStatus::SettledCancelled
+    );
 }
 
 #[test]
@@ -816,13 +849,13 @@ fn test_end_to_end_delayed_lifecycle() {
     t.ctrl.execute_settlements(&t.keeper);
 
     // Traveler claims payoff from FlightPoolManager.
-    t.pool.claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+    t.pool
+        .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
 
     assert_eq!(t.usdc.balance(&traveler), PAYOFF);
-    assert!(
-        t.pool
-            .has_claimed(&symbol_short!("AA100"), &FLIGHT_DATE, &traveler)
-    );
+    assert!(t
+        .pool
+        .has_claimed(&symbol_short!("AA100"), &FLIGHT_DATE, &traveler));
 }
 
 #[test]
@@ -842,7 +875,10 @@ fn test_end_to_end_on_time_lifecycle_no_payout() {
         .pool
         .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
         .unwrap();
-    assert_eq!(cfg.status, flight_pool_manager::SettlementStatus::SettledOnTime);
+    assert_eq!(
+        cfg.status,
+        flight_pool_manager::SettlementStatus::SettledOnTime
+    );
 }
 
 #[test]

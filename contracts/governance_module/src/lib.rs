@@ -15,13 +15,11 @@ use events::{
     RouteRemoved, RouteUpdated,
 };
 use storage::{
-    assert_route_terms_valid, assert_terms_valid, extend_route_ttl, read_defaults,
-    resolve_terms, DataKey, RouteTerms,
+    assert_route_terms_valid, assert_terms_valid, extend_route_ttl, read_defaults, resolve_terms,
+    DataKey, RouteTerms,
 };
 
-pub use storage::{
-    DelayHoursUpdate, PayoffUpdate, PremiumUpdate, ResolvedTerms, RouteStatus,
-};
+pub use storage::{DelayHoursUpdate, PayoffUpdate, PremiumUpdate, ResolvedTerms, RouteStatus};
 
 #[contract]
 pub struct GovernanceModule;
@@ -57,9 +55,7 @@ impl GovernanceModule {
         e.storage()
             .instance()
             .set(&DataKey::DefaultPremium, &premium);
-        e.storage()
-            .instance()
-            .set(&DataKey::DefaultPayoff, &payoff);
+        e.storage().instance().set(&DataKey::DefaultPayoff, &payoff);
         e.storage()
             .instance()
             .set(&DataKey::DefaultDelayHours, &delay_hours);
@@ -85,7 +81,9 @@ impl GovernanceModule {
     #[only_owner]
     #[when_not_paused]
     pub fn remove_admin(e: &Env, admin: Address) {
-        e.storage().instance().remove(&DataKey::Admin(admin.clone()));
+        e.storage()
+            .instance()
+            .remove(&DataKey::Admin(admin.clone()));
 
         GovAdminRemoved { admin }.publish(e);
     }
@@ -157,13 +155,7 @@ impl GovernanceModule {
     }
 
     #[when_not_paused]
-    pub fn enable_route(
-        e: &Env,
-        caller: Address,
-        flight_id: Symbol,
-        origin: Symbol,
-        dest: Symbol,
-    ) {
+    pub fn enable_route(e: &Env, caller: Address, flight_id: Symbol, origin: Symbol, dest: Symbol) {
         require_owner_or_admin(e, &caller);
 
         let key = DataKey::Route(flight_id.clone(), origin.clone(), dest.clone());
@@ -189,13 +181,7 @@ impl GovernanceModule {
     /// first (approved == false). Prevents fat-finger removal of an
     /// actively-purchasable route.
     #[when_not_paused]
-    pub fn remove_route(
-        e: &Env,
-        caller: Address,
-        flight_id: Symbol,
-        origin: Symbol,
-        dest: Symbol,
-    ) {
+    pub fn remove_route(e: &Env, caller: Address, flight_id: Symbol, origin: Symbol, dest: Symbol) {
         require_owner_or_admin(e, &caller);
 
         let key = DataKey::Route(flight_id.clone(), origin.clone(), dest.clone());
@@ -285,12 +271,7 @@ impl GovernanceModule {
     /// if the entry exists and is approved; `Disabled` if the entry exists
     /// but is not approved; `Unknown` if the entry is missing (never
     /// whitelisted, removed, or storage archived).
-    pub fn route_status(
-        e: &Env,
-        flight_id: Symbol,
-        origin: Symbol,
-        dest: Symbol,
-    ) -> RouteStatus {
+    pub fn route_status(e: &Env, flight_id: Symbol, origin: Symbol, dest: Symbol) -> RouteStatus {
         let key = DataKey::Route(flight_id, origin, dest);
         let terms: Option<RouteTerms> = e.storage().persistent().get(&key);
         match terms {

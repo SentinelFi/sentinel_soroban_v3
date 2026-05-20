@@ -26,10 +26,7 @@ impl RiskVault {
     }
 
     pub fn get_controller(e: &Env) -> Address {
-        e.storage()
-            .instance()
-            .get(&VaultKey::Controller)
-            .unwrap()
+        e.storage().instance().get(&VaultKey::Controller).unwrap()
     }
 
     pub fn get_withdrawal_queue(e: &Env) -> Vec<WithdrawalRequest> {

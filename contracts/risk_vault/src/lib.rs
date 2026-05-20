@@ -16,7 +16,6 @@ use stellar_contract_utils::pausable::{self as pausable, Pausable};
 use stellar_tokens::fungible::{Base, FungibleToken};
 
 #[cfg(test)]
-#[allow(unused_imports)]
 use soroban_sdk::token;
 
 #[cfg(test)]

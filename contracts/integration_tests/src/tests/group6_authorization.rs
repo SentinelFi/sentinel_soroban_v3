@@ -129,11 +129,7 @@ fn non_owner_recover_uncollected_panics() {
     let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
     let stranger = Address::generate(&env);
-    vault.recover_uncollected(
-        &stranger,
-        &100_0000000,
-        &risk_vault::RecoveryMode::Recredit,
-    );
+    vault.recover_uncollected(&stranger, &100_0000000, &risk_vault::RecoveryMode::Recredit);
 }
 
 #[test]

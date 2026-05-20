@@ -11,12 +11,8 @@ use crate::{FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient};
 impl FlightPoolManager {
     pub fn __constructor(e: &Env, owner: Address, usdc_token: Address, risk_vault: Address) {
         ownable::set_owner(e, &owner);
-        e.storage()
-            .instance()
-            .set(&PoolKey::UsdcToken, &usdc_token);
-        e.storage()
-            .instance()
-            .set(&PoolKey::RiskVault, &risk_vault);
+        e.storage().instance().set(&PoolKey::UsdcToken, &usdc_token);
+        e.storage().instance().set(&PoolKey::RiskVault, &risk_vault);
         e.storage()
             .instance()
             .set(&PoolKey::RecoveredBalance, &0i128);

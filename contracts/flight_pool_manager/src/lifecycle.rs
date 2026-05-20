@@ -4,7 +4,10 @@ use stellar_macros::when_not_paused;
 use crate::auth::require_controller;
 use crate::events::{BuyerAdded, FlightRegistered};
 use crate::storage::{extend_flight_ttl, PoolKey, BUYER_TTL_LEDGERS};
-use crate::{FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient, SettlementStatus};
+use crate::{
+    FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient,
+    SettlementStatus,
+};
 
 #[contractimpl]
 impl FlightPoolManager {
@@ -78,13 +81,7 @@ impl FlightPoolManager {
     /// buy_insurance. Premium USDC is expected to have arrived separately
     /// (Controller transfers from traveler before calling this).
     #[when_not_paused]
-    pub fn add_buyer(
-        e: &Env,
-        controller: Address,
-        flight_id: Symbol,
-        date: u64,
-        buyer: Address,
-    ) {
+    pub fn add_buyer(e: &Env, controller: Address, flight_id: Symbol, date: u64, buyer: Address) {
         require_controller(e, &controller);
 
         let cfg_key = PoolKey::FlightConfig(flight_id.clone(), date);
@@ -93,10 +90,7 @@ impl FlightPoolManager {
             .persistent()
             .get(&cfg_key)
             .expect("flight not registered");
-        assert!(
-            cfg.status == SettlementStatus::Active,
-            "flight not active"
-        );
+        assert!(cfg.status == SettlementStatus::Active, "flight not active");
 
         let buyer_key = PoolKey::Buyer(flight_id.clone(), date, buyer.clone());
         let existing: Option<bool> = e.storage().persistent().get(&buyer_key);
@@ -107,10 +101,7 @@ impl FlightPoolManager {
             .persistent()
             .extend_ttl(&buyer_key, BUYER_TTL_LEDGERS, BUYER_TTL_LEDGERS);
 
-        cfg.buyer_count = cfg
-            .buyer_count
-            .checked_add(1)
-            .expect("addition overflow");
+        cfg.buyer_count = cfg.buyer_count.checked_add(1).expect("addition overflow");
         e.storage().persistent().set(&cfg_key, &cfg);
         extend_flight_ttl(e, &flight_id, date);
 

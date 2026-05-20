@@ -4,7 +4,10 @@ use stellar_macros::when_not_paused;
 use crate::auth::require_controller;
 use crate::events::FlightSettled;
 use crate::storage::{extend_flight_ttl_to, prune_active_list, PoolKey};
-use crate::{FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient, SettlementStatus};
+use crate::{
+    FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient,
+    SettlementStatus,
+};
 
 #[contractimpl]
 impl FlightPoolManager {
@@ -19,10 +22,7 @@ impl FlightPoolManager {
             .persistent()
             .get(&cfg_key)
             .expect("flight not registered");
-        assert!(
-            cfg.status == SettlementStatus::Active,
-            "flight not active"
-        );
+        assert!(cfg.status == SettlementStatus::Active, "flight not active");
 
         cfg.status = SettlementStatus::SettledOnTime;
         e.storage().persistent().set(&cfg_key, &cfg);
@@ -66,7 +66,13 @@ impl FlightPoolManager {
         claim_expiry: u64,
     ) {
         require_controller(e, &controller);
-        settle_with_claim_window(e, flight_id, date, claim_expiry, SettlementStatus::SettledDelayed);
+        settle_with_claim_window(
+            e,
+            flight_id,
+            date,
+            claim_expiry,
+            SettlementStatus::SettledDelayed,
+        );
     }
 
     /// Settle cancelled: identical state shape to settle_delayed.
@@ -79,7 +85,13 @@ impl FlightPoolManager {
         claim_expiry: u64,
     ) {
         require_controller(e, &controller);
-        settle_with_claim_window(e, flight_id, date, claim_expiry, SettlementStatus::SettledCancelled);
+        settle_with_claim_window(
+            e,
+            flight_id,
+            date,
+            claim_expiry,
+            SettlementStatus::SettledCancelled,
+        );
     }
 }
 
@@ -96,10 +108,7 @@ fn settle_with_claim_window(
         .persistent()
         .get(&cfg_key)
         .expect("flight not registered");
-    assert!(
-        cfg.status == SettlementStatus::Active,
-        "flight not active"
-    );
+    assert!(cfg.status == SettlementStatus::Active, "flight not active");
     assert!(
         claim_expiry > e.ledger().timestamp(),
         "claim_expiry must be in the future"

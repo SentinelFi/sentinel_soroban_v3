@@ -12,7 +12,13 @@ use crate::{RiskVault, RiskVaultArgs, RiskVaultClient};
 #[contractimpl]
 impl RiskVault {
     #[when_not_paused]
-    pub fn deposit(e: &Env, assets: i128, receiver: Address, from: Address, operator: Address) -> i128 {
+    pub fn deposit(
+        e: &Env,
+        assets: i128,
+        receiver: Address,
+        from: Address,
+        operator: Address,
+    ) -> i128 {
         let shares = Vault::deposit(e, assets, receiver, from, operator);
         let tma = Self::get_total_managed_assets(e);
         e.storage().instance().set(
@@ -23,7 +29,13 @@ impl RiskVault {
     }
 
     #[when_not_paused]
-    pub fn withdraw(e: &Env, assets: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
+    pub fn withdraw(
+        e: &Env,
+        assets: i128,
+        receiver: Address,
+        owner: Address,
+        operator: Address,
+    ) -> i128 {
         assert!(assets <= Self::get_free_capital(e), "exceeds free capital");
         let shares = Vault::withdraw(e, assets, receiver, owner, operator);
         let tma = Self::get_total_managed_assets(e);
@@ -35,7 +47,13 @@ impl RiskVault {
     }
 
     #[when_not_paused]
-    pub fn mint_shares(e: &Env, shares: i128, receiver: Address, from: Address, operator: Address) -> i128 {
+    pub fn mint_shares(
+        e: &Env,
+        shares: i128,
+        receiver: Address,
+        from: Address,
+        operator: Address,
+    ) -> i128 {
         let assets = Vault::mint(e, shares, receiver, from, operator);
         let tma = Self::get_total_managed_assets(e);
         e.storage().instance().set(
@@ -46,7 +64,13 @@ impl RiskVault {
     }
 
     #[when_not_paused]
-    pub fn redeem(e: &Env, shares: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
+    pub fn redeem(
+        e: &Env,
+        shares: i128,
+        receiver: Address,
+        owner: Address,
+        operator: Address,
+    ) -> i128 {
         let assets = Vault::preview_redeem(e, shares);
         assert!(assets <= Self::get_free_capital(e), "exceeds free capital");
         let actual_assets = Vault::redeem(e, shares, receiver, owner, operator);

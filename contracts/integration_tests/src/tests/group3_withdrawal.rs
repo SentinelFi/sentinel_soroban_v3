@@ -19,12 +19,9 @@ fn deposit_then_immediate_redeem_within_free_capital() {
 
     // Redeem half — succeeds because no capital is locked.
     let half = shares / 2;
-    let assets = t.vault.redeem(
-        &half,
-        &t.underwriter,
-        &t.underwriter,
-        &t.underwriter,
-    );
+    let assets = t
+        .vault
+        .redeem(&half, &t.underwriter, &t.underwriter, &t.underwriter);
     assert!(assets > 0);
 }
 
@@ -36,11 +33,7 @@ fn redeem_blocked_when_capital_locked() {
     // redemption.
     for _ in 0..20 {
         let buyer = Address::generate(&t.env);
-        t.buy_flight(
-            &buyer,
-            &symbol_short!("AA100"),
-            FLIGHT_DATE + 1,
-        );
+        t.buy_flight(&buyer, &symbol_short!("AA100"), FLIGHT_DATE + 1);
     }
     // 20 buys × 50 USDC payoff = 1000 USDC locked. Free is now 0.
     let shares = t.vault.balance(&t.underwriter);
@@ -113,11 +106,8 @@ fn recover_uncollected_recredit_path() {
     // No prior credit.
     assert_eq!(t.vault.get_claimable_balance(&user), 0);
 
-    t.vault.recover_uncollected(
-        &user,
-        &500_0000000,
-        &risk_vault::RecoveryMode::Recredit,
-    );
+    t.vault
+        .recover_uncollected(&user, &500_0000000, &risk_vault::RecoveryMode::Recredit);
     assert_eq!(t.vault.get_claimable_balance(&user), 500_0000000);
 
     // User can collect.
@@ -138,16 +128,10 @@ fn recover_uncollected_transfer_path() {
     usdc_admin.mint(&t.vault_addr, &200_0000000);
 
     // Transfer is gated on a prior credit; seed via Recredit first.
-    t.vault.recover_uncollected(
-        &user,
-        &50_0000000,
-        &risk_vault::RecoveryMode::Recredit,
-    );
-    t.vault.recover_uncollected(
-        &user,
-        &50_0000000,
-        &risk_vault::RecoveryMode::Transfer,
-    );
+    t.vault
+        .recover_uncollected(&user, &50_0000000, &risk_vault::RecoveryMode::Recredit);
+    t.vault
+        .recover_uncollected(&user, &50_0000000, &risk_vault::RecoveryMode::Transfer);
     // Credit settled; balance cleared.
     assert_eq!(t.vault.get_claimable_balance(&user), 0);
     assert_eq!(t.usdc.balance(&user), 50_0000000);
@@ -166,9 +150,5 @@ fn recover_uncollected_unauthorized_panics() {
     let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
     let stranger = Address::generate(&env);
-    vault.recover_uncollected(
-        &stranger,
-        &100_0000000,
-        &risk_vault::RecoveryMode::Recredit,
-    );
+    vault.recover_uncollected(&stranger, &100_0000000, &risk_vault::RecoveryMode::Recredit);
 }

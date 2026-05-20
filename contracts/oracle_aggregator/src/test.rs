@@ -1,9 +1,6 @@
 use super::*;
 use sentinel_types::test_support::collect_events;
-use soroban_sdk::{
-    symbol_short, testutils::Address as _, testutils::Ledger as _,
-    IntoVal,
-};
+use soroban_sdk::{symbol_short, testutils::Address as _, testutils::Ledger as _, IntoVal};
 
 const FLIGHT_DATE: u64 = 1710400000; // arbitrary unix timestamp
 const EST_ARRIVAL: u64 = 1710410000;
@@ -423,7 +420,14 @@ fn test_active_flights_not_removed_on_settlement() {
 const SECONDS_PER_DAY: u64 = 86_400;
 const RETENTION_SECONDS: u64 = 30 * SECONDS_PER_DAY;
 
-fn settle_full_lifecycle(env: &Env, client: &OracleAggregatorClient<'_>, oracle: &Address, controller: &Address, fid: &Symbol, date: u64) {
+fn settle_full_lifecycle(
+    env: &Env,
+    client: &OracleAggregatorClient<'_>,
+    oracle: &Address,
+    controller: &Address,
+    fid: &Symbol,
+    date: u64,
+) {
     client.register_flight(controller, fid, &date);
     client.set_estimated_arrival(oracle, fid, &date, &EST_ARRIVAL);
     client.set_landed(oracle, fid, &date, &ACT_ARRIVAL);
@@ -566,9 +570,9 @@ fn test_prune_settled_only_removes_aged_settled() {
     // Mix: one settled-and-aged-out, one settled-and-recent, one unsettled.
     let (env, client, _owner, oracle, controller) = setup();
 
-    let f1 = symbol_short!("AA100");  // will be settled long ago
-    let f2 = symbol_short!("UA200");  // will be settled recently
-    let f3 = symbol_short!("DL300");  // never settled
+    let f1 = symbol_short!("AA100"); // will be settled long ago
+    let f2 = symbol_short!("UA200"); // will be settled recently
+    let f3 = symbol_short!("DL300"); // never settled
     let date: u64 = FLIGHT_DATE;
 
     // Settle f1 at t=1000

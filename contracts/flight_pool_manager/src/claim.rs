@@ -3,7 +3,10 @@ use stellar_macros::when_not_paused;
 
 use crate::events::{ExpiredSwept, PayoutClaimed};
 use crate::storage::{extend_flight_ttl, PoolKey, BUYER_TTL_LEDGERS};
-use crate::{FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient, SettlementStatus};
+use crate::{
+    FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient,
+    SettlementStatus,
+};
 
 #[contractimpl]
 impl FlightPoolManager {
@@ -31,19 +34,11 @@ impl FlightPoolManager {
         );
 
         let buyer_key = PoolKey::Buyer(flight_id.clone(), date, traveler.clone());
-        let has_policy: bool = e
-            .storage()
-            .persistent()
-            .get(&buyer_key)
-            .unwrap_or(false);
+        let has_policy: bool = e.storage().persistent().get(&buyer_key).unwrap_or(false);
         assert!(has_policy, "no policy");
 
         let claimed_key = PoolKey::Claimed(flight_id.clone(), date, traveler.clone());
-        let already_claimed: bool = e
-            .storage()
-            .persistent()
-            .get(&claimed_key)
-            .unwrap_or(false);
+        let already_claimed: bool = e.storage().persistent().get(&claimed_key).unwrap_or(false);
         assert!(!already_claimed, "already claimed");
 
         e.storage().persistent().set(&claimed_key, &true);
@@ -51,10 +46,7 @@ impl FlightPoolManager {
             .persistent()
             .extend_ttl(&claimed_key, BUYER_TTL_LEDGERS, BUYER_TTL_LEDGERS);
 
-        cfg.claimed_count = cfg
-            .claimed_count
-            .checked_add(1)
-            .expect("addition overflow");
+        cfg.claimed_count = cfg.claimed_count.checked_add(1).expect("addition overflow");
         e.storage().persistent().set(&cfg_key, &cfg);
         extend_flight_ttl(e, &flight_id, date);
 
@@ -112,9 +104,7 @@ impl FlightPoolManager {
             .unwrap_or(0);
         e.storage().instance().set(
             &PoolKey::RecoveredBalance,
-            &recovered
-                .checked_add(unclaimed)
-                .expect("addition overflow"),
+            &recovered.checked_add(unclaimed).expect("addition overflow"),
         );
 
         // Mark fully-swept by setting claimed_count = buyer_count so re-entry

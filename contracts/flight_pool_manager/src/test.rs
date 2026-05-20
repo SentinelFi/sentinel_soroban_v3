@@ -1,8 +1,7 @@
 use super::*;
 use sentinel_types::test_support::collect_events;
 use soroban_sdk::{
-    symbol_short, testutils::Address as _, testutils::Ledger, token,
-    Address, Env, Symbol,
+    symbol_short, testutils::Address as _, testutils::Ledger, token, Address, Env, Symbol,
 };
 
 const PREMIUM: i128 = 10_0000000; // 10 USDC (7 decimals)
@@ -88,7 +87,8 @@ fn flight_a() -> Symbol {
 // Helper: simulate a buyer purchase — transfer premium to pool then add_buyer
 fn buy(t: &TestEnv, buyer: &Address) {
     t.usdc.transfer(buyer, &t.pool_addr, &PREMIUM);
-    t.pool.add_buyer(&t.controller, &flight_a(), &FLIGHT_DATE, buyer);
+    t.pool
+        .add_buyer(&t.controller, &flight_a(), &FLIGHT_DATE, buyer);
 }
 
 // Helper: register flight with default terms
@@ -139,10 +139,7 @@ fn test_set_controller_no_auth_fails() {
     let usdc_admin = Address::generate(&env);
     let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin);
     let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
-    let pool_addr = env.register(
-        FlightPoolManager,
-        (&owner, &usdc_id.address(), &vault_addr),
-    );
+    let pool_addr = env.register(FlightPoolManager, (&owner, &usdc_id.address(), &vault_addr));
     let pool = FlightPoolManagerClient::new(&env, &pool_addr);
     let controller = Address::generate(&env);
     // No mock_all_auths — should fail
@@ -290,7 +287,8 @@ fn test_add_buyer_after_settlement_fails() {
     let t = setup();
     register(&t);
     buy(&t, &t.buyer1);
-    t.pool.settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
+    t.pool
+        .settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
     buy(&t, &t.buyer2);
 }
 
@@ -309,7 +307,8 @@ fn test_settle_on_time_with_buyers_transfers_premium_to_vault() {
     assert_eq!(pool_balance_before, PREMIUM * 2);
     let vault_tma_before = t.vault.get_total_managed_assets();
 
-    t.pool.settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
+    t.pool
+        .settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
 
     let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.status, SettlementStatus::SettledOnTime);
@@ -326,7 +325,8 @@ fn test_settle_on_time_zero_buyers_no_transfer() {
     let t = setup();
     register(&t);
     let vault_tma_before = t.vault.get_total_managed_assets();
-    t.pool.settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
+    t.pool
+        .settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
     let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.status, SettlementStatus::SettledOnTime);
     assert_eq!(t.pool.get_active_flights().len(), 0);
@@ -338,8 +338,10 @@ fn test_settle_on_time_zero_buyers_no_transfer() {
 fn test_settle_on_time_twice_fails() {
     let t = setup();
     register(&t);
-    t.pool.settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
-    t.pool.settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
+    t.pool
+        .settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
+    t.pool
+        .settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
 }
 
 #[test]
@@ -438,10 +440,7 @@ fn test_claim_after_delayed_success() {
     let buyer1_balance_before = t.usdc.balance(&t.buyer1);
     t.pool.claim(&t.buyer1, &flight_a(), &FLIGHT_DATE);
 
-    assert_eq!(
-        t.usdc.balance(&t.buyer1),
-        buyer1_balance_before + PAYOFF
-    );
+    assert_eq!(t.usdc.balance(&t.buyer1), buyer1_balance_before + PAYOFF);
     assert!(t.pool.has_claimed(&flight_a(), &FLIGHT_DATE, &t.buyer1));
     let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.claimed_count, 1);
@@ -478,7 +477,8 @@ fn test_claim_on_on_time_flight_fails() {
     let t = setup();
     register(&t);
     buy(&t, &t.buyer1);
-    t.pool.settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
+    t.pool
+        .settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
     t.pool.claim(&t.buyer1, &flight_a(), &FLIGHT_DATE);
 }
 
@@ -592,7 +592,8 @@ fn test_sweep_expired_on_on_time_fails() {
     let t = setup();
     register(&t);
     buy(&t, &t.buyer1);
-    t.pool.settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
+    t.pool
+        .settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
     advance(&t, CLAIM_WINDOW_SEC + 1);
     t.pool.sweep_expired(&flight_a(), &FLIGHT_DATE);
 }
@@ -636,10 +637,7 @@ fn test_withdraw_recovered_no_auth_fails() {
     let usdc_admin = Address::generate(&env);
     let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin);
     let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
-    let pool_addr = env.register(
-        FlightPoolManager,
-        (&owner, &usdc_id.address(), &vault_addr),
-    );
+    let pool_addr = env.register(FlightPoolManager, (&owner, &usdc_id.address(), &vault_addr));
     let pool = FlightPoolManagerClient::new(&env, &pool_addr);
     pool.withdraw_recovered(&1);
 }
@@ -663,7 +661,8 @@ fn test_active_flights_pruned_on_settlement() {
     );
     assert_eq!(t.pool.get_active_flights().len(), 2);
 
-    t.pool.settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
+    t.pool
+        .settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
     let active = t.pool.get_active_flights();
     assert_eq!(active.len(), 1);
     assert_eq!(active.get(0), Some((other, FLIGHT_DATE)));
