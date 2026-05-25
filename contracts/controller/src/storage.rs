@@ -15,9 +15,11 @@ pub enum CtrlKey {
     TotalPoliciesSold,
     TotalPremiumsCollected,
     TotalPayoutsDistributed,
+    WhitelistEnabled, // bool — Phase 11 buyer whitelist kill-switch
 
     // Persistent — keyed multi-row state
-    TravelerFlights(Address), // Vec<(Symbol, u64)>
+    TravelerFlights(Address),  // Vec<(Symbol, u64)>
+    BuyerWhitelisted(Address), // bool — Phase 11 buyer whitelist entry
 }
 
 // 60 days at 5s/ledger = 60 * 24 * 60 * 12 = 1_036_800. Applied on every
@@ -45,4 +47,28 @@ pub(crate) fn append_traveler_flight(e: &Env, traveler: &Address, flight_id: &Sy
         TRAVELER_FLIGHTS_TTL_LEDGERS,
         TRAVELER_FLIGHTS_TTL_LEDGERS,
     );
+}
+
+pub(crate) fn write_buyer_whitelisted(e: &Env, addr: &Address, allowed: bool) {
+    let key = CtrlKey::BuyerWhitelisted(addr.clone());
+    e.storage().persistent().set(&key, &allowed);
+    e.storage().persistent().extend_ttl(
+        &key,
+        TRAVELER_FLIGHTS_TTL_LEDGERS,
+        TRAVELER_FLIGHTS_TTL_LEDGERS,
+    );
+}
+
+pub(crate) fn read_buyer_whitelisted(e: &Env, addr: &Address) -> bool {
+    e.storage()
+        .persistent()
+        .get(&CtrlKey::BuyerWhitelisted(addr.clone()))
+        .unwrap_or(false)
+}
+
+pub(crate) fn read_whitelist_enabled(e: &Env) -> bool {
+    e.storage()
+        .instance()
+        .get(&CtrlKey::WhitelistEnabled)
+        .unwrap_or(false)
 }

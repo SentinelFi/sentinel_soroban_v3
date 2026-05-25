@@ -886,3 +886,266 @@ fn test_extend_ttl_is_callable() {
     let t = setup();
     t.ctrl.extend_ttl();
 }
+
+// =========================================================================
+// Phase 11 — buyer whitelist
+// =========================================================================
+
+fn whitelist_admin(t: &TestEnv) -> Address {
+    let admin = Address::generate(&t.env);
+    t.gov.add_admin(&admin);
+    admin
+}
+
+#[test]
+fn test_whitelist_disabled_by_default() {
+    let t = setup();
+    assert!(!t.ctrl.whitelist_enabled());
+    let stranger = Address::generate(&t.env);
+    assert!(!t.ctrl.is_whitelisted(&stranger));
+}
+
+#[test]
+fn test_whitelist_disabled_allows_any_buyer() {
+    // Default state — whitelist off, anyone can buy. Mirrors the baseline
+    // happy-path test_buy_insurance_first_traveler_registers_flight.
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    let (sold, _, _) = t.ctrl.get_stats();
+    assert_eq!(sold, 1);
+}
+
+#[test]
+#[should_panic(expected = "buyer not whitelisted")]
+fn test_whitelist_enabled_blocks_non_whitelisted_buyer() {
+    let t = setup();
+    t.ctrl.set_whitelist_enabled(&true);
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+}
+
+#[test]
+fn test_whitelist_enabled_allows_whitelisted_buyer() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    t.ctrl.set_whitelist_enabled(&true);
+    t.ctrl.add_whitelisted_buyer(&t.owner, &traveler);
+    assert!(t.ctrl.is_whitelisted(&traveler));
+
+    buy(&t, &traveler);
+    let (sold, _, _) = t.ctrl.get_stats();
+    assert_eq!(sold, 1);
+}
+
+#[test]
+fn test_whitelist_toggle_round_trip() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    t.ctrl.set_whitelist_enabled(&true);
+    t.ctrl.add_whitelisted_buyer(&t.owner, &traveler);
+    buy(&t, &traveler);
+
+    // Flip off — strangers can buy again.
+    t.ctrl.set_whitelist_enabled(&false);
+    assert!(!t.ctrl.whitelist_enabled());
+    let stranger = Address::generate(&t.env);
+    t.usdc_admin.mint(&stranger, &PREMIUM);
+    t.ctrl.buy_insurance(
+        &stranger,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &(FLIGHT_DATE + 1),
+    );
+    let (sold, _, _) = t.ctrl.get_stats();
+    assert_eq!(sold, 2);
+}
+
+#[test]
+fn test_gov_admin_can_add_whitelisted_buyer() {
+    let t = setup();
+    let admin = whitelist_admin(&t);
+    let traveler = Address::generate(&t.env);
+
+    t.ctrl.set_whitelist_enabled(&true);
+    t.ctrl.add_whitelisted_buyer(&admin, &traveler);
+    assert!(t.ctrl.is_whitelisted(&traveler));
+
+    buy(&t, &traveler);
+}
+
+#[test]
+#[should_panic(expected = "not owner or governance admin")]
+fn test_non_admin_add_whitelisted_buyer_panics() {
+    let t = setup();
+    let stranger = Address::generate(&t.env);
+    let traveler = Address::generate(&t.env);
+    t.ctrl.add_whitelisted_buyer(&stranger, &traveler);
+}
+
+#[test]
+#[should_panic(expected = "not owner or governance admin")]
+fn test_non_admin_remove_whitelisted_buyer_panics() {
+    let t = setup();
+    t.ctrl
+        .add_whitelisted_buyer(&t.owner, &Address::generate(&t.env));
+    let stranger = Address::generate(&t.env);
+    let traveler = Address::generate(&t.env);
+    t.ctrl.remove_whitelisted_buyer(&stranger, &traveler);
+}
+
+#[test]
+fn test_remove_whitelisted_buyer_blocks_next_purchase() {
+    let t = setup();
+    let admin = whitelist_admin(&t);
+    let traveler = Address::generate(&t.env);
+
+    t.ctrl.set_whitelist_enabled(&true);
+    t.ctrl.add_whitelisted_buyer(&admin, &traveler);
+    assert!(t.ctrl.is_whitelisted(&traveler));
+
+    t.ctrl.remove_whitelisted_buyer(&admin, &traveler);
+    assert!(!t.ctrl.is_whitelisted(&traveler));
+}
+
+#[test]
+#[should_panic(expected = "buyer not whitelisted")]
+fn test_removed_buyer_cannot_purchase() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    t.ctrl.set_whitelist_enabled(&true);
+    t.ctrl.add_whitelisted_buyer(&t.owner, &traveler);
+    t.ctrl.remove_whitelisted_buyer(&t.owner, &traveler);
+    buy(&t, &traveler);
+}
+
+#[test]
+#[should_panic]
+fn test_non_owner_set_whitelist_enabled_panics() {
+    // Fresh env, no mock_all_auths — #[only_owner] guard fails for stranger.
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    let usdc_admin_addr = Address::generate(&env);
+    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin_addr);
+
+    let gov_addr = env.register(
+        governance_module::GovernanceModule,
+        (&owner, &PREMIUM, &PAYOFF, &DELAY_HOURS),
+    );
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
+    let oracle_addr = env.register(
+        oracle_aggregator::OracleAggregator,
+        (&owner, &Address::generate(&env)),
+    );
+    let pool_addr = env.register(
+        flight_pool_manager::FlightPoolManager,
+        (&owner, &usdc_id.address(), &vault_addr),
+    );
+    let ctrl_addr = env.register(
+        Controller,
+        (
+            &owner,
+            &gov_addr,
+            &vault_addr,
+            &oracle_addr,
+            &pool_addr,
+            &usdc_id.address(),
+            &Address::generate(&env),
+            &MIN_LEAD_TIME,
+            &CLAIM_EXPIRY_WINDOW,
+        ),
+    );
+    let ctrl = ControllerClient::new(&env, &ctrl_addr);
+
+    // Stranger cannot toggle. (No mock_all_auths — the only_owner check
+    // panics before any internal logic runs.)
+    let _ = stranger;
+    ctrl.set_whitelist_enabled(&true);
+}
+
+#[test]
+fn test_owner_can_add_even_when_toggle_off() {
+    // Owner can pre-populate the whitelist before flipping the toggle.
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    t.ctrl.add_whitelisted_buyer(&t.owner, &traveler);
+    assert!(t.ctrl.is_whitelisted(&traveler));
+    assert!(!t.ctrl.whitelist_enabled());
+}
+
+#[test]
+fn test_whitelist_events_emitted() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    t.ctrl.add_whitelisted_buyer(&t.owner, &traveler);
+
+    let mut found_added = false;
+    for (event_addr, topics, _data) in collect_events(&t.env).iter() {
+        if event_addr != t.ctrl_addr {
+            continue;
+        }
+        if topics.len() < 3 {
+            continue;
+        }
+        let t0 = Symbol::try_from_val(&t.env, &topics.get(0).unwrap()).ok();
+        let t1 = Symbol::try_from_val(&t.env, &topics.get(1).unwrap()).ok();
+        if t0 == Some(symbol_short!("sentinel"))
+            && t1 == Some(Symbol::new(&t.env, "buyer_whitelisted"))
+        {
+            found_added = true;
+            break;
+        }
+    }
+    assert!(found_added, "expected sentinel.buyer_whitelisted event");
+}
+
+#[test]
+fn test_whitelist_toggled_event_emitted() {
+    let t = setup();
+    t.ctrl.set_whitelist_enabled(&true);
+
+    let mut found = false;
+    for (event_addr, topics, _data) in collect_events(&t.env).iter() {
+        if event_addr != t.ctrl_addr {
+            continue;
+        }
+        let t0 = Symbol::try_from_val(&t.env, &topics.get(0).unwrap()).ok();
+        let t1 = Symbol::try_from_val(&t.env, &topics.get(1).unwrap()).ok();
+        if t0 == Some(symbol_short!("sentinel"))
+            && t1 == Some(Symbol::new(&t.env, "whitelist_toggled"))
+        {
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "expected sentinel.whitelist_toggled event");
+}
+
+#[test]
+fn test_whitelist_removed_event_emitted() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    t.ctrl.add_whitelisted_buyer(&t.owner, &traveler);
+    t.ctrl.remove_whitelisted_buyer(&t.owner, &traveler);
+
+    let mut found = false;
+    for (event_addr, topics, _data) in collect_events(&t.env).iter() {
+        if event_addr != t.ctrl_addr {
+            continue;
+        }
+        if topics.len() < 3 {
+            continue;
+        }
+        let t0 = Symbol::try_from_val(&t.env, &topics.get(0).unwrap()).ok();
+        let t1 = Symbol::try_from_val(&t.env, &topics.get(1).unwrap()).ok();
+        if t0 == Some(symbol_short!("sentinel"))
+            && t1 == Some(Symbol::new(&t.env, "buyer_removed"))
+        {
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "expected sentinel.buyer_removed event");
+}

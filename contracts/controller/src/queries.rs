@@ -1,6 +1,6 @@
 use soroban_sdk::{contractimpl, Address, Env, Symbol, Vec};
 
-use crate::storage::CtrlKey;
+use crate::storage::{read_buyer_whitelisted, read_whitelist_enabled, CtrlKey};
 use crate::{Controller, ControllerArgs, ControllerClient};
 
 #[contractimpl]
@@ -50,5 +50,16 @@ impl Controller {
             .instance()
             .get(&CtrlKey::FlightPoolManager)
             .unwrap()
+    }
+
+    /// Whether the buyer whitelist gate is currently active.
+    pub fn whitelist_enabled(e: &Env) -> bool {
+        read_whitelist_enabled(e)
+    }
+
+    /// Whether `addr` is on the whitelist. Returns `false` for any
+    /// address that has never been added (or has been removed / archived).
+    pub fn is_whitelisted(e: &Env, addr: Address) -> bool {
+        read_buyer_whitelisted(e, &addr)
     }
 }

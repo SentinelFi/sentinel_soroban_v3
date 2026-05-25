@@ -41,3 +41,23 @@ pub struct TtlMiss {
     pub(crate) flight_id: Symbol,
     pub(crate) date: u64,
 }
+
+// Phase 11 — buyer whitelist lifecycle events. The whitelist itself is
+// stored on Controller (one source of truth on the buy path); add/remove
+// callers are validated by cross-calling GovernanceModule.is_admin.
+#[contractevent(topics = ["sentinel", "buyer_whitelisted"], data_format = "single-value")]
+pub struct BuyerWhitelistedEvent {
+    #[topic]
+    pub(crate) addr: Address,
+}
+
+#[contractevent(topics = ["sentinel", "buyer_removed"], data_format = "single-value")]
+pub struct BuyerWhitelistRemovedEvent {
+    #[topic]
+    pub(crate) addr: Address,
+}
+
+#[contractevent(topics = ["sentinel", "whitelist_toggled"], data_format = "single-value")]
+pub struct WhitelistToggled {
+    pub(crate) enabled: bool,
+}

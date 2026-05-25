@@ -11,6 +11,7 @@ pub use sentinel_types::{FlightConfig, FlightData, FlightStatus, RouteStatus};
 #[contractclient(name = "GovClient")]
 pub trait GovernanceInterface {
     fn route_status(env: &Env, flight_id: Symbol, origin: Symbol, dest: Symbol) -> RouteStatus;
+    fn is_admin(env: &Env, addr: Address) -> bool;
 }
 
 #[contractclient(name = "VaultClient")]

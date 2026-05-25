@@ -8,6 +8,7 @@ mod purchase;
 mod queries;
 mod settle;
 mod storage;
+mod whitelist;
 
 use soroban_sdk::{contract, contractimpl, Address, Env};
 use stellar_access::ownable::{self as ownable, Ownable};

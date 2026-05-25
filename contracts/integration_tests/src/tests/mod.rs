@@ -8,3 +8,5 @@ mod group5_edge_cases;
 mod group6_authorization;
 mod group7_governance;
 mod group8_events;
+mod group9_whitelist;
+mod group10_executor_simulation;

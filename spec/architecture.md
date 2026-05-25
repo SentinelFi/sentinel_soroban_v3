@@ -591,6 +591,15 @@ everything: it calls functions on other contracts that change state and move mon
 14. **Pausable** (audit H-03). Owner-only pause halts `buy_insurance`, `classify_flights`,
     `execute_settlements`, `run_queue_maintenance`; admin setters and `extend_ttl` stay
     open so the owner can recover from a paused state.
+15. **Buyer whitelist (Phase 11)** — opt-in allowlist on `buy_insurance`. Owner-only
+    `set_whitelist_enabled(bool)` flips the kill-switch (default `false`, so deploy is
+    non-breaking). When enabled, `buy_insurance` panics with `"buyer not whitelisted"`
+    unless `BuyerWhitelisted(traveler) == true`. Admin-managed via
+    `add_whitelisted_buyer(caller, addr)` / `remove_whitelisted_buyer(caller, addr)`
+    where `caller` is the owner or any address flagged on `GovernanceModule.is_admin`
+    — single source of truth for admin identity, no duplicated admin list. Admin paths
+    are intentionally NOT gated by Pausable (mirrors `recover_uncollected`) so the
+    list stays manageable during a pause.
 
 **Three settlement-phase keeper entry points — different rates, separated by audit M-03:**
 
@@ -659,13 +668,16 @@ pool_client.register_flight(&controller_addr, &flight_id, &date,
                             &terms.premium, &terms.payoff, &terms.delay_hours);
 ```
 
-**Events emitted (audit L-03 + L-08 namespace pass):**
+**Events emitted (audit L-03 + L-08 namespace pass; Phase 11 whitelist events):**
 
 ```
-("sentinel", "ctrl",     <traveler>, <flight_id>, <date>) → InsuranceBought    (premium)
-("sentinel", "ctrl",     <flight_id>, <date>)             → FlightClassified   (status)
-("sentinel", "ctrl",     <flight_id>, <date>)             → FlightSettledEvent (outcome)
-("sentinel", "ttl_miss", <flight_id>)                     → TtlMiss            (date)
+("sentinel", "ctrl",              <traveler>, <flight_id>, <date>) → InsuranceBought             (premium)
+("sentinel", "ctrl",              <flight_id>, <date>)             → FlightClassified            (status)
+("sentinel", "ctrl",              <flight_id>, <date>)             → FlightSettledEvent          (outcome)
+("sentinel", "ttl_miss",          <flight_id>)                     → TtlMiss                     (date)
+("sentinel", "buyer_whitelisted", <addr>)                          → BuyerWhitelistedEvent
+("sentinel", "buyer_removed",     <addr>)                          → BuyerWhitelistRemovedEvent
+("sentinel", "whitelist_toggled")                                  → WhitelistToggled            (enabled)
 ```
 
 The first three are domain events covering the buy / classify / settle
@@ -696,6 +708,8 @@ pub enum CtrlKey {
     TotalPoliciesSold,         // u64 — Instance
     TotalPremiumsCollected,    // i128 — Instance
     TotalPayoutsDistributed,   // i128 — Instance
+    WhitelistEnabled,          // bool — Instance (Phase 11; default false → open buys)
+    BuyerWhitelisted(Address), // bool — Persistent (Phase 11; per-buyer entry, 60d TTL on write)
 }
 ```
 
@@ -861,6 +875,15 @@ of truth, no byte-layout drift hazard between contracts. Same applies to
 The protocol needs three off-chain cron jobs to keep ticking. All three are
 **backend-agnostic** — the contracts enforce authorization via `require_auth()` on
 updatable addresses.
+
+**Implementation status (Phase 12, 2026-05-25):** the centralized cron backend
+lives at `executor/centralized_cron/`. Stack: TypeScript + Node + tsx +
+`@stellar/stellar-sdk` v14 + `node-cron` + `express` + `dotenv`. Five cron
+jobs (FlightDataFetcher, FlightClassifier, SettlementExecutor, QueueMaintainer,
+TTLExtender), one HTTP API for health / logs / manual triggers, and a
+single-shot CLI (`npm run {fetch,classify,settle,queue,ttl}`) for ops + tests.
+Acurast TEE backend planned as a sibling under `executor/acurast/` in a
+later phase — same core logic, different deployment manifest.
 
 ### Cron Job Summary
 

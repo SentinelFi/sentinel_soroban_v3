@@ -6,7 +6,9 @@ use crate::events::InsuranceBought;
 use crate::interfaces::{
     FlightPoolManagerClient, GovClient, OracleClient, RouteStatus, VaultClient,
 };
-use crate::storage::{append_traveler_flight, CtrlKey};
+use crate::storage::{
+    append_traveler_flight, read_buyer_whitelisted, read_whitelist_enabled, CtrlKey,
+};
 use crate::{Controller, ControllerArgs, ControllerClient};
 
 #[contractimpl]
@@ -21,6 +23,17 @@ impl Controller {
         date: u64,
     ) {
         traveler.require_auth();
+
+        // 0. Phase 11 buyer-whitelist gate. Default-off (open buy_insurance);
+        //    when the owner has flipped the toggle, only addresses an admin
+        //    has explicitly added via add_whitelisted_buyer pass. One Instance
+        //    read on the hot path when off, plus a Persistent read when on.
+        if read_whitelist_enabled(e) {
+            assert!(
+                read_buyer_whitelisted(e, &traveler),
+                "buyer not whitelisted",
+            );
+        }
 
         let gov_addr: Address = e.storage().instance().get(&CtrlKey::Governance).unwrap();
         let vault_addr: Address = e.storage().instance().get(&CtrlKey::RiskVault).unwrap();

@@ -1,0 +1,27 @@
+{
+  "AA100": {
+    "outcome": "on_time",
+    "origin": "KJFK",
+    "destination": "KLAX",
+    "aircraft_type": "B738"
+  },
+  "UAL456": {
+    "outcome": "delayed",
+    "delay_minutes": 180,
+    "origin": "KORD",
+    "destination": "KSFO",
+    "aircraft_type": "A320"
+  },
+  "DL789": {
+    "outcome": "cancelled",
+    "origin": "KATL",
+    "destination": "KBOS",
+    "aircraft_type": "B739"
+  },
+  "SW333": {
+    "outcome": "en_route",
+    "origin": "KDEN",
+    "destination": "KLAS",
+    "aircraft_type": "B737"
+  }
+}
