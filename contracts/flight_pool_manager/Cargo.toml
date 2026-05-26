@@ -14,12 +14,12 @@ stellar-access = { workspace = true }
 stellar-macros = { workspace = true }
 stellar-contract-utils = { workspace = true }
 sentinel_types = { path = "../sentinel_types" }
-risk_vault = { path = "../risk_vault" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
 sentinel_types = { path = "../sentinel_types", features = ["testutils"] }
 mock_usdc = { path = "../mock_usdc" }
+risk_vault = { path = "../risk_vault" }
 
 [package.metadata.stellar]
 cargo_inherit = true
