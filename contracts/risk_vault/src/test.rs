@@ -42,7 +42,7 @@ fn test_constructor() {
 #[test]
 fn test_deposit_and_redeem() {
     let (env, client, _owner, _controller, depositor) = setup();
-    let usdc = token::Client::new(&env, &client.asset());
+    let usdc = token::Client::new(&env, &client.query_asset());
 
     // Deposit 1000 USDC
     let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
@@ -102,7 +102,7 @@ fn test_record_premium_income() {
 
     // Real flow: pool transfers USDC to vault FIRST, then controller calls.
     // The balance floor check inside record_premium_income enforces this.
-    let usdc_admin = token::StellarAssetClient::new(&env, &client.asset());
+    let usdc_admin = token::StellarAssetClient::new(&env, &client.query_asset());
     usdc_admin.mint(&client.address, &50_0000000);
 
     client.record_premium_income(&controller, &50_0000000);
@@ -123,7 +123,7 @@ fn test_record_premium_income_rejects_when_usdc_not_received() {
 #[test]
 fn test_send_payout() {
     let (env, client, _owner, controller, depositor) = setup();
-    let usdc = token::Client::new(&env, &client.asset());
+    let usdc = token::Client::new(&env, &client.query_asset());
     let recipient = Address::generate(&env);
 
     client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
@@ -155,7 +155,7 @@ fn test_set_controller_twice() {
 #[test]
 fn test_withdrawal_queue_request_process_collect() {
     let (env, client, _owner, controller, depositor) = setup();
-    let usdc = token::Client::new(&env, &client.asset());
+    let usdc = token::Client::new(&env, &client.query_asset());
 
     // Deposit 1000 USDC
     let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
@@ -253,7 +253,7 @@ fn test_cancel_withdrawal_by_request_id_is_index_independent() {
     // queue indices shifted.
     let (env, client, _owner, controller, depositor) = setup();
     let other = Address::generate(&env);
-    let usdc_admin = token::StellarAssetClient::new(&env, &client.asset());
+    let usdc_admin = token::StellarAssetClient::new(&env, &client.query_asset());
     usdc_admin.mint(&other, &500_0000000);
 
     let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
@@ -324,7 +324,7 @@ fn test_snapshot_noop_if_too_soon() {
 #[test]
 fn test_tma_tracking_through_operations() {
     let (env, client, _owner, controller, depositor) = setup();
-    let usdc_client = token::StellarAssetClient::new(&env, &client.asset());
+    let usdc_client = token::StellarAssetClient::new(&env, &client.query_asset());
 
     // Deposit 1000
     client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
@@ -347,7 +347,7 @@ fn test_tma_tracking_through_operations() {
 #[test]
 fn test_multiple_depositors() {
     let (env, client, _owner, _controller, depositor) = setup();
-    let usdc_client = token::StellarAssetClient::new(&env, &client.asset());
+    let usdc_client = token::StellarAssetClient::new(&env, &client.query_asset());
 
     let depositor2 = Address::generate(&env);
     usdc_client.mint(&depositor2, &5_000_0000000);
@@ -478,8 +478,8 @@ fn test_recover_uncollected_recredit_can_increase_existing() {
 fn test_recover_uncollected_transfer_moves_usdc() {
     use soroban_sdk::symbol_short;
     let (env, client, _owner, _controller, depositor) = setup();
-    let usdc = token::Client::new(&env, &client.asset());
-    let usdc_admin = token::StellarAssetClient::new(&env, &client.asset());
+    let usdc = token::Client::new(&env, &client.query_asset());
+    let usdc_admin = token::StellarAssetClient::new(&env, &client.query_asset());
 
     // Seed vault with USDC so the transfer has funds to move.
     usdc_admin.mint(&client.address, &200_0000000);
@@ -509,7 +509,7 @@ fn test_recover_uncollected_transfer_moves_usdc() {
 #[should_panic(expected = "amount exceeds claimable balance")]
 fn test_recover_uncollected_transfer_without_prior_credit_panics() {
     let (env, client, _owner, _controller, depositor) = setup();
-    let usdc_admin = token::StellarAssetClient::new(&env, &client.asset());
+    let usdc_admin = token::StellarAssetClient::new(&env, &client.query_asset());
 
     // Vault has USDC but the user was never credited — Transfer must refuse.
     usdc_admin.mint(&client.address, &200_0000000);
@@ -520,7 +520,7 @@ fn test_recover_uncollected_transfer_without_prior_credit_panics() {
 #[should_panic(expected = "amount exceeds claimable balance")]
 fn test_recover_uncollected_transfer_exceeding_credit_panics() {
     let (env, client, _owner, _controller, depositor) = setup();
-    let usdc_admin = token::StellarAssetClient::new(&env, &client.asset());
+    let usdc_admin = token::StellarAssetClient::new(&env, &client.query_asset());
     usdc_admin.mint(&client.address, &200_0000000);
 
     // Credit is 50, attempt to transfer 51 must refuse.
@@ -640,11 +640,11 @@ fn test_vault_views_before_and_after_deposit() {
 #[test]
 fn test_mint_shares_pulls_assets_from_caller() {
     let (env, client, _owner, _controller, depositor) = setup();
-    let usdc = token::Client::new(&env, &client.asset());
+    let usdc = token::Client::new(&env, &client.query_asset());
 
     let initial_usdc = usdc.balance(&depositor);
     let target_shares = 100_0000000_000i128;
-    let assets_in = client.mint_shares(&target_shares, &depositor, &depositor, &depositor);
+    let assets_in = client.mint(&target_shares, &depositor, &depositor, &depositor);
 
     assert!(assets_in > 0, "mint_shares should pull non-zero assets");
     assert_eq!(usdc.balance(&depositor), initial_usdc - assets_in);

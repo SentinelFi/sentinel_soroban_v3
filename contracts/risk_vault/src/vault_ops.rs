@@ -4,21 +4,15 @@
 
 use soroban_sdk::{contractimpl, Address, Env};
 use stellar_macros::when_not_paused;
-use stellar_tokens::vault::Vault;
+use stellar_tokens::vault::{FungibleVault, Vault};
 
 use crate::storage::VaultKey;
 use crate::{RiskVault, RiskVaultArgs, RiskVaultClient};
 
 #[contractimpl]
-impl RiskVault {
+impl FungibleVault for RiskVault {
     #[when_not_paused]
-    pub fn deposit(
-        e: &Env,
-        assets: i128,
-        receiver: Address,
-        from: Address,
-        operator: Address,
-    ) -> i128 {
+    fn deposit(e: &Env, assets: i128, receiver: Address, from: Address, operator: Address) -> i128 {
         let shares = Vault::deposit(e, assets, receiver, from, operator);
         let tma = Self::get_total_managed_assets(e);
         e.storage().instance().set(
@@ -29,7 +23,7 @@ impl RiskVault {
     }
 
     #[when_not_paused]
-    pub fn withdraw(
+    fn withdraw(
         e: &Env,
         assets: i128,
         receiver: Address,
@@ -47,13 +41,7 @@ impl RiskVault {
     }
 
     #[when_not_paused]
-    pub fn mint_shares(
-        e: &Env,
-        shares: i128,
-        receiver: Address,
-        from: Address,
-        operator: Address,
-    ) -> i128 {
+    fn mint(e: &Env, shares: i128, receiver: Address, from: Address, operator: Address) -> i128 {
         let assets = Vault::mint(e, shares, receiver, from, operator);
         let tma = Self::get_total_managed_assets(e);
         e.storage().instance().set(
@@ -64,13 +52,7 @@ impl RiskVault {
     }
 
     #[when_not_paused]
-    pub fn redeem(
-        e: &Env,
-        shares: i128,
-        receiver: Address,
-        owner: Address,
-        operator: Address,
-    ) -> i128 {
+    fn redeem(e: &Env, shares: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
         let assets = Vault::preview_redeem(e, shares);
         assert!(assets <= Self::get_free_capital(e), "exceeds free capital");
         let actual_assets = Vault::redeem(e, shares, receiver, owner, operator);
@@ -83,47 +65,47 @@ impl RiskVault {
         actual_assets
     }
 
-    pub fn total_assets(e: &Env) -> i128 {
+    fn total_assets(e: &Env) -> i128 {
         Vault::total_assets(e)
     }
 
-    pub fn asset(e: &Env) -> Address {
+    fn query_asset(e: &Env) -> Address {
         Vault::query_asset(e)
     }
 
-    pub fn convert_to_shares(e: &Env, assets: i128) -> i128 {
+    fn convert_to_shares(e: &Env, assets: i128) -> i128 {
         Vault::convert_to_shares(e, assets)
     }
 
-    pub fn convert_to_assets(e: &Env, shares: i128) -> i128 {
+    fn convert_to_assets(e: &Env, shares: i128) -> i128 {
         Vault::convert_to_assets(e, shares)
     }
 
-    pub fn preview_deposit(e: &Env, assets: i128) -> i128 {
+    fn preview_deposit(e: &Env, assets: i128) -> i128 {
         Vault::preview_deposit(e, assets)
     }
 
-    pub fn preview_mint(e: &Env, shares: i128) -> i128 {
+    fn preview_mint(e: &Env, shares: i128) -> i128 {
         Vault::preview_mint(e, shares)
     }
 
-    pub fn preview_withdraw(e: &Env, assets: i128) -> i128 {
+    fn preview_withdraw(e: &Env, assets: i128) -> i128 {
         Vault::preview_withdraw(e, assets)
     }
 
-    pub fn preview_redeem(e: &Env, shares: i128) -> i128 {
+    fn preview_redeem(e: &Env, shares: i128) -> i128 {
         Vault::preview_redeem(e, shares)
     }
 
-    pub fn max_deposit(e: &Env, address: Address) -> i128 {
+    fn max_deposit(e: &Env, address: Address) -> i128 {
         Vault::max_deposit(e, address)
     }
 
-    pub fn max_mint(e: &Env, address: Address) -> i128 {
+    fn max_mint(e: &Env, address: Address) -> i128 {
         Vault::max_mint(e, address)
     }
 
-    pub fn max_withdraw(e: &Env, owner: Address) -> i128 {
+    fn max_withdraw(e: &Env, owner: Address) -> i128 {
         let vault_max = Vault::max_withdraw(e, owner);
         let free = Self::get_free_capital(e);
         if vault_max < free {
@@ -133,7 +115,7 @@ impl RiskVault {
         }
     }
 
-    pub fn max_redeem(e: &Env, owner: Address) -> i128 {
+    fn max_redeem(e: &Env, owner: Address) -> i128 {
         let vault_max = Vault::max_redeem(e, owner);
         let free_capital = Self::get_free_capital(e);
         let free_shares = Vault::convert_to_shares(e, free_capital);

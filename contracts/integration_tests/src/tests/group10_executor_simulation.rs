@@ -38,7 +38,11 @@ fn whitelist_extra_routes(t: &TestEnv) {
     // we can simulate a realistic multi-flight portfolio.
     for (id, origin, dest) in [
         (flight_delayed(), symbol_short!("ORD"), symbol_short!("SFO")),
-        (flight_cancelled(), symbol_short!("ATL"), symbol_short!("BOS")),
+        (
+            flight_cancelled(),
+            symbol_short!("ATL"),
+            symbol_short!("BOS"),
+        ),
         (flight_pending(), symbol_short!("DEN"), symbol_short!("LAS")),
     ] {
         t.gov.whitelist_route(
@@ -135,7 +139,9 @@ fn fetcher_tick_simulates_oracle_pushes_for_mixed_portfolio() {
         oracle_aggregator::FlightStatus::Landed
     );
     assert_eq!(
-        t.oracle.get_flight_data(&flight_delayed(), &FLIGHT_DATE).status,
+        t.oracle
+            .get_flight_data(&flight_delayed(), &FLIGHT_DATE)
+            .status,
         oracle_aggregator::FlightStatus::Landed
     );
     assert_eq!(
@@ -159,7 +165,13 @@ fn classifier_tick_advances_all_landed_or_cancelled_flights() {
     let b = Address::generate(&t.env);
     let c = Address::generate(&t.env);
     t.buy(&a);
-    buy_on(&t, &b, &flight_delayed(), symbol_short!("ORD"), symbol_short!("SFO"));
+    buy_on(
+        &t,
+        &b,
+        &flight_delayed(),
+        symbol_short!("ORD"),
+        symbol_short!("SFO"),
+    );
     buy_on(
         &t,
         &c,
@@ -201,7 +213,9 @@ fn classifier_tick_advances_all_landed_or_cancelled_flights() {
         oracle_aggregator::FlightStatus::ToBeSettledOnTime
     );
     assert_eq!(
-        t.oracle.get_flight_data(&flight_delayed(), &FLIGHT_DATE).status,
+        t.oracle
+            .get_flight_data(&flight_delayed(), &FLIGHT_DATE)
+            .status,
         oracle_aggregator::FlightStatus::ToBeSettledDelayed
     );
     assert_eq!(
@@ -292,10 +306,7 @@ fn pending_flight_carries_across_ticks() {
     t.ctrl.classify_flights(&t.keeper);
     let ttl_miss_count =
         count_events_with_single_prefix(&t.env, &t.ctrl_addr, symbol_short!("ttl_miss"));
-    assert!(
-        ttl_miss_count >= 1,
-        "expected ttl_miss for pending flight"
-    );
+    assert!(ttl_miss_count >= 1, "expected ttl_miss for pending flight");
 
     // Tick 2 — fetcher now gets data. Push it and run the cycle to completion.
     t.oracle.set_estimated_arrival(
@@ -314,7 +325,9 @@ fn pending_flight_carries_across_ticks() {
     t.ctrl.execute_settlements(&t.keeper);
 
     assert_eq!(
-        t.oracle.get_flight_data(&flight_pending(), &FLIGHT_DATE).status,
+        t.oracle
+            .get_flight_data(&flight_pending(), &FLIGHT_DATE)
+            .status,
         oracle_aggregator::FlightStatus::Settled
     );
 }

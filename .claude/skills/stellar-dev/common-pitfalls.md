@@ -32,11 +32,11 @@ Additional strategies:
 
 ```bash
 # Check contract size
-ls -la target/wasm32-unknown-unknown/release/*.wasm
+ls -la target/wasm32v1-none/release/*.wasm
 
 # Analyze what's taking space
 cargo install cargo-bloat
-cargo bloat --release --target wasm32-unknown-unknown
+cargo bloat --release --target wasm32v1-none
 ```
 
 ---

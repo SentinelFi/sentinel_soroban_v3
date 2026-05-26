@@ -277,7 +277,7 @@ curl "http://localhost:8000/friendbot?addr=G..."
 ```bash
 # Deploy contract to local network
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/contract.wasm \
+  --wasm target/wasm32v1-none/release/contract.wasm \
   --source test-account \
   --network local
 
@@ -320,13 +320,13 @@ curl "https://friendbot.stellar.org?addr=G..."
 ```bash
 # Deploy contract
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/contract.wasm \
+  --wasm target/wasm32v1-none/release/contract.wasm \
   --source my-testnet-key \
   --network testnet
 
 # Install contract code (separate from deployment)
 stellar contract install \
-  --wasm target/wasm32-unknown-unknown/release/contract.wasm \
+  --wasm target/wasm32v1-none/release/contract.wasm \
   --source my-testnet-key \
   --network testnet
 ```
@@ -470,13 +470,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Add WASM target
-        run: rustup target add wasm32-unknown-unknown
+        run: rustup target add wasm32v1-none
 
       - name: Run unit tests
         run: cargo test
 
       - name: Build contract
-        run: cargo build --release --target wasm32-unknown-unknown
+        run: cargo build --release --target wasm32v1-none
 
   integration-tests:
     runs-on: ubuntu-latest
@@ -503,7 +503,7 @@ jobs:
         run: |
           stellar keys generate --global ci-test --network local --fund
           stellar contract deploy \
-            --wasm target/wasm32-unknown-unknown/release/contract.wasm \
+            --wasm target/wasm32v1-none/release/contract.wasm \
             --source ci-test \
             --network local
 ```

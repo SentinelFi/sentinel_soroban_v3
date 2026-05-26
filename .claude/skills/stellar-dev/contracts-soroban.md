@@ -120,7 +120,7 @@ impl MyContract {
 ### Deploy with constructor args (CLI)
 ```bash
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/my_contract.wasm \
+  --wasm target/wasm32v1-none/release/my_contract.wasm \
   --source alice \
   --network testnet \
   -- \
@@ -327,7 +327,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env};
 
 mod token_contract {
     soroban_sdk::contractimport!(
-        file = "../token/target/wasm32-unknown-unknown/release/token.wasm"
+        file = "../token/target/wasm32v1-none/release/token.wasm"
     );
 }
 
@@ -429,7 +429,7 @@ pub fn transfer(env: Env, from: Address, to: Address, amount: i128) -> Result<()
 # Build optimized WASM
 stellar contract build
 
-# Output: target/wasm32-unknown-unknown/release/my_contract.wasm
+# Output: target/wasm32v1-none/release/my_contract.wasm
 ```
 
 ### Deploy to Testnet
@@ -439,7 +439,7 @@ stellar keys generate --global alice --network testnet --fund
 
 # Deploy contract
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/my_contract.wasm \
+  --wasm target/wasm32v1-none/release/my_contract.wasm \
   --source alice \
   --network testnet
 

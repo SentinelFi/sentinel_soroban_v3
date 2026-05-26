@@ -18,18 +18,18 @@ pub struct MyVault;
 #[contractimpl]
 impl MyVault {
     pub fn __constructor(e: &Env, asset: Address) {
-        // Set vault share token metadata
-        Base::set_metadata(e, 7, String::from_str(e, "Vault Shares"), String::from_str(e, "vSHR"));
         // Set underlying asset (immutable after this call)
         Vault::set_asset(e, &asset);
         // Set decimals offset for inflation attack protection (immutable, max 10)
         Vault::set_decimals_offset(e, 0);
+        // Set vault share token metadata
+        Base::set_metadata(e, 7, String::from_str(e, "Vault Shares"), String::from_str(e, "vSHR"));
     }
 }
 
 #[contractimpl(contracttrait)]
 impl FungibleToken for MyVault {
-    type ContractType = Base;
+    type ContractType = Vault;
 }
 
 #[contractimpl(contracttrait)]

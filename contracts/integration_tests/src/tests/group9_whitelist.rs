@@ -218,11 +218,8 @@ fn whitelist_events_emit_on_controller() {
     assert_eq!(added_count, 1);
 
     t.ctrl.remove_whitelisted_buyer(&admin, &traveler);
-    let removed_count = count_events_with_single_prefix(
-        &t.env,
-        &t.ctrl_addr,
-        Symbol::new(&t.env, "buyer_removed"),
-    );
+    let removed_count =
+        count_events_with_single_prefix(&t.env, &t.ctrl_addr, Symbol::new(&t.env, "buyer_removed"));
     assert_eq!(removed_count, 1);
 
     t.ctrl.set_whitelist_enabled(&true);
