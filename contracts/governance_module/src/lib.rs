@@ -4,7 +4,7 @@ mod auth;
 mod events;
 mod storage;
 
-use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Symbol};
 use stellar_access::ownable::{self as ownable, Ownable};
 use stellar_contract_utils::pausable::{self as pausable, Pausable};
 use stellar_macros::{only_owner, when_not_paused};
@@ -86,6 +86,11 @@ impl GovernanceModule {
             .remove(&DataKey::Admin(admin.clone()));
 
         GovAdminRemoved { admin }.publish(e);
+    }
+
+    #[only_owner]
+    pub fn upgrade(e: &Env, wasm_hash: BytesN<32>) {
+        e.deployer().update_current_contract_wasm(wasm_hash);
     }
 
     // --- Owner or Admin: route lifecycle ---

@@ -4,7 +4,7 @@ mod auth;
 mod events;
 mod storage;
 
-use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Symbol, Vec};
 use stellar_access::ownable::{self as ownable, Ownable};
 use stellar_contract_utils::pausable::{self as pausable, Pausable};
 use stellar_macros::{only_owner, when_not_paused};
@@ -51,6 +51,11 @@ impl OracleAggregator {
             .instance()
             .set(&OracleKey::AuthorizedOracle, &new_oracle);
         extend_instance_ttl(e);
+    }
+
+    #[only_owner]
+    pub fn upgrade(e: &Env, wasm_hash: BytesN<32>) {
+        e.deployer().update_current_contract_wasm(wasm_hash);
     }
 
     // --- Oracle-only write functions ---
