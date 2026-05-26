@@ -13,7 +13,7 @@ mod vault_ops;
 use soroban_sdk::{contract, contractimpl, Address, Env, MuxedAddress, String};
 use stellar_access::ownable::{self as ownable, Ownable};
 use stellar_contract_utils::pausable::{self as pausable, Pausable};
-use stellar_tokens::fungible::{Base, FungibleToken};
+use stellar_tokens::{fungible::FungibleToken, vault::Vault};
 
 #[cfg(test)]
 use soroban_sdk::token;
@@ -28,7 +28,7 @@ pub struct RiskVault;
 
 #[contractimpl(contracttrait)]
 impl FungibleToken for RiskVault {
-    type ContractType = Base;
+    type ContractType = Vault;
 }
 
 #[contractimpl(contracttrait)]
@@ -44,6 +44,7 @@ impl Pausable for RiskVault {
         owner.require_auth();
         pausable::pause(e);
     }
+
     fn unpause(e: &Env, caller: Address) {
         let _ = caller;
         let owner = ownable::get_owner(e).expect("owner not set");

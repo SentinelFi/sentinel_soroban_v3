@@ -12,6 +12,13 @@ members = [
 ]
 exclude = ["target", "risk_vault/fuzz", "oracle_aggregator/fuzz"]
 
+[workspace.package]
+authors = ["SentinelFi"]
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/SentinelFi/sentinel_soroban_v3"
+version = "1.0.0"
+
 [workspace.dependencies]
 soroban-sdk = "25.3.1"
 stellar-tokens = "0.7.1"

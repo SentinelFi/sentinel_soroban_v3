@@ -1140,8 +1140,7 @@ fn test_whitelist_removed_event_emitted() {
         }
         let t0 = Symbol::try_from_val(&t.env, &topics.get(0).unwrap()).ok();
         let t1 = Symbol::try_from_val(&t.env, &topics.get(1).unwrap()).ok();
-        if t0 == Some(symbol_short!("sentinel"))
-            && t1 == Some(Symbol::new(&t.env, "buyer_removed"))
+        if t0 == Some(symbol_short!("sentinel")) && t1 == Some(Symbol::new(&t.env, "buyer_removed"))
         {
             found = true;
             break;

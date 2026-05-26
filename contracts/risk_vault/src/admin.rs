@@ -12,14 +12,14 @@ use crate::{RiskVault, RiskVaultArgs, RiskVaultClient};
 impl RiskVault {
     pub fn __constructor(e: &Env, owner: Address, usdc_token: Address) {
         ownable::set_owner(e, &owner);
+        Vault::set_asset(e, usdc_token);
+        Vault::set_decimals_offset(e, 3);
         Base::set_metadata(
             e,
             10,
             String::from_str(e, "RiskVault Share"),
             String::from_str(e, "RVS"),
         );
-        Vault::set_asset(e, usdc_token);
-        Vault::set_decimals_offset(e, 3);
         e.storage()
             .instance()
             .set(&VaultKey::TotalManagedAssets, &0i128);
