@@ -1,6 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, Env, MuxedAddress, String};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, MuxedAddress, String};
 use stellar_access::ownable::{self as ownable, Ownable};
+use stellar_macros::only_owner;
 use stellar_tokens::fungible::{burnable::FungibleBurnable, Base, FungibleToken};
 
 #[contract]
@@ -16,6 +17,11 @@ impl MockUSDC {
             String::from_str(e, "USDC"),
         );
         ownable::set_owner(e, &admin);
+    }
+
+    #[only_owner]
+    pub fn upgrade(e: &Env, wasm_hash: BytesN<32>) {
+        e.deployer().update_current_contract_wasm(wasm_hash);
     }
 
     /// Permissionless mint — anyone can mint any amount to any address.

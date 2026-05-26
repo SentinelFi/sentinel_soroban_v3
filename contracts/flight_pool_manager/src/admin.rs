@@ -1,4 +1,4 @@
-use soroban_sdk::{contractimpl, token, Address, Env};
+use soroban_sdk::{contractimpl, token, Address, BytesN, Env};
 use stellar_access::ownable::{self as ownable};
 use stellar_macros::{only_owner, when_not_paused};
 
@@ -63,5 +63,10 @@ impl FlightPoolManager {
     /// Extend instance TTL. Called by cron as a safety net.
     pub fn extend_ttl(e: &Env) {
         extend_instance_ttl(e);
+    }
+
+    #[only_owner]
+    pub fn upgrade(e: &Env, wasm_hash: BytesN<32>) {
+        e.deployer().update_current_contract_wasm(wasm_hash);
     }
 }

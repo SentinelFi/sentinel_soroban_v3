@@ -1,4 +1,4 @@
-use soroban_sdk::{contractimpl, Address, Env, String};
+use soroban_sdk::{contractimpl, Address, BytesN, Env, String};
 use stellar_access::ownable::{self as ownable};
 use stellar_macros::only_owner;
 use stellar_tokens::fungible::Base;
@@ -45,5 +45,10 @@ impl RiskVault {
         e.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+    }
+
+    #[only_owner]
+    pub fn upgrade(e: &Env, wasm_hash: BytesN<32>) {
+        e.deployer().update_current_contract_wasm(wasm_hash);
     }
 }
