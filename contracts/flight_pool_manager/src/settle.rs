@@ -1,4 +1,4 @@
-use soroban_sdk::{contractimpl, token, Address, Env, Symbol};
+use soroban_sdk::{contractimpl, token, Address, Env, IntoVal, Symbol};
 use stellar_macros::when_not_paused;
 
 use crate::auth::require_controller;
@@ -42,8 +42,8 @@ impl FlightPoolManager {
             // record_premium_income is controller-only on the vault. Forward the
             // controller's auth (already present from this call's require_controller)
             // so the vault's auth check sees the same address it has stored.
-            let vault_client = risk_vault::RiskVaultClient::new(e, &vault_addr);
-            vault_client.record_premium_income(&controller, &total_premium);
+            let args = (&controller, &total_premium).into_val(e);
+            e.invoke_contract::<()>(&vault_addr, &Symbol::new(e, "record_premium_income"), args);
         }
 
         FlightSettled {
