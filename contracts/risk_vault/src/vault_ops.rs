@@ -31,6 +31,14 @@ impl FungibleVault for RiskVault {
         owner: Address,
         operator: Address,
     ) -> i128 {
+        // Audit ASF-02: once any underwriter is queued, the queue is the canonical
+        // exit path — block direct exits so a latecomer can't consume free capital
+        // ahead of LPs already waiting in FIFO order. When the queue is empty this
+        // fast path stays open.
+        assert!(
+            Self::get_withdrawal_queue(e).is_empty(),
+            "withdrawal queue active; use request_withdrawal",
+        );
         assert!(assets <= Self::get_free_capital(e), "exceeds free capital");
         let shares = Vault::withdraw(e, assets, receiver, owner, operator);
         let tma = Self::get_total_managed_assets(e);
@@ -54,6 +62,12 @@ impl FungibleVault for RiskVault {
 
     #[when_not_paused]
     fn redeem(e: &Env, shares: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
+        // Audit ASF-02: see `withdraw` — direct redeem defers to the queue while
+        // any request is pending so it can't jump the FIFO line.
+        assert!(
+            Self::get_withdrawal_queue(e).is_empty(),
+            "withdrawal queue active; use request_withdrawal",
+        );
         let assets = Vault::preview_redeem(e, shares);
         assert!(assets <= Self::get_free_capital(e), "exceeds free capital");
         let actual_assets = Vault::redeem(e, shares, receiver, owner, operator);

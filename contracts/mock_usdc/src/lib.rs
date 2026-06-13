@@ -1,4 +1,18 @@
 #![no_std]
+//! # MockUSDC — ⚠️ TESTNET ONLY
+//!
+//! Audit ASF-03 (Deployment Critical). This token exposes **permissionless**
+//! mint/faucet: anyone can mint arbitrary balances. It exists only to fund
+//! integration tests and testnet demos.
+//!
+//! NEVER deploy MockUSDC as the `usdc_token` backing `RiskVault`, `Controller`,
+//! or `FlightPoolManager` on mainnet — any user could mint unlimited "USDC",
+//! buy arbitrary policies, fake vault capital, and destroy all share/insurance
+//! accounting. Production must use the real USDC Stellar Asset Contract (SAC).
+//!
+//! Guardrail: the permissionless `mint`/`faucet` entrypoints are compiled only
+//! under the default-on `testnet` feature. A production build
+//! (`--no-default-features`) omits them entirely.
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, MuxedAddress, String};
 use stellar_access::ownable::{self as ownable, Ownable};
 use stellar_macros::only_owner;
@@ -25,11 +39,15 @@ impl MockUSDC {
     }
 
     /// Permissionless mint — anyone can mint any amount to any address.
+    /// Audit ASF-03: testnet-only, gated behind the default-on `testnet` feature.
+    #[cfg(feature = "testnet")]
     pub fn mint(e: &Env, to: Address, amount: i128) {
         Base::mint(e, &to, amount);
     }
 
     /// Permissionless faucet — mints 10,000 USDC to any address.
+    /// Audit ASF-03: testnet-only, gated behind the default-on `testnet` feature.
+    #[cfg(feature = "testnet")]
     pub fn faucet(e: &Env, to: Address) {
         Base::mint(e, &to, 10_000_0000000); // 10,000 USDC (7 decimals)
     }
