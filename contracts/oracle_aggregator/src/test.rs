@@ -250,15 +250,20 @@ fn test_invalid_transition_landed_to_settled() {
 }
 
 #[test]
-#[should_panic(expected = "actual_arrival_time must not precede estimated_arrival_time")]
-fn test_set_landed_rejects_actual_before_estimated() {
+fn test_set_landed_accepts_early_arrival() {
+    // Audit VF-07: an early arrival (actual < estimated) is a legitimate
+    // outcome and must land the flight rather than reverting and leaving it
+    // stuck Active. Downstream delay math saturates to zero (on-time).
     let (env, client, _owner, oracle, controller) = setup();
     let fid = flight_id(&env);
 
     client.register_flight(&controller, &fid, &FLIGHT_DATE);
     client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);
-    // actual = EST_ARRIVAL - 1 < estimated → must reject.
     client.set_landed(&oracle, &fid, &FLIGHT_DATE, &(EST_ARRIVAL - 1));
+
+    let data = client.get_flight_data(&fid, &FLIGHT_DATE);
+    assert_eq!(data.status, FlightStatus::Landed);
+    assert_eq!(data.actual_arrival_time, EST_ARRIVAL - 1);
 }
 
 #[test]

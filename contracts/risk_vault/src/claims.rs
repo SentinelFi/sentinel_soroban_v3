@@ -19,6 +19,13 @@ impl RiskVault {
     pub fn request_withdrawal(e: &Env, caller: Address, shares: i128) -> u64 {
         caller.require_auth();
         assert!(shares > 0, "shares must be positive");
+        // Audit VF-04: reject dust requests that preview to zero assets. Such a
+        // request would otherwise sit at the queue head and block every later
+        // request (the drain loop stops at the first zero-preview entry).
+        assert!(
+            Vault::preview_redeem(e, shares) > 0,
+            "shares redeem to zero assets",
+        );
 
         // Escrow shares: transfer from caller to vault
         Base::update(
@@ -175,6 +182,14 @@ impl RiskVault {
                     e.storage().persistent().remove(&key);
                 } else {
                     e.storage().persistent().set(&key, &remaining);
+                    // Audit VF-16: a partial transfer leaves a nonzero balance
+                    // behind — refresh its TTL so the remainder can't archive
+                    // sooner than a freshly-credited entry.
+                    e.storage().persistent().extend_ttl(
+                        &key,
+                        CLAIMABLE_TTL_LEDGERS,
+                        CLAIMABLE_TTL_LEDGERS,
+                    );
                 }
 
                 let usdc = token::Client::new(e, &Vault::query_asset(e));

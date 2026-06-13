@@ -42,6 +42,18 @@ pub struct TtlMiss {
     pub(crate) date: u64,
 }
 
+// Audit VF-13: diagnostic emitted by `classify_flights` / `execute_settlements`
+// when a flight is present in the oracle active list but its FlightConfig is
+// missing from FlightPoolManager (archived past TTL, or never registered).
+// The flight is skipped instead of panicking the whole keeper loop; the
+// off-chain cron consumes this to investigate / re-extend TTL.
+#[contractevent(topics = ["sentinel", "cfg_missing"], data_format = "map")]
+pub struct FlightConfigMissing {
+    #[topic]
+    pub(crate) flight_id: Symbol,
+    pub(crate) date: u64,
+}
+
 // Phase 11 — buyer whitelist lifecycle events. The whitelist itself is
 // stored on Controller (one source of truth on the buy path); add/remove
 // callers are validated by cross-calling GovernanceModule.is_admin.

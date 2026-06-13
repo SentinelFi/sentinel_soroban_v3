@@ -2,9 +2,9 @@ use soroban_sdk::{contractimpl, Address, Env};
 use stellar_macros::when_not_paused;
 
 use crate::auth::{extend_instance_ttl, require_keeper};
-use crate::events::{FlightClassified, FlightSettledEvent, TtlMiss};
+use crate::events::{FlightClassified, FlightConfigMissing, FlightSettledEvent, TtlMiss};
 use crate::interfaces::{FlightPoolManagerClient, FlightStatus, OracleClient, VaultClient};
-use crate::storage::CtrlKey;
+use crate::storage::{CtrlKey, MAX_SETTLE_BATCH};
 use crate::{Controller, ControllerArgs, ControllerClient};
 
 #[contractimpl]
@@ -29,8 +29,27 @@ impl Controller {
         let controller_addr = e.current_contract_address();
 
         let flights = oracle.get_active_flights();
+        let len = flights.len();
+        if len == 0 {
+            extend_instance_ttl(e);
+            return;
+        }
 
-        for i in 0..flights.len() {
+        // Audit VF-01: scan at most MAX_SETTLE_BATCH entries per call, starting
+        // at a persisted rotating cursor, so per-call cost is bounded by the
+        // batch size rather than the (unbounded) active-list length.
+        let mut cursor: u32 = e
+            .storage()
+            .instance()
+            .get(&CtrlKey::ClassifyCursor)
+            .unwrap_or(0);
+        if cursor >= len {
+            cursor = 0;
+        }
+        let batch = MAX_SETTLE_BATCH.min(len);
+
+        let mut i = cursor;
+        for _ in 0..batch {
             let (flight_id, date) = flights.get(i).unwrap();
             let data = oracle.get_flight_data(&flight_id, &date);
 
@@ -38,24 +57,33 @@ impl Controller {
                 FlightStatus::Cancelled => Some(FlightStatus::ToBeSettledCancelled),
                 FlightStatus::Landed => {
                     // Read delay_hours from FlightPoolManager (locked at register time).
-                    // If the flight is in the oracle's active list, it MUST also exist
-                    // in FlightPoolManager — they're registered together in buy_insurance.
-                    // .unwrap() here surfaces real protocol bugs (mismatched state).
-                    let cfg = pool
-                        .get_flight_config(&flight_id, &date)
-                        .expect("flight in oracle but missing in FlightPoolManager");
-                    let delay_hours = cfg.delay_hours;
+                    // Audit VF-13: a present-in-oracle but missing-in-pool config
+                    // (archived past TTL) must not panic the whole loop. Skip the
+                    // flight and emit a diagnostic so one bad entry can't block
+                    // settlement of every other flight.
+                    match pool.get_flight_config(&flight_id, &date) {
+                        Some(cfg) => {
+                            let delay_hours = cfg.delay_hours;
+                            let delay_seconds = data
+                                .actual_arrival_time
+                                .saturating_sub(data.estimated_arrival_time);
+                            let delay_hours_actual =
+                                delay_seconds.checked_div(3600).expect("division by zero");
 
-                    let delay_seconds = data
-                        .actual_arrival_time
-                        .saturating_sub(data.estimated_arrival_time);
-                    let delay_hours_actual =
-                        delay_seconds.checked_div(3600).expect("division by zero");
-
-                    if delay_hours_actual >= (delay_hours as u64) {
-                        Some(FlightStatus::ToBeSettledDelayed)
-                    } else {
-                        Some(FlightStatus::ToBeSettledOnTime)
+                            if delay_hours_actual >= (delay_hours as u64) {
+                                Some(FlightStatus::ToBeSettledDelayed)
+                            } else {
+                                Some(FlightStatus::ToBeSettledOnTime)
+                            }
+                        }
+                        None => {
+                            FlightConfigMissing {
+                                flight_id: flight_id.clone(),
+                                date,
+                            }
+                            .publish(e);
+                            None
+                        }
                     }
                 }
                 FlightStatus::NotInitiated => {
@@ -85,8 +113,11 @@ impl Controller {
                 }
                 .publish(e);
             }
+
+            i = (i + 1) % len;
         }
 
+        e.storage().instance().set(&CtrlKey::ClassifyCursor, &i);
         extend_instance_ttl(e);
     }
 
@@ -125,18 +156,42 @@ impl Controller {
             .expect("addition overflow");
 
         let flights = oracle.get_active_flights();
+        let len = flights.len();
+        if len == 0 {
+            extend_instance_ttl(e);
+            return;
+        }
 
-        for i in 0..flights.len() {
+        // Audit VF-01: bounded rotating scan — see classify_flights.
+        let mut cursor: u32 = e
+            .storage()
+            .instance()
+            .get(&CtrlKey::SettleCursor)
+            .unwrap_or(0);
+        if cursor >= len {
+            cursor = 0;
+        }
+        let batch = MAX_SETTLE_BATCH.min(len);
+
+        let mut i = cursor;
+        for _ in 0..batch {
             let (flight_id, date) = flights.get(i).unwrap();
+            i = (i + 1) % len;
             let data = oracle.get_flight_data(&flight_id, &date);
             let outcome = data.status.clone();
 
             match data.status {
                 FlightStatus::ToBeSettledOnTime => {
                     // FlightPoolManager owns the locked terms + buyer count.
-                    let cfg = pool
-                        .get_flight_config(&flight_id, &date)
-                        .expect("flight not registered in pool");
+                    // Audit VF-13: skip + diagnose a missing config instead of
+                    // panicking the whole settlement loop.
+                    let cfg = match pool.get_flight_config(&flight_id, &date) {
+                        Some(cfg) => cfg,
+                        None => {
+                            FlightConfigMissing { flight_id, date }.publish(e);
+                            continue;
+                        }
+                    };
                     let total_payoff = cfg
                         .payoff
                         .checked_mul(cfg.buyer_count as i128)
@@ -158,9 +213,13 @@ impl Controller {
                     .publish(e);
                 }
                 FlightStatus::ToBeSettledDelayed | FlightStatus::ToBeSettledCancelled => {
-                    let cfg = pool
-                        .get_flight_config(&flight_id, &date)
-                        .expect("flight not registered in pool");
+                    let cfg = match pool.get_flight_config(&flight_id, &date) {
+                        Some(cfg) => cfg,
+                        None => {
+                            FlightConfigMissing { flight_id, date }.publish(e);
+                            continue;
+                        }
+                    };
                     let buyer_count_i128 = cfg.buyer_count as i128;
                     let payout_from_vault = cfg
                         .payoff
@@ -210,6 +269,7 @@ impl Controller {
             }
         }
 
+        e.storage().instance().set(&CtrlKey::SettleCursor, &i);
         extend_instance_ttl(e);
     }
 

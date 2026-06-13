@@ -81,7 +81,16 @@ pub(crate) fn prune_active_list(e: &Env, flight_id: &Symbol, date: u64) {
         }
     }
     if let Some(i) = idx {
-        list.remove(i);
+        // Audit VF-14: swap-remove instead of `Vec::remove`, which shifts every
+        // trailing element. The active list is an unordered set, so moving the
+        // last entry into the gap and popping the tail is O(1) and avoids
+        // compounding shift cost when many flights settle in one call.
+        let last = list.len() - 1;
+        if i != last {
+            let tail = list.get(last).unwrap();
+            list.set(i, tail);
+        }
+        list.pop_back();
         e.storage()
             .instance()
             .set(&PoolKey::ActiveFlightList, &list);

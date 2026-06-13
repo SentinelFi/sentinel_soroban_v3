@@ -463,6 +463,25 @@ fn test_claim_after_cancelled_success() {
 }
 
 #[test]
+fn test_claim_succeeds_while_paused() {
+    // Audit VF-03: claim must remain callable during an emergency pause —
+    // otherwise the ledger clock would run the claim window out and a valid,
+    // already-funded payout would be permanently lost.
+    let t = setup();
+    register(&t);
+    buy(&t, &t.buyer1);
+    settle_delayed_and_topup(&t, 1);
+
+    t.pool.pause(&t.owner);
+    assert!(t.pool.paused());
+
+    let before = t.usdc.balance(&t.buyer1);
+    t.pool.claim(&t.buyer1, &flight_a(), &FLIGHT_DATE);
+    assert_eq!(t.usdc.balance(&t.buyer1), before + PAYOFF);
+    assert!(t.pool.has_claimed(&flight_a(), &FLIGHT_DATE, &t.buyer1));
+}
+
+#[test]
 #[should_panic(expected = "flight not in claimable status")]
 fn test_claim_before_settlement_fails() {
     let t = setup();

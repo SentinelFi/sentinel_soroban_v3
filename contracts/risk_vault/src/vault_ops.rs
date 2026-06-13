@@ -3,6 +3,7 @@
 // reason about free vs. locked capital.
 
 use soroban_sdk::{contractimpl, Address, Env};
+use stellar_contract_utils::pausable::paused;
 use stellar_macros::when_not_paused;
 use stellar_tokens::vault::{FungibleVault, Vault};
 
@@ -97,15 +98,28 @@ impl FungibleVault for RiskVault {
         Vault::preview_redeem(e, shares)
     }
 
+    // Audit VF-17: the executable deposit/mint/withdraw/redeem paths are all
+    // `#[when_not_paused]`, so the `max_*` views must report zero while paused.
+    // Otherwise integrations read a positive limit and submit transactions that
+    // revert during a pause.
     fn max_deposit(e: &Env, address: Address) -> i128 {
+        if paused(e) {
+            return 0;
+        }
         Vault::max_deposit(e, address)
     }
 
     fn max_mint(e: &Env, address: Address) -> i128 {
+        if paused(e) {
+            return 0;
+        }
         Vault::max_mint(e, address)
     }
 
     fn max_withdraw(e: &Env, owner: Address) -> i128 {
+        if paused(e) {
+            return 0;
+        }
         let vault_max = Vault::max_withdraw(e, owner);
         let free = Self::get_free_capital(e);
         if vault_max < free {
@@ -116,6 +130,9 @@ impl FungibleVault for RiskVault {
     }
 
     fn max_redeem(e: &Env, owner: Address) -> i128 {
+        if paused(e) {
+            return 0;
+        }
         let vault_max = Vault::max_redeem(e, owner);
         let free_capital = Self::get_free_capital(e);
         let free_shares = Vault::convert_to_shares(e, free_capital);
