@@ -281,8 +281,21 @@ impl GovernanceModule {
         let terms: Option<RouteTerms> = e.storage().persistent().get(&key);
         match terms {
             None => RouteStatus::Unknown,
-            Some(t) if !t.approved => RouteStatus::Disabled,
-            Some(t) => RouteStatus::Active(resolve_terms(&t, read_defaults(e))),
+            Some(t) => {
+                // Audit VF-05: refresh the route's TTL whenever it is read on a
+                // committing call (e.g. the controller's buy_insurance path).
+                // Route keys were otherwise extended only on write, so an
+                // approved-but-idle route could archive and become unsellable
+                // ("route not whitelisted") despite never being disabled.
+                // Read-only simulations don't persist this, so frontend queries
+                // are unaffected.
+                extend_route_ttl(e, &key);
+                if !t.approved {
+                    RouteStatus::Disabled
+                } else {
+                    RouteStatus::Active(resolve_terms(&t, read_defaults(e)))
+                }
+            }
         }
     }
 

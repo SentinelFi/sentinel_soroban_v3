@@ -7,7 +7,8 @@ use crate::interfaces::{
     FlightPoolManagerClient, GovClient, OracleClient, RouteStatus, VaultClient,
 };
 use crate::storage::{
-    append_traveler_flight, read_buyer_whitelisted, read_whitelist_enabled, CtrlKey,
+    append_traveler_flight, read_buyer_whitelisted, read_whitelist_enabled,
+    touch_buyer_whitelisted, CtrlKey,
 };
 use crate::{Controller, ControllerArgs, ControllerClient};
 
@@ -33,6 +34,8 @@ impl Controller {
                 read_buyer_whitelisted(e, &traveler),
                 "buyer not whitelisted",
             );
+            // Audit VF-10: keep an active buyer's approval from aging out.
+            touch_buyer_whitelisted(e, &traveler);
         }
 
         let gov_addr: Address = e.storage().instance().get(&CtrlKey::Governance).unwrap();

@@ -45,6 +45,15 @@ pub enum RecoveryMode {
 
 pub(crate) const SECONDS_PER_DAY: u64 = 86400;
 
+/// Audit VF-02: maximum withdrawal requests examined per
+/// `process_withdrawal_queue` call. Bounds the per-call resource cost
+/// (preview_redeem + share burn + storage writes) so a large queue can never
+/// make maintenance exceed Soroban transaction limits and revert before any
+/// entry is drained. The keeper cron calls repeatedly, draining the queue
+/// across multiple ledgers. Set high enough that normal volumes drain in one
+/// call.
+pub(crate) const MAX_QUEUE_BATCH: u32 = 50;
+
 /// 60 days at 5s/ledger = 60 * 24 * 60 * 12 = 1_036_800.
 /// Applied on every `ClaimableBalance(addr)` write to prevent silent archival
 /// of per-user pending USDC. Layered defense:

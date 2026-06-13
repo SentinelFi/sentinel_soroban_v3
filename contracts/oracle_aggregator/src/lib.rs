@@ -10,9 +10,10 @@ use stellar_contract_utils::pausable::{self as pausable, Pausable};
 use stellar_macros::{only_owner, when_not_paused};
 
 use auth::{extend_instance_ttl, require_controller, require_oracle};
-use events::emit_status_event;
+use events::{emit_status_event, MissingFlightDataPruned};
 use storage::{
-    extend_flight_ttl, is_valid_transition, OracleKey, SECONDS_PER_DAY, SETTLED_RETENTION_DAYS,
+    extend_flight_ttl, is_valid_transition, OracleKey, MAX_PRUNE_BATCH, SECONDS_PER_DAY,
+    SETTLED_RETENTION_DAYS,
 };
 
 pub use storage::{FlightData, FlightStatus};
@@ -113,13 +114,12 @@ impl OracleAggregator {
             is_valid_transition(&data.status, &FlightStatus::Landed),
             "invalid transition"
         );
-        // Reject implausible reports: arrival can't be earlier than estimate.
-        // Stops a buggy / adversarial oracle from misclassifying a delayed
-        // flight as on-time via an actual_arrival_time below estimate.
-        assert!(
-            actual_arrival_time >= data.estimated_arrival_time,
-            "actual_arrival_time must not precede estimated_arrival_time",
-        );
+        // Audit VF-07: do NOT reject `actual_arrival_time < estimated_arrival_time`.
+        // Early arrivals are legitimate flight outcomes; rejecting them left such
+        // flights stuck `Active` forever (never classifiable/settleable, collateral
+        // locked indefinitely). The authorized oracle is trusted to report truthful
+        // times, and downstream delay math (`classify_flights`) already saturates a
+        // negative delay to zero, classifying an early/on-time arrival correctly.
 
         data.status = FlightStatus::Landed;
         data.actual_arrival_time = actual_arrival_time;
@@ -275,18 +275,54 @@ impl OracleAggregator {
             .get(&OracleKey::ActiveFlightList)
             .unwrap_or(Vec::new(e));
 
+        let len = list.len();
+        if len == 0 {
+            extend_instance_ttl(e);
+            return;
+        }
+
+        // Audit VF-06: only inspect a bounded window [cursor, cursor+batch) of
+        // the list per call. Entries outside the window are kept untouched (no
+        // persistent lookup), bounding the expensive storage reads. The cursor
+        // rotates across calls so the whole list is eventually swept.
+        let mut cursor: u32 = e
+            .storage()
+            .instance()
+            .get(&OracleKey::PruneCursor)
+            .unwrap_or(0);
+        if cursor >= len {
+            cursor = 0;
+        }
+        let stop = cursor.saturating_add(MAX_PRUNE_BATCH).min(len);
+
         let mut kept: Vec<(Symbol, u64)> = Vec::new(e);
-        for i in 0..list.len() {
-            let (flight_id, date) = list.get(i).unwrap();
-            // Missing FlightData (archived past its persistent TTL) is treated
-            // as evict — the entry is unrecoverable on-chain anyway, so
-            // keeping it in the active list would only block future pruning.
+        let mut removed_any = false;
+        for i in 0..len {
+            let entry = list.get(i).unwrap();
+            if i < cursor || i >= stop {
+                // Outside the inspection window — carry over without a lookup.
+                kept.push_back(entry);
+                continue;
+            }
+            let flight_id = entry.0.clone();
+            let date = entry.1;
             let aged_out = match e
                 .storage()
                 .persistent()
                 .get::<_, FlightData>(&OracleKey::FlightData(flight_id.clone(), date))
             {
-                None => true,
+                None => {
+                    // Audit VF-15: FlightData archived past its TTL. Keep the
+                    // prior evict behavior (a missing entry is unrecoverable
+                    // on-chain and would block pruning forever, audit H-02) but
+                    // surface it via a diagnostic so it is no longer silent.
+                    MissingFlightDataPruned {
+                        flight_id: flight_id.clone(),
+                        date,
+                    }
+                    .publish(e);
+                    true
+                }
                 Some(data) => {
                     let age_seconds = now.saturating_sub(data.settled_at);
                     data.status == FlightStatus::Settled
@@ -294,16 +330,24 @@ impl OracleAggregator {
                         && age_seconds >= SETTLED_RETENTION_DAYS * SECONDS_PER_DAY
                 }
             };
-            if !aged_out {
-                kept.push_back((flight_id, date));
+            if aged_out {
+                removed_any = true;
+            } else {
+                kept.push_back(entry);
             }
         }
 
-        if kept.len() != list.len() {
+        if removed_any {
             e.storage()
                 .instance()
                 .set(&OracleKey::ActiveFlightList, &kept);
         }
+        // Advance (wrap at end). Indices shift after removals, but pruning is
+        // idempotent and re-callable, so eventual full coverage still holds.
+        let next_cursor = if stop >= len { 0 } else { stop };
+        e.storage()
+            .instance()
+            .set(&OracleKey::PruneCursor, &next_cursor);
         extend_instance_ttl(e);
     }
 

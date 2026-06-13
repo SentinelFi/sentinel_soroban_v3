@@ -11,7 +11,13 @@ use crate::{
 #[contractimpl]
 impl FlightPoolManager {
     /// Buyer claims their payoff after delayed/cancelled settlement.
-    #[when_not_paused]
+    ///
+    /// Audit VF-03: intentionally NOT `#[when_not_paused]`. Claim windows run on
+    /// the ledger clock, which keeps advancing during a pause; gating claims
+    /// would let an emergency pause silently expire valid, already-funded
+    /// payouts that travelers could never recover after unpause. Claiming only
+    /// moves funds already earmarked to the rightful policy holder (full auth +
+    /// status + window + double-claim checks below), so it is safe to keep open.
     pub fn claim(e: &Env, traveler: Address, flight_id: Symbol, date: u64) {
         traveler.require_auth();
 

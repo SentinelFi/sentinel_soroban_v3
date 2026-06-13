@@ -8,7 +8,7 @@ use stellar_tokens::vault::Vault;
 
 use crate::auth::require_controller;
 use crate::events::Credited;
-use crate::storage::{VaultKey, CLAIMABLE_TTL_LEDGERS};
+use crate::storage::{VaultKey, CLAIMABLE_TTL_LEDGERS, MAX_QUEUE_BATCH};
 use crate::{RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
 #[contractimpl]
@@ -96,12 +96,42 @@ impl RiskVault {
         let mut tma = Self::get_total_managed_assets(e);
         let vault_addr = e.current_contract_address();
 
+        // Audit VF-02: examine at most MAX_QUEUE_BATCH entries per call.
+        // Entries beyond the window are carried over untouched and drained on a
+        // later call. `kept` accumulates everything that survives this pass
+        // (skipped, deferred, or out-of-window) so removals don't have to be a
+        // contiguous head prefix.
+        let limit = queue.len().min(MAX_QUEUE_BATCH);
+        let mut kept: Vec<WithdrawalRequest> = Vec::new(e);
+        let mut hit_capacity = false;
+
         for i in 0..queue.len() {
             let request = queue.get(i).unwrap();
+
+            // Out-of-batch-window, or we already hit a request we can't fund:
+            // preserve FIFO liquidity ordering by keeping this and all later
+            // requests for a future call.
+            if i >= limit || hit_capacity {
+                kept.push_back(request);
+                continue;
+            }
+
             let assets = Vault::preview_redeem(e, request.shares);
 
-            if assets > remaining_free || assets == 0 {
-                break;
+            if assets > remaining_free {
+                // Not enough free capital for the head-most request: stop
+                // servicing and defer the rest (strict FIFO).
+                hit_capacity = true;
+                kept.push_back(request);
+                continue;
+            }
+
+            // Audit VF-04: a request that previews to zero assets must not stop
+            // the drain. Skip it (keep it queued so the owner can still
+            // cancel_withdrawal to recover the escrowed shares) and continue.
+            if assets == 0 {
+                kept.push_back(request);
+                continue;
             }
 
             // Burn escrowed shares (held by vault)
@@ -142,13 +172,9 @@ impl RiskVault {
         }
 
         if processed > 0 {
-            let mut new_queue = Vec::new(e);
-            for i in processed..queue.len() {
-                new_queue.push_back(queue.get(i).unwrap());
-            }
             e.storage()
                 .instance()
-                .set(&VaultKey::WithdrawalQueue, &new_queue);
+                .set(&VaultKey::WithdrawalQueue, &kept);
         }
     }
 }
