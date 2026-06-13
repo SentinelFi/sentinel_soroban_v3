@@ -8,7 +8,7 @@ use crate::interfaces::{
 };
 use crate::storage::{
     append_traveler_flight, read_buyer_whitelisted, read_whitelist_enabled,
-    touch_buyer_whitelisted, CtrlKey,
+    touch_buyer_whitelisted, CtrlKey, MAX_BOOK_AHEAD_SECS,
 };
 use crate::{Controller, ControllerArgs, ControllerClient};
 
@@ -58,13 +58,20 @@ impl Controller {
         };
 
         // 3. Enforce minimum lead time.
+        let now = e.ledger().timestamp();
         let min_lead: u64 = e.storage().instance().get(&CtrlKey::MinLeadTime).unwrap();
-        let earliest_allowed = e
-            .ledger()
-            .timestamp()
-            .checked_add(min_lead)
-            .expect("addition overflow");
+        let earliest_allowed = now.checked_add(min_lead).expect("addition overflow");
         assert!(date > earliest_allowed, "departure too soon");
+
+        // 3b. Audit ASF-01: enforce a maximum booking horizon so the policy
+        //     lifecycle (departure + claim window) provably fits inside the
+        //     180-day buyer-key TTL. Without this a far-future purchase could
+        //     have its policy key archive before settlement, stranding the
+        //     premium and making the claim impossible.
+        let latest_allowed = now
+            .checked_add(MAX_BOOK_AHEAD_SECS)
+            .expect("addition overflow");
+        assert!(date <= latest_allowed, "departure too far in future");
 
         // 4. Register flight on the pool + oracle. Both calls are idempotent
         //    (audit M-05): no precheck needed, no revert if a parallel buyer

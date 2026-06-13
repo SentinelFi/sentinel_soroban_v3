@@ -216,6 +216,32 @@ fn test_pause_and_unpause_gate_state_mutations() {
 }
 
 #[test]
+#[should_panic(expected = "withdrawal queue active")]
+fn test_direct_redeem_blocked_while_queue_active() {
+    // Audit ASF-02: once a request is queued, direct redeem must defer to the
+    // queue so it can't consume free capital ahead of waiting LPs.
+    let (_env, client, _owner, _controller, depositor) = setup();
+    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+
+    // Queue half the shares; the rest stay with the depositor.
+    client.request_withdrawal(&depositor, &(shares / 2));
+    assert_eq!(client.get_withdrawal_queue().len(), 1);
+
+    // Direct redeem of the remaining shares is now rejected.
+    client.redeem(&(shares / 2), &depositor, &depositor, &depositor);
+}
+
+#[test]
+fn test_direct_redeem_allowed_when_queue_empty() {
+    // Audit ASF-02: the fast path stays open when no one is queued.
+    let (_env, client, _owner, _controller, depositor) = setup();
+    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    assert!(client.get_withdrawal_queue().is_empty());
+    let assets = client.redeem(&shares, &depositor, &depositor, &depositor);
+    assert_eq!(assets, 1_000_0000000);
+}
+
+#[test]
 fn test_max_views_return_zero_when_paused() {
     // Audit VF-17: max_deposit/mint/withdraw/redeem must report zero while
     // paused, matching the (paused-gated) executable paths.

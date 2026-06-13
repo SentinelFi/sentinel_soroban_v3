@@ -49,7 +49,37 @@ pub(crate) const MIN_SOLVENCY_RATIO: u32 = 100; // 100% — must at least back p
 pub(crate) const MAX_SOLVENCY_RATIO: u32 = 10_000; // 100x — practical sanity cap
 pub(crate) const MAX_MIN_LEAD_TIME_SECS: u64 = 7_776_000; // 90 days
 pub(crate) const MIN_CLAIM_EXPIRY_WINDOW_SECS: u64 = 86_400; // 1 day — travelers need time
-pub(crate) const MAX_CLAIM_EXPIRY_WINDOW_SECS: u64 = 15_552_000; // 180 days — fits Soroban TTL ceiling
+// Audit ASF-01: reduced from 180d → 60d. The buyer policy key
+// (`PoolKey::Buyer`) is written at purchase with a fixed 180-day TTL and is
+// never re-extended (the contract can't iterate buyers post-settlement, and
+// 180d is Stellar's max persistent TTL — it cannot be raised). For a claim to
+// always be possible the key must still exist at the claim deadline
+// (flight_date + claim_window). Bounding book-ahead + claim-window below the
+// buyer TTL makes that an on-chain guarantee instead of a cron dependency.
+pub(crate) const MAX_CLAIM_EXPIRY_WINDOW_SECS: u64 = 5_184_000; // 60 days
+
+// Audit ASF-01: maximum future booking horizon. `buy_insurance` previously
+// enforced only a minimum lead time, so a buyer could insure a flight further
+// out than the 180-day buyer-key TTL — paying premium and locking collateral
+// only to find the policy key archived before settlement, making the claim
+// impossible and the payoff sweepable. 90 days mirrors the documented design.
+pub(crate) const MAX_BOOK_AHEAD_SECS: u64 = 7_776_000; // 90 days
+
+// Buyer policy key TTL expressed in seconds: BUYER_TTL_LEDGERS (3_110_400) at
+// ~5 s/ledger = 15_552_000 s = 180 days (also Stellar's max persistent TTL).
+// Mirrored here (the constant lives in flight_pool_manager) to assert the
+// lifecycle invariant below at compile time.
+const BUYER_KEY_TTL_SECS: u64 = 15_552_000;
+
+// Audit ASF-01 invariant: a policy bought at the furthest allowed horizon whose
+// flight then settles into the longest allowed claim window must still have a
+// live buyer key at the claim deadline. Guaranteed iff
+// MAX_BOOK_AHEAD + MAX_CLAIM_EXPIRY <= buyer key TTL. Enforced at compile time
+// so future tuning of any bound can't silently reintroduce ASF-01.
+const _: () = assert!(
+    MAX_BOOK_AHEAD_SECS + MAX_CLAIM_EXPIRY_WINDOW_SECS <= BUYER_KEY_TTL_SECS,
+    "ASF-01: book-ahead + claim window must not exceed the buyer key TTL",
+);
 
 pub(crate) fn append_traveler_flight(e: &Env, traveler: &Address, flight_id: &Symbol, date: u64) {
     let key = CtrlKey::TravelerFlights(traveler.clone());

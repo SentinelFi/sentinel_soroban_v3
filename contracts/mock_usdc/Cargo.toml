@@ -8,6 +8,15 @@ publish = false
 crate-type = ["cdylib"]
 doctest = false
 
+# Audit ASF-03: permissionless mint/faucet are gated behind this default-on
+# feature. Normal testnet builds (`cargo build`, `stellar contract build`) keep
+# them; a production build must opt out with `--no-default-features`, turning an
+# accidental mainnet deployment of a permissionless-mint token into a deliberate
+# act. Production should use the real USDC Stellar Asset Contract regardless.
+[features]
+default = ["testnet"]
+testnet = []
+
 [dependencies]
 soroban-sdk = { workspace = true }
 stellar-tokens = { workspace = true }

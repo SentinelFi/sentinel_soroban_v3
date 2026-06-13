@@ -482,6 +482,25 @@ fn test_buy_insurance_panics_on_short_lead_time() {
 }
 
 #[test]
+#[should_panic(expected = "departure too far in future")]
+fn test_buy_insurance_panics_on_far_future_booking() {
+    // Audit ASF-01: a flight dated beyond the 90-day booking horizon must be
+    // rejected so the policy lifecycle can't outlive the 180-day buyer-key TTL.
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    t.usdc_admin.mint(&traveler, &PREMIUM);
+    // 90 days + 1 second past the current ledger time.
+    let too_far = INITIAL_TIMESTAMP + 7_776_000 + 1;
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &too_far,
+    );
+}
+
+#[test]
 #[should_panic(expected = "insufficient vault capital")]
 fn test_buy_insurance_panics_on_solvency_gate() {
     let env = Env::default();
