@@ -35,11 +35,11 @@ impl FlightPoolManager {
                 .premium
                 .checked_mul(cfg.buyer_count as i128)
                 .expect("multiplication overflow");
-            let usdc_addr: Address = e.storage().instance().get(&PoolKey::UsdcToken).unwrap();
+            let asset_addr: Address = e.storage().instance().get(&PoolKey::AssetToken).unwrap();
             let vault_addr: Address = e.storage().instance().get(&PoolKey::RiskVault).unwrap();
 
-            let usdc = token::Client::new(e, &usdc_addr);
-            usdc.transfer(&e.current_contract_address(), &vault_addr, &total_premium);
+            let asset = token::Client::new(e, &asset_addr);
+            asset.transfer(&e.current_contract_address(), &vault_addr, &total_premium);
 
             // record_premium_income is controller-only on the vault. Forward the
             // controller's auth (already present from this call's require_controller)

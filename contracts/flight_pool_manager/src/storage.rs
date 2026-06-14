@@ -8,7 +8,7 @@ pub use sentinel_types::{FlightConfig, SettlementStatus};
 pub enum PoolKey {
     // Instance — global config & accounting
     Controller,
-    UsdcToken,
+    AssetToken,
     RiskVault,
     ActiveFlightList,
     RecoveredBalance,

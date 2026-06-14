@@ -83,21 +83,21 @@ fn non_owner_set_keeper_panics() {
     let env = Env::default();
     let owner = Address::generate(&env);
     let stranger = Address::generate(&env);
-    let usdc_admin_addr = Address::generate(&env);
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin_addr);
+    let asset_admin_addr = Address::generate(&env);
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin_addr);
 
     let gov_addr = env.register(
         governance_module::GovernanceModule,
         (&owner, &PREMIUM, &PAYOFF, &DELAY_HOURS),
     );
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
     let oracle_addr = env.register(
         oracle_aggregator::OracleAggregator,
         (&owner, &Address::generate(&env)),
     );
     let pool_addr = env.register(
         flight_pool_manager::FlightPoolManager,
-        (&owner, &usdc_id.address(), &vault_addr),
+        (&owner, &asset_id.address(), &vault_addr),
     );
     let ctrl_addr = env.register(
         controller::Controller,
@@ -107,7 +107,7 @@ fn non_owner_set_keeper_panics() {
             &vault_addr,
             &oracle_addr,
             &pool_addr,
-            &usdc_id.address(),
+            &asset_id.address(),
             &Address::generate(&env),
             &MIN_LEAD_TIME,
             &CLAIM_EXPIRY_WINDOW,
@@ -123,9 +123,9 @@ fn non_owner_set_keeper_panics() {
 fn non_owner_recover_uncollected_panics() {
     let env = Env::default();
     let owner = Address::generate(&env);
-    let usdc_admin_addr = Address::generate(&env);
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin_addr);
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
+    let asset_admin_addr = Address::generate(&env);
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin_addr);
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
     let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
     let stranger = Address::generate(&env);

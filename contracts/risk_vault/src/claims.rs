@@ -119,8 +119,8 @@ impl RiskVault {
         // CEI: clear the entry before the external transfer.
         e.storage().persistent().remove(&key);
 
-        let usdc = token::Client::new(e, &Vault::query_asset(e));
-        usdc.transfer(&e.current_contract_address(), &caller, &claimable);
+        let asset = token::Client::new(e, &Vault::query_asset(e));
+        asset.transfer(&e.current_contract_address(), &caller, &claimable);
 
         // Signal balance drained so the off-chain indexer can DELETE this
         // address from its claimable_balances tracker.
@@ -139,7 +139,7 @@ impl RiskVault {
     /// - `RecoveryMode::Recredit` — SET `ClaimableBalance(user) = amount`,
     ///   extend TTL, emit `vault.recovered(.., Recredit)`. Use after
     ///   archival recovery.
-    /// - `RecoveryMode::Transfer` — directly `usdc.transfer(vault → user,
+    /// - `RecoveryMode::Transfer` — directly `asset.transfer(vault → user,
     ///   amount)`. No storage write. Use when user wants funds in hand.
     ///
     /// Layered defense:
@@ -200,8 +200,8 @@ impl RiskVault {
                     );
                 }
 
-                let usdc = token::Client::new(e, &Vault::query_asset(e));
-                usdc.transfer(&e.current_contract_address(), &user, &amount);
+                let asset = token::Client::new(e, &Vault::query_asset(e));
+                asset.transfer(&e.current_contract_address(), &user, &amount);
             }
         }
 

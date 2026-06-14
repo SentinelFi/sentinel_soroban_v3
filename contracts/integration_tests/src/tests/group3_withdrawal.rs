@@ -10,7 +10,7 @@ use soroban_sdk::{symbol_short, testutils::Address as _, token, Address};
 #[test]
 fn deposit_then_immediate_redeem_within_free_capital() {
     let t = TestEnv::new();
-    // The default underwriter already deposited 1000 USDC during setup.
+    // The default underwriter already deposited 1000 asset during setup.
     // Pre-purchase, all capital is free.
     assert_eq!(t.vault.get_free_capital(), DEPOSIT_AMOUNT);
 
@@ -35,7 +35,7 @@ fn redeem_blocked_when_capital_locked() {
         let buyer = Address::generate(&t.env);
         t.buy_flight(&buyer, &symbol_short!("AA100"), FLIGHT_DATE + 1);
     }
-    // 20 buys × 50 USDC payoff = 1000 USDC locked. Free is now 0.
+    // 20 buys × 50 asset payoff = 1000 asset locked. Free is now 0.
     let shares = t.vault.balance(&t.underwriter);
     t.vault
         .redeem(&shares, &t.underwriter, &t.underwriter, &t.underwriter);
@@ -75,9 +75,9 @@ fn collect_after_credit() {
     let claimable = t.vault.get_claimable_balance(&t.underwriter);
     assert!(claimable > 0);
 
-    let usdc_before = t.usdc.balance(&t.underwriter);
+    let asset_before = t.asset.balance(&t.underwriter);
     t.vault.collect(&t.underwriter);
-    assert_eq!(t.usdc.balance(&t.underwriter), usdc_before + claimable);
+    assert_eq!(t.asset.balance(&t.underwriter), asset_before + claimable);
     assert_eq!(t.vault.get_claimable_balance(&t.underwriter), 0);
 }
 
@@ -111,11 +111,11 @@ fn recover_uncollected_recredit_path() {
     assert_eq!(t.vault.get_claimable_balance(&user), 500_0000000);
 
     // User can collect.
-    let usdc_admin = token::StellarAssetClient::new(&t.env, &t.usdc_addr);
-    // Vault needs USDC liquidity for collect; mint it.
-    usdc_admin.mint(&t.vault_addr, &500_0000000);
+    let asset_admin = token::StellarAssetClient::new(&t.env, &t.asset_addr);
+    // Vault needs asset liquidity for collect; mint it.
+    asset_admin.mint(&t.vault_addr, &500_0000000);
     t.vault.collect(&user);
-    assert_eq!(t.usdc.balance(&user), 500_0000000);
+    assert_eq!(t.asset.balance(&user), 500_0000000);
 }
 
 #[test]
@@ -123,9 +123,9 @@ fn recover_uncollected_transfer_path() {
     let t = TestEnv::new();
     let user = Address::generate(&t.env);
 
-    // Seed vault with USDC for the transfer.
-    let usdc_admin = token::StellarAssetClient::new(&t.env, &t.usdc_addr);
-    usdc_admin.mint(&t.vault_addr, &200_0000000);
+    // Seed vault with asset for the transfer.
+    let asset_admin = token::StellarAssetClient::new(&t.env, &t.asset_addr);
+    asset_admin.mint(&t.vault_addr, &200_0000000);
 
     // Transfer is gated on a prior credit; seed via Recredit first.
     t.vault
@@ -134,7 +134,7 @@ fn recover_uncollected_transfer_path() {
         .recover_uncollected(&user, &50_0000000, &risk_vault::RecoveryMode::Transfer);
     // Credit settled; balance cleared.
     assert_eq!(t.vault.get_claimable_balance(&user), 0);
-    assert_eq!(t.usdc.balance(&user), 50_0000000);
+    assert_eq!(t.asset.balance(&user), 50_0000000);
 }
 
 #[test]
@@ -144,9 +144,9 @@ fn recover_uncollected_unauthorized_panics() {
     let env = Env::default();
     // No mock_all_auths — owner check fails.
     let owner = Address::generate(&env);
-    let usdc_admin_addr = Address::generate(&env);
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin_addr);
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
+    let asset_admin_addr = Address::generate(&env);
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin_addr);
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
     let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
     let stranger = Address::generate(&env);

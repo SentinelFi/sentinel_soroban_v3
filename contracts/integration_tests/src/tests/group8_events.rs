@@ -16,7 +16,7 @@ fn buy_path_emits_full_chain() {
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);
 
-    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,
         &symbol_short!("AA100"),
@@ -154,9 +154,9 @@ fn vault_recovered_recredit_and_transfer_modes_emit_correct_topics() {
         "expected vault.recovered event for Recredit mode"
     );
 
-    // Transfer path (seed vault with USDC and prior credit first)
-    let usdc_admin = token::StellarAssetClient::new(&t.env, &t.usdc_addr);
-    usdc_admin.mint(&t.vault_addr, &50_0000000);
+    // Transfer path (seed vault with asset and prior credit first)
+    let asset_admin = token::StellarAssetClient::new(&t.env, &t.asset_addr);
+    asset_admin.mint(&t.vault_addr, &50_0000000);
     t.vault
         .recover_uncollected(&user_b, &50_0000000, &risk_vault::RecoveryMode::Recredit);
     t.vault

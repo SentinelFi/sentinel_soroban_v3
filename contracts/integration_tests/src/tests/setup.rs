@@ -4,13 +4,13 @@ use soroban_sdk::{
     TryFromVal,
 };
 
-pub const PREMIUM: i128 = 10_0000000; // 10 USDC (7 decimals)
-pub const PAYOFF: i128 = 50_0000000; // 50 USDC
+pub const PREMIUM: i128 = 10_0000000; // 10 asset (7 decimals)
+pub const PAYOFF: i128 = 50_0000000; // 50 asset
 pub const DELAY_HOURS: u32 = 3;
 pub const FLIGHT_DATE: u64 = 1_710_500_000;
 pub const MIN_LEAD_TIME: u64 = 3_600;
 pub const CLAIM_EXPIRY_WINDOW: u64 = 5_184_000; // 60 days
-pub const DEPOSIT_AMOUNT: i128 = 1_000_0000000; // 1000 USDC
+pub const DEPOSIT_AMOUNT: i128 = 1_000_0000000; // 1000 asset
 pub const INITIAL_TIMESTAMP: u64 = 1_710_400_000;
 pub const EST_ARRIVAL: u64 = 1_710_500_000;
 pub const ACTUAL_ON_TIME: u64 = 1_710_501_800; // 30min late (< 3h)
@@ -28,9 +28,9 @@ pub struct TestEnv {
     pub pool: flight_pool_manager::FlightPoolManagerClient<'static>,
     pub pool_addr: Address,
     pub gov: governance_module::GovernanceModuleClient<'static>,
-    pub usdc: token::Client<'static>,
-    pub usdc_admin: token::StellarAssetClient<'static>,
-    pub usdc_addr: Address,
+    pub asset: token::Client<'static>,
+    pub asset_admin: token::StellarAssetClient<'static>,
+    pub asset_addr: Address,
     pub owner: Address,
     pub keeper: Address,
     pub oracle_account: Address,
@@ -48,13 +48,13 @@ impl TestEnv {
 
         let owner = Address::generate(&env);
         let keeper = Address::generate(&env);
-        let usdc_admin_addr = Address::generate(&env);
+        let asset_admin_addr = Address::generate(&env);
         let oracle_account = Address::generate(&env);
 
-        // USDC (Stellar Asset Contract)
-        let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin_addr.clone());
-        let usdc_admin = token::StellarAssetClient::new(&env, &usdc_id.address());
-        let usdc = token::Client::new(&env, &usdc_id.address());
+        // asset (Stellar Asset Contract)
+        let asset_id = env.register_stellar_asset_contract_v2(asset_admin_addr.clone());
+        let asset_admin = token::StellarAssetClient::new(&env, &asset_id.address());
+        let asset = token::Client::new(&env, &asset_id.address());
 
         // GovernanceModule
         let gov_addr = env.register(
@@ -64,7 +64,7 @@ impl TestEnv {
         let gov = governance_module::GovernanceModuleClient::new(&env, &gov_addr);
 
         // RiskVault
-        let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
+        let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
         let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
         // OracleAggregator
@@ -77,7 +77,7 @@ impl TestEnv {
         // FlightPoolManager
         let pool_addr = env.register(
             flight_pool_manager::FlightPoolManager,
-            (&owner, &usdc_id.address(), &vault_addr),
+            (&owner, &asset_id.address(), &vault_addr),
         );
         let pool = flight_pool_manager::FlightPoolManagerClient::new(&env, &pool_addr);
 
@@ -90,7 +90,7 @@ impl TestEnv {
                 &vault_addr,
                 &oracle_addr,
                 &pool_addr,
-                &usdc_id.address(),
+                &asset_id.address(),
                 &keeper,
                 &MIN_LEAD_TIME,
                 &CLAIM_EXPIRY_WINDOW,
@@ -116,7 +116,7 @@ impl TestEnv {
 
         // Seed underwriter capital so solvency checks pass.
         let underwriter = Address::generate(&env);
-        usdc_admin.mint(&underwriter, &DEPOSIT_AMOUNT);
+        asset_admin.mint(&underwriter, &DEPOSIT_AMOUNT);
         vault.deposit(&DEPOSIT_AMOUNT, &underwriter, &underwriter, &underwriter);
 
         TestEnv {
@@ -130,9 +130,9 @@ impl TestEnv {
             pool,
             pool_addr,
             gov,
-            usdc,
-            usdc_admin,
-            usdc_addr: usdc_id.address(),
+            asset,
+            asset_admin,
+            asset_addr: asset_id.address(),
             owner,
             keeper,
             oracle_account,
@@ -140,11 +140,11 @@ impl TestEnv {
         }
     }
 
-    /// Mint PREMIUM USDC to the traveler and call `controller.buy_insurance`
+    /// Mint PREMIUM asset to the traveler and call `controller.buy_insurance`
     /// for the default route + FLIGHT_DATE.
     #[allow(dead_code)]
     pub fn buy(&self, traveler: &Address) {
-        self.usdc_admin.mint(traveler, &PREMIUM);
+        self.asset_admin.mint(traveler, &PREMIUM);
         self.ctrl.buy_insurance(
             traveler,
             &symbol_short!("AA100"),
@@ -157,7 +157,7 @@ impl TestEnv {
     /// Same as `buy` but for an arbitrary flight_id + date (default origin/dest).
     #[allow(dead_code)]
     pub fn buy_flight(&self, traveler: &Address, flight_id: &Symbol, date: u64) {
-        self.usdc_admin.mint(traveler, &PREMIUM);
+        self.asset_admin.mint(traveler, &PREMIUM);
         self.ctrl.buy_insurance(
             traveler,
             flight_id,

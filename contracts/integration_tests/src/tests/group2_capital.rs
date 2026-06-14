@@ -20,9 +20,9 @@ fn solvency_gate_blocks_undercollateralized_purchase() {
     let owner = Address::generate(&env);
     let keeper = Address::generate(&env);
     let oracle_account = Address::generate(&env);
-    let usdc_admin_addr = Address::generate(&env);
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin_addr);
-    let usdc_admin = token::StellarAssetClient::new(&env, &usdc_id.address());
+    let asset_admin_addr = Address::generate(&env);
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin_addr);
+    let asset_admin = token::StellarAssetClient::new(&env, &asset_id.address());
 
     let gov_addr = env.register(
         governance_module::GovernanceModule,
@@ -30,7 +30,7 @@ fn solvency_gate_blocks_undercollateralized_purchase() {
     );
     let gov = governance_module::GovernanceModuleClient::new(&env, &gov_addr);
 
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
     let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
     let oracle_addr = env.register(
@@ -41,7 +41,7 @@ fn solvency_gate_blocks_undercollateralized_purchase() {
 
     let pool_addr = env.register(
         flight_pool_manager::FlightPoolManager,
-        (&owner, &usdc_id.address(), &vault_addr),
+        (&owner, &asset_id.address(), &vault_addr),
     );
     let pool = flight_pool_manager::FlightPoolManagerClient::new(&env, &pool_addr);
 
@@ -53,7 +53,7 @@ fn solvency_gate_blocks_undercollateralized_purchase() {
             &vault_addr,
             &oracle_addr,
             &pool_addr,
-            &usdc_id.address(),
+            &asset_id.address(),
             &keeper,
             &MIN_LEAD_TIME,
             &CLAIM_EXPIRY_WINDOW,
@@ -77,7 +77,7 @@ fn solvency_gate_blocks_undercollateralized_purchase() {
 
     // Vault has 0 free capital — purchase must panic.
     let traveler = Address::generate(&env);
-    usdc_admin.mint(&traveler, &PREMIUM);
+    asset_admin.mint(&traveler, &PREMIUM);
     ctrl.buy_insurance(
         &traveler,
         &symbol_short!("AA100"),
@@ -89,7 +89,7 @@ fn solvency_gate_blocks_undercollateralized_purchase() {
 
 #[test]
 fn solvency_gate_with_ratio_150() {
-    // Required = payoff * 1.5. Default vault has 1000 USDC, so the first
+    // Required = payoff * 1.5. Default vault has 1000 asset, so the first
     // buy locks 50 * 1.5 = 75 required → fits. We'll buy enough to push
     // free below the next required.
     let t = TestEnv::new();
@@ -106,7 +106,7 @@ fn solvency_gate_with_ratio_150() {
 fn lead_time_gate_blocks_short_notice() {
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);
-    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.asset_admin.mint(&traveler, &PREMIUM);
     // Flight date < INITIAL_TIMESTAMP + MIN_LEAD_TIME.
     t.ctrl.buy_insurance(
         &traveler,
@@ -122,14 +122,14 @@ fn lead_time_gate_blocks_short_notice() {
 // =========================================================================
 
 #[test]
-fn usdc_transfer_traveler_to_pool_on_buy() {
+fn asset_transfer_traveler_to_pool_on_buy() {
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);
     t.buy(&traveler);
 
-    // Traveler USDC drained, pool holds the premium.
-    assert_eq!(t.usdc.balance(&traveler), 0);
-    assert_eq!(t.usdc.balance(&t.pool_addr), PREMIUM);
+    // Traveler asset drained, pool holds the premium.
+    assert_eq!(t.asset.balance(&traveler), 0);
+    assert_eq!(t.asset.balance(&t.pool_addr), PREMIUM);
 }
 
 #[test]

@@ -136,7 +136,7 @@ fn toggle_off_then_on_then_off_buy_cycle() {
     // Off again → strangers can buy without being on the list.
     t.ctrl.set_whitelist_enabled(&false);
     let traveler3 = Address::generate(&t.env);
-    t.usdc_admin.mint(&traveler3, &PREMIUM);
+    t.asset_admin.mint(&traveler3, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler3,
         &symbol_short!("UA200"),
@@ -168,7 +168,7 @@ fn whitelisted_buyer_completes_delayed_lifecycle() {
     t.pool
         .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
 
-    assert_eq!(t.usdc.balance(&traveler), PAYOFF);
+    assert_eq!(t.asset.balance(&traveler), PAYOFF);
 }
 
 // =========================================================================

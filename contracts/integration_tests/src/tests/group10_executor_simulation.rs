@@ -58,7 +58,7 @@ fn whitelist_extra_routes(t: &TestEnv) {
 }
 
 fn buy_on(t: &TestEnv, traveler: &Address, flight_id: &Symbol, origin: Symbol, dest: Symbol) {
-    t.usdc_admin.mint(traveler, &PREMIUM);
+    t.asset_admin.mint(traveler, &PREMIUM);
     t.ctrl
         .buy_insurance(traveler, flight_id, &origin, &dest, &FLIGHT_DATE);
 }
@@ -447,11 +447,11 @@ fn full_executor_cycle_settles_all_flights_in_one_pass() {
         .claim(&delayed_buyer, &flight_delayed(), &FLIGHT_DATE);
     t.pool
         .claim(&cancelled_buyer, &flight_cancelled(), &FLIGHT_DATE);
-    assert_eq!(t.usdc.balance(&delayed_buyer), PAYOFF);
-    assert_eq!(t.usdc.balance(&cancelled_buyer), PAYOFF);
+    assert_eq!(t.asset.balance(&delayed_buyer), PAYOFF);
+    assert_eq!(t.asset.balance(&cancelled_buyer), PAYOFF);
 
     // On-time buyer never gets a payout — that's the protocol's revenue.
-    assert_eq!(t.usdc.balance(&on_time_buyer), 0);
+    assert_eq!(t.asset.balance(&on_time_buyer), 0);
 
     let (sold, collected, distributed) = t.ctrl.get_stats();
     assert_eq!(sold, 3);

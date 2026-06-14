@@ -5,13 +5,13 @@ use soroban_sdk::{
     TryFromVal,
 };
 
-const PREMIUM: i128 = 10_0000000; // 10 USDC (7 decimals)
-const PAYOFF: i128 = 50_0000000; // 50 USDC
+const PREMIUM: i128 = 10_0000000; // 10 asset (7 decimals)
+const PAYOFF: i128 = 50_0000000; // 50 asset
 const DELAY_HOURS: u32 = 3;
 const FLIGHT_DATE: u64 = 1_710_500_000;
 const MIN_LEAD_TIME: u64 = 3_600;
 const CLAIM_EXPIRY_WINDOW: u64 = 5_184_000; // 60 days
-const DEPOSIT_AMOUNT: i128 = 1_000_0000000; // 1000 USDC
+const DEPOSIT_AMOUNT: i128 = 1_000_0000000; // 1000 asset
 const INITIAL_TIMESTAMP: u64 = 1_710_400_000;
 const EST_ARRIVAL: u64 = 1_710_500_000;
 const ACTUAL_ON_TIME: u64 = 1_710_501_800; // 30 min late (< 3h)
@@ -27,8 +27,8 @@ struct TestEnv {
     pool: flight_pool_manager::FlightPoolManagerClient<'static>,
     pool_addr: Address,
     gov: governance_module::GovernanceModuleClient<'static>,
-    usdc: token::Client<'static>,
-    usdc_admin: token::StellarAssetClient<'static>,
+    asset: token::Client<'static>,
+    asset_admin: token::StellarAssetClient<'static>,
     owner: Address,
     keeper: Address,
     oracle_account: Address,
@@ -46,13 +46,13 @@ fn setup() -> TestEnv {
 
     let owner = Address::generate(&env);
     let keeper = Address::generate(&env);
-    let usdc_admin_addr = Address::generate(&env);
+    let asset_admin_addr = Address::generate(&env);
     let oracle_account = Address::generate(&env);
 
-    // USDC (Stellar Asset Contract)
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin_addr.clone());
-    let usdc_admin = token::StellarAssetClient::new(&env, &usdc_id.address());
-    let usdc = token::Client::new(&env, &usdc_id.address());
+    // asset (Stellar Asset Contract)
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin_addr.clone());
+    let asset_admin = token::StellarAssetClient::new(&env, &asset_id.address());
+    let asset = token::Client::new(&env, &asset_id.address());
 
     // GovernanceModule
     let gov_addr = env.register(
@@ -62,7 +62,7 @@ fn setup() -> TestEnv {
     let gov = governance_module::GovernanceModuleClient::new(&env, &gov_addr);
 
     // RiskVault
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
     let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
     // OracleAggregator
@@ -75,7 +75,7 @@ fn setup() -> TestEnv {
     // FlightPoolManager
     let pool_addr = env.register(
         flight_pool_manager::FlightPoolManager,
-        (&owner, &usdc_id.address(), &vault_addr),
+        (&owner, &asset_id.address(), &vault_addr),
     );
     let pool = flight_pool_manager::FlightPoolManagerClient::new(&env, &pool_addr);
 
@@ -88,7 +88,7 @@ fn setup() -> TestEnv {
             &vault_addr,
             &oracle_addr,
             &pool_addr,
-            &usdc_id.address(),
+            &asset_id.address(),
             &keeper,
             &MIN_LEAD_TIME,
             &CLAIM_EXPIRY_WINDOW,
@@ -114,7 +114,7 @@ fn setup() -> TestEnv {
 
     // Seed underwriter capital so solvency checks pass.
     let underwriter = Address::generate(&env);
-    usdc_admin.mint(&underwriter, &DEPOSIT_AMOUNT);
+    asset_admin.mint(&underwriter, &DEPOSIT_AMOUNT);
     vault.deposit(&DEPOSIT_AMOUNT, &underwriter, &underwriter, &underwriter);
 
     TestEnv {
@@ -126,8 +126,8 @@ fn setup() -> TestEnv {
         pool,
         pool_addr,
         gov,
-        usdc,
-        usdc_admin,
+        asset,
+        asset_admin,
         owner,
         keeper,
         oracle_account,
@@ -136,7 +136,7 @@ fn setup() -> TestEnv {
 }
 
 fn buy(t: &TestEnv, traveler: &Address) {
-    t.usdc_admin.mint(traveler, &PREMIUM);
+    t.asset_admin.mint(traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         traveler,
         &symbol_short!("AA100"),
@@ -286,21 +286,21 @@ fn test_unauthorized_set_keeper() {
     // No mock_all_auths — owner check fails.
     let owner = Address::generate(&env);
     let stranger = Address::generate(&env);
-    let usdc_admin_addr = Address::generate(&env);
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin_addr);
+    let asset_admin_addr = Address::generate(&env);
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin_addr);
 
     let gov_addr = env.register(
         governance_module::GovernanceModule,
         (&owner, &PREMIUM, &PAYOFF, &DELAY_HOURS),
     );
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
     let oracle_addr = env.register(
         oracle_aggregator::OracleAggregator,
         (&owner, &Address::generate(&env)),
     );
     let pool_addr = env.register(
         flight_pool_manager::FlightPoolManager,
-        (&owner, &usdc_id.address(), &vault_addr),
+        (&owner, &asset_id.address(), &vault_addr),
     );
     let ctrl_addr = env.register(
         Controller,
@@ -310,7 +310,7 @@ fn test_unauthorized_set_keeper() {
             &vault_addr,
             &oracle_addr,
             &pool_addr,
-            &usdc_id.address(),
+            &asset_id.address(),
             &Address::generate(&env), // keeper
             &MIN_LEAD_TIME,
             &CLAIM_EXPIRY_WINDOW,
@@ -336,8 +336,8 @@ fn test_buy_insurance_first_traveler_registers_flight() {
     assert_eq!(collected, PREMIUM);
 
     // Premium transferred from traveler to FlightPoolManager.
-    assert_eq!(t.usdc.balance(&traveler), 0);
-    assert_eq!(t.usdc.balance(&t.pool_addr), PREMIUM);
+    assert_eq!(t.asset.balance(&traveler), 0);
+    assert_eq!(t.asset.balance(&t.pool_addr), PREMIUM);
 
     // Vault collateral locked.
     assert_eq!(t.vault.get_locked_capital(), PAYOFF);
@@ -377,8 +377,8 @@ fn test_buy_insurance_second_traveler_skips_register() {
         .unwrap();
     assert_eq!(cfg.buyer_count, 2);
 
-    // Pool USDC = 2 × premium, vault locked = 2 × payoff.
-    assert_eq!(t.usdc.balance(&t.pool_addr), 2 * PREMIUM);
+    // Pool asset = 2 × premium, vault locked = 2 × payoff.
+    assert_eq!(t.asset.balance(&t.pool_addr), 2 * PREMIUM);
     assert_eq!(t.vault.get_locked_capital(), 2 * PAYOFF);
 
     // Each traveler has their own per-traveler index entry.
@@ -404,7 +404,7 @@ fn test_buy_insurance_traveler_index_for_multiple_flights() {
 
     buy(&t, &traveler);
 
-    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,
         &symbol_short!("UA200"),
@@ -456,7 +456,7 @@ fn test_buy_insurance_panics_on_disabled_route() {
 fn test_buy_insurance_panics_on_unknown_route() {
     let t = setup();
     let traveler = Address::generate(&t.env);
-    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,
         &symbol_short!("ZZ999"),
@@ -471,7 +471,7 @@ fn test_buy_insurance_panics_on_unknown_route() {
 fn test_buy_insurance_panics_on_short_lead_time() {
     let t = setup();
     let traveler = Address::generate(&t.env);
-    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,
         &symbol_short!("AA100"),
@@ -488,7 +488,7 @@ fn test_buy_insurance_panics_on_far_future_booking() {
     // rejected so the policy lifecycle can't outlive the 180-day buyer-key TTL.
     let t = setup();
     let traveler = Address::generate(&t.env);
-    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.asset_admin.mint(&traveler, &PREMIUM);
     // 90 days + 1 second past the current ledger time.
     let too_far = INITIAL_TIMESTAMP + 7_776_000 + 1;
     t.ctrl.buy_insurance(
@@ -562,7 +562,7 @@ fn test_classify_and_settle_multiple_flights_in_one_batch() {
 
     for (fid, o, d) in flights.iter() {
         let traveler = Address::generate(&t.env);
-        t.usdc_admin.mint(&traveler, &PREMIUM);
+        t.asset_admin.mint(&traveler, &PREMIUM);
         t.ctrl.buy_insurance(&traveler, fid, o, d, &FLIGHT_DATE);
         t.oracle
             .set_estimated_arrival(&t.oracle_account, fid, &FLIGHT_DATE, &EST_ARRIVAL);
@@ -591,10 +591,10 @@ fn test_buy_insurance_panics_on_solvency_gate() {
     let owner = Address::generate(&env);
     let keeper = Address::generate(&env);
     let oracle_account = Address::generate(&env);
-    let usdc_admin_addr = Address::generate(&env);
+    let asset_admin_addr = Address::generate(&env);
 
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin_addr);
-    let usdc_admin = token::StellarAssetClient::new(&env, &usdc_id.address());
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin_addr);
+    let asset_admin = token::StellarAssetClient::new(&env, &asset_id.address());
 
     let gov_addr = env.register(
         governance_module::GovernanceModule,
@@ -602,7 +602,7 @@ fn test_buy_insurance_panics_on_solvency_gate() {
     );
     let gov = governance_module::GovernanceModuleClient::new(&env, &gov_addr);
 
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
     let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
     let oracle_addr = env.register(
@@ -613,7 +613,7 @@ fn test_buy_insurance_panics_on_solvency_gate() {
 
     let pool_addr = env.register(
         flight_pool_manager::FlightPoolManager,
-        (&owner, &usdc_id.address(), &vault_addr),
+        (&owner, &asset_id.address(), &vault_addr),
     );
     let pool = flight_pool_manager::FlightPoolManagerClient::new(&env, &pool_addr);
 
@@ -625,7 +625,7 @@ fn test_buy_insurance_panics_on_solvency_gate() {
             &vault_addr,
             &oracle_addr,
             &pool_addr,
-            &usdc_id.address(),
+            &asset_id.address(),
             &keeper,
             &MIN_LEAD_TIME,
             &CLAIM_EXPIRY_WINDOW,
@@ -649,7 +649,7 @@ fn test_buy_insurance_panics_on_solvency_gate() {
 
     // NO underwriter capital — vault has 0 free capital.
     let traveler = Address::generate(&env);
-    usdc_admin.mint(&traveler, &PREMIUM);
+    asset_admin.mint(&traveler, &PREMIUM);
     ctrl.buy_insurance(
         &traveler,
         &symbol_short!("AA100"),
@@ -796,8 +796,8 @@ fn test_execute_settlements_on_time_flow() {
     assert_eq!(t.vault.get_locked_capital(), 0);
     assert_eq!(t.vault.get_total_managed_assets(), tma_before + PREMIUM);
 
-    // Pool's USDC drained to vault.
-    assert_eq!(t.usdc.balance(&t.pool_addr), 0);
+    // Pool's asset drained to vault.
+    assert_eq!(t.asset.balance(&t.pool_addr), 0);
 
     // Oracle marks Settled with settled_at recorded.
     let data = t
@@ -825,14 +825,14 @@ fn test_execute_settlements_delayed_flow() {
     oracle_delayed(&t);
     t.ctrl.classify_flights(&t.keeper);
 
-    assert_eq!(t.usdc.balance(&t.pool_addr), PREMIUM);
+    assert_eq!(t.asset.balance(&t.pool_addr), PREMIUM);
 
     t.ctrl.execute_settlements(&t.keeper);
 
     // Delayed: vault sends (payoff - premium) to pool, collateral unlocked.
     assert_eq!(t.vault.get_locked_capital(), 0);
     // Pool now holds the full payoff for the buyer to claim.
-    assert_eq!(t.usdc.balance(&t.pool_addr), PAYOFF);
+    assert_eq!(t.asset.balance(&t.pool_addr), PAYOFF);
 
     let (_, _, distributed) = t.ctrl.get_stats();
     assert_eq!(distributed, PAYOFF);
@@ -864,7 +864,7 @@ fn test_execute_settlements_cancelled_flow() {
     t.ctrl.execute_settlements(&t.keeper);
 
     assert_eq!(t.vault.get_locked_capital(), 0);
-    assert_eq!(t.usdc.balance(&t.pool_addr), PAYOFF);
+    assert_eq!(t.asset.balance(&t.pool_addr), PAYOFF);
 
     let cfg = t
         .pool
@@ -942,7 +942,7 @@ fn test_end_to_end_delayed_lifecycle() {
     let traveler = Address::generate(&t.env);
 
     buy(&t, &traveler);
-    assert_eq!(t.usdc.balance(&traveler), 0);
+    assert_eq!(t.asset.balance(&traveler), 0);
 
     oracle_delayed(&t);
     t.ctrl.classify_flights(&t.keeper);
@@ -952,7 +952,7 @@ fn test_end_to_end_delayed_lifecycle() {
     t.pool
         .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
 
-    assert_eq!(t.usdc.balance(&traveler), PAYOFF);
+    assert_eq!(t.asset.balance(&traveler), PAYOFF);
     assert!(t
         .pool
         .has_claimed(&symbol_short!("AA100"), &FLIGHT_DATE, &traveler));
@@ -968,8 +968,8 @@ fn test_end_to_end_on_time_lifecycle_no_payout() {
     t.ctrl.classify_flights(&t.keeper);
     t.ctrl.execute_settlements(&t.keeper);
 
-    // Traveler keeps no USDC (already paid premium); on-time = no claim.
-    assert_eq!(t.usdc.balance(&traveler), 0);
+    // Traveler keeps no asset (already paid premium); on-time = no claim.
+    assert_eq!(t.asset.balance(&traveler), 0);
 
     let cfg = t
         .pool
@@ -1050,7 +1050,7 @@ fn test_whitelist_toggle_round_trip() {
     t.ctrl.set_whitelist_enabled(&false);
     assert!(!t.ctrl.whitelist_enabled());
     let stranger = Address::generate(&t.env);
-    t.usdc_admin.mint(&stranger, &PREMIUM);
+    t.asset_admin.mint(&stranger, &PREMIUM);
     t.ctrl.buy_insurance(
         &stranger,
         &symbol_short!("AA100"),
@@ -1127,21 +1127,21 @@ fn test_non_owner_set_whitelist_enabled_panics() {
     let env = Env::default();
     let owner = Address::generate(&env);
     let stranger = Address::generate(&env);
-    let usdc_admin_addr = Address::generate(&env);
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin_addr);
+    let asset_admin_addr = Address::generate(&env);
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin_addr);
 
     let gov_addr = env.register(
         governance_module::GovernanceModule,
         (&owner, &PREMIUM, &PAYOFF, &DELAY_HOURS),
     );
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
     let oracle_addr = env.register(
         oracle_aggregator::OracleAggregator,
         (&owner, &Address::generate(&env)),
     );
     let pool_addr = env.register(
         flight_pool_manager::FlightPoolManager,
-        (&owner, &usdc_id.address(), &vault_addr),
+        (&owner, &asset_id.address(), &vault_addr),
     );
     let ctrl_addr = env.register(
         Controller,
@@ -1151,7 +1151,7 @@ fn test_non_owner_set_whitelist_enabled_panics() {
             &vault_addr,
             &oracle_addr,
             &pool_addr,
-            &usdc_id.address(),
+            &asset_id.address(),
             &Address::generate(&env),
             &MIN_LEAD_TIME,
             &CLAIM_EXPIRY_WINDOW,

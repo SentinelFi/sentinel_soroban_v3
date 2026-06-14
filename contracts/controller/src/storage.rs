@@ -7,7 +7,7 @@ pub enum CtrlKey {
     RiskVault,
     Oracle,
     FlightPoolManager,
-    UsdcToken,
+    AssetToken,
     AuthorizedKeeper,
     SolvencyRatio,
     MinLeadTime,

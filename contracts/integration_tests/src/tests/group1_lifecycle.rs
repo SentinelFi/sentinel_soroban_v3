@@ -23,8 +23,8 @@ fn lifecycle_on_time() {
     // Premium recorded as yield, collateral released.
     assert_eq!(t.vault.get_total_managed_assets(), tma_before + PREMIUM);
     assert_eq!(t.vault.get_locked_capital(), 0);
-    assert_eq!(t.usdc.balance(&t.pool_addr), 0);
-    assert_eq!(t.usdc.balance(&traveler), 0);
+    assert_eq!(t.asset.balance(&t.pool_addr), 0);
+    assert_eq!(t.asset.balance(&traveler), 0);
 
     // Oracle settled.
     let data = t
@@ -48,13 +48,13 @@ fn lifecycle_delayed() {
     t.classify_and_settle();
 
     // Pool now holds the full payoff for the traveler to claim.
-    assert_eq!(t.usdc.balance(&t.pool_addr), PAYOFF);
+    assert_eq!(t.asset.balance(&t.pool_addr), PAYOFF);
     assert_eq!(t.vault.get_locked_capital(), 0);
 
     // Traveler claims.
     t.pool
         .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
-    assert_eq!(t.usdc.balance(&traveler), PAYOFF);
+    assert_eq!(t.asset.balance(&traveler), PAYOFF);
 }
 
 // =========================================================================
@@ -70,7 +70,7 @@ fn lifecycle_cancelled() {
     t.oracle_cancelled();
     t.classify_and_settle();
 
-    assert_eq!(t.usdc.balance(&t.pool_addr), PAYOFF);
+    assert_eq!(t.asset.balance(&t.pool_addr), PAYOFF);
     let cfg = t
         .pool
         .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
@@ -82,7 +82,7 @@ fn lifecycle_cancelled() {
 
     t.pool
         .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
-    assert_eq!(t.usdc.balance(&traveler), PAYOFF);
+    assert_eq!(t.asset.balance(&traveler), PAYOFF);
 }
 
 // =========================================================================

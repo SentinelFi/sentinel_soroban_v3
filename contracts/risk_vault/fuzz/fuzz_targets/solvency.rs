@@ -20,7 +20,7 @@ use soroban_sdk::{
 };
 
 const NUM_USERS: usize = 4;
-const INITIAL_USDC: i128 = 1_000_000_0000000; // 1,000,000 USDC
+const INITIAL_ASSET: i128 = 1_000_000_0000000; // 1,000,000 asset
 
 #[derive(Debug, Arbitrary)]
 pub enum Op {
@@ -53,12 +53,12 @@ fuzz_target!(|input: Input| {
     let owner = Address::generate(&env);
     let controller = Address::generate(&env);
 
-    let usdc_admin = Address::generate(&env);
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin);
-    let usdc_admin_client = token::StellarAssetClient::new(&env, &usdc_id.address());
-    let usdc = token::Client::new(&env, &usdc_id.address());
+    let asset_admin = Address::generate(&env);
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin);
+    let asset_admin_client = token::StellarAssetClient::new(&env, &asset_id.address());
+    let asset = token::Client::new(&env, &asset_id.address());
 
-    let vault_id = env.register(RiskVault, (&owner, usdc_id.address()));
+    let vault_id = env.register(RiskVault, (&owner, asset_id.address()));
     let client = RiskVaultClient::new(&env, &vault_id);
     client.set_controller(&controller);
 
@@ -66,7 +66,7 @@ fuzz_target!(|input: Input| {
     let users: Vec<Address> = (0..NUM_USERS)
         .map(|_| {
             let a = Address::generate(&env);
-            usdc_admin_client.mint(&a, &INITIAL_USDC);
+            asset_admin_client.mint(&a, &INITIAL_ASSET);
             a
         })
         .collect();
@@ -144,12 +144,12 @@ fuzz_target!(|input: Input| {
         assert!(tma >= 0, "tma went negative: {}", tma);
         assert!(locked >= 0, "locked went negative: {}", locked);
 
-        // Vault USDC balance should cover unlocked claims + locked capital.
-        let vault_usdc = usdc.balance(&client.address);
+        // Vault asset balance should cover unlocked claims + locked capital.
+        let vault_asset = asset.balance(&client.address);
         assert!(
-            vault_usdc >= 0,
-            "vault usdc balance went negative: {}",
-            vault_usdc
+            vault_asset >= 0,
+            "vault asset balance went negative: {}",
+            vault_asset
         );
     }
 });

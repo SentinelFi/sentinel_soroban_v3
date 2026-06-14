@@ -7,20 +7,20 @@ fn setup() -> (Env, RiskVaultClient<'static>, Address, Address, Address) {
     env.mock_all_auths();
 
     let owner = Address::generate(&env);
-    let usdc_admin = Address::generate(&env);
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin.clone());
-    let usdc_client = token::StellarAssetClient::new(&env, &usdc_id.address());
+    let asset_admin = Address::generate(&env);
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin.clone());
+    let asset_client = token::StellarAssetClient::new(&env, &asset_id.address());
 
-    let contract_id = env.register(RiskVault, (&owner, usdc_id.address()));
+    let contract_id = env.register(RiskVault, (&owner, asset_id.address()));
     let client = RiskVaultClient::new(&env, &contract_id);
 
     // Set up a controller
     let controller = Address::generate(&env);
     client.set_controller(&controller);
 
-    // Mint USDC to a depositor
+    // Mint asset to a depositor
     let depositor = Address::generate(&env);
-    usdc_client.mint(&depositor, &10_000_0000000);
+    asset_client.mint(&depositor, &10_000_0000000);
 
     (env, client, owner, controller, depositor)
 }
@@ -42,27 +42,27 @@ fn test_constructor() {
 #[test]
 fn test_deposit_and_redeem() {
     let (env, client, _owner, _controller, depositor) = setup();
-    let usdc = token::Client::new(&env, &client.query_asset());
+    let asset = token::Client::new(&env, &client.query_asset());
 
-    // Deposit 1000 USDC
+    // Deposit 1000 asset
     let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
     assert!(shares > 0);
     assert_eq!(client.get_total_managed_assets(), 1_000_0000000);
     assert_eq!(client.total_assets(), 1_000_0000000);
-    assert_eq!(usdc.balance(&client.address), 1_000_0000000);
+    assert_eq!(asset.balance(&client.address), 1_000_0000000);
 
     // Redeem all shares
     let assets = client.redeem(&shares, &depositor, &depositor, &depositor);
     assert_eq!(assets, 1_000_0000000);
     assert_eq!(client.get_total_managed_assets(), 0);
-    assert_eq!(usdc.balance(&depositor), 10_000_0000000); // back to original
+    assert_eq!(asset.balance(&depositor), 10_000_0000000); // back to original
 }
 
 #[test]
 fn test_locked_capital_gates_withdrawal() {
     let (_env, client, _owner, controller, depositor) = setup();
 
-    // Deposit 1000 USDC
+    // Deposit 1000 asset
     let _shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
 
     // Lock 800 → free = 200
@@ -100,10 +100,10 @@ fn test_record_premium_income() {
     client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
     assert_eq!(client.get_total_managed_assets(), 1_000_0000000);
 
-    // Real flow: pool transfers USDC to vault FIRST, then controller calls.
+    // Real flow: pool transfers asset to vault FIRST, then controller calls.
     // The balance floor check inside record_premium_income enforces this.
-    let usdc_admin = token::StellarAssetClient::new(&env, &client.query_asset());
-    usdc_admin.mint(&client.address, &50_0000000);
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+    asset_admin.mint(&client.address, &50_0000000);
 
     client.record_premium_income(&controller, &50_0000000);
     assert_eq!(client.get_total_managed_assets(), 1_050_0000000);
@@ -111,27 +111,27 @@ fn test_record_premium_income() {
 
 #[test]
 #[should_panic(expected = "Error(Contract, #706)")]
-fn test_record_premium_income_rejects_when_usdc_not_received() {
-    // Regression for M-06: caller-stated amount must be backed by actual USDC.
+fn test_record_premium_income_rejects_when_asset_not_received() {
+    // Regression for M-06: caller-stated amount must be backed by actual asset.
     let (_env, client, _owner, controller, depositor) = setup();
     client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
 
-    // No USDC was transferred to the vault — credit must fail.
+    // No asset was transferred to the vault — credit must fail.
     client.record_premium_income(&controller, &50_0000000);
 }
 
 #[test]
 fn test_send_payout() {
     let (env, client, _owner, controller, depositor) = setup();
-    let usdc = token::Client::new(&env, &client.query_asset());
+    let asset = token::Client::new(&env, &client.query_asset());
     let recipient = Address::generate(&env);
 
     client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
 
     client.send_payout(&controller, &recipient, &200_0000000);
     assert_eq!(client.get_total_managed_assets(), 800_0000000);
-    assert_eq!(usdc.balance(&recipient), 200_0000000);
-    assert_eq!(usdc.balance(&client.address), 800_0000000);
+    assert_eq!(asset.balance(&recipient), 200_0000000);
+    assert_eq!(asset.balance(&client.address), 800_0000000);
 }
 
 #[test]
@@ -155,9 +155,9 @@ fn test_set_controller_twice() {
 #[test]
 fn test_withdrawal_queue_request_process_collect() {
     let (env, client, _owner, controller, depositor) = setup();
-    let usdc = token::Client::new(&env, &client.query_asset());
+    let asset = token::Client::new(&env, &client.query_asset());
 
-    // Deposit 1000 USDC
+    // Deposit 1000 asset
     let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
 
     // Lock all capital
@@ -180,10 +180,10 @@ fn test_withdrawal_queue_request_process_collect() {
     assert_eq!(client.get_withdrawal_queue().len(), 0);
     assert!(client.get_claimable_balance(&depositor) > 0);
 
-    // Collect USDC
+    // Collect asset
     let claimable = client.get_claimable_balance(&depositor);
     client.collect(&depositor);
-    assert_eq!(usdc.balance(&depositor), 9_000_0000000 + claimable);
+    assert_eq!(asset.balance(&depositor), 9_000_0000000 + claimable);
     assert_eq!(client.get_claimable_balance(&depositor), 0);
 }
 
@@ -292,9 +292,9 @@ fn test_pause_by_non_owner_panics() {
     let env = Env::default();
     // No mock_all_auths — owner auth will fail under stranger.
     let owner = Address::generate(&env);
-    let usdc_admin = Address::generate(&env);
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin);
-    let contract_id = env.register(RiskVault, (&owner, usdc_id.address()));
+    let asset_admin = Address::generate(&env);
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin);
+    let contract_id = env.register(RiskVault, (&owner, asset_id.address()));
     let client = RiskVaultClient::new(&env, &contract_id);
 
     let stranger = Address::generate(&env);
@@ -324,8 +324,8 @@ fn test_cancel_withdrawal_by_request_id_is_index_independent() {
     // queue indices shifted.
     let (env, client, _owner, controller, depositor) = setup();
     let other = Address::generate(&env);
-    let usdc_admin = token::StellarAssetClient::new(&env, &client.query_asset());
-    usdc_admin.mint(&other, &500_0000000);
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+    asset_admin.mint(&other, &500_0000000);
 
     let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
     let other_shares = client.deposit(&500_0000000, &other, &other, &other);
@@ -395,14 +395,14 @@ fn test_snapshot_noop_if_too_soon() {
 #[test]
 fn test_tma_tracking_through_operations() {
     let (env, client, _owner, controller, depositor) = setup();
-    let usdc_client = token::StellarAssetClient::new(&env, &client.query_asset());
+    let asset_client = token::StellarAssetClient::new(&env, &client.query_asset());
 
     // Deposit 1000
     client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
     assert_eq!(client.get_total_managed_assets(), 1_000_0000000);
 
-    // Record premium income +50 (simulate USDC arriving from FlightPool)
-    usdc_client.mint(&client.address, &50_0000000);
+    // Record premium income +50 (simulate asset arriving from FlightPool)
+    asset_client.mint(&client.address, &50_0000000);
     client.record_premium_income(&controller, &50_0000000);
     assert_eq!(client.get_total_managed_assets(), 1_050_0000000);
 
@@ -418,15 +418,15 @@ fn test_tma_tracking_through_operations() {
 #[test]
 fn test_multiple_depositors() {
     let (env, client, _owner, _controller, depositor) = setup();
-    let usdc_client = token::StellarAssetClient::new(&env, &client.query_asset());
+    let asset_client = token::StellarAssetClient::new(&env, &client.query_asset());
 
     let depositor2 = Address::generate(&env);
-    usdc_client.mint(&depositor2, &5_000_0000000);
+    asset_client.mint(&depositor2, &5_000_0000000);
 
-    // First depositor: 1000 USDC
+    // First depositor: 1000 asset
     let shares1 = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
 
-    // Second depositor: 500 USDC
+    // Second depositor: 500 asset
     let shares2 = client.deposit(&500_0000000, &depositor2, &depositor2, &depositor2);
 
     assert_eq!(client.get_total_managed_assets(), 1_500_0000000);
@@ -546,20 +546,20 @@ fn test_recover_uncollected_recredit_can_increase_existing() {
 }
 
 #[test]
-fn test_recover_uncollected_transfer_moves_usdc() {
+fn test_recover_uncollected_transfer_moves_asset() {
     use soroban_sdk::symbol_short;
     let (env, client, _owner, _controller, depositor) = setup();
-    let usdc = token::Client::new(&env, &client.query_asset());
-    let usdc_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+    let asset = token::Client::new(&env, &client.query_asset());
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
 
-    // Seed vault with USDC so the transfer has funds to move.
-    usdc_admin.mint(&client.address, &200_0000000);
+    // Seed vault with asset so the transfer has funds to move.
+    asset_admin.mint(&client.address, &200_0000000);
 
     // Seed a claimable balance via Recredit; Transfer is now gated on this.
     client.recover_uncollected(&depositor, &50_0000000, &RecoveryMode::Recredit);
 
-    let vault_balance_before = usdc.balance(&client.address);
-    let user_balance_before = usdc.balance(&depositor);
+    let vault_balance_before = asset.balance(&client.address);
+    let user_balance_before = asset.balance(&depositor);
 
     client.recover_uncollected(&depositor, &50_0000000, &RecoveryMode::Transfer);
 
@@ -567,12 +567,12 @@ fn test_recover_uncollected_transfer_moves_usdc() {
     // invocation's events.
     assert!(count_events_with_verb(&env, &client.address, symbol_short!("recovered")) >= 1);
 
-    // Vault USDC down by 50, user up by 50, claimable cleared.
+    // Vault asset down by 50, user up by 50, claimable cleared.
     assert_eq!(
-        usdc.balance(&client.address),
+        asset.balance(&client.address),
         vault_balance_before - 50_0000000
     );
-    assert_eq!(usdc.balance(&depositor), user_balance_before + 50_0000000);
+    assert_eq!(asset.balance(&depositor), user_balance_before + 50_0000000);
     assert_eq!(client.get_claimable_balance(&depositor), 0);
 }
 
@@ -580,10 +580,10 @@ fn test_recover_uncollected_transfer_moves_usdc() {
 #[should_panic(expected = "Error(Contract, #713)")]
 fn test_recover_uncollected_transfer_without_prior_credit_panics() {
     let (env, client, _owner, _controller, depositor) = setup();
-    let usdc_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
 
-    // Vault has USDC but the user was never credited — Transfer must refuse.
-    usdc_admin.mint(&client.address, &200_0000000);
+    // Vault has asset but the user was never credited — Transfer must refuse.
+    asset_admin.mint(&client.address, &200_0000000);
     client.recover_uncollected(&depositor, &50_0000000, &RecoveryMode::Transfer);
 }
 
@@ -591,8 +591,8 @@ fn test_recover_uncollected_transfer_without_prior_credit_panics() {
 #[should_panic(expected = "Error(Contract, #713)")]
 fn test_recover_uncollected_transfer_exceeding_credit_panics() {
     let (env, client, _owner, _controller, depositor) = setup();
-    let usdc_admin = token::StellarAssetClient::new(&env, &client.query_asset());
-    usdc_admin.mint(&client.address, &200_0000000);
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+    asset_admin.mint(&client.address, &200_0000000);
 
     // Credit is 50, attempt to transfer 51 must refuse.
     client.recover_uncollected(&depositor, &50_0000000, &RecoveryMode::Recredit);
@@ -605,9 +605,9 @@ fn test_recover_uncollected_unauthorized() {
     let env = Env::default();
     // No mock_all_auths — owner check fails.
     let owner = Address::generate(&env);
-    let usdc_admin = Address::generate(&env);
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin);
-    let contract_id = env.register(RiskVault, (&owner, usdc_id.address()));
+    let asset_admin = Address::generate(&env);
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin);
+    let contract_id = env.register(RiskVault, (&owner, asset_id.address()));
     let client = RiskVaultClient::new(&env, &contract_id);
 
     let stranger = Address::generate(&env);
@@ -711,14 +711,14 @@ fn test_vault_views_before_and_after_deposit() {
 #[test]
 fn test_mint_shares_pulls_assets_from_caller() {
     let (env, client, _owner, _controller, depositor) = setup();
-    let usdc = token::Client::new(&env, &client.query_asset());
+    let asset = token::Client::new(&env, &client.query_asset());
 
-    let initial_usdc = usdc.balance(&depositor);
+    let initial_asset = asset.balance(&depositor);
     let target_shares = 100_0000000_000i128;
     let assets_in = client.mint(&target_shares, &depositor, &depositor, &depositor);
 
     assert!(assets_in > 0, "mint_shares should pull non-zero assets");
-    assert_eq!(usdc.balance(&depositor), initial_usdc - assets_in);
+    assert_eq!(asset.balance(&depositor), initial_asset - assets_in);
     assert_eq!(client.balance(&depositor), target_shares);
     assert_eq!(client.get_total_managed_assets(), assets_in);
 }
@@ -731,7 +731,7 @@ fn test_max_withdraw_clamped_by_locked_capital() {
     // Before locking, max_withdraw == full deposit.
     assert_eq!(client.max_withdraw(&depositor), 1_000_0000000);
 
-    // Lock 600 USDC; max_withdraw clamps to remaining free capital.
+    // Lock 600 asset; max_withdraw clamps to remaining free capital.
     client.increase_locked(&controller, &600_0000000);
     assert_eq!(client.max_withdraw(&depositor), 400_0000000);
     assert_eq!(client.get_free_capital(), 400_0000000);

@@ -124,10 +124,10 @@ fn withdraw_recovered_by_owner() {
     t.pool.sweep_expired(&symbol_short!("AA100"), &FLIGHT_DATE);
     assert_eq!(t.pool.get_recovered_balance(), PAYOFF);
 
-    let owner_balance_before = t.usdc.balance(&t.owner);
+    let owner_balance_before = t.asset.balance(&t.owner);
     t.pool.withdraw_recovered(&PAYOFF);
 
-    assert_eq!(t.usdc.balance(&t.owner), owner_balance_before + PAYOFF);
+    assert_eq!(t.asset.balance(&t.owner), owner_balance_before + PAYOFF);
     assert_eq!(t.pool.get_recovered_balance(), 0);
 }
 

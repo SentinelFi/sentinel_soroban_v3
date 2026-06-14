@@ -55,14 +55,14 @@ impl RiskVault {
         let old_tma = Self::get_total_managed_assets(e);
         let new_tma = old_tma.checked_add(amount).expect("addition overflow");
 
-        // Defensive: the pool transfers USDC to the vault BEFORE calling this.
-        // Reject the credit if the vault's USDC balance can't cover the new
-        // TMA — catches the "controller called us but no USDC arrived" path
+        // Defensive: the pool transfers asset to the vault BEFORE calling this.
+        // Reject the credit if the vault's asset balance can't cover the new
+        // TMA — catches the "controller called us but no asset arrived" path
         // (compromised or buggy caller). Note: outstanding ClaimableBalance
         // entries are not part of TMA (they were decremented at credit
         // time), so the check is a strict floor on managed assets.
-        let usdc = token::Client::new(e, &Vault::query_asset(e));
-        let balance = usdc.balance(&e.current_contract_address());
+        let asset = token::Client::new(e, &Vault::query_asset(e));
+        let balance = asset.balance(&e.current_contract_address());
         if balance < new_tma {
             panic_with_error!(e, Error::PremiumNotReceived);
         }
@@ -89,8 +89,8 @@ impl RiskVault {
             &tma.checked_sub(amount).expect("subtraction underflow"),
         );
 
-        let usdc = token::Client::new(e, &Vault::query_asset(e));
-        usdc.transfer(&e.current_contract_address(), &to, &amount);
+        let asset = token::Client::new(e, &Vault::query_asset(e));
+        asset.transfer(&e.current_contract_address(), &to, &amount);
     }
 
     #[when_not_paused]

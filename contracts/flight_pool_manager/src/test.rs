@@ -4,13 +4,13 @@ use soroban_sdk::{
     symbol_short, testutils::Address as _, testutils::Ledger, token, Address, Env, Symbol,
 };
 
-const PREMIUM: i128 = 10_0000000; // 10 USDC (7 decimals)
-const PAYOFF: i128 = 50_0000000; // 50 USDC
+const PREMIUM: i128 = 10_0000000; // 10 asset (7 decimals)
+const PAYOFF: i128 = 50_0000000; // 50 asset
 const DELAY_HOURS: u32 = 3;
 const FLIGHT_DATE: u64 = 1_710_500_000;
 const INITIAL_TIMESTAMP: u64 = 1_710_400_000;
 const CLAIM_WINDOW_SEC: u64 = 5_184_000; // 60 days
-const VAULT_LIQUIDITY: i128 = 10_000_0000000; // 10,000 USDC seeded into vault
+const VAULT_LIQUIDITY: i128 = 10_000_0000000; // 10,000 asset seeded into vault
 
 #[allow(dead_code)]
 struct TestEnv {
@@ -19,8 +19,8 @@ struct TestEnv {
     pool_addr: Address,
     vault: risk_vault::RiskVaultClient<'static>,
     vault_addr: Address,
-    usdc: token::Client<'static>,
-    usdc_addr: Address,
+    asset: token::Client<'static>,
+    asset_addr: Address,
     owner: Address,
     controller: Address,
     buyer1: Address,
@@ -37,33 +37,33 @@ fn setup() -> TestEnv {
     let buyer1 = Address::generate(&env);
     let buyer2 = Address::generate(&env);
 
-    // Mock USDC via Stellar Asset Contract
-    let usdc_admin = Address::generate(&env);
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin.clone());
-    let usdc_addr = usdc_id.address();
-    let usdc = token::Client::new(&env, &usdc_addr);
-    let usdc_admin_client = token::StellarAssetClient::new(&env, &usdc_addr);
+    // Mock asset via Stellar Asset Contract
+    let asset_admin = Address::generate(&env);
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin.clone());
+    let asset_addr = asset_id.address();
+    let asset = token::Client::new(&env, &asset_addr);
+    let asset_admin_client = token::StellarAssetClient::new(&env, &asset_addr);
 
-    // RiskVault — needs OZ FungibleVault wired around USDC.
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_addr));
+    // RiskVault — needs OZ FungibleVault wired around asset.
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_addr));
     let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
     // FlightPoolManager
-    let pool_addr = env.register(FlightPoolManager, (&owner, &usdc_addr, &vault_addr));
+    let pool_addr = env.register(FlightPoolManager, (&owner, &asset_addr, &vault_addr));
     let pool = FlightPoolManagerClient::new(&env, &pool_addr);
 
     // Wire controller (one-time write) — both vault and pool
     vault.set_controller(&controller);
     pool.set_controller(&controller);
 
-    // Seed vault with USDC liquidity (mint then deposit through vault as a fake underwriter)
+    // Seed vault with asset liquidity (mint then deposit through vault as a fake underwriter)
     let underwriter = Address::generate(&env);
-    usdc_admin_client.mint(&underwriter, &VAULT_LIQUIDITY);
+    asset_admin_client.mint(&underwriter, &VAULT_LIQUIDITY);
     vault.deposit(&VAULT_LIQUIDITY, &underwriter, &underwriter, &underwriter);
 
-    // Pre-fund buyers with enough USDC to pay premiums; they'll transfer to pool in tests
-    usdc_admin_client.mint(&buyer1, &(PREMIUM * 10));
-    usdc_admin_client.mint(&buyer2, &(PREMIUM * 10));
+    // Pre-fund buyers with enough asset to pay premiums; they'll transfer to pool in tests
+    asset_admin_client.mint(&buyer1, &(PREMIUM * 10));
+    asset_admin_client.mint(&buyer2, &(PREMIUM * 10));
 
     TestEnv {
         env,
@@ -71,8 +71,8 @@ fn setup() -> TestEnv {
         pool_addr,
         vault,
         vault_addr,
-        usdc,
-        usdc_addr,
+        asset,
+        asset_addr,
         owner,
         controller,
         buyer1,
@@ -86,7 +86,7 @@ fn flight_a() -> Symbol {
 
 // Helper: simulate a buyer purchase — transfer premium to pool then add_buyer
 fn buy(t: &TestEnv, buyer: &Address) {
-    t.usdc.transfer(buyer, &t.pool_addr, &PREMIUM);
+    t.asset.transfer(buyer, &t.pool_addr, &PREMIUM);
     t.pool
         .add_buyer(&t.controller, &flight_a(), &FLIGHT_DATE, buyer);
 }
@@ -117,7 +117,7 @@ fn advance(t: &TestEnv, seconds: u64) {
 fn test_constructor_sets_owner_and_addresses() {
     let t = setup();
     assert_eq!(t.pool.get_owner(), Some(t.owner.clone()));
-    assert_eq!(t.pool.get_usdc_token(), t.usdc_addr);
+    assert_eq!(t.pool.get_asset_token(), t.asset_addr);
     assert_eq!(t.pool.get_risk_vault(), t.vault_addr);
     assert_eq!(t.pool.get_recovered_balance(), 0);
     assert_eq!(t.pool.get_active_flights().len(), 0);
@@ -136,10 +136,13 @@ fn test_set_controller_twice_fails() {
 fn test_set_controller_no_auth_fails() {
     let env = Env::default();
     let owner = Address::generate(&env);
-    let usdc_admin = Address::generate(&env);
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin);
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
-    let pool_addr = env.register(FlightPoolManager, (&owner, &usdc_id.address(), &vault_addr));
+    let asset_admin = Address::generate(&env);
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin);
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
+    let pool_addr = env.register(
+        FlightPoolManager,
+        (&owner, &asset_id.address(), &vault_addr),
+    );
     let pool = FlightPoolManagerClient::new(&env, &pool_addr);
     let controller = Address::generate(&env);
     // No mock_all_auths — should fail
@@ -280,9 +283,9 @@ fn test_config_survives_claim_window_after_quick_settle() {
     // 60-day claim window (timestamp unchanged, so the window is still open).
     t.env.ledger().with_mut(|l| l.sequence_number = 600_000);
 
-    let before = t.usdc.balance(&t.buyer1);
+    let before = t.asset.balance(&t.buyer1);
     t.pool.claim(&t.buyer1, &flight_a(), &FLIGHT_DATE);
-    assert_eq!(t.usdc.balance(&t.buyer1), before + PAYOFF);
+    assert_eq!(t.asset.balance(&t.buyer1), before + PAYOFF);
 }
 
 // =========================================================================
@@ -298,7 +301,7 @@ fn test_add_buyer_single() {
     assert_eq!(cfg.buyer_count, 1);
     assert!(t.pool.has_policy(&flight_a(), &FLIGHT_DATE, &t.buyer1));
     assert!(!t.pool.has_policy(&flight_a(), &FLIGHT_DATE, &t.buyer2));
-    assert_eq!(t.usdc.balance(&t.pool_addr), PREMIUM);
+    assert_eq!(t.asset.balance(&t.pool_addr), PREMIUM);
 }
 
 #[test]
@@ -311,7 +314,7 @@ fn test_add_buyer_multiple() {
     assert_eq!(cfg.buyer_count, 2);
     assert!(t.pool.has_policy(&flight_a(), &FLIGHT_DATE, &t.buyer1));
     assert!(t.pool.has_policy(&flight_a(), &FLIGHT_DATE, &t.buyer2));
-    assert_eq!(t.usdc.balance(&t.pool_addr), PREMIUM * 2);
+    assert_eq!(t.asset.balance(&t.pool_addr), PREMIUM * 2);
 }
 
 #[test]
@@ -364,7 +367,7 @@ fn test_settle_on_time_with_buyers_transfers_premium_to_vault() {
     buy(&t, &t.buyer1);
     buy(&t, &t.buyer2);
 
-    let pool_balance_before = t.usdc.balance(&t.pool_addr);
+    let pool_balance_before = t.asset.balance(&t.pool_addr);
     assert_eq!(pool_balance_before, PREMIUM * 2);
     let vault_tma_before = t.vault.get_total_managed_assets();
 
@@ -374,7 +377,7 @@ fn test_settle_on_time_with_buyers_transfers_premium_to_vault() {
     let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.status, SettlementStatus::SettledOnTime);
     assert_eq!(t.pool.get_active_flights().len(), 0);
-    assert_eq!(t.usdc.balance(&t.pool_addr), 0);
+    assert_eq!(t.asset.balance(&t.pool_addr), 0);
     assert_eq!(
         t.vault.get_total_managed_assets(),
         vault_tma_before + PREMIUM * 2
@@ -498,10 +501,10 @@ fn test_claim_after_delayed_success() {
     buy(&t, &t.buyer1);
     settle_delayed_and_topup(&t, 1);
 
-    let buyer1_balance_before = t.usdc.balance(&t.buyer1);
+    let buyer1_balance_before = t.asset.balance(&t.buyer1);
     t.pool.claim(&t.buyer1, &flight_a(), &FLIGHT_DATE);
 
-    assert_eq!(t.usdc.balance(&t.buyer1), buyer1_balance_before + PAYOFF);
+    assert_eq!(t.asset.balance(&t.buyer1), buyer1_balance_before + PAYOFF);
     assert!(t.pool.has_claimed(&flight_a(), &FLIGHT_DATE, &t.buyer1));
     let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.claimed_count, 1);
@@ -518,9 +521,9 @@ fn test_claim_after_cancelled_success() {
     let topup = PAYOFF - PREMIUM;
     t.vault.send_payout(&t.controller, &t.pool_addr, &topup);
 
-    let before = t.usdc.balance(&t.buyer1);
+    let before = t.asset.balance(&t.buyer1);
     t.pool.claim(&t.buyer1, &flight_a(), &FLIGHT_DATE);
-    assert_eq!(t.usdc.balance(&t.buyer1), before + PAYOFF);
+    assert_eq!(t.asset.balance(&t.buyer1), before + PAYOFF);
 }
 
 #[test]
@@ -536,9 +539,9 @@ fn test_claim_succeeds_while_paused() {
     t.pool.pause(&t.owner);
     assert!(t.pool.paused());
 
-    let before = t.usdc.balance(&t.buyer1);
+    let before = t.asset.balance(&t.buyer1);
     t.pool.claim(&t.buyer1, &flight_a(), &FLIGHT_DATE);
-    assert_eq!(t.usdc.balance(&t.buyer1), before + PAYOFF);
+    assert_eq!(t.asset.balance(&t.buyer1), before + PAYOFF);
     assert!(t.pool.has_claimed(&flight_a(), &FLIGHT_DATE, &t.buyer1));
 }
 
@@ -694,11 +697,11 @@ fn test_withdraw_recovered_success() {
 
     let recovered = t.pool.get_recovered_balance();
     assert_eq!(recovered, PAYOFF * 2);
-    let owner_before = t.usdc.balance(&t.owner);
+    let owner_before = t.asset.balance(&t.owner);
 
     t.pool.withdraw_recovered(&recovered);
 
-    assert_eq!(t.usdc.balance(&t.owner), owner_before + recovered);
+    assert_eq!(t.asset.balance(&t.owner), owner_before + recovered);
     assert_eq!(t.pool.get_recovered_balance(), 0);
 }
 
@@ -714,10 +717,13 @@ fn test_withdraw_recovered_exceeds_balance_fails() {
 fn test_withdraw_recovered_no_auth_fails() {
     let env = Env::default();
     let owner = Address::generate(&env);
-    let usdc_admin = Address::generate(&env);
-    let usdc_id = env.register_stellar_asset_contract_v2(usdc_admin);
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &usdc_id.address()));
-    let pool_addr = env.register(FlightPoolManager, (&owner, &usdc_id.address(), &vault_addr));
+    let asset_admin = Address::generate(&env);
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin);
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
+    let pool_addr = env.register(
+        FlightPoolManager,
+        (&owner, &asset_id.address(), &vault_addr),
+    );
     let pool = FlightPoolManagerClient::new(&env, &pool_addr);
     pool.withdraw_recovered(&1);
 }

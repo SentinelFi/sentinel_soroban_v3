@@ -27,7 +27,7 @@ stellar-macros = "0.7.1"
 stellar-contract-utils = "0.7.1"
 
 [workspace.lints.clippy]
-# 7-decimal USDC literals look like `10_0000000` — the grouping is
+# 7-decimal asset literals look like `10_0000000` — the grouping is
 # convention, not a typo. Same for the underlying-token-decimals constant.
 inconsistent_digit_grouping = "allow"
 unreadable_literal = "allow"
