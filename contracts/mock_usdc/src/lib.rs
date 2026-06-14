@@ -11,60 +11,13 @@
 //! Guardrail: the permissionless `mint`/`faucet` entrypoints are compiled only
 //! under the default-on `testnet` feature. A production build
 //! (`--no-default-features`) omits them entirely.
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, MuxedAddress, String};
-use stellar_access::ownable::{self as ownable, Ownable};
-use stellar_macros::only_owner;
-use stellar_tokens::fungible::{burnable::FungibleBurnable, Base, FungibleToken};
+mod token;
+mod traits;
+
+use soroban_sdk::contract;
 
 #[contract]
 pub struct MockUSDC;
-
-#[contractimpl]
-impl MockUSDC {
-    /// Initialize the mock token.
-    ///
-    /// # Arguments
-    /// * `admin` - Address set as token owner (holds the upgrade authority).
-    pub fn __constructor(e: &Env, admin: Address) {
-        Base::set_metadata(
-            e,
-            7,
-            String::from_str(e, "Mock USDC"),
-            String::from_str(e, "USDC"),
-        );
-        ownable::set_owner(e, &admin);
-    }
-
-    #[only_owner]
-    pub fn upgrade(e: &Env, wasm_hash: BytesN<32>) {
-        e.deployer().update_current_contract_wasm(wasm_hash);
-    }
-
-    /// Permissionless mint — anyone can mint any amount to any address.
-    /// Audit ASF-03: testnet-only, gated behind the default-on `testnet` feature.
-    #[cfg(feature = "testnet")]
-    pub fn mint(e: &Env, to: Address, amount: i128) {
-        Base::mint(e, &to, amount);
-    }
-
-    /// Permissionless faucet — mints 10,000 USDC to any address.
-    /// Audit ASF-03: testnet-only, gated behind the default-on `testnet` feature.
-    #[cfg(feature = "testnet")]
-    pub fn faucet(e: &Env, to: Address) {
-        Base::mint(e, &to, 10_000_0000000); // 10,000 USDC (7 decimals)
-    }
-}
-
-#[contractimpl(contracttrait)]
-impl FungibleToken for MockUSDC {
-    type ContractType = Base;
-}
-
-#[contractimpl(contracttrait)]
-impl FungibleBurnable for MockUSDC {}
-
-#[contractimpl(contracttrait)]
-impl Ownable for MockUSDC {}
 
 #[cfg(test)]
 mod test;
