@@ -11,6 +11,7 @@
 //! Guardrail: the permissionless `mint`/`faucet` entrypoints are compiled only
 //! under the default-on `testnet` feature. A production build
 //! (`--no-default-features`) omits them entirely.
+mod constants;
 mod token;
 mod traits;
 mod upgrade;

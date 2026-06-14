@@ -32,6 +32,6 @@ impl MockUSDC {
     /// Testnet-only, gated behind the default-on `testnet` feature.
     #[cfg(feature = "testnet")]
     pub fn faucet(e: &Env, to: Address) {
-        Base::mint(e, &to, 10_000_0000000); // 10,000 USDC (7 decimals)
+        Base::mint(e, &to, crate::constants::FAUCET_AMOUNT);
     }
 }

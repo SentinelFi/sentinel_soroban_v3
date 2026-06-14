@@ -6,8 +6,9 @@ use stellar_macros::{only_owner, when_not_paused};
 use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
 
+use crate::constants::CLAIMABLE_TTL_LEDGERS;
 use crate::events::{Collected, Recovered};
-use crate::storage::{VaultKey, CLAIMABLE_TTL_LEDGERS};
+use crate::storage::VaultKey;
 use crate::{Error, RecoveryMode, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
 #[contractimpl]
@@ -116,7 +117,7 @@ impl RiskVault {
             panic_with_error!(e, Error::NothingToCollect);
         }
 
-        // CEI: clear the entry before the external transfer.
+        // Clear the entry before the external transfer.
         e.storage().persistent().remove(&key);
 
         let asset = token::Client::new(e, &Vault::query_asset(e));
@@ -184,7 +185,8 @@ impl RiskVault {
                     panic_with_error!(e, Error::AmountExceedsClaimableBalance);
                 }
 
-                // CEI: write state before the external transfer.
+                // Write state before the external transfer (ordering for
+                // clarity; no reentrancy on Soroban).
                 let remaining = existing.checked_sub(amount).expect("subtraction underflow");
                 if remaining == 0 {
                     e.storage().persistent().remove(&key);

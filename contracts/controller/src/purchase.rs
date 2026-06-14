@@ -1,13 +1,14 @@
 use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, Symbol};
 use stellar_macros::when_not_paused;
 
+use crate::constants::MAX_BOOK_AHEAD_SECS;
 use crate::events::InsuranceBought;
 use crate::interfaces::{
     FlightPoolManagerClient, FlightStatus, GovClient, OracleClient, RouteStatus, VaultClient,
 };
 use crate::storage::{
     append_traveler_flight, read_buyer_whitelisted, read_whitelist_enabled,
-    touch_buyer_whitelisted, CtrlKey, MAX_BOOK_AHEAD_SECS,
+    touch_buyer_whitelisted, CtrlKey,
 };
 use crate::{Controller, ControllerArgs, ControllerClient, Error};
 

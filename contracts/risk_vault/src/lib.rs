@@ -30,6 +30,7 @@ mod admin;
 mod auth;
 mod capital;
 mod claims;
+mod constants;
 mod error;
 mod events;
 mod queries;
@@ -45,7 +46,7 @@ use soroban_sdk::contract;
 use soroban_sdk::token;
 
 #[cfg(test)]
-use storage::SECONDS_PER_DAY;
+use constants::SECONDS_PER_DAY;
 
 pub use error::Error;
 pub use storage::{RecoveryMode, WithdrawalRequest};
