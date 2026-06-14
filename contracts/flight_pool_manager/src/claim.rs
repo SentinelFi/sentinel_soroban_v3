@@ -58,9 +58,9 @@ impl FlightPoolManager {
         e.storage().persistent().set(&cfg_key, &cfg);
         extend_flight_ttl(e, &flight_id, date);
 
-        let usdc_addr: Address = e.storage().instance().get(&PoolKey::UsdcToken).unwrap();
-        let usdc = token::Client::new(e, &usdc_addr);
-        usdc.transfer(&e.current_contract_address(), &traveler, &cfg.payoff);
+        let asset_addr: Address = e.storage().instance().get(&PoolKey::AssetToken).unwrap();
+        let asset = token::Client::new(e, &asset_addr);
+        asset.transfer(&e.current_contract_address(), &traveler, &cfg.payoff);
 
         PayoutClaimed {
             flight_id,

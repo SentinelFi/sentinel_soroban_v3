@@ -45,7 +45,7 @@ impl Controller {
             .instance()
             .get(&CtrlKey::FlightPoolManager)
             .unwrap();
-        let usdc_addr: Address = e.storage().instance().get(&CtrlKey::UsdcToken).unwrap();
+        let asset_addr: Address = e.storage().instance().get(&CtrlKey::AssetToken).unwrap();
         let controller_addr = e.current_contract_address();
 
         // 1+2. Validate route + read terms in one cross-contract call.
@@ -125,8 +125,8 @@ impl Controller {
         // 6. Transfer premium directly from traveler to FlightPoolManager.
         //    Soroban auth propagates: the traveler signed buy_insurance, so
         //    this sub-invocation transfer is authorized.
-        let usdc = token::Client::new(e, &usdc_addr);
-        usdc.transfer(&traveler, &pool_addr, &terms.premium);
+        let asset = token::Client::new(e, &asset_addr);
+        asset.transfer(&traveler, &pool_addr, &terms.premium);
 
         // 7. Lock collateral in vault.
         vault.increase_locked(&controller_addr, &terms.payoff);

@@ -64,15 +64,15 @@ stellar contract build --optimize
 ```bash
 stellar contract deploy --wasm target/wasm32v1-none/release/mock_usdc.wasm --source-account alice --network testnet --alias mock_usdc -- --admin alice
 
-stellar contract deploy --wasm target/wasm32v1-none/release/flight_pool_manager.wasm --source-account alice --network testnet --alias flight_pool_manager -- --owner alice --usdc_token alice --risk_vault alice
+stellar contract deploy --wasm target/wasm32v1-none/release/flight_pool_manager.wasm --source-account alice --network testnet --alias flight_pool_manager -- --owner alice --asset_token alice --risk_vault alice
 
-stellar contract deploy --wasm target/wasm32v1-none/release/risk_vault.wasm --source-account alice --network testnet --alias risk_vault -- --owner alice --usdc_token alice
+stellar contract deploy --wasm target/wasm32v1-none/release/risk_vault.wasm --source-account alice --network testnet --alias risk_vault -- --owner alice --asset_token alice
 
 stellar contract deploy --wasm target/wasm32v1-none/release/oracle_aggregator.wasm --source-account alice --network testnet --alias oracle_aggregator -- --owner alice --authorized_oracle alice 
 
 stellar contract deploy --wasm target/wasm32v1-none/release/governance_module.wasm --source-account alice --network testnet --alias governance_module -- --owner alice --default_premium 100 --default_payoff 200 --default_delay_hours 3 
 
-stellar contract deploy --wasm target/wasm32v1-none/release/controller.wasm --source-account alice --network testnet --alias controller -- --owner alice --governance alice --risk_vault alice --oracle alice --flight_pool_manager alice --usdc_token alice --authorized_keeper alice --min_lead_time 3600 --claim_expiry_window 86500
+stellar contract deploy --wasm target/wasm32v1-none/release/controller.wasm --source-account alice --network testnet --alias controller -- --owner alice --governance alice --risk_vault alice --oracle alice --flight_pool_manager alice --asset_token alice --authorized_keeper alice --min_lead_time 3600 --claim_expiry_window 86500
 ```
 
 ### Generate TypeScript Bindings

@@ -24,8 +24,8 @@ fn multiple_buyers_same_flight() {
         .unwrap();
     assert_eq!(cfg.buyer_count, 3);
 
-    // Pool USDC = 3 × premium, vault locked = 3 × payoff.
-    assert_eq!(t.usdc.balance(&t.pool_addr), 3 * PREMIUM);
+    // Pool asset = 3 × premium, vault locked = 3 × payoff.
+    assert_eq!(t.asset.balance(&t.pool_addr), 3 * PREMIUM);
     assert_eq!(t.vault.get_locked_capital(), 3 * PAYOFF);
 }
 
@@ -53,7 +53,7 @@ fn multiple_flights_independent_settlements() {
 
     // Buy on both flights.
     t.buy(&traveler_a);
-    t.usdc_admin.mint(&traveler_b, &PREMIUM);
+    t.asset_admin.mint(&traveler_b, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler_b,
         &symbol_short!("UA200"),
@@ -80,7 +80,7 @@ fn multiple_flights_independent_settlements() {
     t.classify_and_settle();
 
     // Flight A: pool holds payoff for traveler_a to claim.
-    assert!(t.usdc.balance(&t.pool_addr) > 0);
+    assert!(t.asset.balance(&t.pool_addr) > 0);
     let cfg_a = t
         .pool
         .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
@@ -122,7 +122,7 @@ fn traveler_index_across_multiple_flights() {
     );
 
     t.buy(&traveler);
-    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,
         &symbol_short!("UA200"),
@@ -169,7 +169,7 @@ fn traveler_with_multiple_routes() {
     );
 
     t.buy(&traveler);
-    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,
         &symbol_short!("UA200"),
@@ -177,7 +177,7 @@ fn traveler_with_multiple_routes() {
         &symbol_short!("ORD"),
         &(FLIGHT_DATE + 1),
     );
-    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,
         &symbol_short!("DL300"),
@@ -201,11 +201,11 @@ fn same_traveler_double_buy_same_flight_panics() {
 #[test]
 fn concurrent_underwriters_share_payout_burden() {
     let t = TestEnv::new();
-    let usdc_admin = token::StellarAssetClient::new(&t.env, &t.usdc_addr);
+    let asset_admin = token::StellarAssetClient::new(&t.env, &t.asset_addr);
 
     // Add a second underwriter with a smaller deposit.
     let underwriter2 = Address::generate(&t.env);
-    usdc_admin.mint(&underwriter2, &500_0000000);
+    asset_admin.mint(&underwriter2, &500_0000000);
     t.vault
         .deposit(&500_0000000, &underwriter2, &underwriter2, &underwriter2);
 
@@ -242,19 +242,19 @@ fn five_travelers_same_flight_lifecycle() {
         .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
         .unwrap();
     assert_eq!(cfg.buyer_count, 5);
-    assert_eq!(t.usdc.balance(&t.pool_addr), 5 * PREMIUM);
+    assert_eq!(t.asset.balance(&t.pool_addr), 5 * PREMIUM);
     assert_eq!(t.vault.get_locked_capital(), 5 * PAYOFF);
 
     t.oracle_delayed();
     t.classify_and_settle();
 
     // Pool now has 5 × payoff for all 5 travelers to claim.
-    assert_eq!(t.usdc.balance(&t.pool_addr), 5 * PAYOFF);
+    assert_eq!(t.asset.balance(&t.pool_addr), 5 * PAYOFF);
 
     // Each travels claims, balance increases by payoff.
     for tr in &travelers {
         t.pool.claim(tr, &symbol_short!("AA100"), &FLIGHT_DATE);
-        assert_eq!(t.usdc.balance(tr), PAYOFF);
+        assert_eq!(t.asset.balance(tr), PAYOFF);
     }
-    assert_eq!(t.usdc.balance(&t.pool_addr), 0);
+    assert_eq!(t.asset.balance(&t.pool_addr), 0);
 }

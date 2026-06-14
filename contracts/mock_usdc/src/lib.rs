@@ -5,10 +5,8 @@
 //! mint/faucet: anyone can mint arbitrary balances. It exists only to fund
 //! integration tests and testnet demos.
 //!
-//! NEVER deploy MockUSDC as the `usdc_token` backing `RiskVault`, `Controller`,
-//! or `FlightPoolManager` on mainnet — any user could mint unlimited "USDC",
-//! buy arbitrary policies, fake vault capital, and destroy all share/insurance
-//! accounting. Production must use the real USDC Stellar Asset Contract (SAC).
+//! NEVER deploy MockUSDC as the `asset token` backing `RiskVault`, `Controller`,
+//! or `FlightPoolManager` on mainnet. Production must use the real USDC Stellar Asset Contract (SAC).
 //!
 //! Guardrail: the permissionless `mint`/`faucet` entrypoints are compiled only
 //! under the default-on `testnet` feature. A production build

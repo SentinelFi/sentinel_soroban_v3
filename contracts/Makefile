@@ -34,11 +34,11 @@ optimize: ## Build and optimize the contract wasm artifacts
 
 deploy-testnet: build ## Deploy all contracts to testnet (override SOURCE/NETWORK as needed)
 	stellar contract deploy --wasm $(WASM_DIR)/mock_usdc.wasm --source-account $(SOURCE) --network $(NETWORK) --alias mock_usdc -- --admin $(SOURCE)
-	stellar contract deploy --wasm $(WASM_DIR)/flight_pool_manager.wasm --source-account $(SOURCE) --network $(NETWORK) --alias flight_pool_manager -- --owner $(SOURCE) --usdc_token $(SOURCE) --risk_vault $(SOURCE)
-	stellar contract deploy --wasm $(WASM_DIR)/risk_vault.wasm --source-account $(SOURCE) --network $(NETWORK) --alias risk_vault -- --owner $(SOURCE) --usdc_token $(SOURCE)
+	stellar contract deploy --wasm $(WASM_DIR)/flight_pool_manager.wasm --source-account $(SOURCE) --network $(NETWORK) --alias flight_pool_manager -- --owner $(SOURCE) --asset_token $(SOURCE) --risk_vault $(SOURCE)
+	stellar contract deploy --wasm $(WASM_DIR)/risk_vault.wasm --source-account $(SOURCE) --network $(NETWORK) --alias risk_vault -- --owner $(SOURCE) --asset_token $(SOURCE)
 	stellar contract deploy --wasm $(WASM_DIR)/oracle_aggregator.wasm --source-account $(SOURCE) --network $(NETWORK) --alias oracle_aggregator -- --owner $(SOURCE) --authorized_oracle $(SOURCE)
 	stellar contract deploy --wasm $(WASM_DIR)/governance_module.wasm --source-account $(SOURCE) --network $(NETWORK) --alias governance_module -- --owner $(SOURCE) --default_premium 100 --default_payoff 200 --default_delay_hours 3
-	stellar contract deploy --wasm $(WASM_DIR)/controller.wasm --source-account $(SOURCE) --network $(NETWORK) --alias controller -- --owner $(SOURCE) --governance $(SOURCE) --risk_vault $(SOURCE) --oracle $(SOURCE) --flight_pool_manager $(SOURCE) --usdc_token $(SOURCE) --authorized_keeper $(SOURCE) --min_lead_time 3600 --claim_expiry_window 86500
+	stellar contract deploy --wasm $(WASM_DIR)/controller.wasm --source-account $(SOURCE) --network $(NETWORK) --alias controller -- --owner $(SOURCE) --governance $(SOURCE) --risk_vault $(SOURCE) --oracle $(SOURCE) --flight_pool_manager $(SOURCE) --asset_token $(SOURCE) --authorized_keeper $(SOURCE) --min_lead_time 3600 --claim_expiry_window 86500
 
 clippy: ## Lint with clippy, treating warnings as errors
 	cargo clippy --all-targets -- -D warnings

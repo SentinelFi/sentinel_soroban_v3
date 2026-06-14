@@ -10,9 +10,9 @@ use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient};
 
 #[contractimpl]
 impl RiskVault {
-    pub fn __constructor(e: &Env, owner: Address, usdc_token: Address) {
+    pub fn __constructor(e: &Env, owner: Address, asset_token: Address) {
         ownable::set_owner(e, &owner);
-        Vault::set_asset(e, usdc_token);
+        Vault::set_asset(e, asset_token);
         Vault::set_decimals_offset(e, 3);
         Base::set_metadata(
             e,

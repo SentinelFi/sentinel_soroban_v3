@@ -96,7 +96,7 @@ impl FlightPoolManager {
     }
 
     /// Record a buyer for an active flight. Called by Controller during
-    /// buy_insurance. Premium USDC is expected to have arrived separately
+    /// buy_insurance. Premium asset is expected to have arrived separately
     /// (Controller transfers from traveler before calling this).
     #[when_not_paused]
     pub fn add_buyer(e: &Env, controller: Address, flight_id: Symbol, date: u64, buyer: Address) {

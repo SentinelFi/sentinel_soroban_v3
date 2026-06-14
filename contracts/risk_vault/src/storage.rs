@@ -38,7 +38,7 @@ pub enum RecoveryMode {
     /// owner provides the full owed amount reconstructed from event logs.
     /// Future `process_withdrawal_queue` credits ADD on top normally.
     Recredit,
-    /// Transfer USDC directly from vault to user. No `ClaimableBalance`
+    /// Transfer asset directly from vault to user. No `ClaimableBalance`
     /// storage write. Indexer DELETEs the address from its tracker.
     Transfer,
 }
@@ -56,7 +56,7 @@ pub(crate) const MAX_QUEUE_BATCH: u32 = 50;
 
 /// 60 days at 5s/ledger = 60 * 24 * 60 * 12 = 1_036_800.
 /// Applied on every `ClaimableBalance(addr)` write to prevent silent archival
-/// of per-user pending USDC. Layered defense:
+/// of per-user pending asset. Layered defense:
 /// 1. On-write extension (this constant).
 /// 2. Off-chain TTL cron footprint extension via the indexer.
 /// 3. `recover_uncollected` owner manual fallback.

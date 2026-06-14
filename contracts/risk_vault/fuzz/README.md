@@ -8,7 +8,7 @@ operations. After every step, the harness asserts:
 - `get_locked_capital() <= get_total_managed_assets()` — solvency invariant
 - `get_total_managed_assets() >= 0`
 - `get_locked_capital() >= 0`
-- USDC balance of the vault stays non-negative
+- asset balance of the vault stays non-negative
 
 ## Requirements
 

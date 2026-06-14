@@ -2,8 +2,8 @@ use super::*;
 use sentinel_types::test_support::collect_events;
 use soroban_sdk::{symbol_short, testutils::Address as _, Env, Symbol};
 
-const DEFAULT_PREMIUM: i128 = 50_0000000; // 50 USDC (7 decimals)
-const DEFAULT_PAYOFF: i128 = 500_0000000; // 500 USDC
+const DEFAULT_PREMIUM: i128 = 50_0000000; // 50 asset (7 decimals)
+const DEFAULT_PAYOFF: i128 = 500_0000000; // 500 asset
 const DEFAULT_DELAY_HOURS: u32 = 3;
 
 fn setup() -> (Env, GovernanceModuleClient<'static>, Address, Address) {

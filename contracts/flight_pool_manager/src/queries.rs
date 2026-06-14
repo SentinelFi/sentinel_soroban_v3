@@ -47,8 +47,8 @@ impl FlightPoolManager {
         e.storage().instance().get(&PoolKey::Controller)
     }
 
-    pub fn get_usdc_token(e: &Env) -> Address {
-        e.storage().instance().get(&PoolKey::UsdcToken).unwrap()
+    pub fn get_asset_token(e: &Env) -> Address {
+        e.storage().instance().get(&PoolKey::AssetToken).unwrap()
     }
 
     pub fn get_risk_vault(e: &Env) -> Address {

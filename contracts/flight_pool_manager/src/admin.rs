@@ -9,9 +9,11 @@ use crate::{Error, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerCl
 
 #[contractimpl]
 impl FlightPoolManager {
-    pub fn __constructor(e: &Env, owner: Address, usdc_token: Address, risk_vault: Address) {
+    pub fn __constructor(e: &Env, owner: Address, asset_token: Address, risk_vault: Address) {
         ownable::set_owner(e, &owner);
-        e.storage().instance().set(&PoolKey::UsdcToken, &usdc_token);
+        e.storage()
+            .instance()
+            .set(&PoolKey::AssetToken, &asset_token);
         e.storage().instance().set(&PoolKey::RiskVault, &risk_vault);
         e.storage()
             .instance()
@@ -31,7 +33,7 @@ impl FlightPoolManager {
     }
 
     /// Owner withdraws funds credited to RecoveredBalance via sweep_expired.
-    /// Transfers USDC from the contract to the owner.
+    /// Transfers asset from the contract to the owner.
     #[only_owner]
     #[when_not_paused]
     pub fn withdraw_recovered(e: &Env, amount: i128) {
@@ -56,9 +58,9 @@ impl FlightPoolManager {
         );
 
         let owner = ownable::get_owner(e).expect("owner not set");
-        let usdc_addr: Address = e.storage().instance().get(&PoolKey::UsdcToken).unwrap();
-        let usdc = token::Client::new(e, &usdc_addr);
-        usdc.transfer(&e.current_contract_address(), &owner, &amount);
+        let asset_addr: Address = e.storage().instance().get(&PoolKey::AssetToken).unwrap();
+        let asset = token::Client::new(e, &asset_addr);
+        asset.transfer(&e.current_contract_address(), &owner, &amount);
 
         RecoveredWithdrawn { owner, amount }.publish(e);
     }

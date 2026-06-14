@@ -233,7 +233,7 @@ impl Controller {
                         .expect("multiplication overflow");
 
                     // Vault sends payout funds to the pool (the pool holds all
-                    // per-flight USDC so travelers can claim from one address).
+                    // per-flight asset so travelers can claim from one address).
                     if payout_from_vault > 0 {
                         vault.send_payout(&controller_addr, &pool_addr, &payout_from_vault);
                     }

@@ -36,7 +36,7 @@ impl Controller {
         risk_vault: Address,
         oracle: Address,
         flight_pool_manager: Address,
-        usdc_token: Address,
+        asset_token: Address,
         authorized_keeper: Address,
         min_lead_time: u64,
         claim_expiry_window: u64,
@@ -52,7 +52,9 @@ impl Controller {
         e.storage()
             .instance()
             .set(&CtrlKey::FlightPoolManager, &flight_pool_manager);
-        e.storage().instance().set(&CtrlKey::UsdcToken, &usdc_token);
+        e.storage()
+            .instance()
+            .set(&CtrlKey::AssetToken, &asset_token);
         e.storage()
             .instance()
             .set(&CtrlKey::AuthorizedKeeper, &authorized_keeper);

@@ -22,7 +22,7 @@ fn whitelist_route_then_buy_succeeds() {
         &None::<u32>,
     );
     let traveler = Address::generate(&t.env);
-    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,
         &symbol_short!("UA200"),
@@ -74,7 +74,7 @@ fn enable_after_disable_unblocks_purchase() {
 fn unknown_route_blocks_purchase() {
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);
-    t.usdc_admin.mint(&traveler, &PREMIUM);
+    t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,
         &symbol_short!("ZZ999"),
