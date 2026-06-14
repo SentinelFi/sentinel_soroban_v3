@@ -113,10 +113,8 @@ impl GovernanceModule {
         // two routes would collide their (flight_id, date) state. Re-whitelisting
         // the same route is fine; a conflicting origin/dest is rejected.
         let fr_key = DataKey::FlightRoute(flight_id.clone());
-        if let Some((existing_origin, existing_dest)) = e
-            .storage()
-            .persistent()
-            .get::<_, (Symbol, Symbol)>(&fr_key)
+        if let Some((existing_origin, existing_dest)) =
+            e.storage().persistent().get::<_, (Symbol, Symbol)>(&fr_key)
         {
             assert!(
                 existing_origin == origin && existing_dest == dest,
