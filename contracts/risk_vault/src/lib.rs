@@ -1,4 +1,30 @@
 #![no_std]
+//! # RiskVault — underwriter capital pool
+//!
+//! The capital pool that backs every insurance policy. Underwriters deposit the
+//! protocol asset and receive transferable vault shares (ERC-4626-style
+//! mechanics, with an inflation-attack defense); they earn from on-time
+//! premiums and absorb delay/cancel payouts.
+//!
+//! Implements the `FungibleToken` standard (vault shares).
+//!
+//! State:
+//! - **Total Managed Assets (TMA)** — the pool's accounting balance.
+//! - **Locked capital** — reserved against outstanding policies; free capital
+//!   is `TMA − locked`.
+//! - **Withdrawal queue** — FIFO share-redemption requests for when free
+//!   capital is insufficient for an immediate redeem.
+//! - **Claimable balances** — per-underwriter pull-based payouts.
+//! - **Daily share-price snapshots** — short-lived, for off-chain analytics.
+//!
+//! Core operations:
+//! - **Underwriter:** `deposit`, `redeem` (immediate, if free capital allows),
+//!   `request_withdrawal` / `cancel_withdrawal` (queue), `collect` (pull).
+//! - **Controller-only:** `increase_locked`, `decrease_locked`,
+//!   `record_premium_income`, `send_payout`, `process_withdrawal_queue`,
+//!   `snapshot`.
+//! - **Owner-only:** `recover_uncollected` — fallback for archived claimable
+//!   balances.
 
 mod admin;
 mod auth;
@@ -9,12 +35,10 @@ mod events;
 mod queries;
 mod snapshot;
 mod storage;
+mod traits;
 mod vault_ops;
 
-use soroban_sdk::{contract, contractimpl, Address, Env, MuxedAddress, String};
-use stellar_access::ownable::{self as ownable, Ownable};
-use stellar_contract_utils::pausable::{self as pausable, Pausable};
-use stellar_tokens::{fungible::FungibleToken, vault::Vault};
+use soroban_sdk::contract;
 
 #[cfg(test)]
 use soroban_sdk::token;
@@ -27,33 +51,6 @@ pub use storage::{RecoveryMode, WithdrawalRequest};
 
 #[contract]
 pub struct RiskVault;
-
-#[contractimpl(contracttrait)]
-impl FungibleToken for RiskVault {
-    type ContractType = Vault;
-}
-
-#[contractimpl(contracttrait)]
-impl Ownable for RiskVault {}
-
-#[contractimpl(contracttrait)]
-impl Pausable for RiskVault {
-    fn pause(e: &Env, caller: Address) {
-        // Owner-gated emergency stop. `caller` is required by the trait
-        // signature; auth is enforced against the stored owner.
-        let _ = caller;
-        let owner = ownable::get_owner(e).expect("owner not set");
-        owner.require_auth();
-        pausable::pause(e);
-    }
-
-    fn unpause(e: &Env, caller: Address) {
-        let _ = caller;
-        let owner = ownable::get_owner(e).expect("owner not set");
-        owner.require_auth();
-        pausable::unpause(e);
-    }
-}
 
 #[cfg(test)]
 mod test;

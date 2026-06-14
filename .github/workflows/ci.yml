@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+
+# Cancel in-progress runs for the same PR when new commits are pushed.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    name: test, build, lint, audit
+    runs-on: ubuntu-latest
+    # The Cargo workspace, Makefile, and rust-toolchain.toml all live in
+    # `contracts/`. Running every step from there lets rustup auto-install the
+    # pinned toolchain (1.94.0 + wasm32v1-none target + clippy/rustfmt) from
+    # rust-toolchain.toml.
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        # Triggers rustup to install the toolchain, target, and components
+        # declared in contracts/rust-toolchain.toml.
+        run: rustup show
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install stellar-cli and cargo-audit
+        run: cargo binstall -y stellar-cli cargo-audit
+
+      - name: cargo test
+        run: cargo test
+
+      - name: stellar contract build
+        run: stellar contract build
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: cargo audit
+        run: cargo audit

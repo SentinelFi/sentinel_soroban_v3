@@ -1,0 +1,16 @@
+# Keep the Docker build context small and reproducible.
+
+# Rust build artifacts (rebuilt inside the image).
+target/
+**/target/
+
+# Fuzz build artifacts (fuzz crates are excluded from the workspace).
+**/fuzz/target/
+**/corpus/
+**/artifacts/
+
+# VCS / editor / OS noise.
+.git/
+.gitignore
+**/*.swp
+.DS_Store

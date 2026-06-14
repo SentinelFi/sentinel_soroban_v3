@@ -1,6 +1,8 @@
 use super::*;
 use sentinel_types::test_support::collect_events;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, Env, Symbol, TryFromVal};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Ledger, Address, Env, String, Symbol, TryFromVal,
+};
 
 fn setup() -> (Env, RiskVaultClient<'static>, Address, Address, Address) {
     let env = Env::default();
