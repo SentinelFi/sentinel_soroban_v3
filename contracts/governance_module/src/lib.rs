@@ -18,6 +18,7 @@
 
 mod admin;
 mod auth;
+mod constants;
 mod error;
 mod events;
 mod queries;

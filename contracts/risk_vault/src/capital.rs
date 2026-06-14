@@ -7,8 +7,9 @@ use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
 
 use crate::auth::require_controller;
+use crate::constants::{CLAIMABLE_TTL_LEDGERS, MAX_QUEUE_BATCH};
 use crate::events::Credited;
-use crate::storage::{VaultKey, CLAIMABLE_TTL_LEDGERS, MAX_QUEUE_BATCH};
+use crate::storage::VaultKey;
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
 #[contractimpl]
@@ -83,7 +84,7 @@ impl RiskVault {
             panic_with_error!(e, Error::InsufficientManagedAssets);
         }
 
-        // CEI: decrement TMA before the external transfer.
+        // Decrement TMA before the external transfer.
         e.storage().instance().set(
             &VaultKey::TotalManagedAssets,
             &tma.checked_sub(amount).expect("subtraction underflow"),

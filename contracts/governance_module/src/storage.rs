@@ -57,14 +57,8 @@ pub enum DelayHoursUpdate {
     UseDefault,
 }
 
-// 60 days at 5s/ledger = 60 * 24 * 60 * 12 = 1_036_800.
-// Applied on every Route(...) write to keep actively edited routes from
-// archival drift; idle routes are extended by the off-chain TTL cron which
-// folds Route(...) keys into its ExtendFootprintTTLOp footprint using the
-// indexer's enumeration.
-pub(crate) const ROUTE_TTL_LEDGERS: u32 = 60 * 24 * 60 * 12;
-
 pub(crate) fn extend_route_ttl(e: &Env, key: &DataKey) {
+    use crate::constants::ROUTE_TTL_LEDGERS;
     e.storage()
         .persistent()
         .extend_ttl(key, ROUTE_TTL_LEDGERS, ROUTE_TTL_LEDGERS);

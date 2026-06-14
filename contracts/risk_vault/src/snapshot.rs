@@ -3,8 +3,9 @@ use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
 
+use crate::constants::{SECONDS_PER_DAY, SNAPSHOT_TTL_LEDGERS};
 use crate::events::SharePriceSnapshot;
-use crate::storage::{VaultKey, SECONDS_PER_DAY, SNAPSHOT_TTL_LEDGERS};
+use crate::storage::VaultKey;
 use crate::{RiskVault, RiskVaultArgs, RiskVaultClient};
 
 #[contractimpl]

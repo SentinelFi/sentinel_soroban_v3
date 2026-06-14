@@ -1,7 +1,8 @@
-use crate::storage::{
-    CtrlKey, MAX_CLAIM_EXPIRY_WINDOW_SECS, MAX_MIN_LEAD_TIME_SECS, MAX_SOLVENCY_RATIO,
+use crate::constants::{
+    MAX_CLAIM_EXPIRY_WINDOW_SECS, MAX_MIN_LEAD_TIME_SECS, MAX_SOLVENCY_RATIO,
     MIN_CLAIM_EXPIRY_WINDOW_SECS, MIN_SOLVENCY_RATIO,
 };
+use crate::storage::CtrlKey;
 use crate::{Controller, ControllerArgs, ControllerClient, Error};
 pub(crate) use sentinel_types::ttl::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
 use soroban_sdk::{contractimpl, panic_with_error, Address, Env};

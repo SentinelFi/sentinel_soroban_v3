@@ -59,7 +59,7 @@ impl FlightPoolManager {
             panic_with_error!(e, Error::ExceedsRecoveredBalance);
         }
 
-        // CEI: decrement balance before the external transfer.
+        // Decrement the balance before the external transfer.
         e.storage().instance().set(
             &PoolKey::RecoveredBalance,
             &recovered

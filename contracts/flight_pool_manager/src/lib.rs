@@ -23,6 +23,7 @@
 mod admin;
 mod auth;
 mod claim;
+mod constants;
 mod error;
 mod events;
 mod lifecycle;

@@ -6,11 +6,9 @@ use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol, Vec};
 use stellar_macros::when_not_paused;
 
 use crate::auth::{extend_instance_ttl, require_controller, require_oracle};
+use crate::constants::{MAX_PRUNE_BATCH, SECONDS_PER_DAY, SETTLED_RETENTION_DAYS};
 use crate::events::{emit_status_event, MissingFlightDataPruned};
-use crate::storage::{
-    extend_flight_ttl, is_valid_transition, OracleKey, MAX_PRUNE_BATCH, SECONDS_PER_DAY,
-    SETTLED_RETENTION_DAYS,
-};
+use crate::storage::{extend_flight_ttl, is_valid_transition, OracleKey};
 use crate::{
     Error, FlightData, FlightStatus, OracleAggregator, OracleAggregatorArgs, OracleAggregatorClient,
 };

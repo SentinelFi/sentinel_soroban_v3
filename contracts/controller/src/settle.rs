@@ -2,9 +2,10 @@ use soroban_sdk::{contractimpl, Address, Env};
 use stellar_macros::when_not_paused;
 
 use crate::auth::require_keeper;
+use crate::constants::MAX_SETTLE_BATCH;
 use crate::events::{FlightClassified, FlightConfigMissing, FlightSettledEvent, TtlMiss};
 use crate::interfaces::{FlightPoolManagerClient, FlightStatus, OracleClient, VaultClient};
-use crate::storage::{CtrlKey, MAX_SETTLE_BATCH};
+use crate::storage::CtrlKey;
 use crate::{Controller, ControllerArgs, ControllerClient};
 
 #[contractimpl]
