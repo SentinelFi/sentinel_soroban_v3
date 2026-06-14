@@ -74,6 +74,7 @@ impl RiskVault {
         e.storage()
             .instance()
             .set(&VaultKey::LastSnapshotTime, &now);
+        Self::extend_ttl(e);
 
         // Emit so off-chain analytics can subscribe instead of polling.
         SharePriceSnapshot { day, price }.publish(e);

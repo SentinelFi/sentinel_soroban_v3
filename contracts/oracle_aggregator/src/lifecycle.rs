@@ -114,6 +114,7 @@ impl OracleAggregator {
     #[when_not_paused]
     pub fn register_flight(e: &Env, controller: Address, flight_id: Symbol, date: u64) {
         require_controller(e, &controller);
+        extend_instance_ttl(e);
 
         let key = OracleKey::FlightData(flight_id.clone(), date);
         if e.storage().persistent().has(&key) {

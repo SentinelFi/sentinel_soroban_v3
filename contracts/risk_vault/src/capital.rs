@@ -17,6 +17,7 @@ impl RiskVault {
     #[when_not_paused]
     pub fn increase_locked(e: &Env, controller: Address, amount: i128) {
         require_controller(e, &controller);
+        Self::extend_ttl(e);
         if amount <= 0 {
             panic_with_error!(e, Error::AmountMustBePositive);
         }
@@ -34,6 +35,7 @@ impl RiskVault {
     #[when_not_paused]
     pub fn decrease_locked(e: &Env, controller: Address, amount: i128) {
         require_controller(e, &controller);
+        Self::extend_ttl(e);
         if amount <= 0 {
             panic_with_error!(e, Error::AmountMustBePositive);
         }
@@ -50,6 +52,7 @@ impl RiskVault {
     #[when_not_paused]
     pub fn record_premium_income(e: &Env, controller: Address, amount: i128) {
         require_controller(e, &controller);
+        Self::extend_ttl(e);
         if amount <= 0 {
             panic_with_error!(e, Error::AmountMustBePositive);
         }
@@ -76,6 +79,7 @@ impl RiskVault {
     #[when_not_paused]
     pub fn send_payout(e: &Env, controller: Address, to: Address, amount: i128) {
         require_controller(e, &controller);
+        Self::extend_ttl(e);
         if amount <= 0 {
             panic_with_error!(e, Error::AmountMustBePositive);
         }
@@ -97,6 +101,7 @@ impl RiskVault {
     #[when_not_paused]
     pub fn process_withdrawal_queue(e: &Env, controller: Address) {
         require_controller(e, &controller);
+        Self::extend_ttl(e);
 
         let queue: Vec<WithdrawalRequest> = e
             .storage()

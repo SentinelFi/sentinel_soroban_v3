@@ -45,6 +45,7 @@ impl RiskVault {
         e.storage()
             .instance()
             .set(&VaultKey::Controller, &controller);
+        Self::extend_ttl(e);
     }
 
     /// Extend instance TTL. Called by cron as a safety net.

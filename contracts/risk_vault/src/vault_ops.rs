@@ -14,6 +14,7 @@ use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient};
 impl FungibleVault for RiskVault {
     #[when_not_paused]
     fn deposit(e: &Env, assets: i128, receiver: Address, from: Address, operator: Address) -> i128 {
+        Self::extend_ttl(e);
         let shares = Vault::deposit(e, assets, receiver, from, operator);
         let tma = Self::get_total_managed_assets(e);
         e.storage().instance().set(
@@ -31,6 +32,7 @@ impl FungibleVault for RiskVault {
         owner: Address,
         operator: Address,
     ) -> i128 {
+        Self::extend_ttl(e);
         // Once any underwriter is queued, the queue is the canonical
         // exit path — block direct exits so a latecomer can't consume free capital
         // ahead of LPs already waiting in FIFO order. When the queue is empty this
@@ -52,6 +54,7 @@ impl FungibleVault for RiskVault {
 
     #[when_not_paused]
     fn mint(e: &Env, shares: i128, receiver: Address, from: Address, operator: Address) -> i128 {
+        Self::extend_ttl(e);
         let assets = Vault::mint(e, shares, receiver, from, operator);
         let tma = Self::get_total_managed_assets(e);
         e.storage().instance().set(
@@ -63,6 +66,7 @@ impl FungibleVault for RiskVault {
 
     #[when_not_paused]
     fn redeem(e: &Env, shares: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
+        Self::extend_ttl(e);
         // See `withdraw` — direct redeem defers to the queue while
         // any request is pending so it can't jump the FIFO line.
         if !Self::get_withdrawal_queue(e).is_empty() {

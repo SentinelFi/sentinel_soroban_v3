@@ -8,6 +8,8 @@
 
 use soroban_sdk::{contracttype, BytesN, Env};
 
+use crate::ttl::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
+
 /// Instance-storage key holding the `u32` on-chain contract version. Stored
 /// under one shared key so every contract reads/writes it consistently.
 #[contracttype]
@@ -44,4 +46,10 @@ pub fn upgrade(e: &Env, wasm_hash: BytesN<32>) {
     e.deployer().update_current_contract_wasm(wasm_hash);
     let next = version(e).saturating_add(1);
     e.storage().instance().set(&UpgradeKey::Version, &next);
+    // Refresh the instance TTL on the upgrade path too: the version write
+    // above touches instance storage, so renew it here rather than relying
+    // solely on the external TTL cron.
+    e.storage()
+        .instance()
+        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 }
