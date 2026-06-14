@@ -1,6 +1,6 @@
 # CertiK AI Report — Remediation Summary
 
-**Source report:** [`20260531_certik_ai_report.md`](20260531_certik_ai_report.md)
+**Source report:** [`20260531_certik_ai_report.md`](../20260531_certik_ai_report.md)
 **Remediation date:** 2026-06-14
 **Scope:** 6 production contracts + `sentinel_types` (per the original report).
 **Test status:** full workspace suite green after changes — **299 tests pass**
