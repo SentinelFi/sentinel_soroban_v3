@@ -27,6 +27,12 @@ struct TestEnv {
     buyer2: Address,
 }
 
+#[test]
+fn version_initialized_to_one() {
+    let t = setup();
+    assert_eq!(t.pool.version(), 1);
+}
+
 fn setup() -> TestEnv {
     let env = Env::default();
     env.mock_all_auths();

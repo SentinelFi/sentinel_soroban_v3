@@ -1,4 +1,4 @@
-use soroban_sdk::{contractimpl, panic_with_error, Address, BytesN, Env};
+use soroban_sdk::{contractimpl, panic_with_error, Address, Env};
 use stellar_access::ownable;
 use stellar_macros::only_owner;
 
@@ -19,6 +19,7 @@ impl OracleAggregator {
         e.storage()
             .instance()
             .set(&OracleKey::AuthorizedOracle, &authorized_oracle);
+        sentinel_types::upgrade::set_initial_version(e);
     }
 
     // --- Owner-only admin functions ---
@@ -45,11 +46,6 @@ impl OracleAggregator {
             .instance()
             .set(&OracleKey::AuthorizedOracle, &new_oracle);
         extend_instance_ttl(e);
-    }
-
-    #[only_owner]
-    pub fn upgrade(e: &Env, wasm_hash: BytesN<32>) {
-        e.deployer().update_current_contract_wasm(wasm_hash);
     }
 
     // --- TTL management ---

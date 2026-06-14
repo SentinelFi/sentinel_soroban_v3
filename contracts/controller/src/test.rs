@@ -35,6 +35,12 @@ struct TestEnv {
     underwriter: Address,
 }
 
+#[test]
+fn version_initialized_to_one() {
+    let t = setup();
+    assert_eq!(t.ctrl.version(), 1);
+}
+
 fn setup() -> TestEnv {
     let env = Env::default();
     // The controller orchestrates 3-deep call chains

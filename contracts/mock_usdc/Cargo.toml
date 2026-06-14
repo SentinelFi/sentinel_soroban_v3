@@ -22,6 +22,7 @@ soroban-sdk = { workspace = true }
 stellar-tokens = { workspace = true }
 stellar-access = { workspace = true }
 stellar-macros = { workspace = true }
+sentinel_types = { path = "../sentinel_types" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }

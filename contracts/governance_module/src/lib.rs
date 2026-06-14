@@ -24,6 +24,7 @@ mod queries;
 mod routes;
 mod storage;
 mod traits;
+mod upgrade;
 
 use soroban_sdk::contract;
 

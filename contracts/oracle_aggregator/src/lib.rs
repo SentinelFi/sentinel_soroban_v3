@@ -30,6 +30,7 @@ mod lifecycle;
 mod queries;
 mod storage;
 mod traits;
+mod upgrade;
 
 use soroban_sdk::contract;
 

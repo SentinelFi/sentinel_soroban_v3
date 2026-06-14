@@ -1,4 +1,4 @@
-use soroban_sdk::{contractimpl, panic_with_error, Address, BytesN, Env};
+use soroban_sdk::{contractimpl, panic_with_error, Address, Env};
 use stellar_access::ownable::{self as ownable};
 use stellar_macros::only_owner;
 
@@ -94,6 +94,7 @@ impl Controller {
         e.storage()
             .instance()
             .set(&CtrlKey::TotalPayoutsDistributed, &0i128);
+        sentinel_types::upgrade::set_initial_version(e);
     }
 
     #[only_owner]
@@ -130,10 +131,5 @@ impl Controller {
     /// Extend instance TTL. Called by cron as a safety net.
     pub fn extend_ttl(e: &Env) {
         extend_instance_ttl(e);
-    }
-
-    #[only_owner]
-    pub fn upgrade(e: &Env, wasm_hash: BytesN<32>) {
-        e.deployer().update_current_contract_wasm(wasm_hash);
     }
 }
