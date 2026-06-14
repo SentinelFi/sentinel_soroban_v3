@@ -1,4 +1,4 @@
-use soroban_sdk::{contractimpl, Address, BytesN, Env, String};
+use soroban_sdk::{contractimpl, panic_with_error, Address, BytesN, Env, String};
 use stellar_access::ownable::{self as ownable};
 use stellar_macros::only_owner;
 use stellar_tokens::fungible::Base;
@@ -6,7 +6,7 @@ use stellar_tokens::vault::Vault;
 
 use crate::auth::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
 use crate::storage::VaultKey;
-use crate::{RiskVault, RiskVaultArgs, RiskVaultClient};
+use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient};
 
 #[contractimpl]
 impl RiskVault {
@@ -31,10 +31,9 @@ impl RiskVault {
 
     #[only_owner]
     pub fn set_controller(e: &Env, controller: Address) {
-        assert!(
-            !e.storage().instance().has(&VaultKey::Controller),
-            "controller already set"
-        );
+        if e.storage().instance().has(&VaultKey::Controller) {
+            panic_with_error!(e, Error::ControllerAlreadySet);
+        }
         e.storage()
             .instance()
             .set(&VaultKey::Controller, &controller);

@@ -192,7 +192,7 @@ fn claim_after_cancelled_succeeds() {
 }
 
 #[test]
-#[should_panic(expected = "flight not in claimable status")]
+#[should_panic(expected = "Error(Contract, #412)")]
 fn claim_panics_on_time() {
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);
@@ -205,7 +205,7 @@ fn claim_panics_on_time() {
 }
 
 #[test]
-#[should_panic(expected = "already claimed")]
+#[should_panic(expected = "Error(Contract, #415)")]
 fn claim_panics_double_claim() {
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);
@@ -220,7 +220,7 @@ fn claim_panics_double_claim() {
 }
 
 #[test]
-#[should_panic(expected = "claim window closed")]
+#[should_panic(expected = "Error(Contract, #413)")]
 fn claim_panics_after_expiry() {
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);

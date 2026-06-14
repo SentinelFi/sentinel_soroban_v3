@@ -1,4 +1,4 @@
-use soroban_sdk::{contractimpl, Address, BytesN, Env};
+use soroban_sdk::{contractimpl, panic_with_error, Address, BytesN, Env};
 use stellar_access::ownable::{self as ownable};
 use stellar_macros::only_owner;
 
@@ -7,27 +7,24 @@ use crate::storage::{
     CtrlKey, MAX_CLAIM_EXPIRY_WINDOW_SECS, MAX_MIN_LEAD_TIME_SECS, MAX_SOLVENCY_RATIO,
     MIN_CLAIM_EXPIRY_WINDOW_SECS, MIN_SOLVENCY_RATIO,
 };
-use crate::{Controller, ControllerArgs, ControllerClient};
+use crate::{Controller, ControllerArgs, ControllerClient, Error};
 
-fn assert_solvency_ratio(ratio: u32) {
-    assert!(
-        (MIN_SOLVENCY_RATIO..=MAX_SOLVENCY_RATIO).contains(&ratio),
-        "solvency_ratio out of bounds",
-    );
+fn assert_solvency_ratio(e: &Env, ratio: u32) {
+    if !(MIN_SOLVENCY_RATIO..=MAX_SOLVENCY_RATIO).contains(&ratio) {
+        panic_with_error!(e, Error::SolvencyRatioOutOfBounds);
+    }
 }
 
-fn assert_min_lead_time(seconds: u64) {
-    assert!(
-        seconds <= MAX_MIN_LEAD_TIME_SECS,
-        "min_lead_time exceeds maximum",
-    );
+fn assert_min_lead_time(e: &Env, seconds: u64) {
+    if seconds > MAX_MIN_LEAD_TIME_SECS {
+        panic_with_error!(e, Error::MinLeadTimeExceedsMaximum);
+    }
 }
 
-fn assert_claim_expiry_window(seconds: u64) {
-    assert!(
-        (MIN_CLAIM_EXPIRY_WINDOW_SECS..=MAX_CLAIM_EXPIRY_WINDOW_SECS).contains(&seconds),
-        "claim_expiry_window out of bounds",
-    );
+fn assert_claim_expiry_window(e: &Env, seconds: u64) {
+    if !(MIN_CLAIM_EXPIRY_WINDOW_SECS..=MAX_CLAIM_EXPIRY_WINDOW_SECS).contains(&seconds) {
+        panic_with_error!(e, Error::ClaimExpiryWindowOutOfBounds);
+    }
 }
 
 #[contractimpl]
@@ -44,8 +41,8 @@ impl Controller {
         min_lead_time: u64,
         claim_expiry_window: u64,
     ) {
-        assert_min_lead_time(min_lead_time);
-        assert_claim_expiry_window(claim_expiry_window);
+        assert_min_lead_time(e, min_lead_time);
+        assert_claim_expiry_window(e, claim_expiry_window);
         ownable::set_owner(e, &owner);
         e.storage()
             .instance()
@@ -87,21 +84,21 @@ impl Controller {
 
     #[only_owner]
     pub fn set_solvency_ratio(e: &Env, ratio: u32) {
-        assert_solvency_ratio(ratio);
+        assert_solvency_ratio(e, ratio);
         e.storage().instance().set(&CtrlKey::SolvencyRatio, &ratio);
         extend_instance_ttl(e);
     }
 
     #[only_owner]
     pub fn set_min_lead_time(e: &Env, seconds: u64) {
-        assert_min_lead_time(seconds);
+        assert_min_lead_time(e, seconds);
         e.storage().instance().set(&CtrlKey::MinLeadTime, &seconds);
         extend_instance_ttl(e);
     }
 
     #[only_owner]
     pub fn set_claim_expiry_window(e: &Env, seconds: u64) {
-        assert_claim_expiry_window(seconds);
+        assert_claim_expiry_window(e, seconds);
         e.storage()
             .instance()
             .set(&CtrlKey::ClaimExpiryWindow, &seconds);

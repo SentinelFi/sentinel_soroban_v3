@@ -1,10 +1,11 @@
 #![no_std]
 
 mod auth;
+mod error;
 mod events;
 mod storage;
 
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, panic_with_error, Address, BytesN, Env, Symbol, Vec};
 use stellar_access::ownable::{self as ownable, Ownable};
 use stellar_contract_utils::pausable::{self as pausable, Pausable};
 use stellar_macros::{only_owner, when_not_paused};
@@ -16,6 +17,7 @@ use storage::{
     SETTLED_RETENTION_DAYS,
 };
 
+pub use error::Error;
 pub use storage::{FlightData, FlightStatus};
 
 #[contract]
@@ -37,7 +39,9 @@ impl OracleAggregator {
     pub fn set_controller(e: &Env, controller: Address) {
         let existing: Option<Address> =
             e.storage().instance().get(&OracleKey::AuthorizedController);
-        assert!(existing.is_none(), "controller already set");
+        if existing.is_some() {
+            panic_with_error!(e, Error::ControllerAlreadySet);
+        }
 
         e.storage()
             .instance()
@@ -79,10 +83,9 @@ impl OracleAggregator {
             .get(&key)
             .expect("flight not registered");
 
-        assert!(
-            is_valid_transition(&data.status, &FlightStatus::Active),
-            "invalid transition"
-        );
+        if !(is_valid_transition(&data.status, &FlightStatus::Active)) {
+            panic_with_error!(e, Error::InvalidTransition);
+        }
 
         data.status = FlightStatus::Active;
         data.estimated_arrival_time = estimated_arrival_time;
@@ -110,10 +113,9 @@ impl OracleAggregator {
             .get(&key)
             .expect("flight not registered");
 
-        assert!(
-            is_valid_transition(&data.status, &FlightStatus::Landed),
-            "invalid transition"
-        );
+        if !(is_valid_transition(&data.status, &FlightStatus::Landed)) {
+            panic_with_error!(e, Error::InvalidTransition);
+        }
         // Audit VF-07: do NOT reject `actual_arrival_time < estimated_arrival_time`.
         // Early arrivals are legitimate flight outcomes; rejecting them left such
         // flights stuck `Active` forever (never classifiable/settleable, collateral
@@ -141,10 +143,9 @@ impl OracleAggregator {
             .get(&key)
             .expect("flight not registered");
 
-        assert!(
-            is_valid_transition(&data.status, &FlightStatus::Cancelled),
-            "invalid transition"
-        );
+        if !(is_valid_transition(&data.status, &FlightStatus::Cancelled)) {
+            panic_with_error!(e, Error::InvalidTransition);
+        }
 
         data.status = FlightStatus::Cancelled;
         e.storage().persistent().set(&key, &data);
@@ -202,15 +203,14 @@ impl OracleAggregator {
     ) {
         require_controller(e, &controller);
 
-        assert!(
-            matches!(
-                status,
-                FlightStatus::ToBeSettledOnTime
-                    | FlightStatus::ToBeSettledDelayed
-                    | FlightStatus::ToBeSettledCancelled
-            ),
-            "invalid settlement status"
-        );
+        if !(matches!(
+            status,
+            FlightStatus::ToBeSettledOnTime
+                | FlightStatus::ToBeSettledDelayed
+                | FlightStatus::ToBeSettledCancelled
+        )) {
+            panic_with_error!(e, Error::InvalidSettlementStatus);
+        }
 
         let key = OracleKey::FlightData(flight_id.clone(), date);
         let mut data: FlightData = e
@@ -219,10 +219,9 @@ impl OracleAggregator {
             .get(&key)
             .expect("flight not registered");
 
-        assert!(
-            is_valid_transition(&data.status, &status),
-            "invalid transition"
-        );
+        if !(is_valid_transition(&data.status, &status)) {
+            panic_with_error!(e, Error::InvalidTransition);
+        }
 
         data.status = status.clone();
         e.storage().persistent().set(&key, &data);
@@ -248,10 +247,9 @@ impl OracleAggregator {
             .get(&key)
             .expect("flight not registered");
 
-        assert!(
-            is_valid_transition(&data.status, &FlightStatus::Settled),
-            "invalid transition"
-        );
+        if !(is_valid_transition(&data.status, &FlightStatus::Settled)) {
+            panic_with_error!(e, Error::InvalidTransition);
+        }
 
         data.status = FlightStatus::Settled;
         data.settled_at = e.ledger().timestamp();

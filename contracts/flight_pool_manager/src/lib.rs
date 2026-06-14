@@ -3,6 +3,7 @@
 mod admin;
 mod auth;
 mod claim;
+mod error;
 mod events;
 mod lifecycle;
 mod queries;
@@ -13,6 +14,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env};
 use stellar_access::ownable::{self as ownable, Ownable};
 use stellar_contract_utils::pausable::{self as pausable, Pausable};
 
+pub use error::Error;
 pub use storage::{FlightConfig, SettlementStatus};
 
 #[contract]

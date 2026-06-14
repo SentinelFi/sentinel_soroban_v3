@@ -1,8 +1,9 @@
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{panic_with_error, Address, Env};
 use stellar_access::ownable::{self as ownable};
 
 use crate::interfaces::GovClient;
 use crate::storage::CtrlKey;
+use crate::Error;
 
 pub(crate) use sentinel_types::ttl::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
 
@@ -13,7 +14,9 @@ pub(crate) fn require_keeper(e: &Env, caller: &Address) {
         .instance()
         .get(&CtrlKey::AuthorizedKeeper)
         .expect("keeper not set");
-    assert!(caller == &keeper, "not authorized keeper");
+    if caller != &keeper {
+        panic_with_error!(e, Error::NotAuthorizedKeeper);
+    }
 }
 
 /// Admin gate for whitelist add/remove. Owner short-circuits to a local check
@@ -33,7 +36,9 @@ pub(crate) fn require_owner_or_gov_admin(e: &Env, caller: &Address) {
         .get(&CtrlKey::Governance)
         .expect("governance not set");
     let gov = GovClient::new(e, &gov_addr);
-    assert!(gov.is_admin(caller), "not owner or governance admin");
+    if !gov.is_admin(caller) {
+        panic_with_error!(e, Error::NotOwnerOrGovernanceAdmin);
+    }
 }
 
 pub(crate) fn extend_instance_ttl(e: &Env) {

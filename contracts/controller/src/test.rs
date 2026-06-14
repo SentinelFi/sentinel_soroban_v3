@@ -238,42 +238,42 @@ fn test_set_claim_expiry_window() {
 }
 
 #[test]
-#[should_panic(expected = "solvency_ratio out of bounds")]
+#[should_panic(expected = "Error(Contract, #301)")]
 fn test_set_solvency_ratio_below_100_panics() {
     let t = setup();
     t.ctrl.set_solvency_ratio(&99);
 }
 
 #[test]
-#[should_panic(expected = "solvency_ratio out of bounds")]
+#[should_panic(expected = "Error(Contract, #301)")]
 fn test_set_solvency_ratio_above_max_panics() {
     let t = setup();
     t.ctrl.set_solvency_ratio(&10_001);
 }
 
 #[test]
-#[should_panic(expected = "min_lead_time exceeds maximum")]
+#[should_panic(expected = "Error(Contract, #302)")]
 fn test_set_min_lead_time_above_max_panics() {
     let t = setup();
     t.ctrl.set_min_lead_time(&7_776_001);
 }
 
 #[test]
-#[should_panic(expected = "claim_expiry_window out of bounds")]
+#[should_panic(expected = "Error(Contract, #303)")]
 fn test_set_claim_expiry_window_zero_panics() {
     let t = setup();
     t.ctrl.set_claim_expiry_window(&0);
 }
 
 #[test]
-#[should_panic(expected = "claim_expiry_window out of bounds")]
+#[should_panic(expected = "Error(Contract, #303)")]
 fn test_set_claim_expiry_window_below_min_panics() {
     let t = setup();
     t.ctrl.set_claim_expiry_window(&86_399);
 }
 
 #[test]
-#[should_panic(expected = "claim_expiry_window out of bounds")]
+#[should_panic(expected = "Error(Contract, #303)")]
 fn test_set_claim_expiry_window_above_max_panics() {
     let t = setup();
     t.ctrl.set_claim_expiry_window(&15_552_001);
@@ -438,7 +438,7 @@ fn test_get_flights_for_traveler_empty_for_unknown_address() {
 // =========================================================================
 
 #[test]
-#[should_panic(expected = "route is disabled")]
+#[should_panic(expected = "Error(Contract, #307)")]
 fn test_buy_insurance_panics_on_disabled_route() {
     let t = setup();
     t.gov.disable_route(
@@ -452,7 +452,7 @@ fn test_buy_insurance_panics_on_disabled_route() {
 }
 
 #[test]
-#[should_panic(expected = "route not whitelisted")]
+#[should_panic(expected = "Error(Contract, #308)")]
 fn test_buy_insurance_panics_on_unknown_route() {
     let t = setup();
     let traveler = Address::generate(&t.env);
@@ -467,7 +467,7 @@ fn test_buy_insurance_panics_on_unknown_route() {
 }
 
 #[test]
-#[should_panic(expected = "departure too soon")]
+#[should_panic(expected = "Error(Contract, #309)")]
 fn test_buy_insurance_panics_on_short_lead_time() {
     let t = setup();
     let traveler = Address::generate(&t.env);
@@ -482,7 +482,7 @@ fn test_buy_insurance_panics_on_short_lead_time() {
 }
 
 #[test]
-#[should_panic(expected = "departure too far in future")]
+#[should_panic(expected = "Error(Contract, #310)")]
 fn test_buy_insurance_panics_on_far_future_booking() {
     // Audit ASF-01: a flight dated beyond the 90-day booking horizon must be
     // rejected so the policy lifecycle can't outlive the 180-day buyer-key TTL.
@@ -501,7 +501,7 @@ fn test_buy_insurance_panics_on_far_future_booking() {
 }
 
 #[test]
-#[should_panic(expected = "flight no longer open for purchase")]
+#[should_panic(expected = "Error(Contract, #311)")]
 fn test_buy_insurance_rejected_after_oracle_cancellation() {
     // Audit V12-CF-01: once the oracle has marked the flight Cancelled, further
     // purchases must be rejected — otherwise a late buyer claims a guaranteed
@@ -582,7 +582,7 @@ fn test_classify_and_settle_multiple_flights_in_one_batch() {
 }
 
 #[test]
-#[should_panic(expected = "insufficient vault capital")]
+#[should_panic(expected = "Error(Contract, #312)")]
 fn test_buy_insurance_panics_on_solvency_gate() {
     let env = Env::default();
     env.mock_all_auths();
@@ -768,7 +768,7 @@ fn test_classify_flights_emits_ttl_miss_for_not_initiated() {
 }
 
 #[test]
-#[should_panic(expected = "not authorized keeper")]
+#[should_panic(expected = "Error(Contract, #304)")]
 fn test_classify_flights_panics_on_non_keeper() {
     let t = setup();
     let stranger = Address::generate(&t.env);
@@ -917,7 +917,7 @@ fn test_run_queue_maintenance_processes_withdrawal_queue() {
 }
 
 #[test]
-#[should_panic(expected = "not authorized keeper")]
+#[should_panic(expected = "Error(Contract, #304)")]
 fn test_run_queue_maintenance_panics_on_non_keeper() {
     let t = setup();
     let stranger = Address::generate(&t.env);
@@ -925,7 +925,7 @@ fn test_run_queue_maintenance_panics_on_non_keeper() {
 }
 
 #[test]
-#[should_panic(expected = "not authorized keeper")]
+#[should_panic(expected = "Error(Contract, #304)")]
 fn test_execute_settlements_panics_on_non_keeper() {
     let t = setup();
     let stranger = Address::generate(&t.env);
@@ -1017,7 +1017,7 @@ fn test_whitelist_disabled_allows_any_buyer() {
 }
 
 #[test]
-#[should_panic(expected = "buyer not whitelisted")]
+#[should_panic(expected = "Error(Contract, #306)")]
 fn test_whitelist_enabled_blocks_non_whitelisted_buyer() {
     let t = setup();
     t.ctrl.set_whitelist_enabled(&true);
@@ -1076,7 +1076,7 @@ fn test_gov_admin_can_add_whitelisted_buyer() {
 }
 
 #[test]
-#[should_panic(expected = "not owner or governance admin")]
+#[should_panic(expected = "Error(Contract, #305)")]
 fn test_non_admin_add_whitelisted_buyer_panics() {
     let t = setup();
     let stranger = Address::generate(&t.env);
@@ -1085,7 +1085,7 @@ fn test_non_admin_add_whitelisted_buyer_panics() {
 }
 
 #[test]
-#[should_panic(expected = "not owner or governance admin")]
+#[should_panic(expected = "Error(Contract, #305)")]
 fn test_non_admin_remove_whitelisted_buyer_panics() {
     let t = setup();
     t.ctrl
@@ -1110,7 +1110,7 @@ fn test_remove_whitelisted_buyer_blocks_next_purchase() {
 }
 
 #[test]
-#[should_panic(expected = "buyer not whitelisted")]
+#[should_panic(expected = "Error(Contract, #306)")]
 fn test_removed_buyer_cannot_purchase() {
     let t = setup();
     let traveler = Address::generate(&t.env);

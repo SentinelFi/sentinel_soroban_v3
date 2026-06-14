@@ -190,7 +190,7 @@ fn traveler_with_multiple_routes() {
 }
 
 #[test]
-#[should_panic(expected = "already a buyer")]
+#[should_panic(expected = "Error(Contract, #411)")]
 fn same_traveler_double_buy_same_flight_panics() {
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);

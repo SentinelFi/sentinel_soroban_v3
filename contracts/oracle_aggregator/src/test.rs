@@ -54,7 +54,7 @@ fn test_set_oracle_updates_address() {
 }
 
 #[test]
-#[should_panic(expected = "controller already set")]
+#[should_panic(expected = "Error(Contract, #601)")]
 fn test_set_controller_twice_fails() {
     let (env, client, _owner, _oracle, _controller) = setup();
     let new_controller = Address::generate(&env);
@@ -95,7 +95,7 @@ fn test_unauthorized_set_oracle() {
 }
 
 #[test]
-#[should_panic(expected = "not authorized oracle")]
+#[should_panic(expected = "Error(Contract, #604)")]
 fn test_unauthorized_oracle_write() {
     let (env, client, _owner, _oracle, controller) = setup();
     let fid = flight_id(&env);
@@ -107,7 +107,7 @@ fn test_unauthorized_oracle_write() {
 }
 
 #[test]
-#[should_panic(expected = "not authorized controller")]
+#[should_panic(expected = "Error(Contract, #605)")]
 fn test_unauthorized_controller_write() {
     let (env, client, _owner, oracle, _controller) = setup();
     let fid = flight_id(&env);
@@ -214,7 +214,7 @@ fn test_full_lifecycle_cancelled() {
 // --- Invalid transition tests ---
 
 #[test]
-#[should_panic(expected = "invalid transition")]
+#[should_panic(expected = "Error(Contract, #602)")]
 fn test_invalid_transition_not_initiated_to_landed() {
     let (env, client, _owner, oracle, controller) = setup();
     let fid = flight_id(&env);
@@ -225,7 +225,7 @@ fn test_invalid_transition_not_initiated_to_landed() {
 }
 
 #[test]
-#[should_panic(expected = "invalid transition")]
+#[should_panic(expected = "Error(Contract, #602)")]
 fn test_invalid_transition_active_to_settled() {
     let (env, client, _owner, oracle, controller) = setup();
     let fid = flight_id(&env);
@@ -237,7 +237,7 @@ fn test_invalid_transition_active_to_settled() {
 }
 
 #[test]
-#[should_panic(expected = "invalid transition")]
+#[should_panic(expected = "Error(Contract, #602)")]
 fn test_invalid_transition_landed_to_settled() {
     let (env, client, _owner, oracle, controller) = setup();
     let fid = flight_id(&env);
@@ -282,7 +282,7 @@ fn test_not_initiated_to_cancelled_short_notice() {
 }
 
 #[test]
-#[should_panic(expected = "invalid transition")]
+#[should_panic(expected = "Error(Contract, #602)")]
 fn test_invalid_transition_landed_to_settled_cancelled() {
     let (env, client, _owner, oracle, controller) = setup();
     let fid = flight_id(&env);
@@ -300,7 +300,7 @@ fn test_invalid_transition_landed_to_settled_cancelled() {
 }
 
 #[test]
-#[should_panic(expected = "invalid settlement status")]
+#[should_panic(expected = "Error(Contract, #603)")]
 fn test_set_to_be_settled_with_non_settlement_status() {
     let (env, client, _owner, oracle, controller) = setup();
     let fid = flight_id(&env);

@@ -10,7 +10,7 @@ use soroban_sdk::{
 // =========================================================================
 
 #[test]
-#[should_panic(expected = "insufficient vault capital")]
+#[should_panic(expected = "Error(Contract, #312)")]
 fn solvency_gate_blocks_undercollateralized_purchase() {
     // Use a fresh env with NO underwriter capital seeded.
     let env = Env::default();
@@ -102,7 +102,7 @@ fn solvency_gate_with_ratio_150() {
 }
 
 #[test]
-#[should_panic(expected = "departure too soon")]
+#[should_panic(expected = "Error(Contract, #309)")]
 fn lead_time_gate_blocks_short_notice() {
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);

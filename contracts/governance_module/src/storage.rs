@@ -1,4 +1,6 @@
-use soroban_sdk::{contracttype, Address, Env, Symbol};
+use soroban_sdk::{contracttype, panic_with_error, Address, Env, Symbol};
+
+use crate::Error;
 
 // Cross-contract types live in the shared `sentinel_types` crate so the
 // governance contract and the controller's mirror reference the same XDR
@@ -96,14 +98,22 @@ pub(crate) fn resolve_terms(terms: &RouteTerms, defaults: (i128, i128, u32)) -> 
 // premium > 0, payoff > premium, delay_hours > 0. Called at write time after
 // defaults are folded in, so partial overrides cannot leave a route with a
 // non-paying or guaranteed-payout configuration.
-pub(crate) fn assert_terms_valid(premium: i128, payoff: i128, delay_hours: u32) {
-    assert!(premium > 0, "premium must be positive");
-    assert!(payoff > 0, "payoff must be positive");
-    assert!(payoff > premium, "payoff must exceed premium");
-    assert!(delay_hours > 0, "delay_hours must be positive");
+pub(crate) fn assert_terms_valid(e: &Env, premium: i128, payoff: i128, delay_hours: u32) {
+    if premium <= 0 {
+        panic_with_error!(e, Error::PremiumMustBePositive);
+    }
+    if payoff <= 0 {
+        panic_with_error!(e, Error::PayoffMustBePositive);
+    }
+    if payoff <= premium {
+        panic_with_error!(e, Error::PayoffMustExceedPremium);
+    }
+    if delay_hours == 0 {
+        panic_with_error!(e, Error::DelayHoursMustBePositive);
+    }
 }
 
 pub(crate) fn assert_route_terms_valid(e: &Env, terms: &RouteTerms) {
     let resolved = resolve_terms(terms, read_defaults(e));
-    assert_terms_valid(resolved.premium, resolved.payoff, resolved.delay_hours);
+    assert_terms_valid(e, resolved.premium, resolved.payoff, resolved.delay_hours);
 }

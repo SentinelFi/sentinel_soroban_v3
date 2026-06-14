@@ -1,4 +1,4 @@
-use soroban_sdk::{contractimpl, token, Address, Env, Symbol};
+use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, Symbol};
 use stellar_macros::when_not_paused;
 
 use crate::auth::extend_instance_ttl;
@@ -10,7 +10,7 @@ use crate::storage::{
     append_traveler_flight, read_buyer_whitelisted, read_whitelist_enabled,
     touch_buyer_whitelisted, CtrlKey, MAX_BOOK_AHEAD_SECS,
 };
-use crate::{Controller, ControllerArgs, ControllerClient};
+use crate::{Controller, ControllerArgs, ControllerClient, Error};
 
 #[contractimpl]
 impl Controller {
@@ -30,10 +30,9 @@ impl Controller {
         //    has explicitly added via add_whitelisted_buyer pass. One Instance
         //    read on the hot path when off, plus a Persistent read when on.
         if read_whitelist_enabled(e) {
-            assert!(
-                read_buyer_whitelisted(e, &traveler),
-                "buyer not whitelisted",
-            );
+            if !read_buyer_whitelisted(e, &traveler) {
+                panic_with_error!(e, Error::BuyerNotWhitelisted);
+            }
             // Audit VF-10: keep an active buyer's approval from aging out.
             touch_buyer_whitelisted(e, &traveler);
         }
@@ -53,15 +52,17 @@ impl Controller {
         let gov = GovClient::new(e, &gov_addr);
         let terms = match gov.route_status(&flight_id, &origin, &dest) {
             RouteStatus::Active(t) => t,
-            RouteStatus::Disabled => panic!("route is disabled"),
-            RouteStatus::Unknown => panic!("route not whitelisted"),
+            RouteStatus::Disabled => panic_with_error!(e, Error::RouteDisabled),
+            RouteStatus::Unknown => panic_with_error!(e, Error::RouteNotWhitelisted),
         };
 
         // 3. Enforce minimum lead time.
         let now = e.ledger().timestamp();
         let min_lead: u64 = e.storage().instance().get(&CtrlKey::MinLeadTime).unwrap();
         let earliest_allowed = now.checked_add(min_lead).expect("addition overflow");
-        assert!(date > earliest_allowed, "departure too soon");
+        if date <= earliest_allowed {
+            panic_with_error!(e, Error::DepartureTooSoon);
+        }
 
         // 3b. Audit ASF-01: enforce a maximum booking horizon so the policy
         //     lifecycle (departure + claim window) provably fits inside the
@@ -71,7 +72,9 @@ impl Controller {
         let latest_allowed = now
             .checked_add(MAX_BOOK_AHEAD_SECS)
             .expect("addition overflow");
-        assert!(date <= latest_allowed, "departure too far in future");
+        if date > latest_allowed {
+            panic_with_error!(e, Error::DepartureTooFarInFuture);
+        }
 
         // 3c. Audit V12-CF-01: reject purchases once the oracle has already
         //     observed an outcome for this flight. `oracle.register_flight` is
@@ -84,13 +87,12 @@ impl Controller {
         //     are open for purchase.
         let oracle = OracleClient::new(e, &oracle_addr);
         let oracle_status = oracle.get_flight_data(&flight_id, &date).status;
-        assert!(
-            matches!(
-                oracle_status,
-                FlightStatus::NotInitiated | FlightStatus::Active
-            ),
-            "flight no longer open for purchase",
-        );
+        if !matches!(
+            oracle_status,
+            FlightStatus::NotInitiated | FlightStatus::Active
+        ) {
+            panic_with_error!(e, Error::FlightNotOpenForPurchase);
+        }
 
         // 4. Register flight on the pool + oracle. Both calls are idempotent
         //    (audit M-05): no precheck needed, no revert if a parallel buyer
@@ -116,7 +118,9 @@ impl Controller {
             .expect("multiplication overflow")
             .checked_div(100)
             .expect("division by zero");
-        assert!(free_capital >= required, "insufficient vault capital");
+        if free_capital < required {
+            panic_with_error!(e, Error::InsufficientVaultCapital);
+        }
 
         // 6. Transfer premium directly from traveler to FlightPoolManager.
         //    Soroban auth propagates: the traveler signed buy_insurance, so

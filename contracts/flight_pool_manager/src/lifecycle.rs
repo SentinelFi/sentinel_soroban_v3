@@ -1,11 +1,11 @@
-use soroban_sdk::{contractimpl, Address, Env, Symbol, Vec};
+use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol, Vec};
 use stellar_macros::when_not_paused;
 
 use crate::auth::require_controller;
 use crate::events::{BuyerAdded, FlightRegistered};
 use crate::storage::{extend_flight_ttl_to, PoolKey, BUYER_TTL_LEDGERS};
 use crate::{
-    FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient,
+    Error, FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient,
     SettlementStatus,
 };
 
@@ -27,27 +27,33 @@ impl FlightPoolManager {
         delay_hours: u32,
     ) {
         require_controller(e, &controller);
-        assert!(premium > 0, "premium must be positive");
-        assert!(payoff > 0, "payoff must be positive");
+        if premium <= 0 {
+            panic_with_error!(e, Error::PremiumNotPositive);
+        }
+        if payoff <= 0 {
+            panic_with_error!(e, Error::PayoffNotPositive);
+        }
         // Audit V12-CF-06: defense in depth. Governance resolves partially-
         // defaulted route terms against MUTABLE defaults, and a later
         // set_defaults can make a route resolve to payoff <= premium without
         // revalidation. Settlement computes `payoff - premium`, which would
         // underflow and brick the flight. Reject such terms here so the bad
         // config can never be stored (the purchase reverts instead).
-        assert!(payoff > premium, "payoff must exceed premium");
+        if payoff <= premium {
+            panic_with_error!(e, Error::PayoffNotAbovePremium);
+        }
 
         let key = PoolKey::FlightConfig(flight_id.clone(), date);
         if let Some(existing) = e.storage().persistent().get::<_, FlightConfig>(&key) {
             // Terms must match — protects against admin route updates between
             // a buyer's tx submission and inclusion changing locked terms
             // under their feet.
-            assert!(
-                existing.premium == premium
-                    && existing.payoff == payoff
-                    && existing.delay_hours == delay_hours,
-                "flight already registered with different terms",
-            );
+            if !(existing.premium == premium
+                && existing.payoff == payoff
+                && existing.delay_hours == delay_hours)
+            {
+                panic_with_error!(e, Error::FlightTermsMismatch);
+            }
             // Audit V12-CF-03: keep the config alive through the flight date
             // (+buffer), not just a flat ~31 days — a flight booked far ahead
             // could otherwise archive before settlement.
@@ -102,11 +108,15 @@ impl FlightPoolManager {
             .persistent()
             .get(&cfg_key)
             .expect("flight not registered");
-        assert!(cfg.status == SettlementStatus::Active, "flight not active");
+        if !(cfg.status == SettlementStatus::Active) {
+            panic_with_error!(e, Error::FlightNotActive);
+        }
 
         let buyer_key = PoolKey::Buyer(flight_id.clone(), date, buyer.clone());
         let existing: Option<bool> = e.storage().persistent().get(&buyer_key);
-        assert!(existing.is_none(), "already a buyer");
+        if existing.is_some() {
+            panic_with_error!(e, Error::AlreadyBuyer);
+        }
 
         e.storage().persistent().set(&buyer_key, &true);
         e.storage()

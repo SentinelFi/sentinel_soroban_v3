@@ -1,7 +1,7 @@
 // Controller-only capital management: lock/unlock collateral, record premium
 // income, send payouts, drain the withdrawal queue into ClaimableBalance.
 
-use soroban_sdk::{contractimpl, token, Address, Env, Vec};
+use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, Vec};
 use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
@@ -9,18 +9,22 @@ use stellar_tokens::vault::Vault;
 use crate::auth::require_controller;
 use crate::events::Credited;
 use crate::storage::{VaultKey, CLAIMABLE_TTL_LEDGERS, MAX_QUEUE_BATCH};
-use crate::{RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
+use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
 #[contractimpl]
 impl RiskVault {
     #[when_not_paused]
     pub fn increase_locked(e: &Env, controller: Address, amount: i128) {
         require_controller(e, &controller);
-        assert!(amount > 0, "amount must be positive");
+        if amount <= 0 {
+            panic_with_error!(e, Error::AmountMustBePositive);
+        }
         let locked = Self::get_locked_capital(e);
         let tma = Self::get_total_managed_assets(e);
         let new_locked = locked.checked_add(amount).expect("addition overflow");
-        assert!(new_locked <= tma, "would exceed total managed assets");
+        if new_locked > tma {
+            panic_with_error!(e, Error::WouldExceedTotalManagedAssets);
+        }
         e.storage()
             .instance()
             .set(&VaultKey::LockedCapital, &new_locked);
@@ -29,9 +33,13 @@ impl RiskVault {
     #[when_not_paused]
     pub fn decrease_locked(e: &Env, controller: Address, amount: i128) {
         require_controller(e, &controller);
-        assert!(amount > 0, "amount must be positive");
+        if amount <= 0 {
+            panic_with_error!(e, Error::AmountMustBePositive);
+        }
         let locked = Self::get_locked_capital(e);
-        assert!(amount <= locked, "would go negative");
+        if amount > locked {
+            panic_with_error!(e, Error::WouldGoNegative);
+        }
         e.storage().instance().set(
             &VaultKey::LockedCapital,
             &locked.checked_sub(amount).expect("subtraction underflow"),
@@ -41,7 +49,9 @@ impl RiskVault {
     #[when_not_paused]
     pub fn record_premium_income(e: &Env, controller: Address, amount: i128) {
         require_controller(e, &controller);
-        assert!(amount > 0, "amount must be positive");
+        if amount <= 0 {
+            panic_with_error!(e, Error::AmountMustBePositive);
+        }
         let old_tma = Self::get_total_managed_assets(e);
         let new_tma = old_tma.checked_add(amount).expect("addition overflow");
 
@@ -53,7 +63,9 @@ impl RiskVault {
         // time), so the check is a strict floor on managed assets.
         let usdc = token::Client::new(e, &Vault::query_asset(e));
         let balance = usdc.balance(&e.current_contract_address());
-        assert!(balance >= new_tma, "premium not received");
+        if balance < new_tma {
+            panic_with_error!(e, Error::PremiumNotReceived);
+        }
 
         e.storage()
             .instance()
@@ -63,9 +75,13 @@ impl RiskVault {
     #[when_not_paused]
     pub fn send_payout(e: &Env, controller: Address, to: Address, amount: i128) {
         require_controller(e, &controller);
-        assert!(amount > 0, "amount must be positive");
+        if amount <= 0 {
+            panic_with_error!(e, Error::AmountMustBePositive);
+        }
         let tma = Self::get_total_managed_assets(e);
-        assert!(amount <= tma, "insufficient managed assets");
+        if amount > tma {
+            panic_with_error!(e, Error::InsufficientManagedAssets);
+        }
 
         // CEI: decrement TMA before the external transfer.
         e.storage().instance().set(

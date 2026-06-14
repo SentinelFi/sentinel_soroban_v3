@@ -1,10 +1,13 @@
 #![no_std]
 
 mod auth;
+mod error;
 mod events;
 mod storage;
 
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, panic_with_error, Address, BytesN, Env, Symbol};
+
+pub use error::Error;
 use stellar_access::ownable::{self as ownable, Ownable};
 use stellar_contract_utils::pausable::{self as pausable, Pausable};
 use stellar_macros::{only_owner, when_not_paused};
@@ -33,7 +36,7 @@ impl GovernanceModule {
         default_payoff: i128,
         default_delay_hours: u32,
     ) {
-        assert_terms_valid(default_premium, default_payoff, default_delay_hours);
+        assert_terms_valid(e, default_premium, default_payoff, default_delay_hours);
         ownable::set_owner(e, &owner);
         e.storage()
             .instance()
@@ -51,7 +54,7 @@ impl GovernanceModule {
     #[only_owner]
     #[when_not_paused]
     pub fn set_defaults(e: &Env, premium: i128, payoff: i128, delay_hours: u32) {
-        assert_terms_valid(premium, payoff, delay_hours);
+        assert_terms_valid(e, premium, payoff, delay_hours);
         e.storage()
             .instance()
             .set(&DataKey::DefaultPremium, &premium);
@@ -116,10 +119,9 @@ impl GovernanceModule {
         if let Some((existing_origin, existing_dest)) =
             e.storage().persistent().get::<_, (Symbol, Symbol)>(&fr_key)
         {
-            assert!(
-                existing_origin == origin && existing_dest == dest,
-                "flight_id already mapped to a different route",
-            );
+            if !(existing_origin == origin && existing_dest == dest) {
+                panic_with_error!(e, Error::FlightIdAlreadyMapped);
+            }
         }
 
         let key = DataKey::Route(flight_id.clone(), origin.clone(), dest.clone());
@@ -165,7 +167,9 @@ impl GovernanceModule {
             .persistent()
             .get(&key)
             .expect("route not whitelisted");
-        assert!(terms.approved, "route already disabled");
+        if !terms.approved {
+            panic_with_error!(e, Error::RouteAlreadyDisabled);
+        }
         terms.approved = false;
         e.storage().persistent().set(&key, &terms);
         extend_route_ttl(e, &key);
@@ -188,7 +192,9 @@ impl GovernanceModule {
             .persistent()
             .get(&key)
             .expect("route not whitelisted");
-        assert!(!terms.approved, "route already active");
+        if terms.approved {
+            panic_with_error!(e, Error::RouteAlreadyActive);
+        }
         terms.approved = true;
         e.storage().persistent().set(&key, &terms);
         extend_route_ttl(e, &key);
@@ -214,7 +220,9 @@ impl GovernanceModule {
             .persistent()
             .get(&key)
             .expect("route not whitelisted");
-        assert!(!terms.approved, "route must be disabled before removal");
+        if terms.approved {
+            panic_with_error!(e, Error::RouteMustBeDisabledBeforeRemoval);
+        }
         e.storage().persistent().remove(&key);
         // Audit V12-CF-05: free the flight_id so it can be re-mapped later.
         e.storage()

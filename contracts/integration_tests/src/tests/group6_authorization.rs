@@ -13,7 +13,7 @@ use soroban_sdk::{symbol_short, testutils::Address as _, Address, Env};
 // =========================================================================
 
 #[test]
-#[should_panic(expected = "not authorized keeper")]
+#[should_panic(expected = "Error(Contract, #304)")]
 fn non_keeper_classify_panics() {
     let t = TestEnv::new();
     let stranger = Address::generate(&t.env);
@@ -21,7 +21,7 @@ fn non_keeper_classify_panics() {
 }
 
 #[test]
-#[should_panic(expected = "not authorized keeper")]
+#[should_panic(expected = "Error(Contract, #304)")]
 fn non_keeper_execute_panics() {
     let t = TestEnv::new();
     let stranger = Address::generate(&t.env);
@@ -33,7 +33,7 @@ fn non_keeper_execute_panics() {
 // =========================================================================
 
 #[test]
-#[should_panic(expected = "not authorized oracle")]
+#[should_panic(expected = "Error(Contract, #604)")]
 fn non_oracle_set_estimated_panics() {
     let t = TestEnv::new();
     // Flight must be registered first so the call path reaches require_oracle.
@@ -50,7 +50,7 @@ fn non_oracle_set_estimated_panics() {
 }
 
 #[test]
-#[should_panic(expected = "not authorized oracle")]
+#[should_panic(expected = "Error(Contract, #604)")]
 fn non_oracle_set_landed_panics() {
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);
@@ -151,7 +151,7 @@ fn non_owner_set_defaults_panics() {
 // =========================================================================
 
 #[test]
-#[should_panic(expected = "not controller")]
+#[should_panic(expected = "Error(Contract, #401)")]
 fn non_controller_register_flight_on_pool_panics() {
     let t = TestEnv::new();
     let stranger = Address::generate(&t.env);
@@ -166,7 +166,7 @@ fn non_controller_register_flight_on_pool_panics() {
 }
 
 #[test]
-#[should_panic(expected = "not controller")]
+#[should_panic(expected = "Error(Contract, #702)")]
 fn non_controller_increase_locked_on_vault_panics() {
     let t = TestEnv::new();
     let stranger = Address::generate(&t.env);
@@ -178,7 +178,7 @@ fn non_controller_increase_locked_on_vault_panics() {
 // =========================================================================
 
 #[test]
-#[should_panic(expected = "controller already set")]
+#[should_panic(expected = "Error(Contract, #402)")]
 fn pool_set_controller_one_time_write_panics_on_second_call() {
     let t = TestEnv::new();
     let new_ctrl = Address::generate(&t.env);
@@ -186,7 +186,7 @@ fn pool_set_controller_one_time_write_panics_on_second_call() {
 }
 
 #[test]
-#[should_panic(expected = "controller already set")]
+#[should_panic(expected = "Error(Contract, #601)")]
 fn oracle_set_controller_one_time_write_panics_on_second_call() {
     let t = TestEnv::new();
     let new_ctrl = Address::generate(&t.env);

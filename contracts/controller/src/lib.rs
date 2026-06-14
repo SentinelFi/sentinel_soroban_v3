@@ -2,6 +2,7 @@
 
 mod admin;
 mod auth;
+mod error;
 mod events;
 mod interfaces;
 mod purchase;
@@ -10,6 +11,7 @@ mod settle;
 mod storage;
 mod whitelist;
 
+pub use error::Error;
 use soroban_sdk::{contract, contractimpl, Address, Env};
 use stellar_access::ownable::{self as ownable, Ownable};
 use stellar_contract_utils::pausable::{self as pausable, Pausable};
