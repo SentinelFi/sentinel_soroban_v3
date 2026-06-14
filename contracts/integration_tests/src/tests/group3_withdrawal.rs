@@ -26,7 +26,7 @@ fn deposit_then_immediate_redeem_within_free_capital() {
 }
 
 #[test]
-#[should_panic(expected = "exceeds free capital")]
+#[should_panic(expected = "Error(Contract, #715)")]
 fn redeem_blocked_when_capital_locked() {
     let t = TestEnv::new();
     // Lock all capital by buying many policies until free is below the

@@ -2,13 +2,13 @@
 // `Vault` trait with `TotalManagedAssets` tracking so the controller can
 // reason about free vs. locked capital.
 
-use soroban_sdk::{contractimpl, Address, Env};
+use soroban_sdk::{contractimpl, panic_with_error, Address, Env};
 use stellar_contract_utils::pausable::paused;
 use stellar_macros::when_not_paused;
 use stellar_tokens::vault::{FungibleVault, Vault};
 
 use crate::storage::VaultKey;
-use crate::{RiskVault, RiskVaultArgs, RiskVaultClient};
+use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient};
 
 #[contractimpl]
 impl FungibleVault for RiskVault {
@@ -35,11 +35,12 @@ impl FungibleVault for RiskVault {
         // exit path — block direct exits so a latecomer can't consume free capital
         // ahead of LPs already waiting in FIFO order. When the queue is empty this
         // fast path stays open.
-        assert!(
-            Self::get_withdrawal_queue(e).is_empty(),
-            "withdrawal queue active; use request_withdrawal",
-        );
-        assert!(assets <= Self::get_free_capital(e), "exceeds free capital");
+        if !Self::get_withdrawal_queue(e).is_empty() {
+            panic_with_error!(e, Error::WithdrawalQueueActive);
+        }
+        if assets > Self::get_free_capital(e) {
+            panic_with_error!(e, Error::ExceedsFreeCapital);
+        }
         let shares = Vault::withdraw(e, assets, receiver, owner, operator);
         let tma = Self::get_total_managed_assets(e);
         e.storage().instance().set(
@@ -64,12 +65,13 @@ impl FungibleVault for RiskVault {
     fn redeem(e: &Env, shares: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
         // Audit ASF-02: see `withdraw` — direct redeem defers to the queue while
         // any request is pending so it can't jump the FIFO line.
-        assert!(
-            Self::get_withdrawal_queue(e).is_empty(),
-            "withdrawal queue active; use request_withdrawal",
-        );
+        if !Self::get_withdrawal_queue(e).is_empty() {
+            panic_with_error!(e, Error::WithdrawalQueueActive);
+        }
         let assets = Vault::preview_redeem(e, shares);
-        assert!(assets <= Self::get_free_capital(e), "exceeds free capital");
+        if assets > Self::get_free_capital(e) {
+            panic_with_error!(e, Error::ExceedsFreeCapital);
+        }
         let actual_assets = Vault::redeem(e, shares, receiver, owner, operator);
         let tma = Self::get_total_managed_assets(e);
         e.storage().instance().set(

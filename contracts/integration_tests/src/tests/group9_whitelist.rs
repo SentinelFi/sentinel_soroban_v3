@@ -40,7 +40,7 @@ fn whitelist_off_allows_any_buyer() {
 // =========================================================================
 
 #[test]
-#[should_panic(expected = "buyer not whitelisted")]
+#[should_panic(expected = "Error(Contract, #306)")]
 fn whitelist_on_blocks_non_whitelisted() {
     let t = TestEnv::new();
     t.ctrl.set_whitelist_enabled(&true);
@@ -82,7 +82,7 @@ fn gov_admin_can_manage_whitelist() {
 }
 
 #[test]
-#[should_panic(expected = "not owner or governance admin")]
+#[should_panic(expected = "Error(Contract, #305)")]
 fn stranger_cannot_add_whitelisted_buyer() {
     let t = TestEnv::new();
     let stranger = Address::generate(&t.env);
@@ -91,7 +91,7 @@ fn stranger_cannot_add_whitelisted_buyer() {
 }
 
 #[test]
-#[should_panic(expected = "not owner or governance admin")]
+#[should_panic(expected = "Error(Contract, #305)")]
 fn removed_gov_admin_loses_whitelist_authority() {
     // Admin loses authority the moment governance.remove_admin lands.
     let t = TestEnv::new();

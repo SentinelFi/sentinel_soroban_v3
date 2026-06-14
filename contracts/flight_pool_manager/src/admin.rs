@@ -1,11 +1,11 @@
-use soroban_sdk::{contractimpl, token, Address, BytesN, Env};
+use soroban_sdk::{contractimpl, panic_with_error, token, Address, BytesN, Env};
 use stellar_access::ownable::{self as ownable};
 use stellar_macros::{only_owner, when_not_paused};
 
 use crate::auth::extend_instance_ttl;
 use crate::events::RecoveredWithdrawn;
 use crate::storage::PoolKey;
-use crate::{FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient};
+use crate::{Error, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient};
 
 #[contractimpl]
 impl FlightPoolManager {
@@ -21,10 +21,9 @@ impl FlightPoolManager {
     /// Set the authorized controller. One-time write — fails if already set.
     #[only_owner]
     pub fn set_controller(e: &Env, controller: Address) {
-        assert!(
-            !e.storage().instance().has(&PoolKey::Controller),
-            "controller already set"
-        );
+        if e.storage().instance().has(&PoolKey::Controller) {
+            panic_with_error!(e, Error::ControllerAlreadySet);
+        }
         e.storage()
             .instance()
             .set(&PoolKey::Controller, &controller);
@@ -36,13 +35,17 @@ impl FlightPoolManager {
     #[only_owner]
     #[when_not_paused]
     pub fn withdraw_recovered(e: &Env, amount: i128) {
-        assert!(amount > 0, "amount must be positive");
+        if amount <= 0 {
+            panic_with_error!(e, Error::AmountNotPositive);
+        }
         let recovered: i128 = e
             .storage()
             .instance()
             .get(&PoolKey::RecoveredBalance)
             .unwrap_or(0);
-        assert!(amount <= recovered, "exceeds recovered balance");
+        if amount > recovered {
+            panic_with_error!(e, Error::ExceedsRecoveredBalance);
+        }
 
         // CEI: decrement balance before the external transfer.
         e.storage().instance().set(

@@ -1,0 +1,22 @@
+use soroban_sdk::contracterror;
+
+#[contracterror]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[repr(u32)]
+pub enum Error {
+    ControllerAlreadySet = 701,
+    NotController = 702,
+    AmountMustBePositive = 703,
+    WouldExceedTotalManagedAssets = 704,
+    WouldGoNegative = 705,
+    PremiumNotReceived = 706,
+    InsufficientManagedAssets = 707,
+    SharesMustBePositive = 708,
+    SharesRedeemToZeroAssets = 709,
+    NotYourRequest = 710,
+    NothingToCollect = 711,
+    RecreditWouldUnderpay = 712,
+    AmountExceedsClaimableBalance = 713,
+    WithdrawalQueueActive = 714,
+    ExceedsFreeCapital = 715,
+}

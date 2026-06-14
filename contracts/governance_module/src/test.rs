@@ -115,7 +115,7 @@ fn test_set_defaults_unauthorized() {
 }
 
 #[test]
-#[should_panic(expected = "premium must be positive")]
+#[should_panic(expected = "Error(Contract, #501)")]
 fn test_constructor_rejects_zero_premium() {
     let env = Env::default();
     env.mock_all_auths();
@@ -127,7 +127,7 @@ fn test_constructor_rejects_zero_premium() {
 }
 
 #[test]
-#[should_panic(expected = "payoff must exceed premium")]
+#[should_panic(expected = "Error(Contract, #503)")]
 fn test_constructor_rejects_payoff_le_premium() {
     let env = Env::default();
     env.mock_all_auths();
@@ -144,7 +144,7 @@ fn test_constructor_rejects_payoff_le_premium() {
 }
 
 #[test]
-#[should_panic(expected = "delay_hours must be positive")]
+#[should_panic(expected = "Error(Contract, #504)")]
 fn test_constructor_rejects_zero_delay_hours() {
     let env = Env::default();
     env.mock_all_auths();
@@ -156,21 +156,21 @@ fn test_constructor_rejects_zero_delay_hours() {
 }
 
 #[test]
-#[should_panic(expected = "delay_hours must be positive")]
+#[should_panic(expected = "Error(Contract, #504)")]
 fn test_set_defaults_rejects_zero_delay_hours() {
     let (_env, client, _owner, _addr) = setup();
     client.set_defaults(&DEFAULT_PREMIUM, &DEFAULT_PAYOFF, &0u32);
 }
 
 #[test]
-#[should_panic(expected = "payoff must exceed premium")]
+#[should_panic(expected = "Error(Contract, #503)")]
 fn test_set_defaults_rejects_payoff_le_premium() {
     let (_env, client, _owner, _addr) = setup();
     client.set_defaults(&DEFAULT_PAYOFF, &DEFAULT_PREMIUM, &DEFAULT_DELAY_HOURS);
 }
 
 #[test]
-#[should_panic(expected = "payoff must exceed premium")]
+#[should_panic(expected = "Error(Contract, #503)")]
 fn test_whitelist_route_rejects_payoff_le_premium() {
     let (_env, client, owner, _addr) = setup();
     let (flight_id, origin, dest) = route_ids();
@@ -186,7 +186,7 @@ fn test_whitelist_route_rejects_payoff_le_premium() {
 }
 
 #[test]
-#[should_panic(expected = "delay_hours must be positive")]
+#[should_panic(expected = "Error(Contract, #504)")]
 fn test_whitelist_route_rejects_zero_delay_hours() {
     let (_env, client, owner, _addr) = setup();
     let (flight_id, origin, dest) = route_ids();
@@ -202,7 +202,7 @@ fn test_whitelist_route_rejects_zero_delay_hours() {
 }
 
 #[test]
-#[should_panic(expected = "payoff must exceed premium")]
+#[should_panic(expected = "Error(Contract, #503)")]
 fn test_update_route_terms_rejects_invalid_resolved() {
     let (_env, client, owner, _addr) = setup();
     let (flight_id, origin, dest) = route_ids();
@@ -344,7 +344,7 @@ fn test_route_status_unknown_when_not_whitelisted() {
 }
 
 #[test]
-#[should_panic(expected = "not owner or admin")]
+#[should_panic(expected = "Error(Contract, #509)")]
 fn test_unauthorized_whitelist() {
     let (env, client, _owner, _addr) = setup();
     let stranger = Address::generate(&env);
@@ -389,7 +389,7 @@ fn test_disable_route_status_disabled_event_fires() {
 }
 
 #[test]
-#[should_panic(expected = "route already disabled")]
+#[should_panic(expected = "Error(Contract, #506)")]
 fn test_disable_already_disabled_panics() {
     let (_env, client, owner, _addr) = setup();
     let (flight_id, origin, dest) = route_ids();
@@ -443,7 +443,7 @@ fn test_enable_after_disable_returns_to_active() {
 }
 
 #[test]
-#[should_panic(expected = "route already active")]
+#[should_panic(expected = "Error(Contract, #507)")]
 fn test_enable_already_active_panics() {
     let (_env, client, owner, _addr) = setup();
     let (flight_id, origin, dest) = route_ids();
@@ -498,7 +498,7 @@ fn test_remove_route_after_disable() {
 }
 
 #[test]
-#[should_panic(expected = "route must be disabled before removal")]
+#[should_panic(expected = "Error(Contract, #508)")]
 fn test_remove_active_route_panics() {
     let (_env, client, owner, _addr) = setup();
     let (flight_id, origin, dest) = route_ids();
@@ -925,7 +925,7 @@ fn test_multiple_routes_independent() {
 // =========================================================================
 
 #[test]
-#[should_panic(expected = "flight_id already mapped to a different route")]
+#[should_panic(expected = "Error(Contract, #505)")]
 fn test_whitelist_route_rejects_conflicting_flight_id() {
     // Downstream pool/oracle state keys on (flight_id, date) only, so a flight_id
     // must map to a single route. A second route with the same flight_id but a

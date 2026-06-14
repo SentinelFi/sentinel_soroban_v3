@@ -1,11 +1,11 @@
-use soroban_sdk::{contractimpl, token, Address, Env, IntoVal, Symbol};
+use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, IntoVal, Symbol};
 use stellar_macros::when_not_paused;
 
 use crate::auth::require_controller;
 use crate::events::FlightSettled;
 use crate::storage::{extend_flight_ttl_to, prune_active_list, PoolKey};
 use crate::{
-    FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient,
+    Error, FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient,
     SettlementStatus,
 };
 
@@ -22,7 +22,9 @@ impl FlightPoolManager {
             .persistent()
             .get(&cfg_key)
             .expect("flight not registered");
-        assert!(cfg.status == SettlementStatus::Active, "flight not active");
+        if !(cfg.status == SettlementStatus::Active) {
+            panic_with_error!(e, Error::FlightNotActive);
+        }
 
         cfg.status = SettlementStatus::SettledOnTime;
         e.storage().persistent().set(&cfg_key, &cfg);
@@ -108,11 +110,12 @@ fn settle_with_claim_window(
         .persistent()
         .get(&cfg_key)
         .expect("flight not registered");
-    assert!(cfg.status == SettlementStatus::Active, "flight not active");
-    assert!(
-        claim_expiry > e.ledger().timestamp(),
-        "claim_expiry must be in the future"
-    );
+    if !(cfg.status == SettlementStatus::Active) {
+        panic_with_error!(e, Error::FlightNotActive);
+    }
+    if claim_expiry <= e.ledger().timestamp() {
+        panic_with_error!(e, Error::ClaimExpiryNotInFuture);
+    }
 
     cfg.status = new_status.clone();
     cfg.claim_expiry = claim_expiry;

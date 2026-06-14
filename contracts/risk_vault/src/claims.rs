@@ -1,14 +1,14 @@
 // Underwriter-facing withdrawal lifecycle: request → process → collect, plus
 // owner-driven manual recovery for entries archived past their TTL.
 
-use soroban_sdk::{contractimpl, token, Address, Env, Vec};
+use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, Vec};
 use stellar_macros::{only_owner, when_not_paused};
 use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
 
 use crate::events::{Collected, Recovered};
 use crate::storage::{VaultKey, CLAIMABLE_TTL_LEDGERS};
-use crate::{RecoveryMode, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
+use crate::{Error, RecoveryMode, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
 #[contractimpl]
 impl RiskVault {
@@ -18,14 +18,15 @@ impl RiskVault {
     #[when_not_paused]
     pub fn request_withdrawal(e: &Env, caller: Address, shares: i128) -> u64 {
         caller.require_auth();
-        assert!(shares > 0, "shares must be positive");
+        if shares <= 0 {
+            panic_with_error!(e, Error::SharesMustBePositive);
+        }
         // Audit VF-04: reject dust requests that preview to zero assets. Such a
         // request would otherwise sit at the queue head and block every later
         // request (the drain loop stops at the first zero-preview entry).
-        assert!(
-            Vault::preview_redeem(e, shares) > 0,
-            "shares redeem to zero assets",
-        );
+        if Vault::preview_redeem(e, shares) <= 0 {
+            panic_with_error!(e, Error::SharesRedeemToZeroAssets);
+        }
 
         // Escrow shares: transfer from caller to vault
         Base::update(
@@ -87,7 +88,9 @@ impl RiskVault {
         }
         let idx = found.expect("request_id not found");
         let request = queue.get(idx).unwrap();
-        assert!(request.owner == caller, "not your request");
+        if request.owner != caller {
+            panic_with_error!(e, Error::NotYourRequest);
+        }
 
         // Return escrowed shares to caller
         Base::update(
@@ -109,7 +112,9 @@ impl RiskVault {
 
         let key = VaultKey::ClaimableBalance(caller.clone());
         let claimable: i128 = e.storage().persistent().get(&key).unwrap_or(0);
-        assert!(claimable > 0, "nothing to collect");
+        if claimable <= 0 {
+            panic_with_error!(e, Error::NothingToCollect);
+        }
 
         // CEI: clear the entry before the external transfer.
         e.storage().persistent().remove(&key);
@@ -145,7 +150,9 @@ impl RiskVault {
     ///    layers 1 and 2 fail.
     #[only_owner]
     pub fn recover_uncollected(e: &Env, user: Address, amount: i128, mode: RecoveryMode) {
-        assert!(amount > 0, "amount must be positive");
+        if amount <= 0 {
+            panic_with_error!(e, Error::AmountMustBePositive);
+        }
 
         match mode {
             RecoveryMode::Recredit => {
@@ -156,10 +163,9 @@ impl RiskVault {
                 // can only ever bring it back up to its prior value or
                 // higher, never down.
                 let existing: i128 = e.storage().persistent().get(&key).unwrap_or(0);
-                assert!(
-                    amount >= existing,
-                    "Recredit would underpay (amount < existing claimable)",
-                );
+                if amount < existing {
+                    panic_with_error!(e, Error::RecreditWouldUnderpay);
+                }
                 e.storage().persistent().set(&key, &amount);
                 e.storage().persistent().extend_ttl(
                     &key,
@@ -174,7 +180,9 @@ impl RiskVault {
                 // an existing obligation — it must not exceed it.
                 let key = VaultKey::ClaimableBalance(user.clone());
                 let existing: i128 = e.storage().persistent().get(&key).unwrap_or(0);
-                assert!(amount <= existing, "amount exceeds claimable balance");
+                if amount > existing {
+                    panic_with_error!(e, Error::AmountExceedsClaimableBalance);
+                }
 
                 // CEI: write state before the external transfer.
                 let remaining = existing.checked_sub(amount).expect("subtraction underflow");

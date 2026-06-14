@@ -124,7 +124,7 @@ fn test_constructor_sets_owner_and_addresses() {
 }
 
 #[test]
-#[should_panic(expected = "controller already set")]
+#[should_panic(expected = "Error(Contract, #402)")]
 fn test_set_controller_twice_fails() {
     let t = setup();
     let other = Address::generate(&t.env);
@@ -180,7 +180,7 @@ fn test_register_flight_duplicate_is_idempotent() {
 }
 
 #[test]
-#[should_panic(expected = "flight already registered with different terms")]
+#[should_panic(expected = "Error(Contract, #410)")]
 fn test_register_flight_duplicate_with_diff_terms_panics() {
     let t = setup();
     register(&t);
@@ -196,7 +196,7 @@ fn test_register_flight_duplicate_with_diff_terms_panics() {
 }
 
 #[test]
-#[should_panic(expected = "not controller")]
+#[should_panic(expected = "Error(Contract, #401)")]
 fn test_register_flight_non_controller_fails() {
     let t = setup();
     let attacker = Address::generate(&t.env);
@@ -211,7 +211,7 @@ fn test_register_flight_non_controller_fails() {
 }
 
 #[test]
-#[should_panic(expected = "premium must be positive")]
+#[should_panic(expected = "Error(Contract, #407)")]
 fn test_register_flight_zero_premium_fails() {
     let t = setup();
     t.pool.register_flight(
@@ -225,7 +225,7 @@ fn test_register_flight_zero_premium_fails() {
 }
 
 #[test]
-#[should_panic(expected = "payoff must exceed premium")]
+#[should_panic(expected = "Error(Contract, #409)")]
 fn test_register_flight_payoff_not_above_premium_fails() {
     // Audit V12-CF-06: defense in depth — a route that resolves (against mutable
     // governance defaults) to payoff <= premium must be rejected at registration
@@ -323,7 +323,7 @@ fn test_add_buyer_before_register_fails() {
 }
 
 #[test]
-#[should_panic(expected = "already a buyer")]
+#[should_panic(expected = "Error(Contract, #411)")]
 fn test_add_buyer_duplicate_same_address_fails() {
     let t = setup();
     register(&t);
@@ -333,7 +333,7 @@ fn test_add_buyer_duplicate_same_address_fails() {
 }
 
 #[test]
-#[should_panic(expected = "not controller")]
+#[should_panic(expected = "Error(Contract, #401)")]
 fn test_add_buyer_non_controller_fails() {
     let t = setup();
     register(&t);
@@ -343,7 +343,7 @@ fn test_add_buyer_non_controller_fails() {
 }
 
 #[test]
-#[should_panic(expected = "flight not active")]
+#[should_panic(expected = "Error(Contract, #405)")]
 fn test_add_buyer_after_settlement_fails() {
     let t = setup();
     register(&t);
@@ -395,7 +395,7 @@ fn test_settle_on_time_zero_buyers_no_transfer() {
 }
 
 #[test]
-#[should_panic(expected = "flight not active")]
+#[should_panic(expected = "Error(Contract, #405)")]
 fn test_settle_on_time_twice_fails() {
     let t = setup();
     register(&t);
@@ -406,7 +406,7 @@ fn test_settle_on_time_twice_fails() {
 }
 
 #[test]
-#[should_panic(expected = "not controller")]
+#[should_panic(expected = "Error(Contract, #401)")]
 fn test_settle_on_time_non_controller_fails() {
     let t = setup();
     register(&t);
@@ -446,7 +446,7 @@ fn test_settle_cancelled_success() {
 }
 
 #[test]
-#[should_panic(expected = "flight not active")]
+#[should_panic(expected = "Error(Contract, #405)")]
 fn test_settle_delayed_twice_fails() {
     let t = setup();
     register(&t);
@@ -458,7 +458,7 @@ fn test_settle_delayed_twice_fails() {
 }
 
 #[test]
-#[should_panic(expected = "not controller")]
+#[should_panic(expected = "Error(Contract, #401)")]
 fn test_settle_delayed_non_controller_fails() {
     let t = setup();
     register(&t);
@@ -469,7 +469,7 @@ fn test_settle_delayed_non_controller_fails() {
 }
 
 #[test]
-#[should_panic(expected = "claim_expiry must be in the future")]
+#[should_panic(expected = "Error(Contract, #406)")]
 fn test_settle_delayed_past_expiry_fails() {
     let t = setup();
     register(&t);
@@ -543,7 +543,7 @@ fn test_claim_succeeds_while_paused() {
 }
 
 #[test]
-#[should_panic(expected = "flight not in claimable status")]
+#[should_panic(expected = "Error(Contract, #412)")]
 fn test_claim_before_settlement_fails() {
     let t = setup();
     register(&t);
@@ -552,7 +552,7 @@ fn test_claim_before_settlement_fails() {
 }
 
 #[test]
-#[should_panic(expected = "flight not in claimable status")]
+#[should_panic(expected = "Error(Contract, #412)")]
 fn test_claim_on_on_time_flight_fails() {
     let t = setup();
     register(&t);
@@ -563,7 +563,7 @@ fn test_claim_on_on_time_flight_fails() {
 }
 
 #[test]
-#[should_panic(expected = "claim window closed")]
+#[should_panic(expected = "Error(Contract, #413)")]
 fn test_claim_after_expiry_fails() {
     let t = setup();
     register(&t);
@@ -574,7 +574,7 @@ fn test_claim_after_expiry_fails() {
 }
 
 #[test]
-#[should_panic(expected = "no policy")]
+#[should_panic(expected = "Error(Contract, #414)")]
 fn test_claim_without_policy_fails() {
     let t = setup();
     register(&t);
@@ -585,7 +585,7 @@ fn test_claim_without_policy_fails() {
 }
 
 #[test]
-#[should_panic(expected = "already claimed")]
+#[should_panic(expected = "Error(Contract, #415)")]
 fn test_claim_double_fails() {
     let t = setup();
     register(&t);
@@ -648,7 +648,7 @@ fn test_sweep_expired_double_call_idempotent() {
 }
 
 #[test]
-#[should_panic(expected = "claim window still open")]
+#[should_panic(expected = "Error(Contract, #416)")]
 fn test_sweep_expired_before_expiry_fails() {
     let t = setup();
     register(&t);
@@ -658,7 +658,7 @@ fn test_sweep_expired_before_expiry_fails() {
 }
 
 #[test]
-#[should_panic(expected = "flight not in claimable status")]
+#[should_panic(expected = "Error(Contract, #412)")]
 fn test_sweep_expired_on_unsettled_fails() {
     let t = setup();
     register(&t);
@@ -667,7 +667,7 @@ fn test_sweep_expired_on_unsettled_fails() {
 }
 
 #[test]
-#[should_panic(expected = "flight not in claimable status")]
+#[should_panic(expected = "Error(Contract, #412)")]
 fn test_sweep_expired_on_on_time_fails() {
     let t = setup();
     register(&t);
@@ -703,7 +703,7 @@ fn test_withdraw_recovered_success() {
 }
 
 #[test]
-#[should_panic(expected = "exceeds recovered balance")]
+#[should_panic(expected = "Error(Contract, #404)")]
 fn test_withdraw_recovered_exceeds_balance_fails() {
     let t = setup();
     t.pool.withdraw_recovered(&1);

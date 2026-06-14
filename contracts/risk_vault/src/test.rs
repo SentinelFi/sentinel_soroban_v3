@@ -80,7 +80,7 @@ fn test_locked_capital_gates_withdrawal() {
 }
 
 #[test]
-#[should_panic(expected = "exceeds free capital")]
+#[should_panic(expected = "Error(Contract, #715)")]
 fn test_redeem_exceeds_free_capital() {
     let (_env, client, _owner, controller, depositor) = setup();
 
@@ -110,7 +110,7 @@ fn test_record_premium_income() {
 }
 
 #[test]
-#[should_panic(expected = "premium not received")]
+#[should_panic(expected = "Error(Contract, #706)")]
 fn test_record_premium_income_rejects_when_usdc_not_received() {
     // Regression for M-06: caller-stated amount must be backed by actual USDC.
     let (_env, client, _owner, controller, depositor) = setup();
@@ -135,7 +135,7 @@ fn test_send_payout() {
 }
 
 #[test]
-#[should_panic(expected = "not controller")]
+#[should_panic(expected = "Error(Contract, #702)")]
 fn test_unauthorized_controller_function() {
     let (env, client, _owner, _controller, _depositor) = setup();
     let stranger = Address::generate(&env);
@@ -144,7 +144,7 @@ fn test_unauthorized_controller_function() {
 }
 
 #[test]
-#[should_panic(expected = "controller already set")]
+#[should_panic(expected = "Error(Contract, #701)")]
 fn test_set_controller_twice() {
     let (env, client, _owner, _controller, _depositor) = setup();
     let new_controller = Address::generate(&env);
@@ -216,7 +216,7 @@ fn test_pause_and_unpause_gate_state_mutations() {
 }
 
 #[test]
-#[should_panic(expected = "withdrawal queue active")]
+#[should_panic(expected = "Error(Contract, #714)")]
 fn test_direct_redeem_blocked_while_queue_active() {
     // Audit ASF-02: once a request is queued, direct redeem must defer to the
     // queue so it can't consume free capital ahead of waiting LPs.
@@ -522,7 +522,7 @@ fn test_recover_uncollected_recredit_sets_balance() {
 }
 
 #[test]
-#[should_panic(expected = "Recredit would underpay")]
+#[should_panic(expected = "Error(Contract, #712)")]
 fn test_recover_uncollected_recredit_rejects_underpay() {
     let (env, client, _owner, controller, depositor) = setup();
     run_credit_flow(&env, &client, &controller, &depositor);
@@ -577,7 +577,7 @@ fn test_recover_uncollected_transfer_moves_usdc() {
 }
 
 #[test]
-#[should_panic(expected = "amount exceeds claimable balance")]
+#[should_panic(expected = "Error(Contract, #713)")]
 fn test_recover_uncollected_transfer_without_prior_credit_panics() {
     let (env, client, _owner, _controller, depositor) = setup();
     let usdc_admin = token::StellarAssetClient::new(&env, &client.query_asset());
@@ -588,7 +588,7 @@ fn test_recover_uncollected_transfer_without_prior_credit_panics() {
 }
 
 #[test]
-#[should_panic(expected = "amount exceeds claimable balance")]
+#[should_panic(expected = "Error(Contract, #713)")]
 fn test_recover_uncollected_transfer_exceeding_credit_panics() {
     let (env, client, _owner, _controller, depositor) = setup();
     let usdc_admin = token::StellarAssetClient::new(&env, &client.query_asset());
@@ -615,7 +615,7 @@ fn test_recover_uncollected_unauthorized() {
 }
 
 #[test]
-#[should_panic(expected = "amount must be positive")]
+#[should_panic(expected = "Error(Contract, #703)")]
 fn test_recover_uncollected_rejects_zero_amount() {
     let (env, client, _owner, _controller, _depositor) = setup();
     let user = Address::generate(&env);

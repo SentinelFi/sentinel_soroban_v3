@@ -1,5 +1,6 @@
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{panic_with_error, Address, Env};
 
+use crate::error::Error;
 use crate::storage::OracleKey;
 
 pub(crate) use sentinel_types::ttl::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
@@ -11,7 +12,9 @@ pub(crate) fn require_oracle(e: &Env, caller: &Address) {
         .instance()
         .get(&OracleKey::AuthorizedOracle)
         .expect("oracle not set");
-    assert!(caller == &oracle, "not authorized oracle");
+    if caller != &oracle {
+        panic_with_error!(e, Error::NotAuthorizedOracle);
+    }
 }
 
 pub(crate) fn require_controller(e: &Env, caller: &Address) {
@@ -21,7 +24,9 @@ pub(crate) fn require_controller(e: &Env, caller: &Address) {
         .instance()
         .get(&OracleKey::AuthorizedController)
         .expect("controller not set");
-    assert!(caller == &controller, "not authorized controller");
+    if caller != &controller {
+        panic_with_error!(e, Error::NotAuthorizedController);
+    }
 }
 
 pub(crate) fn extend_instance_ttl(e: &Env) {

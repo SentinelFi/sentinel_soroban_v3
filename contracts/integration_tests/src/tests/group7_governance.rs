@@ -37,7 +37,7 @@ fn whitelist_route_then_buy_succeeds() {
 // =========================================================================
 
 #[test]
-#[should_panic(expected = "route is disabled")]
+#[should_panic(expected = "Error(Contract, #307)")]
 fn disable_route_blocks_new_purchase() {
     let t = TestEnv::new();
     t.gov.disable_route(
@@ -70,7 +70,7 @@ fn enable_after_disable_unblocks_purchase() {
 }
 
 #[test]
-#[should_panic(expected = "route not whitelisted")]
+#[should_panic(expected = "Error(Contract, #308)")]
 fn unknown_route_blocks_purchase() {
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);
@@ -198,7 +198,7 @@ fn admin_can_whitelist_and_disable() {
 // =========================================================================
 
 #[test]
-#[should_panic(expected = "route must be disabled before removal")]
+#[should_panic(expected = "Error(Contract, #508)")]
 fn remove_route_panics_on_active_route() {
     let t = TestEnv::new();
     // Route is still Active (whitelisted in setup) — remove must panic.

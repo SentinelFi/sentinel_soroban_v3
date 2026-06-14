@@ -1,10 +1,10 @@
-use soroban_sdk::{contractimpl, token, Address, Env, Symbol};
+use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, Symbol};
 use stellar_macros::when_not_paused;
 
 use crate::events::{ExpiredSwept, PayoutClaimed};
 use crate::storage::{extend_flight_ttl, PoolKey, BUYER_TTL_LEDGERS};
 use crate::{
-    FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient,
+    Error, FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient,
     SettlementStatus,
 };
 
@@ -27,25 +27,27 @@ impl FlightPoolManager {
             .persistent()
             .get(&cfg_key)
             .expect("flight not registered");
-        assert!(
-            matches!(
-                cfg.status,
-                SettlementStatus::SettledDelayed | SettlementStatus::SettledCancelled
-            ),
-            "flight not in claimable status"
-        );
-        assert!(
-            e.ledger().timestamp() < cfg.claim_expiry,
-            "claim window closed"
-        );
+        if !(matches!(
+            cfg.status,
+            SettlementStatus::SettledDelayed | SettlementStatus::SettledCancelled
+        )) {
+            panic_with_error!(e, Error::FlightNotClaimable);
+        }
+        if e.ledger().timestamp() >= cfg.claim_expiry {
+            panic_with_error!(e, Error::ClaimWindowClosed);
+        }
 
         let buyer_key = PoolKey::Buyer(flight_id.clone(), date, traveler.clone());
         let has_policy: bool = e.storage().persistent().get(&buyer_key).unwrap_or(false);
-        assert!(has_policy, "no policy");
+        if !(has_policy) {
+            panic_with_error!(e, Error::NoPolicy);
+        }
 
         let claimed_key = PoolKey::Claimed(flight_id.clone(), date, traveler.clone());
         let already_claimed: bool = e.storage().persistent().get(&claimed_key).unwrap_or(false);
-        assert!(!already_claimed, "already claimed");
+        if already_claimed {
+            panic_with_error!(e, Error::AlreadyClaimed);
+        }
 
         e.storage().persistent().set(&claimed_key, &true);
         e.storage()
@@ -79,17 +81,15 @@ impl FlightPoolManager {
             .persistent()
             .get(&cfg_key)
             .expect("flight not registered");
-        assert!(
-            matches!(
-                cfg.status,
-                SettlementStatus::SettledDelayed | SettlementStatus::SettledCancelled
-            ),
-            "flight not in claimable status"
-        );
-        assert!(
-            e.ledger().timestamp() > cfg.claim_expiry,
-            "claim window still open"
-        );
+        if !(matches!(
+            cfg.status,
+            SettlementStatus::SettledDelayed | SettlementStatus::SettledCancelled
+        )) {
+            panic_with_error!(e, Error::FlightNotClaimable);
+        }
+        if e.ledger().timestamp() <= cfg.claim_expiry {
+            panic_with_error!(e, Error::ClaimWindowStillOpen);
+        }
 
         let unclaimed_buyers = cfg
             .buyer_count
