@@ -22,14 +22,14 @@ impl MockUSDC {
     }
 
     /// Permissionless mint — anyone can mint any amount to any address.
-    /// Audit ASF-03: testnet-only, gated behind the default-on `testnet` feature.
+    /// Testnet-only, gated behind the default-on `testnet` feature.
     #[cfg(feature = "testnet")]
     pub fn mint(e: &Env, to: Address, amount: i128) {
         Base::mint(e, &to, amount);
     }
 
     /// Permissionless faucet — mints 10,000 USDC to any address.
-    /// Audit ASF-03: testnet-only, gated behind the default-on `testnet` feature.
+    /// Testnet-only, gated behind the default-on `testnet` feature.
     #[cfg(feature = "testnet")]
     pub fn faucet(e: &Env, to: Address) {
         Base::mint(e, &to, 10_000_0000000); // 10,000 USDC (7 decimals)

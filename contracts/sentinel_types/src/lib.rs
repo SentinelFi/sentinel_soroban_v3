@@ -1,7 +1,6 @@
 // Shared cross-contract types. Lives in its own crate so the canonical
 // definitions and the controller-side mirrors are guaranteed to share a
-// single XDR layout — eliminates the byte-level drift hazard that motivated
-// audit I-05.
+// single XDR layout — eliminates the byte-level drift hazard.
 //
 // Every type here is part of the public ABI of at least one contract.
 // Field/variant order is load-bearing for #[contracttype] codec — do NOT

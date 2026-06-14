@@ -1,7 +1,7 @@
 // Topic prefix scheme: ["sentinel", "route", <action>] for route-lifecycle
 // events, ["sentinel", "gov", <action>] for governance-meta events. Every
 // event leads with `"sentinel"` so a shared off-chain indexer can subscribe
-// once and discriminate against unrelated Soroban contracts (L-03 — audit).
+// once and discriminate against unrelated Soroban contracts.
 //
 // route.listed / route.updated carry Option<T> values (NOT resolved):
 // indexers mirror option-ness in their schema (NULL = UseDefault) and

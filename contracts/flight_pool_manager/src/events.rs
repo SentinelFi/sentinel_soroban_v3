@@ -2,7 +2,7 @@ use soroban_sdk::{contractevent, Address, Symbol};
 
 use crate::storage::SettlementStatus;
 
-// Topics prefix scheme (L-03 — audit): every Sentinel-protocol event leads
+// Topics prefix scheme: every Sentinel-protocol event leads
 // with `"sentinel"` so off-chain indexers can subscribe once and discriminate
 // across the 5 contracts via the second prefix (`register`, `settle`, etc.).
 #[contractevent(topics = ["sentinel", "register"], data_format = "map")]

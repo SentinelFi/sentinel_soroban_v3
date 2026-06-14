@@ -21,7 +21,7 @@ impl GovernanceModule {
         match terms {
             None => RouteStatus::Unknown,
             Some(t) => {
-                // Audit VF-05: refresh the route's TTL whenever it is read on a
+                // Refresh the route's TTL whenever it is read on a
                 // committing call (e.g. the controller's buy_insurance path).
                 // Route keys were otherwise extended only on write, so an
                 // approved-but-idle route could archive and become unsellable

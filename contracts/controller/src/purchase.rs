@@ -32,7 +32,7 @@ impl Controller {
             if !read_buyer_whitelisted(e, &traveler) {
                 panic_with_error!(e, Error::BuyerNotWhitelisted);
             }
-            // Audit VF-10: keep an active buyer's approval from aging out.
+            // Keep an active buyer's approval from aging out.
             touch_buyer_whitelisted(e, &traveler);
         }
 
@@ -63,7 +63,7 @@ impl Controller {
             panic_with_error!(e, Error::DepartureTooSoon);
         }
 
-        // 3b. Audit ASF-01: enforce a maximum booking horizon so the policy
+        // 3b. Enforce a maximum booking horizon so the policy
         //     lifecycle (departure + claim window) provably fits inside the
         //     180-day buyer-key TTL. Without this a far-future purchase could
         //     have its policy key archive before settlement, stranding the
@@ -75,7 +75,7 @@ impl Controller {
             panic_with_error!(e, Error::DepartureTooFarInFuture);
         }
 
-        // 3c. Audit V12-CF-01: reject purchases once the oracle has already
+        // 3c. Reject purchases once the oracle has already
         //     observed an outcome for this flight. `oracle.register_flight` is
         //     idempotent and returns silently on an existing row, and
         //     `add_buyer` only checks the pool's own status — so without this
@@ -93,8 +93,8 @@ impl Controller {
             panic_with_error!(e, Error::FlightNotOpenForPurchase);
         }
 
-        // 4. Register flight on the pool + oracle. Both calls are idempotent
-        //    (audit M-05): no precheck needed, no revert if a parallel buyer
+        // 4. Register flight on the pool + oracle. Both calls are idempotent:
+        //    no precheck needed, no revert if a parallel buyer
         //    in the same ledger registered first.
         let pool = FlightPoolManagerClient::new(e, &pool_addr);
         pool.register_flight(

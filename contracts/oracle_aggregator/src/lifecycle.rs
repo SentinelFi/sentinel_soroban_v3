@@ -70,7 +70,7 @@ impl OracleAggregator {
         if !(is_valid_transition(&data.status, &FlightStatus::Landed)) {
             panic_with_error!(e, Error::InvalidTransition);
         }
-        // Audit VF-07: do NOT reject `actual_arrival_time < estimated_arrival_time`.
+        // Do NOT reject `actual_arrival_time < estimated_arrival_time`.
         // Early arrivals are legitimate flight outcomes; rejecting them left such
         // flights stuck `Active` forever (never classifiable/settleable, collateral
         // locked indefinitely). The authorized oracle is trusted to report truthful
@@ -111,7 +111,7 @@ impl OracleAggregator {
     // --- Controller-only write functions ---
 
     /// Register a flight. Idempotent: re-registering the same
-    /// `(flight_id, date)` is a no-op (audit M-05) — only the TTL is
+    /// `(flight_id, date)` is a no-op — only the TTL is
     /// extended, no event is re-emitted.
     #[when_not_paused]
     pub fn register_flight(e: &Env, controller: Address, flight_id: Symbol, date: u64) {
@@ -233,7 +233,7 @@ impl OracleAggregator {
             return;
         }
 
-        // Audit VF-06: only inspect a bounded window [cursor, cursor+batch) of
+        // Only inspect a bounded window [cursor, cursor+batch) of
         // the list per call. Entries outside the window are kept untouched (no
         // persistent lookup), bounding the expensive storage reads. The cursor
         // rotates across calls so the whole list is eventually swept.
@@ -264,9 +264,9 @@ impl OracleAggregator {
                 .get::<_, FlightData>(&OracleKey::FlightData(flight_id.clone(), date))
             {
                 None => {
-                    // Audit VF-15: FlightData archived past its TTL. Keep the
+                    // FlightData archived past its TTL. Keep the
                     // prior evict behavior (a missing entry is unrecoverable
-                    // on-chain and would block pruning forever, audit H-02) but
+                    // on-chain and would block pruning forever) but
                     // surface it via a diagnostic so it is no longer silent.
                     MissingFlightDataPruned {
                         flight_id: flight_id.clone(),

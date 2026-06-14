@@ -27,7 +27,7 @@ impl GovernanceModule {
     ) {
         require_owner_or_admin(e, &caller);
 
-        // Audit V12-CF-05: enforce one (origin, dest) per flight_id. Downstream
+        // Enforce one (origin, dest) per flight_id. Downstream
         // pool/oracle keys drop origin/dest, so allowing a flight_id to map to
         // two routes would collide their (flight_id, date) state. Re-whitelisting
         // the same route is fine; a conflicting origin/dest is rejected.
@@ -140,7 +140,7 @@ impl GovernanceModule {
             panic_with_error!(e, Error::RouteMustBeDisabledBeforeRemoval);
         }
         e.storage().persistent().remove(&key);
-        // Audit V12-CF-05: free the flight_id so it can be re-mapped later.
+        // Free the flight_id so it can be re-mapped later.
         e.storage()
             .persistent()
             .remove(&DataKey::FlightRoute(flight_id.clone()));

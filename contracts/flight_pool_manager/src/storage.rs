@@ -64,7 +64,7 @@ pub(crate) fn extend_flight_ttl_to(e: &Env, flight_id: &Symbol, date: u64, deadl
         .clamp(PERSISTENT_TTL_EXTEND, MAX_PERSISTENT_TTL_LEDGERS);
 
     let key = PoolKey::FlightConfig(flight_id.clone(), date);
-    // Audit V12-CF-02: use `extend_to` as the threshold, NOT the ~7-day
+    // Use `extend_to` as the threshold, NOT the ~7-day
     // PERSISTENT_TTL_THRESHOLD. `extend_ttl` only acts when the current TTL is
     // below the threshold; with the small threshold a config settled soon after
     // purchase (still holding ~31 days of TTL) was skipped entirely, so the
@@ -91,7 +91,7 @@ pub(crate) fn prune_active_list(e: &Env, flight_id: &Symbol, date: u64) {
         }
     }
     if let Some(i) = idx {
-        // Audit VF-14: swap-remove instead of `Vec::remove`, which shifts every
+        // Swap-remove instead of `Vec::remove`, which shifts every
         // trailing element. The active list is an unordered set, so moving the
         // last entry into the gap and popping the tail is O(1) and avoids
         // compounding shift cost when many flights settle in one call.

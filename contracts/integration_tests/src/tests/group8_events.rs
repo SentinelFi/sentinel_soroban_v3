@@ -122,7 +122,7 @@ fn vault_credited_collected_chain_via_underwriter_lifecycle() {
     t.oracle_on_time();
     t.ctrl.classify_flights(&t.keeper);
     t.ctrl.execute_settlements(&t.keeper);
-    // M-03: queue drain is now a separate keeper entry point.
+    // Queue drain is now a separate keeper entry point.
     t.ctrl.run_queue_maintenance(&t.keeper);
 
     // run_queue_maintenance is the most-recent invocation. It triggered

@@ -1,7 +1,7 @@
 #![no_std]
 //! # MockUSDC — ⚠️ TESTNET ONLY
 //!
-//! Audit ASF-03 (Deployment Critical). This token exposes **permissionless**
+//! This token exposes **permissionless**
 //! mint/faucet: anyone can mint arbitrary balances. It exists only to fund
 //! integration tests and testnet demos.
 //!

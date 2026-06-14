@@ -16,15 +16,15 @@ pub enum CtrlKey {
     TotalPremiumsCollected,
     TotalPayoutsDistributed,
     WhitelistEnabled, // bool — Phase 11 buyer whitelist kill-switch
-    ClassifyCursor,   // u32 — audit VF-01: rotating index into the oracle active list
-    SettleCursor,     // u32 — audit VF-01: rotating index into the oracle active list
+    ClassifyCursor,   // u32 — rotating index into the oracle active list
+    SettleCursor,     // u32 — rotating index into the oracle active list
 
     // Persistent — keyed multi-row state
     TravelerFlights(Address),  // Vec<(Symbol, u64)>
     BuyerWhitelisted(Address), // bool — Phase 11 buyer whitelist entry
 }
 
-/// Audit VF-01: maximum flights processed per `classify_flights` /
+/// Maximum flights processed per `classify_flights` /
 /// `execute_settlements` call. Each call scans a bounded window of the oracle
 /// active list starting at a persisted rotating cursor, so per-call resource
 /// cost stays bounded no matter how large the list grows. Both passes are
@@ -33,23 +33,23 @@ pub enum CtrlKey {
 /// high enough that normal volumes are fully processed in a single call.
 pub(crate) const MAX_SETTLE_BATCH: u32 = 100;
 
-// Audit VF-12: 180 days at 5s/ledger = 180 * 24 * 60 * 12 = 3_110_400.
+// 180 days at 5s/ledger = 180 * 24 * 60 * 12 = 3_110_400.
 // Sized to cover the maximum policy lifecycle (up to a 180-day claim-expiry
 // window) rather than a flat 60 days, so the per-traveler "My Policies" index
 // cannot archive while a referenced policy is still active or claimable. The
 // off-chain TTL cron still refreshes idle entries; this is the on-write floor.
-// Also governs `BuyerWhitelisted(addr)` entries (audit VF-10) — keeping
+// Also governs `BuyerWhitelisted(addr)` entries — keeping
 // approved buyers from silently aging out of the whitelist.
 pub(crate) const TRAVELER_FLIGHTS_TTL_LEDGERS: u32 = 180 * 24 * 60 * 12;
 
 // Bounds on owner-tunable parameters. Owner is single-key by default
-// (see audit I-02), so a compromised key cannot brick the protocol by
+// (single-key owner), so a compromised key cannot brick the protocol by
 // pushing these values to extremes.
 pub(crate) const MIN_SOLVENCY_RATIO: u32 = 100; // 100% — must at least back payouts
 pub(crate) const MAX_SOLVENCY_RATIO: u32 = 10_000; // 100x — practical sanity cap
 pub(crate) const MAX_MIN_LEAD_TIME_SECS: u64 = 7_776_000; // 90 days
 pub(crate) const MIN_CLAIM_EXPIRY_WINDOW_SECS: u64 = 86_400; // 1 day — travelers need time
-                                                             // Audit ASF-01: reduced from 180d → 60d. The buyer policy key
+                                                             // Reduced from 180d → 60d. The buyer policy key
                                                              // (`PoolKey::Buyer`) is written at purchase with a fixed 180-day TTL and is
                                                              // never re-extended (the contract can't iterate buyers post-settlement, and
                                                              // 180d is Stellar's max persistent TTL — it cannot be raised). For a claim to
@@ -58,7 +58,7 @@ pub(crate) const MIN_CLAIM_EXPIRY_WINDOW_SECS: u64 = 86_400; // 1 day — travel
                                                              // buyer TTL makes that an on-chain guarantee instead of a cron dependency.
 pub(crate) const MAX_CLAIM_EXPIRY_WINDOW_SECS: u64 = 5_184_000; // 60 days
 
-// Audit ASF-01: maximum future booking horizon. `buy_insurance` previously
+// Maximum future booking horizon. `buy_insurance` previously
 // enforced only a minimum lead time, so a buyer could insure a flight further
 // out than the 180-day buyer-key TTL — paying premium and locking collateral
 // only to find the policy key archived before settlement, making the claim
@@ -71,14 +71,14 @@ pub(crate) const MAX_BOOK_AHEAD_SECS: u64 = 7_776_000; // 90 days
 // lifecycle invariant below at compile time.
 const BUYER_KEY_TTL_SECS: u64 = 15_552_000;
 
-// Audit ASF-01 invariant: a policy bought at the furthest allowed horizon whose
+// Invariant: a policy bought at the furthest allowed horizon whose
 // flight then settles into the longest allowed claim window must still have a
 // live buyer key at the claim deadline. Guaranteed iff
 // MAX_BOOK_AHEAD + MAX_CLAIM_EXPIRY <= buyer key TTL. Enforced at compile time
-// so future tuning of any bound can't silently reintroduce ASF-01.
+// so future tuning of any bound can't silently reintroduce the hazard.
 const _: () = assert!(
     MAX_BOOK_AHEAD_SECS + MAX_CLAIM_EXPIRY_WINDOW_SECS <= BUYER_KEY_TTL_SECS,
-    "ASF-01: book-ahead + claim window must not exceed the buyer key TTL",
+    "book-ahead + claim window must not exceed the buyer key TTL",
 );
 
 pub(crate) fn append_traveler_flight(e: &Env, traveler: &Address, flight_id: &Symbol, date: u64) {
@@ -110,7 +110,7 @@ pub(crate) fn read_buyer_whitelisted(e: &Env, addr: &Address) -> bool {
         .unwrap_or(false)
 }
 
-/// Audit VF-10: refresh an existing whitelist entry's TTL. Called from the
+/// Refresh an existing whitelist entry's TTL. Called from the
 /// buy_insurance gate so an actively-buying approved address keeps its approval
 /// alive on its own (the bare read in `read_buyer_whitelisted` cannot, and a
 /// frequent buyer should never have to be re-approved). No-op if the entry is

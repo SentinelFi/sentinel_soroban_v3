@@ -112,7 +112,7 @@ impl RiskVault {
         let mut tma = Self::get_total_managed_assets(e);
         let vault_addr = e.current_contract_address();
 
-        // Audit VF-02: examine at most MAX_QUEUE_BATCH entries per call.
+        // Examine at most MAX_QUEUE_BATCH entries per call.
         // Entries beyond the window are carried over untouched and drained on a
         // later call. `kept` accumulates everything that survives this pass
         // (skipped, deferred, or out-of-window) so removals don't have to be a
@@ -142,7 +142,7 @@ impl RiskVault {
                 continue;
             }
 
-            // Audit VF-04: a request that previews to zero assets must not stop
+            // A request that previews to zero assets must not stop
             // the drain. Skip it (keep it queued so the owner can still
             // cancel_withdrawal to recover the escrowed shares) and continue.
             if assets == 0 {

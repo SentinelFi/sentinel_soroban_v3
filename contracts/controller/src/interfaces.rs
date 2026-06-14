@@ -1,7 +1,7 @@
 // Cross-contract interfaces. The trait names are input to `#[contractclient]`
 // which generates the actual `XClient` types. The data types live in the
 // shared `sentinel_types` crate so this file no longer mirrors them — single
-// source of truth, no byte-layout drift hazard (audit I-05).
+// source of truth, no byte-layout drift hazard.
 #![allow(dead_code)]
 
 use soroban_sdk::{contractclient, Address, Env, Symbol, Vec};

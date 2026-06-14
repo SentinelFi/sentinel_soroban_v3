@@ -35,7 +35,7 @@ impl Controller {
             return;
         }
 
-        // Audit VF-01: scan at most MAX_SETTLE_BATCH entries per call, starting
+        // Scan at most MAX_SETTLE_BATCH entries per call, starting
         // at a persisted rotating cursor, so per-call cost is bounded by the
         // batch size rather than the (unbounded) active-list length.
         let mut cursor: u32 = e
@@ -57,7 +57,7 @@ impl Controller {
                 FlightStatus::Cancelled => Some(FlightStatus::ToBeSettledCancelled),
                 FlightStatus::Landed => {
                     // Read delay_hours from FlightPoolManager (locked at register time).
-                    // Audit VF-13: a present-in-oracle but missing-in-pool config
+                    // A present-in-oracle but missing-in-pool config
                     // (archived past TTL) must not panic the whole loop. Skip the
                     // flight and emit a diagnostic so one bad entry can't block
                     // settlement of every other flight.
@@ -126,7 +126,7 @@ impl Controller {
     /// RiskVault, then mark the oracle entry as `Settled`.
     ///
     /// Queue drain and share-price snapshot are NOT done here — see
-    /// `run_queue_maintenance` (audit M-03). Splitting them ensures
+    /// `run_queue_maintenance`. Splitting them ensures
     /// underwriter withdrawals can still be processed when the settlement
     /// loop runs near the resource budget.
     #[when_not_paused]
@@ -162,7 +162,7 @@ impl Controller {
             return;
         }
 
-        // Audit VF-01: bounded rotating scan — see classify_flights.
+        // Bounded rotating scan — see classify_flights.
         let mut cursor: u32 = e
             .storage()
             .instance()
@@ -183,7 +183,7 @@ impl Controller {
             match data.status {
                 FlightStatus::ToBeSettledOnTime => {
                     // FlightPoolManager owns the locked terms + buyer count.
-                    // Audit VF-13: skip + diagnose a missing config instead of
+                    // Skip + diagnose a missing config instead of
                     // panicking the whole settlement loop.
                     let cfg = match pool.get_flight_config(&flight_id, &date) {
                         Some(cfg) => cfg,
@@ -275,8 +275,8 @@ impl Controller {
 
     /// Drain the underwriter withdrawal queue and refresh the share-price
     /// snapshot. Keeper-only. Decoupled from `execute_settlements` so the
-    /// queue cannot be blocked by gas exhaustion in the settlement loop
-    /// (audit M-03); keeper can run this on its own cadence.
+    /// queue cannot be blocked by gas exhaustion in the settlement loop;
+    /// keeper can run this on its own cadence.
     #[when_not_paused]
     pub fn run_queue_maintenance(e: &Env, keeper: Address) {
         require_keeper(e, &keeper);

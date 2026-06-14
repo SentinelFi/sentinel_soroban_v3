@@ -9,13 +9,13 @@ pub enum OracleKey {
     AuthorizedOracle,
     AuthorizedController,
     ActiveFlightList,
-    PruneCursor, // u32 — audit VF-06: rotating index into ActiveFlightList
+    PruneCursor, // u32 — rotating index into ActiveFlightList
 
     // Persistent — keyed multi-row state
     FlightData(Symbol, u64),
 }
 
-/// Audit VF-06: maximum active-list entries inspected per `prune_settled` call.
+/// Maximum active-list entries inspected per `prune_settled` call.
 /// Bounds the expensive per-entry persistent lookups so pruning cannot become
 /// uncallable as the list grows. Each call advances a rotating cursor, so
 /// repeated calls eventually sweep the whole list.
