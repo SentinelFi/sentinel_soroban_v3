@@ -3,7 +3,7 @@ use stellar_macros::when_not_paused;
 
 use crate::auth::require_controller;
 use crate::events::{BuyerAdded, FlightRegistered};
-use crate::storage::{extend_flight_ttl, PoolKey, BUYER_TTL_LEDGERS};
+use crate::storage::{extend_flight_ttl_to, PoolKey, BUYER_TTL_LEDGERS};
 use crate::{
     FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient,
     SettlementStatus,
@@ -29,6 +29,13 @@ impl FlightPoolManager {
         require_controller(e, &controller);
         assert!(premium > 0, "premium must be positive");
         assert!(payoff > 0, "payoff must be positive");
+        // Audit V12-CF-06: defense in depth. Governance resolves partially-
+        // defaulted route terms against MUTABLE defaults, and a later
+        // set_defaults can make a route resolve to payoff <= premium without
+        // revalidation. Settlement computes `payoff - premium`, which would
+        // underflow and brick the flight. Reject such terms here so the bad
+        // config can never be stored (the purchase reverts instead).
+        assert!(payoff > premium, "payoff must exceed premium");
 
         let key = PoolKey::FlightConfig(flight_id.clone(), date);
         if let Some(existing) = e.storage().persistent().get::<_, FlightConfig>(&key) {
@@ -41,7 +48,10 @@ impl FlightPoolManager {
                     && existing.delay_hours == delay_hours,
                 "flight already registered with different terms",
             );
-            extend_flight_ttl(e, &flight_id, date);
+            // Audit V12-CF-03: keep the config alive through the flight date
+            // (+buffer), not just a flat ~31 days — a flight booked far ahead
+            // could otherwise archive before settlement.
+            extend_flight_ttl_to(e, &flight_id, date, date);
             return;
         }
 
@@ -55,7 +65,9 @@ impl FlightPoolManager {
             claim_expiry: 0,
         };
         e.storage().persistent().set(&key, &cfg);
-        extend_flight_ttl(e, &flight_id, date);
+        // Audit V12-CF-03: cover the flight date (+buffer) so a far-booked
+        // flight's config survives until settlement.
+        extend_flight_ttl_to(e, &flight_id, date, date);
 
         let mut list: Vec<(Symbol, u64)> = e
             .storage()
@@ -103,7 +115,8 @@ impl FlightPoolManager {
 
         cfg.buyer_count = cfg.buyer_count.checked_add(1).expect("addition overflow");
         e.storage().persistent().set(&cfg_key, &cfg);
-        extend_flight_ttl(e, &flight_id, date);
+        // Audit V12-CF-03: keep config alive through the flight date (+buffer).
+        extend_flight_ttl_to(e, &flight_id, date, date);
 
         BuyerAdded {
             flight_id,

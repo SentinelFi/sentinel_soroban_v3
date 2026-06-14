@@ -921,6 +921,71 @@ fn test_multiple_routes_independent() {
 }
 
 // =========================================================================
+// Audit V12-CF-05 — one (origin, dest) per flight_id
+// =========================================================================
+
+#[test]
+#[should_panic(expected = "flight_id already mapped to a different route")]
+fn test_whitelist_route_rejects_conflicting_flight_id() {
+    // Downstream pool/oracle state keys on (flight_id, date) only, so a flight_id
+    // must map to a single route. A second route with the same flight_id but a
+    // different origin/dest is rejected.
+    let (_env, client, owner, _addr) = setup();
+    client.whitelist_route(
+        &owner,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.whitelist_route(
+        &owner,
+        &symbol_short!("AA100"),
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+}
+
+#[test]
+fn test_remove_route_frees_flight_id_mapping() {
+    // Removing a route frees its flight_id so it can later be mapped to a
+    // different (origin, dest).
+    let (_env, client, owner, _addr) = setup();
+    let fid = symbol_short!("AA100");
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.disable_route(&owner, &fid, &symbol_short!("JFK"), &symbol_short!("LAX"));
+    client.remove_route(&owner, &fid, &symbol_short!("JFK"), &symbol_short!("LAX"));
+
+    // A different route for the same flight_id is now allowed.
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    assert!(matches!(
+        client.route_status(&fid, &symbol_short!("SFO"), &symbol_short!("ORD")),
+        RouteStatus::Active(_)
+    ));
+}
+
+// =========================================================================
 // Re-whitelist overwrites previous terms
 // =========================================================================
 

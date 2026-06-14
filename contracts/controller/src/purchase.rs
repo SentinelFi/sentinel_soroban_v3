@@ -4,7 +4,7 @@ use stellar_macros::when_not_paused;
 use crate::auth::extend_instance_ttl;
 use crate::events::InsuranceBought;
 use crate::interfaces::{
-    FlightPoolManagerClient, GovClient, OracleClient, RouteStatus, VaultClient,
+    FlightPoolManagerClient, FlightStatus, GovClient, OracleClient, RouteStatus, VaultClient,
 };
 use crate::storage::{
     append_traveler_flight, read_buyer_whitelisted, read_whitelist_enabled,
@@ -73,6 +73,25 @@ impl Controller {
             .expect("addition overflow");
         assert!(date <= latest_allowed, "departure too far in future");
 
+        // 3c. Audit V12-CF-01: reject purchases once the oracle has already
+        //     observed an outcome for this flight. `oracle.register_flight` is
+        //     idempotent and returns silently on an existing row, and
+        //     `add_buyer` only checks the pool's own status — so without this
+        //     gate a buyer could purchase AFTER the oracle marked the flight
+        //     Cancelled/Landed but BEFORE the keeper settled, then claim a
+        //     guaranteed payoff and drain the vault. Only NotInitiated (no
+        //     data / not yet registered) and Active (in-flight, pre-outcome)
+        //     are open for purchase.
+        let oracle = OracleClient::new(e, &oracle_addr);
+        let oracle_status = oracle.get_flight_data(&flight_id, &date).status;
+        assert!(
+            matches!(
+                oracle_status,
+                FlightStatus::NotInitiated | FlightStatus::Active
+            ),
+            "flight no longer open for purchase",
+        );
+
         // 4. Register flight on the pool + oracle. Both calls are idempotent
         //    (audit M-05): no precheck needed, no revert if a parallel buyer
         //    in the same ledger registered first.
@@ -85,7 +104,6 @@ impl Controller {
             &terms.payoff,
             &terms.delay_hours,
         );
-        let oracle = OracleClient::new(e, &oracle_addr);
         oracle.register_flight(&controller_addr, &flight_id, &date);
 
         // 5. Solvency check.

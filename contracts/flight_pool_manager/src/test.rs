@@ -224,6 +224,67 @@ fn test_register_flight_zero_premium_fails() {
     );
 }
 
+#[test]
+#[should_panic(expected = "payoff must exceed premium")]
+fn test_register_flight_payoff_not_above_premium_fails() {
+    // Audit V12-CF-06: defense in depth — a route that resolves (against mutable
+    // governance defaults) to payoff <= premium must be rejected at registration
+    // so settlement's `payoff - premium` can never underflow and brick the flight.
+    let t = setup();
+    t.pool.register_flight(
+        &t.controller,
+        &flight_a(),
+        &FLIGHT_DATE,
+        &PAYOFF, // premium == payoff → not strictly greater
+        &PAYOFF,
+        &DELAY_HOURS,
+    );
+}
+
+#[test]
+fn test_config_survives_until_far_future_flight() {
+    // Audit V12-CF-03: a flight booked far ahead must keep its config alive
+    // until settlement (extended to the flight date + buffer), not just the flat
+    // ~31-day default. Advancing the ledger sequence well past the old TTL must
+    // leave the config readable.
+    let t = setup();
+    let far_date = INITIAL_TIMESTAMP + 80 * 86_400; // 80 days out
+    t.pool.register_flight(
+        &t.controller,
+        &flight_a(),
+        &far_date,
+        &PREMIUM,
+        &PAYOFF,
+        &DELAY_HOURS,
+    );
+    // Past the old flat ~31-day TTL (535_680 ledgers), within the extended life.
+    t.env.ledger().with_mut(|l| l.sequence_number = 600_000);
+    assert!(t.pool.get_flight_config(&flight_a(), &far_date).is_some());
+}
+
+#[test]
+fn test_config_survives_claim_window_after_quick_settle() {
+    // Audit V12-CF-02: settling shortly after purchase must still extend the
+    // config TTL across the full claim window. The extension previously no-op'd
+    // (7-day threshold vs ~31-day live TTL), archiving the config mid-window.
+    let t = setup();
+    register(&t);
+    buy(&t, &t.buyer1);
+    let claim_expiry = t.env.ledger().timestamp() + CLAIM_WINDOW_SEC;
+    t.pool
+        .settle_delayed(&t.controller, &flight_a(), &FLIGHT_DATE, &claim_expiry);
+    let topup = PAYOFF - PREMIUM;
+    t.vault.send_payout(&t.controller, &t.pool_addr, &topup);
+
+    // Advance the ledger sequence past the old ~31-day TTL but inside the
+    // 60-day claim window (timestamp unchanged, so the window is still open).
+    t.env.ledger().with_mut(|l| l.sequence_number = 600_000);
+
+    let before = t.usdc.balance(&t.buyer1);
+    t.pool.claim(&t.buyer1, &flight_a(), &FLIGHT_DATE);
+    assert_eq!(t.usdc.balance(&t.buyer1), before + PAYOFF);
+}
+
 // =========================================================================
 // add_buyer
 // =========================================================================
