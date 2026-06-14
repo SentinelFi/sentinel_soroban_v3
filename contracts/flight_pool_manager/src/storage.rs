@@ -39,6 +39,10 @@ pub(crate) const LEDGERS_PER_SECOND_DEN: u64 = 5; // ~5 s per ledger on mainnet
 // 180 days at 5s/ledger = 180 * 24 * 60 * 12 = 3,110,400.
 pub(crate) const BUYER_TTL_LEDGERS: u32 = 3_110_400;
 
+// ~180 days = Stellar's maximum persistent-entry TTL. extend_ttl panics if the
+// target exceeds the network max, so any computed extension is clamped to this.
+pub(crate) const MAX_PERSISTENT_TTL_LEDGERS: u32 = 3_110_400;
+
 pub(crate) fn extend_flight_ttl(e: &Env, flight_id: &Symbol, date: u64) {
     let key = PoolKey::FlightConfig(flight_id.clone(), date);
     e.storage()
@@ -46,10 +50,9 @@ pub(crate) fn extend_flight_ttl(e: &Env, flight_id: &Symbol, date: u64) {
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND);
 }
 
-// Extend FlightConfig TTL to cover the full claim window + safety buffer.
-// Called from settle paths that open a claim window so the entry cannot be
-// archived before buyers finish claiming, independent of off-chain TTL cron.
-// Never shortens: floors at PERSISTENT_TTL_EXTEND.
+// Extend FlightConfig TTL to cover a deadline (claim window, or the flight date
+// itself pre-settlement) + safety buffer. Never shortens: floors at
+// PERSISTENT_TTL_EXTEND; clamped to the network max.
 pub(crate) fn extend_flight_ttl_to(e: &Env, flight_id: &Symbol, date: u64, deadline_secs: u64) {
     let now = e.ledger().timestamp();
     let secs_remaining = deadline_secs.saturating_sub(now);
@@ -58,12 +61,19 @@ pub(crate) fn extend_flight_ttl_to(e: &Env, flight_id: &Symbol, date: u64, deadl
     let ledgers_remaining_u32 = u32::try_from(ledgers_remaining).unwrap_or(u32::MAX);
     let extend_to = ledgers_remaining_u32
         .saturating_add(TTL_BUFFER_LEDGERS)
-        .max(PERSISTENT_TTL_EXTEND);
+        .clamp(PERSISTENT_TTL_EXTEND, MAX_PERSISTENT_TTL_LEDGERS);
 
     let key = PoolKey::FlightConfig(flight_id.clone(), date);
+    // Audit V12-CF-02: use `extend_to` as the threshold, NOT the ~7-day
+    // PERSISTENT_TTL_THRESHOLD. `extend_ttl` only acts when the current TTL is
+    // below the threshold; with the small threshold a config settled soon after
+    // purchase (still holding ~31 days of TTL) was skipped entirely, so the
+    // intended claim-window extension silently no-op'd and the entry could
+    // archive before the claim window closed. Equal threshold/target forces the
+    // extension whenever the current TTL is short of the required lifetime.
     e.storage()
         .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, extend_to);
+        .extend_ttl(&key, extend_to, extend_to);
 }
 
 pub(crate) fn prune_active_list(e: &Env, flight_id: &Symbol, date: u64) {

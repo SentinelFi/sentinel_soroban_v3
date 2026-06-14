@@ -108,6 +108,22 @@ impl GovernanceModule {
     ) {
         require_owner_or_admin(e, &caller);
 
+        // Audit V12-CF-05: enforce one (origin, dest) per flight_id. Downstream
+        // pool/oracle keys drop origin/dest, so allowing a flight_id to map to
+        // two routes would collide their (flight_id, date) state. Re-whitelisting
+        // the same route is fine; a conflicting origin/dest is rejected.
+        let fr_key = DataKey::FlightRoute(flight_id.clone());
+        if let Some((existing_origin, existing_dest)) = e
+            .storage()
+            .persistent()
+            .get::<_, (Symbol, Symbol)>(&fr_key)
+        {
+            assert!(
+                existing_origin == origin && existing_dest == dest,
+                "flight_id already mapped to a different route",
+            );
+        }
+
         let key = DataKey::Route(flight_id.clone(), origin.clone(), dest.clone());
         let terms = RouteTerms {
             premium,
@@ -118,6 +134,11 @@ impl GovernanceModule {
         assert_route_terms_valid(e, &terms);
         e.storage().persistent().set(&key, &terms);
         extend_route_ttl(e, &key);
+
+        e.storage()
+            .persistent()
+            .set(&fr_key, &(origin.clone(), dest.clone()));
+        extend_route_ttl(e, &fr_key);
 
         RouteListed {
             flight_id,
@@ -197,6 +218,10 @@ impl GovernanceModule {
             .expect("route not whitelisted");
         assert!(!terms.approved, "route must be disabled before removal");
         e.storage().persistent().remove(&key);
+        // Audit V12-CF-05: free the flight_id so it can be re-mapped later.
+        e.storage()
+            .persistent()
+            .remove(&DataKey::FlightRoute(flight_id.clone()));
 
         RouteRemoved {
             flight_id,

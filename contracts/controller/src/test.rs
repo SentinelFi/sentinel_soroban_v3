@@ -501,6 +501,87 @@ fn test_buy_insurance_panics_on_far_future_booking() {
 }
 
 #[test]
+#[should_panic(expected = "flight no longer open for purchase")]
+fn test_buy_insurance_rejected_after_oracle_cancellation() {
+    // Audit V12-CF-01: once the oracle has marked the flight Cancelled, further
+    // purchases must be rejected — otherwise a late buyer claims a guaranteed
+    // payoff and drains the vault.
+    let t = setup();
+    let traveler1 = Address::generate(&t.env);
+    buy(&t, &traveler1); // registers the flight on the oracle
+
+    // Oracle observes the cancellation before the keeper settles.
+    oracle_cancelled(&t);
+
+    // A second buyer can no longer purchase this (flight_id, date).
+    let traveler2 = Address::generate(&t.env);
+    buy(&t, &traveler2);
+}
+
+#[test]
+fn test_classify_and_settle_multiple_flights_in_one_batch() {
+    // Audit V12-CF-04: the bounded rotating-cursor loop must still process every
+    // flight when several are active. Three distinct flights settle in one pass.
+    let t = setup();
+    t.gov.whitelist_route(
+        &t.owner,
+        &symbol_short!("UA200"),
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    t.gov.whitelist_route(
+        &t.owner,
+        &symbol_short!("DL300"),
+        &symbol_short!("ATL"),
+        &symbol_short!("BOS"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+
+    let flights = [
+        (
+            symbol_short!("AA100"),
+            symbol_short!("JFK"),
+            symbol_short!("LAX"),
+        ),
+        (
+            symbol_short!("UA200"),
+            symbol_short!("SFO"),
+            symbol_short!("ORD"),
+        ),
+        (
+            symbol_short!("DL300"),
+            symbol_short!("ATL"),
+            symbol_short!("BOS"),
+        ),
+    ];
+
+    for (fid, o, d) in flights.iter() {
+        let traveler = Address::generate(&t.env);
+        t.usdc_admin.mint(&traveler, &PREMIUM);
+        t.ctrl.buy_insurance(&traveler, fid, o, d, &FLIGHT_DATE);
+        t.oracle
+            .set_estimated_arrival(&t.oracle_account, fid, &FLIGHT_DATE, &EST_ARRIVAL);
+        t.oracle
+            .set_landed(&t.oracle_account, fid, &FLIGHT_DATE, &ACTUAL_ON_TIME);
+    }
+
+    t.ctrl.classify_flights(&t.keeper);
+    t.ctrl.execute_settlements(&t.keeper);
+
+    for (fid, _o, _d) in flights.iter() {
+        assert_eq!(
+            t.oracle.get_flight_data(fid, &FLIGHT_DATE).status,
+            oracle_aggregator::FlightStatus::Settled,
+        );
+    }
+}
+
+#[test]
 #[should_panic(expected = "insufficient vault capital")]
 fn test_buy_insurance_panics_on_solvency_gate() {
     let env = Env::default();
