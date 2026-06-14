@@ -1,13 +1,12 @@
-use soroban_sdk::{contractimpl, panic_with_error, Address, Env};
-use stellar_access::ownable::{self as ownable};
-use stellar_macros::only_owner;
-
-use crate::auth::extend_instance_ttl;
 use crate::storage::{
     CtrlKey, MAX_CLAIM_EXPIRY_WINDOW_SECS, MAX_MIN_LEAD_TIME_SECS, MAX_SOLVENCY_RATIO,
     MIN_CLAIM_EXPIRY_WINDOW_SECS, MIN_SOLVENCY_RATIO,
 };
 use crate::{Controller, ControllerArgs, ControllerClient, Error};
+pub(crate) use sentinel_types::ttl::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
+use soroban_sdk::{contractimpl, panic_with_error, Address, Env};
+use stellar_access::ownable::{self as ownable};
+use stellar_macros::only_owner;
 
 fn assert_solvency_ratio(e: &Env, ratio: u32) {
     if !(MIN_SOLVENCY_RATIO..=MAX_SOLVENCY_RATIO).contains(&ratio) {
@@ -102,21 +101,21 @@ impl Controller {
         e.storage()
             .instance()
             .set(&CtrlKey::AuthorizedKeeper, &keeper);
-        extend_instance_ttl(e);
+        Self::extend_ttl(e);
     }
 
     #[only_owner]
     pub fn set_solvency_ratio(e: &Env, ratio: u32) {
         assert_solvency_ratio(e, ratio);
         e.storage().instance().set(&CtrlKey::SolvencyRatio, &ratio);
-        extend_instance_ttl(e);
+        Self::extend_ttl(e);
     }
 
     #[only_owner]
     pub fn set_min_lead_time(e: &Env, seconds: u64) {
         assert_min_lead_time(e, seconds);
         e.storage().instance().set(&CtrlKey::MinLeadTime, &seconds);
-        extend_instance_ttl(e);
+        Self::extend_ttl(e);
     }
 
     #[only_owner]
@@ -125,11 +124,15 @@ impl Controller {
         e.storage()
             .instance()
             .set(&CtrlKey::ClaimExpiryWindow, &seconds);
-        extend_instance_ttl(e);
+        Self::extend_ttl(e);
     }
 
-    /// Extend instance TTL. Called by cron as a safety net.
+    /// Extend instance TTL. Called by cron as a safety net, and reused
+    /// internally as the single instance-TTL entry point (other functions call
+    /// `Self::extend_ttl`).
     pub fn extend_ttl(e: &Env) {
-        extend_instance_ttl(e);
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
     }
 }

@@ -1,7 +1,7 @@
 use soroban_sdk::{contractimpl, Address, Env};
 use stellar_macros::when_not_paused;
 
-use crate::auth::{extend_instance_ttl, require_keeper};
+use crate::auth::require_keeper;
 use crate::events::{FlightClassified, FlightConfigMissing, FlightSettledEvent, TtlMiss};
 use crate::interfaces::{FlightPoolManagerClient, FlightStatus, OracleClient, VaultClient};
 use crate::storage::{CtrlKey, MAX_SETTLE_BATCH};
@@ -31,7 +31,7 @@ impl Controller {
         let flights = oracle.get_active_flights();
         let len = flights.len();
         if len == 0 {
-            extend_instance_ttl(e);
+            Controller::extend_ttl(e);
             return;
         }
 
@@ -118,7 +118,7 @@ impl Controller {
         }
 
         e.storage().instance().set(&CtrlKey::ClassifyCursor, &i);
-        extend_instance_ttl(e);
+        Controller::extend_ttl(e);
     }
 
     /// Iterate the oracle's active-flight list and process every flight that's
@@ -158,7 +158,7 @@ impl Controller {
         let flights = oracle.get_active_flights();
         let len = flights.len();
         if len == 0 {
-            extend_instance_ttl(e);
+            Controller::extend_ttl(e);
             return;
         }
 
@@ -270,7 +270,7 @@ impl Controller {
         }
 
         e.storage().instance().set(&CtrlKey::SettleCursor, &i);
-        extend_instance_ttl(e);
+        Controller::extend_ttl(e);
     }
 
     /// Drain the underwriter withdrawal queue and refresh the share-price
@@ -288,6 +288,6 @@ impl Controller {
         vault.process_withdrawal_queue(&controller_addr);
         vault.snapshot();
 
-        extend_instance_ttl(e);
+        Controller::extend_ttl(e);
     }
 }

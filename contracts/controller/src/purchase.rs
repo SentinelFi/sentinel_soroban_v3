@@ -1,7 +1,6 @@
 use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, Symbol};
 use stellar_macros::when_not_paused;
 
-use crate::auth::extend_instance_ttl;
 use crate::events::InsuranceBought;
 use crate::interfaces::{
     FlightPoolManagerClient, FlightStatus, GovClient, OracleClient, RouteStatus, VaultClient,
@@ -166,7 +165,7 @@ impl Controller {
                 .expect("addition overflow"),
         );
 
-        extend_instance_ttl(e);
+        Controller::extend_ttl(e);
 
         InsuranceBought {
             traveler,

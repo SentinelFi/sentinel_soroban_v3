@@ -5,8 +5,6 @@ use crate::interfaces::GovClient;
 use crate::storage::CtrlKey;
 use crate::Error;
 
-pub(crate) use sentinel_types::ttl::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
-
 pub(crate) fn require_keeper(e: &Env, caller: &Address) {
     caller.require_auth();
     let keeper: Address = e
@@ -39,10 +37,4 @@ pub(crate) fn require_owner_or_gov_admin(e: &Env, caller: &Address) {
     if !gov.is_admin(caller) {
         panic_with_error!(e, Error::NotOwnerOrGovernanceAdmin);
     }
-}
-
-pub(crate) fn extend_instance_ttl(e: &Env) {
-    e.storage()
-        .instance()
-        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 }
