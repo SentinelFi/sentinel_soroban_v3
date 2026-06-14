@@ -1,7 +1,7 @@
 use soroban_sdk::{contractimpl, Address, Env};
 use stellar_macros::only_owner;
 
-use crate::auth::{extend_instance_ttl, require_owner_or_gov_admin};
+use crate::auth::require_owner_or_gov_admin;
 use crate::events::{BuyerWhitelistRemovedEvent, BuyerWhitelistedEvent, WhitelistToggled};
 use crate::storage::{write_buyer_whitelisted, CtrlKey};
 use crate::{Controller, ControllerArgs, ControllerClient};
@@ -15,7 +15,7 @@ impl Controller {
     pub fn add_whitelisted_buyer(e: &Env, caller: Address, addr: Address) {
         require_owner_or_gov_admin(e, &caller);
         write_buyer_whitelisted(e, &addr, true);
-        extend_instance_ttl(e);
+        Controller::extend_ttl(e);
 
         BuyerWhitelistedEvent { addr }.publish(e);
     }
@@ -28,7 +28,7 @@ impl Controller {
     pub fn remove_whitelisted_buyer(e: &Env, caller: Address, addr: Address) {
         require_owner_or_gov_admin(e, &caller);
         write_buyer_whitelisted(e, &addr, false);
-        extend_instance_ttl(e);
+        Controller::extend_ttl(e);
 
         BuyerWhitelistRemovedEvent { addr }.publish(e);
     }
@@ -41,7 +41,7 @@ impl Controller {
         e.storage()
             .instance()
             .set(&CtrlKey::WhitelistEnabled, &enabled);
-        extend_instance_ttl(e);
+        Controller::extend_ttl(e);
 
         WhitelistToggled { enabled }.publish(e);
     }
