@@ -29,6 +29,17 @@ pub struct GovernanceModule;
 
 #[contractimpl]
 impl GovernanceModule {
+    /// Initialize the governance module.
+    ///
+    /// # Arguments
+    /// * `owner` - Address granted owner rights (manage admins, update
+    ///   defaults, upgrade).
+    /// * `default_premium` - Fallback premium (asset units) applied to routes
+    ///   that don't override it.
+    /// * `default_payoff` - Fallback payoff (asset units) paid on a valid
+    ///   claim; must exceed the premium.
+    /// * `default_delay_hours` - Fallback delay threshold (hours) after which a
+    ///   flight counts as delayed.
     pub fn __constructor(
         e: &Env,
         owner: Address,

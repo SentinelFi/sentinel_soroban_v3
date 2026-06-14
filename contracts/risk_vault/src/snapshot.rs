@@ -9,6 +9,20 @@ use crate::{RiskVault, RiskVaultArgs, RiskVaultClient};
 
 #[contractimpl]
 impl RiskVault {
+    /// Record today's share price into temporary storage and emit it.
+    ///
+    /// Access control: **intentionally permissionless** — any address may call
+    /// this, by design. It is a keeper/cron entrypoint meant to be triggered
+    /// by the off-chain scheduler, but anyone is allowed to keep the daily price
+    /// series alive. This is safe because the function:
+    /// - moves no funds and mutates no capital/locked accounting — it only
+    ///   writes a derived price into temporary storage and emits an event;
+    /// - cannot be manipulated by the caller — the price is computed solely
+    ///   from on-chain state, so a caller controls only *when* it runs, never
+    /// the recorded value;
+    /// - is idempotent and rate-limited — it no-ops if a snapshot already
+    ///   exists for the current day (see the guard below), so repeated or
+    ///   adversarial calls cost the caller gas but change nothing.
     #[when_not_paused]
     pub fn snapshot(e: &Env) {
         let now = e.ledger().timestamp();
