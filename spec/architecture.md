@@ -1771,8 +1771,8 @@ network_passphrase = "Public Global Stellar Network ; September 2015"
              --flight_pool_manager CONTRACT_ID_FLIGHT_POOL_MANAGER \
              --usdc USDC_CONTRACT_ID \
              --solvency_ratio 100 \
-             --min_lead_time 3600 \
-             --claim_expiry 5184000
+             --min_lead_time_secs 3600 \
+             --claim_expiry_window_secs 5184000
         -> returns CONTRACT_ID_CONTROLLER
 
 3. Post-deployment wiring:

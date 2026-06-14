@@ -38,7 +38,7 @@ deploy-testnet: build ## Deploy all contracts to testnet (override SOURCE/NETWOR
 	stellar contract deploy --wasm $(WASM_DIR)/risk_vault.wasm --source-account $(SOURCE) --network $(NETWORK) --alias risk_vault -- --owner $(SOURCE) --asset_token $(SOURCE)
 	stellar contract deploy --wasm $(WASM_DIR)/oracle_aggregator.wasm --source-account $(SOURCE) --network $(NETWORK) --alias oracle_aggregator -- --owner $(SOURCE) --authorized_oracle $(SOURCE)
 	stellar contract deploy --wasm $(WASM_DIR)/governance_module.wasm --source-account $(SOURCE) --network $(NETWORK) --alias governance_module -- --owner $(SOURCE) --default_premium 100 --default_payoff 200 --default_delay_hours 3
-	stellar contract deploy --wasm $(WASM_DIR)/controller.wasm --source-account $(SOURCE) --network $(NETWORK) --alias controller -- --owner $(SOURCE) --governance $(SOURCE) --risk_vault $(SOURCE) --oracle $(SOURCE) --flight_pool_manager $(SOURCE) --asset_token $(SOURCE) --authorized_keeper $(SOURCE) --min_lead_time 3600 --claim_expiry_window 86500
+	stellar contract deploy --wasm $(WASM_DIR)/controller.wasm --source-account $(SOURCE) --network $(NETWORK) --alias controller -- --owner $(SOURCE) --governance $(SOURCE) --risk_vault $(SOURCE) --oracle $(SOURCE) --flight_pool_manager $(SOURCE) --asset_token $(SOURCE) --authorized_keeper $(SOURCE) --min_lead_time_secs 3600 --claim_expiry_window_secs 86500
 
 clippy: ## Lint with clippy, treating warnings as errors
 	cargo clippy --all-targets -- -D warnings

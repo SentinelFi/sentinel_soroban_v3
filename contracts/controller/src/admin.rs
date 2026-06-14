@@ -45,10 +45,10 @@ impl Controller {
     /// * `asset_token` - SAC address of the settlement asset premiums are
     ///   collected in.
     /// * `authorized_keeper` - Address permitted to trigger settlement.
-    /// * `min_lead_time` - Minimum seconds between purchase and departure; buys
-    ///   too close to departure are rejected.
-    /// * `claim_expiry_window` - Seconds after settlement during which a payout
-    ///   remains claimable before it expires.
+    /// * `min_lead_time_secs` - Minimum number of seconds between purchase and
+    ///   departure; buys too close to departure are rejected.
+    /// * `claim_expiry_window_secs` - Number of seconds after settlement during
+    ///   which a payout remains claimable before it expires.
     pub fn __constructor(
         e: &Env,
         owner: Address,
@@ -58,11 +58,11 @@ impl Controller {
         flight_pool_manager: Address,
         asset_token: Address,
         authorized_keeper: Address,
-        min_lead_time: u64,
-        claim_expiry_window: u64,
+        min_lead_time_secs: u64,
+        claim_expiry_window_secs: u64,
     ) {
-        assert_min_lead_time(e, min_lead_time);
-        assert_claim_expiry_window(e, claim_expiry_window);
+        assert_min_lead_time(e, min_lead_time_secs);
+        assert_claim_expiry_window(e, claim_expiry_window_secs);
         ownable::set_owner(e, &owner);
         e.storage()
             .instance()
@@ -80,10 +80,10 @@ impl Controller {
             .set(&CtrlKey::AuthorizedKeeper, &authorized_keeper);
         e.storage()
             .instance()
-            .set(&CtrlKey::MinLeadTime, &min_lead_time);
+            .set(&CtrlKey::MinLeadTime, &min_lead_time_secs);
         e.storage()
             .instance()
-            .set(&CtrlKey::ClaimExpiryWindow, &claim_expiry_window);
+            .set(&CtrlKey::ClaimExpiryWindow, &claim_expiry_window_secs);
         e.storage().instance().set(&CtrlKey::SolvencyRatio, &100u32);
         e.storage()
             .instance()
