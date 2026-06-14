@@ -131,7 +131,13 @@ impl Controller {
         // 7. Lock collateral in vault.
         vault.increase_locked(&controller_addr, &terms.payoff);
 
-        // 8. Record buyer in FlightPoolManager.
+        // 8. Record buyer in FlightPoolManager. This also enforces
+        //    single-purchase-per-policy: add_buyer keys the buyer on
+        //    (flight_id, date, traveler) and panics with Error::AlreadyBuyer
+        //    if this traveler already holds a policy for the same flight+date.
+        //    A duplicate buy_insurance with identical parameters therefore
+        //    reverts here, and atomicity rolls back the premium transfer (6)
+        //    and the collateral lock (7) — no double charge, no double lock.
         pool.add_buyer(&controller_addr, &flight_id, &date, &traveler);
 
         // 9. Append to per-traveler index (unblocks MyPolicies frontend).

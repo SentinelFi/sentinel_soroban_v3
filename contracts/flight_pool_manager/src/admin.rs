@@ -9,6 +9,15 @@ use crate::{Error, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerCl
 
 #[contractimpl]
 impl FlightPoolManager {
+    /// Initialize the flight pool manager.
+    ///
+    /// # Arguments
+    /// * `owner` - Address granted owner rights (set the controller, recover
+    ///   stranded balances, upgrade).
+    /// * `asset_token` - SAC address of the asset in which premiums are held
+    ///   and payouts are made to buyers.
+    /// * `risk_vault` - Address of the RiskVault that collected premiums are
+    ///   swept to on settlement.
     pub fn __constructor(e: &Env, owner: Address, asset_token: Address, risk_vault: Address) {
         ownable::set_owner(e, &owner);
         e.storage()

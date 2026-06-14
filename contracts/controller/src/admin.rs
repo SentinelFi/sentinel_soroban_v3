@@ -29,6 +29,26 @@ fn assert_claim_expiry_window(e: &Env, seconds: u64) {
 
 #[contractimpl]
 impl Controller {
+    /// Initialize the controller — the orchestrator wiring together the
+    /// governance, vault, oracle, and pool contracts.
+    ///
+    /// # Arguments
+    /// * `owner` - Address granted owner rights (rotate the keeper, tune
+    ///   parameters, pause, upgrade).
+    /// * `governance` - Address of the GovernanceModule that resolves route
+    ///   terms (premium/payoff/delay).
+    /// * `risk_vault` - Address of the RiskVault holding collateral and paying
+    ///   out claims.
+    /// * `oracle` - Address of the OracleAggregator providing flight outcomes.
+    /// * `flight_pool_manager` - Address of the FlightPoolManager tracking
+    ///   per-flight buyers and premiums.
+    /// * `asset_token` - SAC address of the settlement asset premiums are
+    ///   collected in.
+    /// * `authorized_keeper` - Address permitted to trigger settlement.
+    /// * `min_lead_time` - Minimum seconds between purchase and departure; buys
+    ///   too close to departure are rejected.
+    /// * `claim_expiry_window` - Seconds after settlement during which a payout
+    ///   remains claimable before it expires.
     pub fn __constructor(
         e: &Env,
         owner: Address,

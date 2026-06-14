@@ -21,6 +21,10 @@ pub struct MockUSDC;
 
 #[contractimpl]
 impl MockUSDC {
+    /// Initialize the mock token.
+    ///
+    /// # Arguments
+    /// * `admin` - Address set as token owner (holds the upgrade authority).
     pub fn __constructor(e: &Env, admin: Address) {
         Base::set_metadata(
             e,

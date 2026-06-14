@@ -25,6 +25,12 @@ pub struct OracleAggregator;
 
 #[contractimpl]
 impl OracleAggregator {
+    /// Initialize the oracle aggregator.
+    ///
+    /// # Arguments
+    /// * `owner` - Address granted owner rights (set the authorized controller,
+    ///   manage configuration, upgrade).
+    /// * `authorized_oracle` - Address permitted to submit flight outcome data.
     pub fn __constructor(e: &Env, owner: Address, authorized_oracle: Address) {
         ownable::set_owner(e, &owner);
         e.storage()
