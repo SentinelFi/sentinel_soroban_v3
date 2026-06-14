@@ -30,6 +30,7 @@ mod queries;
 mod settle;
 mod storage;
 mod traits;
+mod upgrade;
 
 use soroban_sdk::contract;
 

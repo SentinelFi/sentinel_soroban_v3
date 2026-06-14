@@ -1,4 +1,4 @@
-use soroban_sdk::{contractimpl, panic_with_error, Address, BytesN, Env, String};
+use soroban_sdk::{contractimpl, panic_with_error, Address, Env, String};
 use stellar_access::ownable::{self as ownable};
 use stellar_macros::only_owner;
 use stellar_tokens::fungible::{Base, FungibleToken};
@@ -34,6 +34,7 @@ impl RiskVault {
         e.storage()
             .instance()
             .set(&VaultKey::LastSnapshotTime, &0u64);
+        sentinel_types::upgrade::set_initial_version(e);
     }
 
     #[only_owner]
@@ -51,10 +52,5 @@ impl RiskVault {
         e.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
-    }
-
-    #[only_owner]
-    pub fn upgrade(e: &Env, wasm_hash: BytesN<32>) {
-        e.deployer().update_current_contract_wasm(wasm_hash);
     }
 }

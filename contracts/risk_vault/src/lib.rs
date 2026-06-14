@@ -36,6 +36,7 @@ mod queries;
 mod snapshot;
 mod storage;
 mod traits;
+mod upgrade;
 mod vault_ops;
 
 use soroban_sdk::contract;

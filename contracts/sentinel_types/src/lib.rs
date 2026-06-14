@@ -11,6 +11,8 @@
 
 use soroban_sdk::contracttype;
 
+pub mod upgrade;
+
 #[cfg(feature = "testutils")]
 pub mod test_support;
 

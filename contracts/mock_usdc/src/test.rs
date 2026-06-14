@@ -1,6 +1,12 @@
 use super::*;
 use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
+#[test]
+fn version_initialized_to_one() {
+    let (_env, client, ..) = setup();
+    assert_eq!(client.version(), 1);
+}
+
 fn setup() -> (Env, MockUSDCClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();

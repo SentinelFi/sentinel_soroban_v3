@@ -20,7 +20,7 @@ and **how** the upgrade is performed.
 ## Which contracts are upgradeable
 
 | Contract | Constructor arg |
-|---|---|---|
+|---|---|
 | `controller` | `owner` |
 | `risk_vault` | `owner` |
 | `oracle_aggregator` | `owner` |

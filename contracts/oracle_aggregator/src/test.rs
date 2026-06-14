@@ -9,6 +9,12 @@ const FLIGHT_DATE: u64 = 1710400000; // arbitrary unix timestamp
 const EST_ARRIVAL: u64 = 1710410000;
 const ACT_ARRIVAL: u64 = 1710412000;
 
+#[test]
+fn version_initialized_to_one() {
+    let (_env, client, ..) = setup();
+    assert_eq!(client.version(), 1);
+}
+
 fn setup() -> (
     Env,
     OracleAggregatorClient<'static>,

@@ -6,6 +6,12 @@ const DEFAULT_PREMIUM: i128 = 50_0000000; // 50 asset (7 decimals)
 const DEFAULT_PAYOFF: i128 = 500_0000000; // 500 asset
 const DEFAULT_DELAY_HOURS: u32 = 3;
 
+#[test]
+fn version_initialized_to_one() {
+    let (_env, gov, ..) = setup();
+    assert_eq!(gov.version(), 1);
+}
+
 fn setup() -> (Env, GovernanceModuleClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();

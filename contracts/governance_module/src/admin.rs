@@ -1,4 +1,4 @@
-use soroban_sdk::{contractimpl, Address, BytesN, Env};
+use soroban_sdk::{contractimpl, Address, Env};
 use stellar_access::ownable;
 use stellar_macros::{only_owner, when_not_paused};
 
@@ -38,6 +38,7 @@ impl GovernanceModule {
         e.storage()
             .instance()
             .set(&DataKey::DefaultDelayHours, &default_delay_hours);
+        sentinel_types::upgrade::set_initial_version(e);
     }
 
     // --- Owner-only ---
@@ -80,11 +81,6 @@ impl GovernanceModule {
             .remove(&DataKey::Admin(admin.clone()));
 
         GovAdminRemoved { admin }.publish(e);
-    }
-
-    #[only_owner]
-    pub fn upgrade(e: &Env, wasm_hash: BytesN<32>) {
-        e.deployer().update_current_contract_wasm(wasm_hash);
     }
 
     // --- TTL management ---

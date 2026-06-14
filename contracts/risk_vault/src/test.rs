@@ -4,6 +4,12 @@ use soroban_sdk::{
     testutils::Address as _, testutils::Ledger, Address, Env, String, Symbol, TryFromVal,
 };
 
+#[test]
+fn version_initialized_to_one() {
+    let (_env, vault, ..) = setup();
+    assert_eq!(vault.version(), 1);
+}
+
 fn setup() -> (Env, RiskVaultClient<'static>, Address, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();

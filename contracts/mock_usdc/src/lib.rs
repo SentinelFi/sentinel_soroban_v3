@@ -13,6 +13,7 @@
 //! (`--no-default-features`) omits them entirely.
 mod token;
 mod traits;
+mod upgrade;
 
 use soroban_sdk::contract;
 
