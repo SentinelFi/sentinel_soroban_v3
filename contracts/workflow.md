@@ -72,7 +72,7 @@ stellar contract deploy --wasm target/wasm32v1-none/release/oracle_aggregator.wa
 
 stellar contract deploy --wasm target/wasm32v1-none/release/governance_module.wasm --source-account alice --network testnet --alias governance_module -- --owner alice --default_premium 100 --default_payoff 200 --default_delay_hours 3 
 
-stellar contract deploy --wasm target/wasm32v1-none/release/controller.wasm --source-account alice --network testnet --alias controller -- --owner alice --governance alice --risk_vault alice --oracle alice --flight_pool_manager alice --asset_token alice --authorized_keeper alice --min_lead_time 3600 --claim_expiry_window 86500
+stellar contract deploy --wasm target/wasm32v1-none/release/controller.wasm --source-account alice --network testnet --alias controller -- --owner alice --governance alice --risk_vault alice --oracle alice --flight_pool_manager alice --asset_token alice --authorized_keeper alice --min_lead_time_secs 3600 --claim_expiry_window_secs 86500
 ```
 
 ### Generate TypeScript Bindings
