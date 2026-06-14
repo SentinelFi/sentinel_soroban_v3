@@ -11,9 +11,9 @@ pub struct FlightStatusChange {
     pub(crate) new_status: FlightStatus,
 }
 
-// Audit VF-15: emitted by `prune_settled` when it evicts an active-list entry
+// Emitted by `prune_settled` when it evicts an active-list entry
 // whose FlightData is missing (archived past its persistent TTL). Eviction is
-// retained (audit H-02 — a missing entry is unrecoverable on-chain and would
+// retained (a missing entry is unrecoverable on-chain and would
 // otherwise block pruning forever), but it is no longer silent: off-chain
 // monitoring can detect a flight that vanished without being explicitly settled.
 #[contractevent(topics = ["sentinel", "data_missing"], data_format = "map")]

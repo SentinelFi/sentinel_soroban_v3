@@ -260,7 +260,7 @@ fn test_invalid_transition_landed_to_settled() {
 
 #[test]
 fn test_set_landed_accepts_early_arrival() {
-    // Audit VF-07: an early arrival (actual < estimated) is a legitimate
+    // An early arrival (actual < estimated) is a legitimate
     // outcome and must land the flight rather than reverting and leaving it
     // stuck Active. Downstream delay math saturates to zero (on-time).
     let (env, client, _owner, oracle, controller) = setup();
@@ -323,7 +323,7 @@ fn test_set_to_be_settled_with_non_settlement_status() {
 
 #[test]
 fn test_register_flight_twice_is_idempotent() {
-    // M-05: re-registering the same flight is a no-op so a parallel
+    // Re-registering the same flight is a no-op so a parallel
     // buyer doesn't have their tx revert.
     let (env, client, _owner, _oracle, controller) = setup();
     let fid = flight_id(&env);
@@ -538,7 +538,7 @@ fn test_prune_settled_no_op_before_retention_window() {
 
 #[test]
 fn test_prune_settled_evicts_missing_flight_data() {
-    // Regression for H-02: a single archived FlightData entry must not panic
+    // Regression: a single archived FlightData entry must not panic
     // prune_settled. The entry is dropped from the active list and the call
     // succeeds; remaining entries are processed normally.
     let (env, client, _owner, _oracle, controller) = setup();

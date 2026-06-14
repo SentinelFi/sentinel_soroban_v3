@@ -42,7 +42,7 @@ pub struct TtlMiss {
     pub(crate) date: u64,
 }
 
-// Audit VF-13: diagnostic emitted by `classify_flights` / `execute_settlements`
+// Diagnostic emitted by `classify_flights` / `execute_settlements`
 // when a flight is present in the oracle active list but its FlightConfig is
 // missing from FlightPoolManager (archived past TTL, or never registered).
 // The flight is skipped instead of panicking the whole keeper loop; the

@@ -215,7 +215,7 @@ impl TestEnv {
     }
 
     /// Run the full classify + execute settlement cycle (Crons #2 + #3) plus
-    /// the queue/snapshot maintenance pass (split out by audit M-03).
+    /// the queue/snapshot maintenance pass (split out separately).
     #[allow(dead_code)]
     pub fn classify_and_settle(&self) {
         self.ctrl.classify_flights(&self.keeper);

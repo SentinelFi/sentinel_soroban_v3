@@ -120,7 +120,7 @@ fn test_record_premium_income() {
 #[test]
 #[should_panic(expected = "Error(Contract, #706)")]
 fn test_record_premium_income_rejects_when_asset_not_received() {
-    // Regression for M-06: caller-stated amount must be backed by actual asset.
+    // Regression: caller-stated amount must be backed by actual asset.
     let (_env, client, _owner, controller, depositor) = setup();
     client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
 
@@ -197,7 +197,7 @@ fn test_withdrawal_queue_request_process_collect() {
 
 #[test]
 fn test_pause_and_unpause_gate_state_mutations() {
-    // Regression for H-03: paused contract rejects deposit / withdrawal /
+    // Regression: paused contract rejects deposit / withdrawal /
     // queue ops; unpausing restores normal flow. Owner-only gate.
     let (_env, client, owner, controller, depositor) = setup();
 
@@ -226,7 +226,7 @@ fn test_pause_and_unpause_gate_state_mutations() {
 #[test]
 #[should_panic(expected = "Error(Contract, #714)")]
 fn test_direct_redeem_blocked_while_queue_active() {
-    // Audit ASF-02: once a request is queued, direct redeem must defer to the
+    // Once a request is queued, direct redeem must defer to the
     // queue so it can't consume free capital ahead of waiting LPs.
     let (_env, client, _owner, _controller, depositor) = setup();
     let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
@@ -241,7 +241,7 @@ fn test_direct_redeem_blocked_while_queue_active() {
 
 #[test]
 fn test_direct_redeem_allowed_when_queue_empty() {
-    // Audit ASF-02: the fast path stays open when no one is queued.
+    // The fast path stays open when no one is queued.
     let (_env, client, _owner, _controller, depositor) = setup();
     let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
     assert!(client.get_withdrawal_queue().is_empty());
@@ -251,7 +251,7 @@ fn test_direct_redeem_allowed_when_queue_empty() {
 
 #[test]
 fn test_max_views_return_zero_when_paused() {
-    // Audit VF-17: max_deposit/mint/withdraw/redeem must report zero while
+    // max_deposit/mint/withdraw/redeem must report zero while
     // paused, matching the (paused-gated) executable paths.
     let (_env, client, owner, _controller, depositor) = setup();
     client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
@@ -270,7 +270,7 @@ fn test_max_views_return_zero_when_paused() {
 
 #[test]
 fn test_request_withdrawal_rejects_zero_preview() {
-    // Audit VF-04: a dust request that previews to zero assets is rejected at
+    // A dust request that previews to zero assets is rejected at
     // submission so it can never sit at the queue head and block the drain.
     let (_env, client, _owner, _controller, depositor) = setup();
     client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
@@ -282,7 +282,7 @@ fn test_request_withdrawal_rejects_zero_preview() {
 
 #[test]
 fn test_zero_preview_request_does_not_block_queue() {
-    // Audit VF-04: even if a zero-preview request somehow reaches the queue, a
+    // Even if a zero-preview request somehow reaches the queue, a
     // later serviceable request must still drain. We exercise the drain loop's
     // skip behavior by queueing a normal request and confirming it processes.
     let (_env, client, _owner, controller, depositor) = setup();
@@ -327,7 +327,7 @@ fn test_cancel_withdrawal() {
 
 #[test]
 fn test_cancel_withdrawal_by_request_id_is_index_independent() {
-    // Regression for M-04: cancelling the FIRST request after a later one
+    // Regression: cancelling the FIRST request after a later one
     // has been processed must still cancel the right request, even though
     // queue indices shifted.
     let (env, client, _owner, controller, depositor) = setup();
@@ -466,7 +466,7 @@ fn run_credit_flow(
     let _ = env;
 }
 
-// Match against the post-`"sentinel"` topic verb (L-03 namespace, 2-item prefix).
+// Match against the post-`"sentinel"` topic verb (namespace, 2-item prefix).
 fn count_events_with_verb(env: &Env, contract_addr: &Address, verb: Symbol) -> u32 {
     use soroban_sdk::symbol_short;
     let sentinel = symbol_short!("sentinel");
@@ -676,7 +676,7 @@ fn test_snapshot_expires_after_30_days() {
 #[test]
 fn test_snapshot_emits_share_price_event() {
     use soroban_sdk::symbol_short;
-    // L-05: snapshot() now emits SharePriceSnapshot so off-chain analytics
+    // snapshot() now emits SharePriceSnapshot so off-chain analytics
     // can subscribe instead of polling.
     let (env, client, _owner, _controller, depositor) = setup();
     client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);

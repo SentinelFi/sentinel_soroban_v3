@@ -43,8 +43,8 @@ impl RiskVault {
         }
 
         // Derive the price scale from the underlying asset's decimals so
-        // the snapshot is meaningful regardless of stablecoin precision
-        // (L-04 — audit). For 7-decimal asset this is still 10^7.
+        // the snapshot is meaningful regardless of stablecoin precision.
+        // For 7-decimal asset this is still 10^7.
         let asset = token::Client::new(e, &Vault::query_asset(e));
         let scale = 10i128
             .checked_pow(asset.decimals())
@@ -74,7 +74,7 @@ impl RiskVault {
             .instance()
             .set(&VaultKey::LastSnapshotTime, &now);
 
-        // L-05: emit so off-chain analytics can subscribe instead of polling.
+        // Emit so off-chain analytics can subscribe instead of polling.
         SharePriceSnapshot { day, price }.publish(e);
     }
 

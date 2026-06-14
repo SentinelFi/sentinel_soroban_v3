@@ -45,7 +45,7 @@ fn route_ids() -> (Symbol, Symbol, Symbol) {
 // IMPORTANT: `env.events().all()` returns events only from the MOST RECENT
 // contract invocation. Call this helper IMMEDIATELY after the emitting call,
 // before any other contract call (including reads like `route_status()`).
-// Match against the post-`"sentinel"` topic verb (L-03 namespace, 2-item prefix).
+// Match against the post-`"sentinel"` topic verb (namespace, 2-item prefix).
 // Callers pass a single combined verb like `Symbol::new(env, "route_listed")`.
 fn count_events_with_verb(env: &Env, addr: &Address, verb: Symbol) -> u32 {
     use soroban_sdk::TryFromVal;
@@ -927,7 +927,7 @@ fn test_multiple_routes_independent() {
 }
 
 // =========================================================================
-// Audit V12-CF-05 — one (origin, dest) per flight_id
+// One (origin, dest) per flight_id
 // =========================================================================
 
 #[test]

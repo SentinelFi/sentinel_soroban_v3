@@ -178,7 +178,7 @@ fn test_register_flight_success() {
 
 #[test]
 fn test_register_flight_duplicate_is_idempotent() {
-    // M-05: re-registering with matching terms is a no-op so two travelers
+    // Re-registering with matching terms is a no-op so two travelers
     // racing to the first purchase don't both have their txs revert.
     let t = setup();
     register(&t);
@@ -236,7 +236,7 @@ fn test_register_flight_zero_premium_fails() {
 #[test]
 #[should_panic(expected = "Error(Contract, #409)")]
 fn test_register_flight_payoff_not_above_premium_fails() {
-    // Audit V12-CF-06: defense in depth — a route that resolves (against mutable
+    // Defense in depth — a route that resolves (against mutable
     // governance defaults) to payoff <= premium must be rejected at registration
     // so settlement's `payoff - premium` can never underflow and brick the flight.
     let t = setup();
@@ -252,7 +252,7 @@ fn test_register_flight_payoff_not_above_premium_fails() {
 
 #[test]
 fn test_config_survives_until_far_future_flight() {
-    // Audit V12-CF-03: a flight booked far ahead must keep its config alive
+    // A flight booked far ahead must keep its config alive
     // until settlement (extended to the flight date + buffer), not just the flat
     // ~31-day default. Advancing the ledger sequence well past the old TTL must
     // leave the config readable.
@@ -273,7 +273,7 @@ fn test_config_survives_until_far_future_flight() {
 
 #[test]
 fn test_config_survives_claim_window_after_quick_settle() {
-    // Audit V12-CF-02: settling shortly after purchase must still extend the
+    // Settling shortly after purchase must still extend the
     // config TTL across the full claim window. The extension previously no-op'd
     // (7-day threshold vs ~31-day live TTL), archiving the config mid-window.
     let t = setup();
@@ -534,7 +534,7 @@ fn test_claim_after_cancelled_success() {
 
 #[test]
 fn test_claim_succeeds_while_paused() {
-    // Audit VF-03: claim must remain callable during an emergency pause —
+    // Claim must remain callable during an emergency pause —
     // otherwise the ledger clock would run the claim window out and a valid,
     // already-funded payout would be permanently lost.
     let t = setup();
@@ -778,7 +778,7 @@ fn test_has_policy_and_has_claimed_flow() {
 // =========================================================================
 
 // Helper: count emitted events on the pool whose topic prefix is
-// `["sentinel", <verb>]` for the given verb. L-03 namespace.
+// `["sentinel", <verb>]` for the given verb.
 fn count_pool_events(t: &TestEnv, verb: Symbol) -> u32 {
     use soroban_sdk::{symbol_short, TryFromVal};
     let pool_addr = t.pool_addr.clone();

@@ -10,7 +10,7 @@
 //   - Mixed multi-flight portfolio in one orchestration cycle.
 //   - Explicit 5-cron tick sequence (Fetcher → Classifier → Settler →
 //     QueueMaintainer → TTL/Prune) over multiple simulated ticks.
-//   - audit M-03 split: settler MUST NOT drain the underwriter queue;
+//   - Settler MUST NOT drain the underwriter queue;
 //     QueueMaintainer is the sole drainer.
 //   - The fetcher's contract-side effect (set_estimated_arrival / set_landed /
 //     set_cancelled) is replayed deterministically since the AeroAPI fetch
@@ -227,12 +227,12 @@ fn classifier_tick_advances_all_landed_or_cancelled_flights() {
 }
 
 // =========================================================================
-// Settler tick — moves money; audit M-03: does NOT drain the queue
+// Settler tick — moves money; does NOT drain the queue
 // =========================================================================
 
 #[test]
 fn settler_tick_does_not_drain_withdrawal_queue() {
-    // Pin down audit M-03: execute_settlements must not touch the
+    // Pin down: execute_settlements must not touch the
     // underwriter queue. Only run_queue_maintenance (Cron #3b) does.
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);

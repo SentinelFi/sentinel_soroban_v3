@@ -21,7 +21,7 @@ impl RiskVault {
         if shares <= 0 {
             panic_with_error!(e, Error::SharesMustBePositive);
         }
-        // Audit VF-04: reject dust requests that preview to zero assets. Such a
+        // Reject dust requests that preview to zero assets. Such a
         // request would otherwise sit at the queue head and block every later
         // request (the drain loop stops at the first zero-preview entry).
         if Vault::preview_redeem(e, shares) <= 0 {
@@ -190,7 +190,7 @@ impl RiskVault {
                     e.storage().persistent().remove(&key);
                 } else {
                     e.storage().persistent().set(&key, &remaining);
-                    // Audit VF-16: a partial transfer leaves a nonzero balance
+                    // A partial transfer leaves a nonzero balance
                     // behind — refresh its TTL so the remainder can't archive
                     // sooner than a freshly-credited entry.
                     e.storage().persistent().extend_ttl(

@@ -45,7 +45,7 @@ pub enum RecoveryMode {
 
 pub(crate) const SECONDS_PER_DAY: u64 = 86400;
 
-/// Audit VF-02: maximum withdrawal requests examined per
+/// Maximum withdrawal requests examined per
 /// `process_withdrawal_queue` call. Bounds the per-call resource cost
 /// (preview_redeem + share burn + storage writes) so a large queue can never
 /// make maintenance exceed Soroban transaction limits and revert before any

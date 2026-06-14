@@ -15,7 +15,7 @@ impl FlightPoolManager {
     /// `(flight_id, date)` is a no-op when the new terms match the existing
     /// entry, and panics when they would diverge. This lets two travelers
     /// race to the first purchase of a new route in the same ledger without
-    /// the second tx reverting (audit M-05).
+    /// the second tx reverting.
     #[when_not_paused]
     pub fn register_flight(
         e: &Env,
@@ -33,7 +33,7 @@ impl FlightPoolManager {
         if payoff <= 0 {
             panic_with_error!(e, Error::PayoffNotPositive);
         }
-        // Audit V12-CF-06: defense in depth. Governance resolves partially-
+        // Defense in depth. Governance resolves partially-
         // defaulted route terms against MUTABLE defaults, and a later
         // set_defaults can make a route resolve to payoff <= premium without
         // revalidation. Settlement computes `payoff - premium`, which would
@@ -54,7 +54,7 @@ impl FlightPoolManager {
             {
                 panic_with_error!(e, Error::FlightTermsMismatch);
             }
-            // Audit V12-CF-03: keep the config alive through the flight date
+            // Keep the config alive through the flight date
             // (+buffer), not just a flat ~31 days — a flight booked far ahead
             // could otherwise archive before settlement.
             extend_flight_ttl_to(e, &flight_id, date, date);
@@ -71,7 +71,7 @@ impl FlightPoolManager {
             claim_expiry: 0,
         };
         e.storage().persistent().set(&key, &cfg);
-        // Audit V12-CF-03: cover the flight date (+buffer) so a far-booked
+        // Cover the flight date (+buffer) so a far-booked
         // flight's config survives until settlement.
         extend_flight_ttl_to(e, &flight_id, date, date);
 
@@ -125,7 +125,7 @@ impl FlightPoolManager {
 
         cfg.buyer_count = cfg.buyer_count.checked_add(1).expect("addition overflow");
         e.storage().persistent().set(&cfg_key, &cfg);
-        // Audit V12-CF-03: keep config alive through the flight date (+buffer).
+        // Keep config alive through the flight date (+buffer).
         extend_flight_ttl_to(e, &flight_id, date, date);
 
         BuyerAdded {

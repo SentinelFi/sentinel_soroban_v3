@@ -12,7 +12,7 @@ use crate::{
 impl FlightPoolManager {
     /// Buyer claims their payoff after delayed/cancelled settlement.
     ///
-    /// Audit VF-03: intentionally NOT `#[when_not_paused]`. Claim windows run on
+    /// Intentionally NOT `#[when_not_paused]`. Claim windows run on
     /// the ledger clock, which keeps advancing during a pause; gating claims
     /// would let an emergency pause silently expire valid, already-funded
     /// payouts that travelers could never recover after unpause. Claiming only

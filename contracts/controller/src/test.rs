@@ -490,7 +490,7 @@ fn test_buy_insurance_panics_on_short_lead_time() {
 #[test]
 #[should_panic(expected = "Error(Contract, #310)")]
 fn test_buy_insurance_panics_on_far_future_booking() {
-    // Audit ASF-01: a flight dated beyond the 90-day booking horizon must be
+    // A flight dated beyond the 90-day booking horizon must be
     // rejected so the policy lifecycle can't outlive the 180-day buyer-key TTL.
     let t = setup();
     let traveler = Address::generate(&t.env);
@@ -509,7 +509,7 @@ fn test_buy_insurance_panics_on_far_future_booking() {
 #[test]
 #[should_panic(expected = "Error(Contract, #311)")]
 fn test_buy_insurance_rejected_after_oracle_cancellation() {
-    // Audit V12-CF-01: once the oracle has marked the flight Cancelled, further
+    // Once the oracle has marked the flight Cancelled, further
     // purchases must be rejected — otherwise a late buyer claims a guaranteed
     // payoff and drains the vault.
     let t = setup();
@@ -526,7 +526,7 @@ fn test_buy_insurance_rejected_after_oracle_cancellation() {
 
 #[test]
 fn test_classify_and_settle_multiple_flights_in_one_batch() {
-    // Audit V12-CF-04: the bounded rotating-cursor loop must still process every
+    // The bounded rotating-cursor loop must still process every
     // flight when several are active. Three distinct flights settle in one pass.
     let t = setup();
     t.gov.whitelist_route(
@@ -899,7 +899,7 @@ fn test_execute_settlements_skips_unclassified_flights() {
 
 #[test]
 fn test_run_queue_maintenance_processes_withdrawal_queue() {
-    // M-03: queue drain is no longer coupled to execute_settlements.
+    // Queue drain is no longer coupled to execute_settlements.
     // After settlements free up capital, the keeper calls
     // run_queue_maintenance to actually drain the queue.
     let t = setup();

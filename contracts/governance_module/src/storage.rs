@@ -14,7 +14,7 @@ pub enum DataKey {
     DefaultPayoff,                 // i128 — Instance
     DefaultDelayHours,             // u32 — Instance
     Route(Symbol, Symbol, Symbol), // RouteTerms — Persistent
-    // Audit V12-CF-05: flight_id → (origin, dest) uniqueness index. Downstream
+    // flight_id → (origin, dest) uniqueness index. Downstream
     // pool/oracle state is keyed only by (flight_id, date), so two approved
     // routes sharing a flight_id but differing in origin/dest would collide.
     // A flight number on a date is one physical flight, so we enforce a single

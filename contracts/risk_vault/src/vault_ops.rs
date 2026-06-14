@@ -31,7 +31,7 @@ impl FungibleVault for RiskVault {
         owner: Address,
         operator: Address,
     ) -> i128 {
-        // Audit ASF-02: once any underwriter is queued, the queue is the canonical
+        // Once any underwriter is queued, the queue is the canonical
         // exit path — block direct exits so a latecomer can't consume free capital
         // ahead of LPs already waiting in FIFO order. When the queue is empty this
         // fast path stays open.
@@ -63,7 +63,7 @@ impl FungibleVault for RiskVault {
 
     #[when_not_paused]
     fn redeem(e: &Env, shares: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
-        // Audit ASF-02: see `withdraw` — direct redeem defers to the queue while
+        // See `withdraw` — direct redeem defers to the queue while
         // any request is pending so it can't jump the FIFO line.
         if !Self::get_withdrawal_queue(e).is_empty() {
             panic_with_error!(e, Error::WithdrawalQueueActive);
@@ -114,7 +114,7 @@ impl FungibleVault for RiskVault {
         Vault::preview_redeem(e, shares)
     }
 
-    // Audit VF-17: the executable deposit/mint/withdraw/redeem paths are all
+    // The executable deposit/mint/withdraw/redeem paths are all
     // `#[when_not_paused]`, so the `max_*` views must report zero while paused.
     // Otherwise integrations read a positive limit and submit transactions that
     // revert during a pause.
