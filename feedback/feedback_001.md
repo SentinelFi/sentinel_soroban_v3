@@ -3,7 +3,7 @@
 ## Things to Fix and Improve
 
 1. **Add a Makefile to the contracts folder.**
-   Create a `Makefile` inside the `contracts` folder with the following commands: `help` (default), `test` (`cargo test`), `build` (`cargo build` and/or `stellar contract build`), `optimize` (stellar command), `deploy-testnet` (stellar command, target `wasm32v1-none`), `clippy` (`cargo clippy --all-targets -- -D warnings`), `format` (`cargo fmt --all`), `audit` (`cargo audit`), `scout-install` (`cargo install cargo-scout-audit --locked`), and `scout-run` (`cargo scout-audit`).
+   Create a `Makefile` inside the `contracts` folder with the following commands: `help` (default), `test` (`cargo test`), `build` (`cargo build` and/or `stellar contract build`), `optimize` (stellar command), `deploy-testnet` (stellar command, target `wasm32v1-none`), `clippy` (`cargo clippy --all-targets -- -D warnings`), `format` (`cargo fmt --all`), `audit` (`cargo audit`), clean, `scout-install` (`cargo install cargo-scout-audit --locked`), and `scout-run` (`cargo scout-audit`).
 
 2. **Add `test_snapshots` to `.gitignore`.**
    Snapshot files generated during testing should not be tracked in version control. Add the relevant path pattern to `.gitignore`. Example path: `contracts\controller\test_snapshots\test\test_buy_insurance_first_traveler_registers_flight.1.json`.

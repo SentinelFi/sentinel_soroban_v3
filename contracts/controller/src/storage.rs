@@ -15,9 +15,9 @@ pub enum CtrlKey {
     TotalPoliciesSold,
     TotalPremiumsCollected,
     TotalPayoutsDistributed,
-    WhitelistEnabled,  // bool — Phase 11 buyer whitelist kill-switch
-    ClassifyCursor,    // u32 — audit VF-01: rotating index into the oracle active list
-    SettleCursor,      // u32 — audit VF-01: rotating index into the oracle active list
+    WhitelistEnabled, // bool — Phase 11 buyer whitelist kill-switch
+    ClassifyCursor,   // u32 — audit VF-01: rotating index into the oracle active list
+    SettleCursor,     // u32 — audit VF-01: rotating index into the oracle active list
 
     // Persistent — keyed multi-row state
     TravelerFlights(Address),  // Vec<(Symbol, u64)>
@@ -49,13 +49,13 @@ pub(crate) const MIN_SOLVENCY_RATIO: u32 = 100; // 100% — must at least back p
 pub(crate) const MAX_SOLVENCY_RATIO: u32 = 10_000; // 100x — practical sanity cap
 pub(crate) const MAX_MIN_LEAD_TIME_SECS: u64 = 7_776_000; // 90 days
 pub(crate) const MIN_CLAIM_EXPIRY_WINDOW_SECS: u64 = 86_400; // 1 day — travelers need time
-// Audit ASF-01: reduced from 180d → 60d. The buyer policy key
-// (`PoolKey::Buyer`) is written at purchase with a fixed 180-day TTL and is
-// never re-extended (the contract can't iterate buyers post-settlement, and
-// 180d is Stellar's max persistent TTL — it cannot be raised). For a claim to
-// always be possible the key must still exist at the claim deadline
-// (flight_date + claim_window). Bounding book-ahead + claim-window below the
-// buyer TTL makes that an on-chain guarantee instead of a cron dependency.
+                                                             // Audit ASF-01: reduced from 180d → 60d. The buyer policy key
+                                                             // (`PoolKey::Buyer`) is written at purchase with a fixed 180-day TTL and is
+                                                             // never re-extended (the contract can't iterate buyers post-settlement, and
+                                                             // 180d is Stellar's max persistent TTL — it cannot be raised). For a claim to
+                                                             // always be possible the key must still exist at the claim deadline
+                                                             // (flight_date + claim_window). Bounding book-ahead + claim-window below the
+                                                             // buyer TTL makes that an on-chain guarantee instead of a cron dependency.
 pub(crate) const MAX_CLAIM_EXPIRY_WINDOW_SECS: u64 = 5_184_000; // 60 days
 
 // Audit ASF-01: maximum future booking horizon. `buy_insurance` previously
