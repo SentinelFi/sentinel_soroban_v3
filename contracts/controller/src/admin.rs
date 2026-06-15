@@ -2,6 +2,7 @@ use crate::constants::{
     MAX_CLAIM_EXPIRY_WINDOW_SECS, MAX_MIN_LEAD_TIME_SECS, MAX_SOLVENCY_RATIO,
     MIN_CLAIM_EXPIRY_WINDOW_SECS, MIN_SOLVENCY_RATIO,
 };
+use crate::events::{ClaimExpiryWindowSet, KeeperSet, MinLeadTimeSet, SolvencyRatioSet};
 use crate::storage::CtrlKey;
 use crate::{Controller, ControllerArgs, ControllerClient, Error};
 pub(crate) use sentinel_types::ttl::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
@@ -103,6 +104,7 @@ impl Controller {
             .instance()
             .set(&CtrlKey::AuthorizedKeeper, &keeper);
         Self::extend_ttl(e);
+        KeeperSet { keeper }.publish(e);
     }
 
     #[only_owner]
@@ -110,6 +112,7 @@ impl Controller {
         assert_solvency_ratio(e, ratio);
         e.storage().instance().set(&CtrlKey::SolvencyRatio, &ratio);
         Self::extend_ttl(e);
+        SolvencyRatioSet { ratio }.publish(e);
     }
 
     #[only_owner]
@@ -117,6 +120,7 @@ impl Controller {
         assert_min_lead_time(e, seconds);
         e.storage().instance().set(&CtrlKey::MinLeadTime, &seconds);
         Self::extend_ttl(e);
+        MinLeadTimeSet { seconds }.publish(e);
     }
 
     #[only_owner]
@@ -126,6 +130,7 @@ impl Controller {
             .instance()
             .set(&CtrlKey::ClaimExpiryWindow, &seconds);
         Self::extend_ttl(e);
+        ClaimExpiryWindowSet { seconds }.publish(e);
     }
 
     /// Extend instance TTL. Called by cron as a safety net, and reused

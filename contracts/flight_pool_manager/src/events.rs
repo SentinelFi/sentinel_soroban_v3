@@ -60,3 +60,11 @@ pub struct RecoveredWithdrawn {
     pub(crate) owner: Address,
     pub(crate) amount: i128,
 }
+
+// Owner-only one-time wiring of the authorized controller. Emitted for the
+// audit trail.
+#[contractevent(topics = ["sentinel", "controller_set"], data_format = "single-value")]
+pub struct ControllerSet {
+    #[topic]
+    pub(crate) controller: Address,
+}

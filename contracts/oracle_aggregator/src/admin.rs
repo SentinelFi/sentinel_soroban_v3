@@ -3,6 +3,7 @@ use stellar_access::ownable;
 use stellar_macros::only_owner;
 
 use crate::auth::extend_instance_ttl;
+use crate::events::{ControllerSet, OracleSet};
 use crate::storage::OracleKey;
 use crate::{Error, OracleAggregator, OracleAggregatorArgs, OracleAggregatorClient};
 
@@ -37,6 +38,7 @@ impl OracleAggregator {
             .instance()
             .set(&OracleKey::AuthorizedController, &controller);
         extend_instance_ttl(e);
+        ControllerSet { controller }.publish(e);
     }
 
     /// Update the authorized oracle address (for backend migration).
@@ -46,12 +48,14 @@ impl OracleAggregator {
             .instance()
             .set(&OracleKey::AuthorizedOracle, &new_oracle);
         extend_instance_ttl(e);
+        OracleSet { oracle: new_oracle }.publish(e);
     }
 
     // --- TTL management ---
 
-    /// Extend instance TTL. Called by cron as a safety net — write functions
-    /// don't touch instance storage, so TTL must be renewed externally.
+    /// Extend instance TTL. Called by cron as a safety net; instance-mutating
+    /// hot paths also renew it inline so the contract self-heals if the cron
+    /// lapses.
     pub fn extend_ttl(e: &Env) {
         extend_instance_ttl(e);
     }

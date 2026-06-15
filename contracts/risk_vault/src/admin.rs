@@ -5,6 +5,7 @@ use stellar_tokens::fungible::{Base, FungibleToken};
 use stellar_tokens::vault::Vault;
 
 use crate::auth::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
+use crate::events::ControllerSet;
 use crate::storage::VaultKey;
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient};
 
@@ -46,6 +47,7 @@ impl RiskVault {
             .instance()
             .set(&VaultKey::Controller, &controller);
         Self::extend_ttl(e);
+        ControllerSet { controller }.publish(e);
     }
 
     /// Extend instance TTL. Called by cron as a safety net.
