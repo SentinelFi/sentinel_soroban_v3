@@ -73,3 +73,26 @@ pub struct BuyerWhitelistRemovedEvent {
 pub struct WhitelistToggled {
     pub(crate) enabled: bool,
 }
+
+// --- Owner-only configuration audit events ---
+
+#[contractevent(topics = ["sentinel", "keeper_set"], data_format = "single-value")]
+pub struct KeeperSet {
+    #[topic]
+    pub(crate) keeper: Address,
+}
+
+#[contractevent(topics = ["sentinel", "solvency_ratio_set"], data_format = "single-value")]
+pub struct SolvencyRatioSet {
+    pub(crate) ratio: u32,
+}
+
+#[contractevent(topics = ["sentinel", "min_lead_time_set"], data_format = "single-value")]
+pub struct MinLeadTimeSet {
+    pub(crate) seconds: u64,
+}
+
+#[contractevent(topics = ["sentinel", "claim_expiry_window_set"], data_format = "single-value")]
+pub struct ClaimExpiryWindowSet {
+    pub(crate) seconds: u64,
+}

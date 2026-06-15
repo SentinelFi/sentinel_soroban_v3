@@ -3,7 +3,7 @@ use stellar_access::ownable::{self as ownable};
 use stellar_macros::{only_owner, when_not_paused};
 
 use crate::auth::extend_instance_ttl;
-use crate::events::RecoveredWithdrawn;
+use crate::events::{ControllerSet, RecoveredWithdrawn};
 use crate::storage::PoolKey;
 use crate::{Error, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient};
 
@@ -40,6 +40,7 @@ impl FlightPoolManager {
             .instance()
             .set(&PoolKey::Controller, &controller);
         extend_instance_ttl(e);
+        ControllerSet { controller }.publish(e);
     }
 
     /// Owner withdraws funds credited to RecoveredBalance via sweep_expired.

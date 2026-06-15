@@ -1,6 +1,20 @@
-use soroban_sdk::{contractevent, Env, Symbol};
+use soroban_sdk::{contractevent, Address, Env, Symbol};
 
 use crate::storage::FlightStatus;
+
+// --- Owner-only configuration audit events ---
+
+#[contractevent(topics = ["sentinel", "controller_set"], data_format = "single-value")]
+pub struct ControllerSet {
+    #[topic]
+    pub(crate) controller: Address,
+}
+
+#[contractevent(topics = ["sentinel", "oracle_set"], data_format = "single-value")]
+pub struct OracleSet {
+    #[topic]
+    pub(crate) oracle: Address,
+}
 
 #[contractevent(topics = ["sentinel", "flight"], data_format = "single-value")]
 pub struct FlightStatusChange {

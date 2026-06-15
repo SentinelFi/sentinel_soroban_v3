@@ -1,7 +1,7 @@
 use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol, Vec};
 use stellar_macros::when_not_paused;
 
-use crate::auth::require_controller;
+use crate::auth::{extend_instance_ttl, require_controller};
 use crate::constants::BUYER_TTL_LEDGERS;
 use crate::events::{BuyerAdded, FlightRegistered};
 use crate::storage::{extend_flight_ttl_to, PoolKey};
@@ -28,6 +28,7 @@ impl FlightPoolManager {
         delay_hours: u32,
     ) {
         require_controller(e, &controller);
+        extend_instance_ttl(e);
         if premium <= 0 {
             panic_with_error!(e, Error::PremiumNotPositive);
         }

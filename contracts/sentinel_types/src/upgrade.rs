@@ -6,7 +6,21 @@
 //! dependency, with owner authorization enforced at the call site (via
 //! `#[only_owner]`) rather than here.
 
-use soroban_sdk::{contracttype, BytesN, Env};
+use soroban_sdk::{contractevent, contracttype, BytesN, Env};
+
+use crate::ttl::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
+
+/// Audit-trail event emitted on every contract upgrade. Defined here (rather
+/// than per-contract) so every contract's upgrade leaves an identical trail.
+/// The emitting contract address rides the event envelope, so off-chain
+/// indexers know *which* contract was upgraded; `wasm_hash` and `version`
+/// record *to what*.
+#[contractevent(topics = ["sentinel", "upgrade"], data_format = "single-value")]
+pub struct ContractUpgraded {
+    #[topic]
+    pub wasm_hash: BytesN<32>,
+    pub version: u32,
+}
 
 /// Instance-storage key holding the `u32` on-chain contract version. Stored
 /// under one shared key so every contract reads/writes it consistently.
@@ -41,7 +55,20 @@ pub fn version(e: &Env) -> u32 {
 /// **Not** access-gated: the caller is responsible for enforcing owner
 /// authorization (the contract wrappers do this with `#[only_owner]`).
 pub fn upgrade(e: &Env, wasm_hash: BytesN<32>) {
-    e.deployer().update_current_contract_wasm(wasm_hash);
+    e.deployer().update_current_contract_wasm(wasm_hash.clone());
     let next = version(e).saturating_add(1);
     e.storage().instance().set(&UpgradeKey::Version, &next);
+    // Refresh the instance TTL on the upgrade path too: the version write
+    // above touches instance storage, so renew it here rather than relying
+    // solely on the external TTL cron.
+    e.storage()
+        .instance()
+        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+    // Leave an audit trail: which Wasm the contract was upgraded to and the
+    // version it bumped to.
+    ContractUpgraded {
+        wasm_hash,
+        version: next,
+    }
+    .publish(e);
 }

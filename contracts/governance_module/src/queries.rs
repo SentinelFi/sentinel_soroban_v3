@@ -7,6 +7,7 @@ use crate::{GovernanceModule, GovernanceModuleArgs, GovernanceModuleClient, Rout
 
 #[contractimpl]
 impl GovernanceModule {
+    /// Return the global default premium, payoff, and delay hours.
     pub fn get_defaults(e: &Env) -> (i128, i128, u32) {
         read_defaults(e)
     }
@@ -38,6 +39,7 @@ impl GovernanceModule {
         }
     }
 
+    /// Return whether the given address has admin rights.
     pub fn is_admin(e: &Env, addr: Address) -> bool {
         e.storage()
             .instance()

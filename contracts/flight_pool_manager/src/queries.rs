@@ -15,6 +15,7 @@ impl FlightPoolManager {
             .get(&PoolKey::FlightConfig(flight_id, date))
     }
 
+    /// Returns true if the traveler holds a policy for the given flight.
     pub fn has_policy(e: &Env, flight_id: Symbol, date: u64, traveler: Address) -> bool {
         e.storage()
             .persistent()
@@ -22,6 +23,7 @@ impl FlightPoolManager {
             .unwrap_or(false)
     }
 
+    /// Returns true if the traveler has already claimed their payout.
     pub fn has_claimed(e: &Env, flight_id: Symbol, date: u64, traveler: Address) -> bool {
         e.storage()
             .persistent()
@@ -29,6 +31,7 @@ impl FlightPoolManager {
             .unwrap_or(false)
     }
 
+    /// Returns the list of currently active (unsettled) flights.
     pub fn get_active_flights(e: &Env) -> Vec<(Symbol, u64)> {
         e.storage()
             .instance()
@@ -36,6 +39,7 @@ impl FlightPoolManager {
             .unwrap_or(Vec::new(e))
     }
 
+    /// Returns the balance of unclaimed funds available for owner recovery.
     pub fn get_recovered_balance(e: &Env) -> i128 {
         e.storage()
             .instance()
@@ -43,14 +47,17 @@ impl FlightPoolManager {
             .unwrap_or(0)
     }
 
+    /// Returns the authorized controller address, or `None` if unset.
     pub fn get_controller(e: &Env) -> Option<Address> {
         e.storage().instance().get(&PoolKey::Controller)
     }
 
+    /// Returns the asset token address used for premiums and payouts.
     pub fn get_asset_token(e: &Env) -> Address {
         e.storage().instance().get(&PoolKey::AssetToken).unwrap()
     }
 
+    /// Returns the RiskVault address that collected premiums are swept to.
     pub fn get_risk_vault(e: &Env) -> Address {
         e.storage().instance().get(&PoolKey::RiskVault).unwrap()
     }

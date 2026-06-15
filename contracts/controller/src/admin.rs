@@ -2,6 +2,7 @@ use crate::constants::{
     MAX_CLAIM_EXPIRY_WINDOW_SECS, MAX_MIN_LEAD_TIME_SECS, MAX_SOLVENCY_RATIO,
     MIN_CLAIM_EXPIRY_WINDOW_SECS, MIN_SOLVENCY_RATIO,
 };
+use crate::events::{ClaimExpiryWindowSet, KeeperSet, MinLeadTimeSet, SolvencyRatioSet};
 use crate::storage::CtrlKey;
 use crate::{Controller, ControllerArgs, ControllerClient, Error};
 pub(crate) use sentinel_types::ttl::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
@@ -97,28 +98,35 @@ impl Controller {
         sentinel_types::upgrade::set_initial_version(e);
     }
 
+    /// Sets the authorized keeper address.
     #[only_owner]
     pub fn set_keeper(e: &Env, keeper: Address) {
         e.storage()
             .instance()
             .set(&CtrlKey::AuthorizedKeeper, &keeper);
         Self::extend_ttl(e);
+        KeeperSet { keeper }.publish(e);
     }
 
+    /// Sets the vault solvency ratio (validated against allowed bounds).
     #[only_owner]
     pub fn set_solvency_ratio(e: &Env, ratio: u32) {
         assert_solvency_ratio(e, ratio);
         e.storage().instance().set(&CtrlKey::SolvencyRatio, &ratio);
         Self::extend_ttl(e);
+        SolvencyRatioSet { ratio }.publish(e);
     }
 
+    /// Sets the minimum lead time (in seconds) required between purchase and departure.
     #[only_owner]
     pub fn set_min_lead_time(e: &Env, seconds: u64) {
         assert_min_lead_time(e, seconds);
         e.storage().instance().set(&CtrlKey::MinLeadTime, &seconds);
         Self::extend_ttl(e);
+        MinLeadTimeSet { seconds }.publish(e);
     }
 
+    /// Sets the claim expiry window (in seconds) after settlement (validated against allowed bounds).
     #[only_owner]
     pub fn set_claim_expiry_window(e: &Env, seconds: u64) {
         assert_claim_expiry_window(e, seconds);
@@ -126,6 +134,7 @@ impl Controller {
             .instance()
             .set(&CtrlKey::ClaimExpiryWindow, &seconds);
         Self::extend_ttl(e);
+        ClaimExpiryWindowSet { seconds }.publish(e);
     }
 
     /// Extend instance TTL. Called by cron as a safety net, and reused

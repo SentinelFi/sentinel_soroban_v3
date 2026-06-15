@@ -3,6 +3,7 @@ use stellar_macros::when_not_paused;
 
 use crate::constants::BUYER_TTL_LEDGERS;
 use crate::events::{ExpiredSwept, PayoutClaimed};
+use crate::auth::extend_instance_ttl;
 use crate::storage::{extend_flight_ttl, PoolKey};
 use crate::{
     Error, FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient,
@@ -91,6 +92,7 @@ impl FlightPoolManager {
         if e.ledger().timestamp() <= cfg.claim_expiry {
             panic_with_error!(e, Error::ClaimWindowStillOpen);
         }
+        extend_instance_ttl(e);
 
         let unclaimed_buyers = cfg
             .buyer_count

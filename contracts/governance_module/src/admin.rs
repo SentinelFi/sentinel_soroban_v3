@@ -43,10 +43,12 @@ impl GovernanceModule {
 
     // --- Owner-only ---
 
+    /// Update the global fallback premium, payoff, and delay-hours defaults.
     #[only_owner]
     #[when_not_paused]
     pub fn set_defaults(e: &Env, premium: i128, payoff: i128, delay_hours: u32) {
         assert_terms_valid(e, premium, payoff, delay_hours);
+        Self::extend_ttl(e);
         e.storage()
             .instance()
             .set(&DataKey::DefaultPremium, &premium);
@@ -63,9 +65,11 @@ impl GovernanceModule {
         .publish(e);
     }
 
+    /// Grant admin rights to an address.
     #[only_owner]
     #[when_not_paused]
     pub fn add_admin(e: &Env, admin: Address) {
+        Self::extend_ttl(e);
         e.storage()
             .instance()
             .set(&DataKey::Admin(admin.clone()), &true);
@@ -73,9 +77,11 @@ impl GovernanceModule {
         GovAdminAdded { admin }.publish(e);
     }
 
+    /// Revoke admin rights from an address.
     #[only_owner]
     #[when_not_paused]
     pub fn remove_admin(e: &Env, admin: Address) {
+        Self::extend_ttl(e);
         e.storage()
             .instance()
             .remove(&DataKey::Admin(admin.clone()));

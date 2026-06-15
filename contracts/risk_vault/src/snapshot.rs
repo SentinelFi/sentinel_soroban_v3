@@ -74,11 +74,13 @@ impl RiskVault {
         e.storage()
             .instance()
             .set(&VaultKey::LastSnapshotTime, &now);
+        Self::extend_ttl(e);
 
         // Emit so off-chain analytics can subscribe instead of polling.
         SharePriceSnapshot { day, price }.publish(e);
     }
 
+    /// Return the recorded share price for the given day (0 if expired/absent).
     pub fn get_snapshot_price(e: &Env, day: u64) -> i128 {
         // Temporary storage — entries older than 30 days return None (= 0).
         // Stale snapshots are intentionally not queryable on-chain.

@@ -19,6 +19,7 @@ impl RiskVault {
     #[when_not_paused]
     pub fn request_withdrawal(e: &Env, caller: Address, shares: i128) -> u64 {
         caller.require_auth();
+        Self::extend_ttl(e);
         if shares <= 0 {
             panic_with_error!(e, Error::SharesMustBePositive);
         }
@@ -73,6 +74,7 @@ impl RiskVault {
     #[when_not_paused]
     pub fn cancel_withdrawal(e: &Env, caller: Address, request_id: u64) {
         caller.require_auth();
+        Self::extend_ttl(e);
 
         let mut queue: Vec<WithdrawalRequest> = e
             .storage()
@@ -107,6 +109,7 @@ impl RiskVault {
             .set(&VaultKey::WithdrawalQueue, &queue);
     }
 
+    /// Collect (transfer out) the caller's accrued claimable balance.
     #[when_not_paused]
     pub fn collect(e: &Env, caller: Address) {
         caller.require_auth();

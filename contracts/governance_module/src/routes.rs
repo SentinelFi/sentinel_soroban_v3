@@ -14,6 +14,7 @@ use crate::{
 
 #[contractimpl]
 impl GovernanceModule {
+    /// Whitelist a route with optional per-route term overrides.
     #[when_not_paused]
     pub fn whitelist_route(
         e: &Env,
@@ -67,6 +68,7 @@ impl GovernanceModule {
         .publish(e);
     }
 
+    /// Mark a whitelisted route as disabled (not purchasable).
     #[when_not_paused]
     pub fn disable_route(
         e: &Env,
@@ -98,6 +100,7 @@ impl GovernanceModule {
         .publish(e);
     }
 
+    /// Re-enable a previously disabled route.
     #[when_not_paused]
     pub fn enable_route(e: &Env, caller: Address, flight_id: Symbol, origin: Symbol, dest: Symbol) {
         require_owner_or_admin(e, &caller);
@@ -153,6 +156,7 @@ impl GovernanceModule {
         .publish(e);
     }
 
+    /// Partially update a route's premium, payoff, and/or delay-hours terms.
     #[when_not_paused]
     pub fn update_route_terms(
         e: &Env,
