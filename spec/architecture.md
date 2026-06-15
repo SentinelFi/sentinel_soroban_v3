@@ -1152,6 +1152,10 @@ double execution. Rollback = set addresses back to old backend.
 
 ## Data Flow
 
+> For visual, editable Mermaid sequence diagrams of these flows (deployment,
+> purchase, underwriter, settlement, claim), see
+> [sequence_diagrams.md](../sequence_diagrams.md).
+
 ### Whitelisting a Route
 
 ```
