@@ -38,6 +38,7 @@ impl RiskVault {
         sentinel_types::upgrade::set_initial_version(e);
     }
 
+    /// Set the vault controller address (one-time, owner-only).
     #[only_owner]
     pub fn set_controller(e: &Env, controller: Address) {
         if e.storage().instance().has(&VaultKey::Controller) {

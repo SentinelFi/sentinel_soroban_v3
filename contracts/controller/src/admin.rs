@@ -98,6 +98,7 @@ impl Controller {
         sentinel_types::upgrade::set_initial_version(e);
     }
 
+    /// Sets the authorized keeper address.
     #[only_owner]
     pub fn set_keeper(e: &Env, keeper: Address) {
         e.storage()
@@ -107,6 +108,7 @@ impl Controller {
         KeeperSet { keeper }.publish(e);
     }
 
+    /// Sets the vault solvency ratio (validated against allowed bounds).
     #[only_owner]
     pub fn set_solvency_ratio(e: &Env, ratio: u32) {
         assert_solvency_ratio(e, ratio);
@@ -115,6 +117,7 @@ impl Controller {
         SolvencyRatioSet { ratio }.publish(e);
     }
 
+    /// Sets the minimum lead time (in seconds) required between purchase and departure.
     #[only_owner]
     pub fn set_min_lead_time(e: &Env, seconds: u64) {
         assert_min_lead_time(e, seconds);
@@ -123,6 +126,7 @@ impl Controller {
         MinLeadTimeSet { seconds }.publish(e);
     }
 
+    /// Sets the claim expiry window (in seconds) after settlement (validated against allowed bounds).
     #[only_owner]
     pub fn set_claim_expiry_window(e: &Env, seconds: u64) {
         assert_claim_expiry_window(e, seconds);

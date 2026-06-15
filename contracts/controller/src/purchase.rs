@@ -14,6 +14,7 @@ use crate::{Controller, ControllerArgs, ControllerClient, Error};
 
 #[contractimpl]
 impl Controller {
+    /// Buys flight-delay insurance for a traveler: validates the route and timing, checks solvency, collects the premium, locks collateral, and records the policy.
     #[when_not_paused]
     pub fn buy_insurance(
         e: &Env,

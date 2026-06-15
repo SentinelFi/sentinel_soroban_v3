@@ -15,6 +15,7 @@ impl Controller {
             .unwrap_or(Vec::new(e))
     }
 
+    /// Returns aggregate stats: total policies sold, premiums collected, and payouts distributed.
     pub fn get_stats(e: &Env) -> (u64, i128, i128) {
         let sold: u64 = e
             .storage()
@@ -34,6 +35,7 @@ impl Controller {
         (sold, collected, distributed)
     }
 
+    /// Returns the currently authorized keeper address.
     pub fn get_keeper(e: &Env) -> Address {
         e.storage()
             .instance()
@@ -41,10 +43,12 @@ impl Controller {
             .unwrap()
     }
 
+    /// Returns the configured vault solvency ratio.
     pub fn get_solvency_ratio(e: &Env) -> u32 {
         e.storage().instance().get(&CtrlKey::SolvencyRatio).unwrap()
     }
 
+    /// Returns the configured FlightPoolManager contract address.
     pub fn get_flight_pool_manager(e: &Env) -> Address {
         e.storage()
             .instance()

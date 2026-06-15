@@ -14,6 +14,7 @@ use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest}
 
 #[contractimpl]
 impl RiskVault {
+    /// Controller-only: lock additional capital as collateral.
     #[when_not_paused]
     pub fn increase_locked(e: &Env, controller: Address, amount: i128) {
         require_controller(e, &controller);
@@ -32,6 +33,7 @@ impl RiskVault {
             .set(&VaultKey::LockedCapital, &new_locked);
     }
 
+    /// Controller-only: release previously locked collateral capital.
     #[when_not_paused]
     pub fn decrease_locked(e: &Env, controller: Address, amount: i128) {
         require_controller(e, &controller);
@@ -49,6 +51,7 @@ impl RiskVault {
         );
     }
 
+    /// Controller-only: credit received premium income to managed assets.
     #[when_not_paused]
     pub fn record_premium_income(e: &Env, controller: Address, amount: i128) {
         require_controller(e, &controller);
@@ -76,6 +79,7 @@ impl RiskVault {
             .set(&VaultKey::TotalManagedAssets, &new_tma);
     }
 
+    /// Controller-only: transfer a claim payout from managed assets to a recipient.
     #[when_not_paused]
     pub fn send_payout(e: &Env, controller: Address, to: Address, amount: i128) {
         require_controller(e, &controller);
@@ -98,6 +102,7 @@ impl RiskVault {
         asset.transfer(&e.current_contract_address(), &to, &amount);
     }
 
+    /// Controller-only: drain queued withdrawals into claimable balances (batched, FIFO).
     #[when_not_paused]
     pub fn process_withdrawal_queue(e: &Env, controller: Address) {
         require_controller(e, &controller);

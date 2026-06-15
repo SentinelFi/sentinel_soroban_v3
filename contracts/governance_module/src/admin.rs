@@ -43,6 +43,7 @@ impl GovernanceModule {
 
     // --- Owner-only ---
 
+    /// Update the global fallback premium, payoff, and delay-hours defaults.
     #[only_owner]
     #[when_not_paused]
     pub fn set_defaults(e: &Env, premium: i128, payoff: i128, delay_hours: u32) {
@@ -64,6 +65,7 @@ impl GovernanceModule {
         .publish(e);
     }
 
+    /// Grant admin rights to an address.
     #[only_owner]
     #[when_not_paused]
     pub fn add_admin(e: &Env, admin: Address) {
@@ -75,6 +77,7 @@ impl GovernanceModule {
         GovAdminAdded { admin }.publish(e);
     }
 
+    /// Revoke admin rights from an address.
     #[only_owner]
     #[when_not_paused]
     pub fn remove_admin(e: &Env, admin: Address) {

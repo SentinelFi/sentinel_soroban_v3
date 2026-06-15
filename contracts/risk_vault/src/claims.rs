@@ -109,6 +109,7 @@ impl RiskVault {
             .set(&VaultKey::WithdrawalQueue, &queue);
     }
 
+    /// Collect (transfer out) the caller's accrued claimable balance.
     #[when_not_paused]
     pub fn collect(e: &Env, caller: Address) {
         caller.require_auth();

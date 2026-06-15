@@ -12,6 +12,7 @@ use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient};
 
 #[contractimpl]
 impl FungibleVault for RiskVault {
+    /// Deposits `assets` for `receiver`, minting shares and tracking total managed assets.
     #[when_not_paused]
     fn deposit(e: &Env, assets: i128, receiver: Address, from: Address, operator: Address) -> i128 {
         Self::extend_ttl(e);
@@ -24,6 +25,7 @@ impl FungibleVault for RiskVault {
         shares
     }
 
+    /// Withdraws `assets` to `receiver`, blocked while the withdrawal queue is active or if it exceeds free capital.
     #[when_not_paused]
     fn withdraw(
         e: &Env,
@@ -52,6 +54,7 @@ impl FungibleVault for RiskVault {
         shares
     }
 
+    /// Mints `shares` to `receiver`, pulling the required assets and tracking total managed assets.
     #[when_not_paused]
     fn mint(e: &Env, shares: i128, receiver: Address, from: Address, operator: Address) -> i128 {
         Self::extend_ttl(e);
@@ -64,6 +67,7 @@ impl FungibleVault for RiskVault {
         assets
     }
 
+    /// Redeems `shares` for assets to `receiver`, blocked while the withdrawal queue is active or if it exceeds free capital.
     #[when_not_paused]
     fn redeem(e: &Env, shares: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
         Self::extend_ttl(e);
@@ -86,34 +90,42 @@ impl FungibleVault for RiskVault {
         actual_assets
     }
 
+    /// Returns the total assets held by the vault.
     fn total_assets(e: &Env) -> i128 {
         Vault::total_assets(e)
     }
 
+    /// Returns the address of the underlying asset token.
     fn query_asset(e: &Env) -> Address {
         Vault::query_asset(e)
     }
 
+    /// Converts an amount of assets to the equivalent number of shares.
     fn convert_to_shares(e: &Env, assets: i128) -> i128 {
         Vault::convert_to_shares(e, assets)
     }
 
+    /// Converts a number of shares to the equivalent amount of assets.
     fn convert_to_assets(e: &Env, shares: i128) -> i128 {
         Vault::convert_to_assets(e, shares)
     }
 
+    /// Previews the shares that would be minted for a given deposit of assets.
     fn preview_deposit(e: &Env, assets: i128) -> i128 {
         Vault::preview_deposit(e, assets)
     }
 
+    /// Previews the assets required to mint a given number of shares.
     fn preview_mint(e: &Env, shares: i128) -> i128 {
         Vault::preview_mint(e, shares)
     }
 
+    /// Previews the shares that would be burned to withdraw a given amount of assets.
     fn preview_withdraw(e: &Env, assets: i128) -> i128 {
         Vault::preview_withdraw(e, assets)
     }
 
+    /// Previews the assets that would be returned for redeeming a given number of shares.
     fn preview_redeem(e: &Env, shares: i128) -> i128 {
         Vault::preview_redeem(e, shares)
     }
@@ -129,6 +141,7 @@ impl FungibleVault for RiskVault {
         Vault::max_deposit(e, address)
     }
 
+    /// Returns the maximum shares mintable for `address`, or zero while paused.
     fn max_mint(e: &Env, address: Address) -> i128 {
         if paused(e) {
             return 0;
@@ -136,6 +149,7 @@ impl FungibleVault for RiskVault {
         Vault::max_mint(e, address)
     }
 
+    /// Returns the maximum assets `owner` can withdraw (capped by free capital), or zero while paused.
     fn max_withdraw(e: &Env, owner: Address) -> i128 {
         if paused(e) {
             return 0;
@@ -149,6 +163,7 @@ impl FungibleVault for RiskVault {
         }
     }
 
+    /// Returns the maximum shares `owner` can redeem (capped by free capital), or zero while paused.
     fn max_redeem(e: &Env, owner: Address) -> i128 {
         if paused(e) {
             return 0;

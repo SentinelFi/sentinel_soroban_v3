@@ -47,6 +47,7 @@ impl OracleAggregator {
 
     // --- Admin read functions ---
 
+    /// Get the authorized oracle address. Panics if not set.
     pub fn get_authorized_oracle(e: &Env) -> Address {
         e.storage()
             .instance()
@@ -54,6 +55,7 @@ impl OracleAggregator {
             .expect("oracle not set")
     }
 
+    /// Get the authorized controller address, or None if not yet set.
     pub fn get_authorized_controller(e: &Env) -> Option<Address> {
         e.storage().instance().get(&OracleKey::AuthorizedController)
     }
