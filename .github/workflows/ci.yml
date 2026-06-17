@@ -39,11 +39,19 @@ jobs:
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
 
-      - name: Install stellar-cli and cargo-audit
-        run: cargo binstall -y stellar-cli cargo-audit
+      - name: Install stellar-cli, cargo-audit, and cargo-llvm-cov
+        run: cargo binstall -y stellar-cli cargo-audit cargo-llvm-cov
 
-      - name: cargo test
-        run: cargo test
+      - name: cargo test with coverage
+        # Runs the suite and writes a browsable HTML report to target/llvm-cov/html.
+        run: cargo llvm-cov test --html
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: contracts/target/llvm-cov/html
+          if-no-files-found: error
 
       - name: stellar contract build
         run: stellar contract build

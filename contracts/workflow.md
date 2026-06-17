@@ -45,6 +45,27 @@ cargo audit
 cargo test
 ```
 
+### Code Coverage
+
+Coverage uses `cargo-llvm-cov`.
+
+```bash
+cargo install cargo-llvm-cov
+```
+
+Print a line-coverage summary to the terminal:
+
+```bash
+cargo llvm-cov test
+```
+
+Generate a browsable HTML report (written to `target/llvm-cov/html/`, which is
+gitignored) and open it:
+
+```bash
+cargo llvm-cov test --html --open
+```
+
 ### Build
 
 ```bash
