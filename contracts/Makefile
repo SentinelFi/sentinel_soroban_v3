@@ -12,8 +12,9 @@ SOURCE    := alice
 
 .DEFAULT_GOAL := help
 
-.PHONY: help test build optimize deploy-testnet clippy format format-check \
-        audit clean scout-install scout-run bindings keys check ci all
+.PHONY: help test coverage coverage-html build optimize deploy-testnet clippy \
+        format format-check audit clean scout-install scout-run bindings keys \
+        check ci all
 
 help: ## Show help
 	@echo "Available:"
@@ -24,6 +25,12 @@ help: ## Show help
 
 test: ## Run the full test suite
 	cargo test
+
+coverage: ## Run tests and print a line-coverage summary (needs cargo-llvm-cov)
+	cargo llvm-cov test
+
+coverage-html: ## Generate an HTML coverage report under target/llvm-cov/html and open it
+	cargo llvm-cov test --html --open
 
 build: ## Build all contracts to wasm
 	cargo build

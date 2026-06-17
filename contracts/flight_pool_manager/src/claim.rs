@@ -1,9 +1,9 @@
 use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, Symbol};
 use stellar_macros::when_not_paused;
 
+use crate::auth::extend_instance_ttl;
 use crate::constants::BUYER_TTL_LEDGERS;
 use crate::events::{ExpiredSwept, PayoutClaimed};
-use crate::auth::extend_instance_ttl;
 use crate::storage::{extend_flight_ttl, PoolKey};
 use crate::{
     Error, FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient,
