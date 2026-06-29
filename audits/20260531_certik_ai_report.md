@@ -14,7 +14,6 @@
 | Assessment Type              | AI-Assisted Internal Security Review   |
 | Auditor(s)                   | Certik AI Auditor                      |
 | Assessment Platform          | https://aiauditor.certik.com/          |
-| Contact Information          | [ai@certik.com](mailto:ai@certik.com)  |
 
 ---
 
