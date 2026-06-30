@@ -44,10 +44,13 @@ pub struct TestEnv {
 impl TestEnv {
     pub fn new() -> Self {
         let env = Env::default();
-        // Required for the 3-deep contract auth chain
-        // (keeper -> controller -> pool -> vault). Plain mock_all_auths only
-        // handles root-frame auth.
-        env.mock_all_auths_allowing_non_root_auth();
+        // Plain root-frame auth is sufficient: every contract-to-contract call
+        // that requires the controller's authorization is made BY the
+        // controller directly, so no non-root contract auth is needed. This
+        // keeps the integration suite honest about production auth semantics
+        // (on-time settlement records premium income via the controller, not via
+        // a pool->vault sub-invocation).
+        env.mock_all_auths();
         env.ledger().with_mut(|l| l.timestamp = INITIAL_TIMESTAMP);
 
         let owner = Address::generate(&env);

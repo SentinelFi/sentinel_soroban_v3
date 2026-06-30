@@ -47,11 +47,12 @@ fn version_initialized_to_one() {
 
 fn setup() -> TestEnv {
     let env = Env::default();
-    // The controller orchestrates 3-deep call chains
-    // (keeper → controller → pool → vault) where the controller's address
-    // authorizes sub-invocations beyond the root frame. Use the non-root
-    // variant so contract auth flows through nested cross-contract calls.
-    env.mock_all_auths_allowing_non_root_auth();
+    // Plain root-frame auth is sufficient: every contract-to-contract call that
+    // requires the controller's authorization is made BY the controller
+    // directly (it is the direct caller in each case), so no non-root contract
+    // auth is needed. This keeps the tests honest about production auth
+    // semantics.
+    env.mock_all_auths();
     env.ledger().with_mut(|l| l.timestamp = INITIAL_TIMESTAMP);
 
     let owner = Address::generate(&env);
@@ -271,8 +272,8 @@ fn test_set_min_lead_time_above_max_panics() {
 #[test]
 #[should_panic(expected = "Error(Contract, #314)")]
 fn test_set_min_lead_time_equal_to_booking_horizon_panics() {
-    // min_lead == MAX_BOOK_AHEAD leaves an empty booking interval (audit
-    // NM-009): `now + min_lead < date <= now + MAX_BOOK_AHEAD` has no solution.
+    // min_lead == MAX_BOOK_AHEAD leaves an empty booking interval:
+    // `now + min_lead < date <= now + MAX_BOOK_AHEAD` has no solution.
     let t = setup();
     t.ctrl.set_min_lead_time(&7_776_000);
 }
@@ -496,8 +497,8 @@ fn test_buy_insurance_panics_on_unknown_route() {
 fn test_buy_insurance_panics_on_short_lead_time() {
     let t = setup();
     // Raise the lead requirement above the gap to the nearest day boundary so a
-    // day-aligned FLIGHT_DATE (which must clear the NM-001 alignment check
-    // first) still falls inside the "too soon" zone.
+    // day-aligned FLIGHT_DATE (which must clear the day-alignment check first)
+    // still falls inside the "too soon" zone.
     t.ctrl.set_min_lead_time(&(2 * SECONDS_PER_DAY));
     let traveler = Address::generate(&t.env);
     t.asset_admin.mint(&traveler, &PREMIUM);
@@ -519,7 +520,7 @@ fn test_buy_insurance_panics_on_far_future_booking() {
     let traveler = Address::generate(&t.env);
     t.asset_admin.mint(&traveler, &PREMIUM);
     // First day boundary strictly beyond the 90-day horizon (day-aligned so the
-    // NM-001 check passes and the booking-horizon gate is what rejects it).
+    // alignment check passes and the booking-horizon gate is what rejects it).
     let too_far = ((INITIAL_TIMESTAMP + 7_776_000) / SECONDS_PER_DAY + 1) * SECONDS_PER_DAY;
     t.ctrl.buy_insurance(
         &traveler,

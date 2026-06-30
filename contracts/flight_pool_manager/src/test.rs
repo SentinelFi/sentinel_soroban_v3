@@ -376,18 +376,28 @@ fn test_settle_on_time_with_buyers_transfers_premium_to_vault() {
     let pool_balance_before = t.asset.balance(&t.pool_addr);
     assert_eq!(pool_balance_before, PREMIUM * 2);
     let vault_tma_before = t.vault.get_total_managed_assets();
+    let vault_balance_before = t.asset.balance(&t.vault_addr);
 
-    t.pool
+    let recorded = t
+        .pool
         .settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
 
     let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.status, SettlementStatus::SettledOnTime);
     assert_eq!(t.pool.get_active_flights().len(), 0);
+
+    // Premiums physically move from pool to vault.
     assert_eq!(t.asset.balance(&t.pool_addr), 0);
     assert_eq!(
-        t.vault.get_total_managed_assets(),
-        vault_tma_before + PREMIUM * 2
+        t.asset.balance(&t.vault_addr),
+        vault_balance_before + PREMIUM * 2
     );
+
+    // settle_on_time returns the transferred total for the Controller to credit
+    // as income; it does NOT itself update vault TMA — recording premium income
+    // is the Controller's call (it must be the authorizing caller of the vault).
+    assert_eq!(recorded, PREMIUM * 2);
+    assert_eq!(t.vault.get_total_managed_assets(), vault_tma_before);
 }
 
 #[test]

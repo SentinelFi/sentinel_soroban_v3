@@ -48,7 +48,7 @@ fn solvency_ratio_enforced_on_aggregate_liabilities() {
 fn solvency_gate_blocks_undercollateralized_purchase() {
     // Use a fresh env with NO underwriter capital seeded.
     let env = Env::default();
-    env.mock_all_auths_allowing_non_root_auth();
+    env.mock_all_auths();
     env.ledger().with_mut(|l| l.timestamp = INITIAL_TIMESTAMP);
 
     let owner = Address::generate(&env);
@@ -140,7 +140,7 @@ fn solvency_gate_with_ratio_150() {
 fn lead_time_gate_blocks_short_notice() {
     let t = TestEnv::new();
     // Raise the lead requirement above the ~0.7-day gap to FLIGHT_DATE so a
-    // day-aligned date (required by the NM-001 check, which runs first) still
+    // day-aligned date (required by the alignment check, which runs first) still
     // lands inside the "too soon" window and trips the lead-time gate (#309).
     t.ctrl.set_min_lead_time(&(2 * SECONDS_PER_DAY));
     let traveler = Address::generate(&t.env);

@@ -55,7 +55,7 @@ pub trait FlightPoolManagerInterface {
     );
     fn get_flight_config(env: &Env, flight_id: Symbol, date: u64) -> Option<FlightConfig>;
     fn add_buyer(env: &Env, controller: Address, flight_id: Symbol, date: u64, buyer: Address);
-    fn settle_on_time(env: &Env, controller: Address, flight_id: Symbol, date: u64);
+    fn settle_on_time(env: &Env, controller: Address, flight_id: Symbol, date: u64) -> i128;
     fn settle_delayed(
         env: &Env,
         controller: Address,
