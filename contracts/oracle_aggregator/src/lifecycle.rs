@@ -8,7 +8,7 @@ use stellar_macros::when_not_paused;
 use crate::auth::{extend_instance_ttl, require_controller, require_oracle};
 use crate::constants::{MAX_PRUNE_BATCH, SECONDS_PER_DAY, SETTLED_RETENTION_DAYS};
 use crate::events::{emit_status_event, MissingFlightDataPruned};
-use crate::storage::{extend_flight_ttl, is_valid_transition, OracleKey};
+use crate::storage::{extend_flight_ttl_to, is_valid_transition, OracleKey};
 use crate::{
     Error, FlightData, FlightStatus, OracleAggregator, OracleAggregatorArgs, OracleAggregatorClient,
 };
@@ -43,7 +43,7 @@ impl OracleAggregator {
         data.estimated_arrival_time = estimated_arrival_time;
         e.storage().persistent().set(&key, &data);
 
-        extend_flight_ttl(e, &flight_id, date);
+        extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &FlightStatus::Active);
     }
 
@@ -79,7 +79,7 @@ impl OracleAggregator {
         data.actual_arrival_time = actual_arrival_time;
         e.storage().persistent().set(&key, &data);
 
-        extend_flight_ttl(e, &flight_id, date);
+        extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &FlightStatus::Landed);
     }
 
@@ -102,7 +102,7 @@ impl OracleAggregator {
         data.status = FlightStatus::Cancelled;
         e.storage().persistent().set(&key, &data);
 
-        extend_flight_ttl(e, &flight_id, date);
+        extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &FlightStatus::Cancelled);
     }
 
@@ -118,7 +118,7 @@ impl OracleAggregator {
 
         let key = OracleKey::FlightData(flight_id.clone(), date);
         if e.storage().persistent().has(&key) {
-            extend_flight_ttl(e, &flight_id, date);
+            extend_flight_ttl_to(e, &flight_id, date, date);
             return;
         }
 
@@ -141,7 +141,7 @@ impl OracleAggregator {
             .instance()
             .set(&OracleKey::ActiveFlightList, &flights);
 
-        extend_flight_ttl(e, &flight_id, date);
+        extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &FlightStatus::NotInitiated);
     }
 
@@ -179,7 +179,7 @@ impl OracleAggregator {
         data.status = status.clone();
         e.storage().persistent().set(&key, &data);
 
-        extend_flight_ttl(e, &flight_id, date);
+        extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &status);
     }
 

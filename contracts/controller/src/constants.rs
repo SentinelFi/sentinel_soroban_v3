@@ -5,9 +5,25 @@
 /// active list starting at a persisted rotating cursor, so per-call resource
 /// cost stays bounded no matter how large the list grows. Both passes are
 /// idempotent on already-handled flights (a settled/classified entry is a
-/// no-op on re-scan), so rotating across calls guarantees full coverage. Set
-/// high enough that normal volumes are fully processed in a single call.
-pub(crate) const MAX_SETTLE_BATCH: u32 = 100;
+/// no-op on re-scan), so rotating across calls guarantees full coverage.
+///
+/// Each settled flight touches cross-contract
+/// persistent state on the oracle (FlightData r/w) and pool (FlightConfig r/w),
+/// plus vault/pool instance entries — so the per-call footprint is roughly
+/// 2× the batch size plus fixed overhead. At batch 100 the footprint blew past
+/// Soroban's 100-entry transaction limit and the keeper call reverted without
+/// advancing its cursor. 25 keeps the worst-case (all-Landed / all-ToBeSettled)
+/// footprint well under the limit; the rotating cursor still covers the full
+/// list across repeated keeper calls.
+pub(crate) const MAX_SETTLE_BATCH: u32 = 25;
+
+/// Seconds per UTC day. `buy_insurance` requires the caller-supplied `date` to
+/// be day-aligned (a multiple of this) so the on-chain policy identity
+/// `(flight_id, date)` matches the off-chain executor's day-level flight
+/// resolution (`YYYY-MM-DD`). Without it a caller could mint many distinct
+/// policies for one physical flight by varying the timestamp within a day, then
+/// claim each one against the same real outcome.
+pub(crate) const SECONDS_PER_DAY: u64 = 86_400;
 
 // 180 days at 5s/ledger = 180 * 24 * 60 * 12 = 3_110_400.
 // Sized to cover the maximum policy lifecycle (up to a 180-day claim-expiry
@@ -23,7 +39,6 @@ pub(crate) const TRAVELER_FLIGHTS_TTL_LEDGERS: u32 = 180 * 24 * 60 * 12;
 // pushing these values to extremes.
 pub(crate) const MIN_SOLVENCY_RATIO: u32 = 100; // 100% — must at least back payouts
 pub(crate) const MAX_SOLVENCY_RATIO: u32 = 10_000; // 100x — practical sanity cap
-pub(crate) const MAX_MIN_LEAD_TIME_SECS: u64 = 7_776_000; // 90 days
 pub(crate) const MIN_CLAIM_EXPIRY_WINDOW_SECS: u64 = 86_400; // 1 day — travelers need time
                                                              // Reduced from 180d → 60d. The buyer policy key
                                                              // (`PoolKey::Buyer`) is written at purchase with a fixed 180-day TTL and is

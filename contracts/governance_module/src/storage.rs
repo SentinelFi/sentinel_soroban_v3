@@ -64,6 +64,23 @@ pub(crate) fn extend_route_ttl(e: &Env, key: &DataKey) {
         .extend_ttl(key, ROUTE_TTL_LEDGERS, ROUTE_TTL_LEDGERS);
 }
 
+// Refresh the `FlightRoute(flight_id)` uniqueness-index TTL in lockstep with the
+// route entry. The index and the route were both written with a 60-day TTL at
+// whitelist time, but only the route key was re-extended on reads/mutations —
+// so the index could archive while the route stayed live, after which a second
+// `whitelist_route` would see no index and accept a conflicting (origin, dest)
+// for the same flight_id, colliding downstream (flight_id, date) state. No-op
+// if the index is absent (extend_ttl on a missing key would panic).
+pub(crate) fn extend_route_index_ttl(e: &Env, flight_id: &Symbol) {
+    use crate::constants::ROUTE_TTL_LEDGERS;
+    let key = DataKey::FlightRoute(flight_id.clone());
+    if e.storage().persistent().has(&key) {
+        e.storage()
+            .persistent()
+            .extend_ttl(&key, ROUTE_TTL_LEDGERS, ROUTE_TTL_LEDGERS);
+    }
+}
+
 pub(crate) fn read_defaults(e: &Env) -> (i128, i128, u32) {
     let premium: i128 = e
         .storage()
@@ -86,6 +103,18 @@ pub(crate) fn resolve_terms(terms: &RouteTerms, defaults: (i128, i128, u32)) -> 
         payoff: terms.payoff.unwrap_or(default_payoff),
         delay_hours: terms.delay_hours.unwrap_or(default_delay_hours),
     }
+}
+
+// Non-panicking mirror of `assert_terms_valid`. A partially-defaulted route is
+// validated at write time, but the global defaults it inherits are mutable: a
+// later `set_defaults` can leave an existing route resolving to economically
+// invalid terms (e.g. payoff <= premium) with no revalidation. `route_status`
+// uses this to avoid advertising such a route as `Active`.
+pub(crate) fn resolved_terms_valid(resolved: &ResolvedTerms) -> bool {
+    resolved.premium > 0
+        && resolved.payoff > 0
+        && resolved.payoff > resolved.premium
+        && resolved.delay_hours > 0
 }
 
 // Enforce the invariants every economically-meaningful route must satisfy:

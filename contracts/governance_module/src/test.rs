@@ -233,6 +233,42 @@ fn test_update_route_terms_rejects_invalid_resolved() {
     );
 }
 
+#[test]
+fn test_route_status_disabled_when_defaults_make_terms_invalid() {
+    // A partially-defaulted route that is valid when written can be made
+    // economically invalid by a later defaults change.
+    // route_status must stop reporting it as Active so the controller rejects
+    // the buy cleanly instead of advertising an unsellable route.
+    let (env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    // Custom premium (400), payoff inherits the default (500). Valid: 500 > 400.
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &Some(400_0000000i128),
+        &None::<i128>,
+        &None::<u32>,
+    );
+    assert!(matches!(
+        client.route_status(&flight_id, &origin, &dest),
+        RouteStatus::Active(_)
+    ));
+
+    // Drop the default payoff below the route's custom premium. The new defaults
+    // are internally consistent (300 > 50) so set_defaults succeeds, but the
+    // route now resolves to premium=400, payoff=300 — invalid.
+    client.set_defaults(&50_0000000, &300_0000000, &DEFAULT_DELAY_HOURS);
+
+    assert_eq!(
+        client.route_status(&flight_id, &origin, &dest),
+        RouteStatus::Disabled
+    );
+    let _ = env;
+}
+
 // =========================================================================
 // Admin management
 // =========================================================================

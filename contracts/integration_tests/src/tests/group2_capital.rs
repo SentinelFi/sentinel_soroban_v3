@@ -10,6 +10,40 @@ use soroban_sdk::{
 // =========================================================================
 
 #[test]
+fn solvency_ratio_enforced_on_aggregate_liabilities() {
+    // With a 200% solvency ratio and 1000 asset of capital, the vault may back
+    // at most 500 asset of aggregate payoff exposure. Each buyer
+    // locks PAYOFF (50); the 10th buy reaches 500 locked (required TMA =
+    // 500 * 2 = 1000 == capital) and succeeds, the 11th would need 1100 and is
+    // rejected — proving the ratio holds across the whole book, not just the
+    // newest payoff.
+    let t = TestEnv::new();
+    t.ctrl.set_solvency_ratio(&200);
+
+    // 10 distinct buyers on the same flight → 10 * PAYOFF = 500 locked.
+    for _ in 0..10 {
+        let buyer = Address::generate(&t.env);
+        t.buy(&buyer);
+    }
+    assert_eq!(t.vault.get_locked_capital(), 10 * PAYOFF);
+
+    // The 11th purchase must be rejected by the aggregate solvency check.
+    let late = Address::generate(&t.env);
+    t.asset_admin.mint(&late, &PREMIUM);
+    let res = t.ctrl.try_buy_insurance(
+        &late,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &FLIGHT_DATE,
+    );
+    assert!(
+        res.is_err(),
+        "11th buy should breach the 200% aggregate ratio"
+    );
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #312)")]
 fn solvency_gate_blocks_undercollateralized_purchase() {
     // Use a fresh env with NO underwriter capital seeded.
@@ -105,15 +139,19 @@ fn solvency_gate_with_ratio_150() {
 #[should_panic(expected = "Error(Contract, #309)")]
 fn lead_time_gate_blocks_short_notice() {
     let t = TestEnv::new();
+    // Raise the lead requirement above the ~0.7-day gap to FLIGHT_DATE so a
+    // day-aligned date (required by the NM-001 check, which runs first) still
+    // lands inside the "too soon" window and trips the lead-time gate (#309).
+    t.ctrl.set_min_lead_time(&(2 * SECONDS_PER_DAY));
     let traveler = Address::generate(&t.env);
     t.asset_admin.mint(&traveler, &PREMIUM);
-    // Flight date < INITIAL_TIMESTAMP + MIN_LEAD_TIME.
+    // FLIGHT_DATE is ~0.7 days out, under the 2-day lead requirement.
     t.ctrl.buy_insurance(
         &traveler,
         &symbol_short!("AA100"),
         &symbol_short!("JFK"),
         &symbol_short!("LAX"),
-        &(INITIAL_TIMESTAMP + 100),
+        &FLIGHT_DATE,
     );
 }
 

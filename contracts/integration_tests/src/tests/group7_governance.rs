@@ -28,7 +28,7 @@ fn whitelist_route_then_buy_succeeds() {
         &symbol_short!("UA200"),
         &symbol_short!("SFO"),
         &symbol_short!("ORD"),
-        &(FLIGHT_DATE + 1),
+        &(FLIGHT_DATE + SECONDS_PER_DAY),
     );
 }
 

@@ -17,6 +17,8 @@ pub trait GovernanceInterface {
 #[contractclient(name = "VaultClient")]
 pub trait VaultInterface {
     fn get_free_capital(env: &Env) -> i128;
+    fn get_total_managed_assets(env: &Env) -> i128;
+    fn get_locked_capital(env: &Env) -> i128;
     fn increase_locked(env: &Env, controller: Address, amount: i128);
     fn decrease_locked(env: &Env, controller: Address, amount: i128);
     fn record_premium_income(env: &Env, controller: Address, amount: i128);

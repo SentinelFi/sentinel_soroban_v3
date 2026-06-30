@@ -8,7 +8,11 @@ use soroban_sdk::{
 const PREMIUM: i128 = 10_0000000; // 10 asset (7 decimals)
 const PAYOFF: i128 = 50_0000000; // 50 asset
 const DELAY_HOURS: u32 = 3;
-const FLIGHT_DATE: u64 = 1_710_500_000;
+// Day-aligned (1_710_460_800 = 86_400 * 19_797).
+// buy_insurance requires the
+// date to be a midnight-UTC boundary.
+const FLIGHT_DATE: u64 = 1_710_460_800;
+const SECONDS_PER_DAY: u64 = 86_400;
 const MIN_LEAD_TIME: u64 = 3_600;
 const CLAIM_EXPIRY_WINDOW: u64 = 5_184_000; // 60 days
 const DEPOSIT_AMOUNT: i128 = 1_000_0000000; // 1000 asset
@@ -258,10 +262,25 @@ fn test_set_solvency_ratio_above_max_panics() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #302)")]
+#[should_panic(expected = "Error(Contract, #314)")]
 fn test_set_min_lead_time_above_max_panics() {
     let t = setup();
     t.ctrl.set_min_lead_time(&7_776_001);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #314)")]
+fn test_set_min_lead_time_equal_to_booking_horizon_panics() {
+    // min_lead == MAX_BOOK_AHEAD leaves an empty booking interval (audit
+    // NM-009): `now + min_lead < date <= now + MAX_BOOK_AHEAD` has no solution.
+    let t = setup();
+    t.ctrl.set_min_lead_time(&7_776_000);
+}
+
+#[test]
+fn test_set_min_lead_time_just_below_horizon_ok() {
+    let t = setup();
+    t.ctrl.set_min_lead_time(&(7_776_000 - 1));
 }
 
 #[test]
@@ -416,7 +435,7 @@ fn test_buy_insurance_traveler_index_for_multiple_flights() {
         &symbol_short!("UA200"),
         &symbol_short!("SFO"),
         &symbol_short!("ORD"),
-        &(FLIGHT_DATE + 1),
+        &(FLIGHT_DATE + SECONDS_PER_DAY),
     );
 
     let flights = t.ctrl.get_flights_for_traveler(&traveler);
@@ -427,7 +446,7 @@ fn test_buy_insurance_traveler_index_for_multiple_flights() {
     );
     assert_eq!(
         flights.get(1).unwrap(),
-        (symbol_short!("UA200"), FLIGHT_DATE + 1)
+        (symbol_short!("UA200"), FLIGHT_DATE + SECONDS_PER_DAY)
     );
 }
 
@@ -476,6 +495,10 @@ fn test_buy_insurance_panics_on_unknown_route() {
 #[should_panic(expected = "Error(Contract, #309)")]
 fn test_buy_insurance_panics_on_short_lead_time() {
     let t = setup();
+    // Raise the lead requirement above the gap to the nearest day boundary so a
+    // day-aligned FLIGHT_DATE (which must clear the NM-001 alignment check
+    // first) still falls inside the "too soon" zone.
+    t.ctrl.set_min_lead_time(&(2 * SECONDS_PER_DAY));
     let traveler = Address::generate(&t.env);
     t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
@@ -483,7 +506,7 @@ fn test_buy_insurance_panics_on_short_lead_time() {
         &symbol_short!("AA100"),
         &symbol_short!("JFK"),
         &symbol_short!("LAX"),
-        &(INITIAL_TIMESTAMP + 100), // way under 3600s lead time
+        &FLIGHT_DATE, // ~0.7 days out, under the 2-day lead requirement
     );
 }
 
@@ -495,8 +518,9 @@ fn test_buy_insurance_panics_on_far_future_booking() {
     let t = setup();
     let traveler = Address::generate(&t.env);
     t.asset_admin.mint(&traveler, &PREMIUM);
-    // 90 days + 1 second past the current ledger time.
-    let too_far = INITIAL_TIMESTAMP + 7_776_000 + 1;
+    // First day boundary strictly beyond the 90-day horizon (day-aligned so the
+    // NM-001 check passes and the booking-horizon gate is what rejects it).
+    let too_far = ((INITIAL_TIMESTAMP + 7_776_000) / SECONDS_PER_DAY + 1) * SECONDS_PER_DAY;
     t.ctrl.buy_insurance(
         &traveler,
         &symbol_short!("AA100"),
@@ -522,6 +546,23 @@ fn test_buy_insurance_rejected_after_oracle_cancellation() {
     // A second buyer can no longer purchase this (flight_id, date).
     let traveler2 = Address::generate(&t.env);
     buy(&t, &traveler2);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #313)")]
+fn test_buy_insurance_panics_on_non_day_aligned_date() {
+    // A date that isn't a midnight-UTC boundary is rejected so
+    // one physical flight can't be split into many intraday policy instances.
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    t.asset_admin.mint(&traveler, &PREMIUM);
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &(FLIGHT_DATE + 1), // 1 second past midnight — not day-aligned
+    );
 }
 
 #[test]
@@ -1062,7 +1103,7 @@ fn test_whitelist_toggle_round_trip() {
         &symbol_short!("AA100"),
         &symbol_short!("JFK"),
         &symbol_short!("LAX"),
-        &(FLIGHT_DATE + 1),
+        &(FLIGHT_DATE + SECONDS_PER_DAY),
     );
     let (sold, _, _) = t.ctrl.get_stats();
     assert_eq!(sold, 2);
