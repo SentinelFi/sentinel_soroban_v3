@@ -27,7 +27,16 @@ export class AeroApiClient {
 
   /**
    * Fetch flight data for a given ident and date.
-   * Returns the most recent flight entry, or null if no data.
+   *
+   * Returns the single matching flight, or null if there is no data OR if the
+   * response is ambiguous. A policy is keyed on-chain by (flight_id, day), and a
+   * flight number on a given calendar day should resolve to exactly one physical
+   * flight. If AeroAPI returns more than one candidate for the day, the executor
+   * must NOT guess (e.g. blindly take the last record): settling against the
+   * wrong physical flight could pay or deny a claim incorrectly. Ambiguity is
+   * logged and treated as "no usable data" so the flight stays unresolved and is
+   * surfaced for operator attention rather than mis-settled.
+   *
    * Retries on 429 (rate limit) and 5xx with exponential backoff.
    */
   async getFlightData(ident: string, dateStr: string): Promise<AeroApiFlight | null> {
@@ -47,7 +56,15 @@ export class AeroApiClient {
           if (!data.flights || data.flights.length === 0) {
             return null;
           }
-          return data.flights[data.flights.length - 1];
+          if (data.flights.length > 1) {
+            console.warn(
+              `[aeroapi] ${data.flights.length} candidate flights for ${ident} on ${dateStr} — ` +
+                `ambiguous; refusing to guess which physical flight is insured. ` +
+                `Skipping until disambiguated.`
+            );
+            return null;
+          }
+          return data.flights[0];
         }
 
         // Permanent errors — don't retry

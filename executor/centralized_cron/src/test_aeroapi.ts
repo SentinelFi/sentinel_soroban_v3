@@ -61,6 +61,13 @@ console.log("\n=== Test: unknown flight ===");
 const f5 = await client.getFlightData("FAKE999", "2026-03-20");
 assert("result", null, f5);
 
+console.log("\n=== Test: ambiguous (multiple same-day candidates) (DUP777) ===");
+// Two candidate records for one ident/day must NOT be silently resolved to one
+// — the fetcher returns null so the flight stays unresolved rather than being
+// settled against the wrong physical flight.
+const f6 = await client.getFlightData("DUP777", "2026-03-20");
+assert("ambiguous → null", null, f6);
+
 console.log(`\n==============================`);
 console.log(`Results: ${pass} passed, ${fail} failed`);
 if (fail === 0) {
