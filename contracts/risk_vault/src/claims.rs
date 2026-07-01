@@ -2,13 +2,17 @@
 // owner-driven manual recovery for entries archived past their TTL.
 
 use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, Vec};
+use stellar_contract_utils::math::Rounding;
 use stellar_macros::{only_owner, when_not_paused};
 use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
 
-use crate::constants::CLAIMABLE_TTL_LEDGERS;
+use crate::constants::{
+    CLAIMABLE_TTL_LEDGERS, MAX_ACTIVE_REQUESTS_PER_ADDRESS, MAX_WITHDRAWAL_QUEUE_LEN,
+};
 use crate::events::{Collected, Recovered};
 use crate::storage::VaultKey;
+use crate::vault_ops::managed_convert_to_assets;
 use crate::{Error, RecoveryMode, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
 #[contractimpl]
@@ -23,11 +27,34 @@ impl RiskVault {
         if shares <= 0 {
             panic_with_error!(e, Error::SharesMustBePositive);
         }
-        // Reject dust requests that preview to zero assets. Such a
-        // request would otherwise sit at the queue head and block every later
-        // request (the drain loop stops at the first zero-preview entry).
-        if Vault::preview_redeem(e, shares) <= 0 {
+        // Reject dust requests that preview to zero assets on the managed-asset
+        // basis. Such a request carries no value and would only consume queue
+        // capacity.
+        if managed_convert_to_assets(e, shares, Rounding::Floor) <= 0 {
             panic_with_error!(e, Error::SharesRedeemToZeroAssets);
+        }
+
+        let mut queue: Vec<WithdrawalRequest> = e
+            .storage()
+            .instance()
+            .get(&VaultKey::WithdrawalQueue)
+            .unwrap_or(Vec::new(e));
+
+        // Bound the shared single-vector queue so it can't grow into the
+        // contract-instance entry-size limit and become unwritable.
+        if queue.len() >= MAX_WITHDRAWAL_QUEUE_LEN {
+            panic_with_error!(e, Error::WithdrawalQueueFull);
+        }
+        // Bound how many pending requests one address may hold, so a single
+        // underwriter can't monopolize the queue and starve others.
+        let mut own_count: u32 = 0;
+        for i in 0..queue.len() {
+            if queue.get(i).unwrap().owner == caller {
+                own_count = own_count.checked_add(1).expect("count overflow");
+            }
+        }
+        if own_count >= MAX_ACTIVE_REQUESTS_PER_ADDRESS {
+            panic_with_error!(e, Error::TooManyActiveRequests);
         }
 
         // Escrow shares: transfer from caller to vault
@@ -47,12 +74,6 @@ impl RiskVault {
         e.storage()
             .instance()
             .set(&VaultKey::NextRequestId, &next_id);
-
-        let mut queue: Vec<WithdrawalRequest> = e
-            .storage()
-            .instance()
-            .get(&VaultKey::WithdrawalQueue)
-            .unwrap_or(Vec::new(e));
 
         queue.push_back(WithdrawalRequest {
             request_id,

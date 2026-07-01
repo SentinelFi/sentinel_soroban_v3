@@ -2,6 +2,7 @@
 // income, send payouts, drain the withdrawal queue into ClaimableBalance.
 
 use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, Vec};
+use stellar_contract_utils::math::Rounding;
 use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
@@ -10,6 +11,7 @@ use crate::auth::require_controller;
 use crate::constants::{CLAIMABLE_TTL_LEDGERS, MAX_QUEUE_BATCH};
 use crate::events::Credited;
 use crate::storage::VaultKey;
+use crate::vault_ops::managed_convert_to_assets;
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
 #[contractimpl]
@@ -131,6 +133,7 @@ impl RiskVault {
         let limit = queue.len().min(MAX_QUEUE_BATCH);
         let mut kept: Vec<WithdrawalRequest> = Vec::new(e);
         let mut hit_capacity = false;
+        let mut returned_any = false;
 
         for i in 0..queue.len() {
             let request = queue.get(i).unwrap();
@@ -143,7 +146,7 @@ impl RiskVault {
                 continue;
             }
 
-            let assets = Vault::preview_redeem(e, request.shares);
+            let assets = managed_convert_to_assets(e, request.shares, Rounding::Floor);
 
             if assets > remaining_free {
                 // Not enough free capital for the head-most request: stop
@@ -153,11 +156,14 @@ impl RiskVault {
                 continue;
             }
 
-            // A request that previews to zero assets must not stop
-            // the drain. Skip it (keep it queued so the owner can still
-            // cancel_withdrawal to recover the escrowed shares) and continue.
+            // A request that has decayed to zero asset value (e.g. a payout
+            // reduced the share price after it was queued) must not sit at the
+            // head and starve later requests. Return the escrowed shares to the
+            // owner and drop it — the owner keeps their shares and may
+            // re-request. Dropping it advances the queue instead of pinning it.
             if assets == 0 {
-                kept.push_back(request);
+                Base::update(e, Some(&vault_addr), Some(&request.owner), request.shares);
+                returned_any = true;
                 continue;
             }
 
@@ -198,7 +204,7 @@ impl RiskVault {
             processed = processed.checked_add(1).expect("addition overflow");
         }
 
-        if processed > 0 {
+        if processed > 0 || returned_any {
             e.storage()
                 .instance()
                 .set(&VaultKey::WithdrawalQueue, &kept);
