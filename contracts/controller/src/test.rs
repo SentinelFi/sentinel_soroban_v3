@@ -2,7 +2,7 @@ use super::*;
 use sentinel_types::test_support::collect_events;
 use soroban_sdk::{
     symbol_short, testutils::Address as _, testutils::Ledger as _, token, Address, Env, Symbol,
-    TryFromVal,
+    TryFromVal, Vec,
 };
 
 const PREMIUM: i128 = 10_0000000; // 10 asset (7 decimals)
@@ -457,6 +457,43 @@ fn test_get_flights_for_traveler_empty_for_unknown_address() {
     let stranger = Address::generate(&t.env);
     let flights = t.ctrl.get_flights_for_traveler(&stranger);
     assert_eq!(flights.len(), 0);
+}
+
+#[test]
+fn test_traveler_flights_index_is_bounded() {
+    // The per-traveler index is capped so it can't grow into the persistent
+    // entry-size limit and permanently block the buy path. When full, the oldest
+    // entry is evicted (keeping the most recent), rather than blocking.
+    use crate::constants::MAX_TRAVELER_FLIGHTS;
+    use crate::storage::{append_traveler_flight, CtrlKey};
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    let fid = symbol_short!("AA100");
+
+    t.env.as_contract(&t.ctrl_addr, || {
+        // Seed the index at exactly the cap (dates 0..MAX-1).
+        let mut list: Vec<(Symbol, u64)> = Vec::new(&t.env);
+        for i in 0..MAX_TRAVELER_FLIGHTS {
+            list.push_back((fid.clone(), i as u64));
+        }
+        t.env
+            .storage()
+            .persistent()
+            .set(&CtrlKey::TravelerFlights(traveler.clone()), &list);
+
+        // One more append must evict the oldest (date 0), not grow past the cap.
+        append_traveler_flight(&t.env, &traveler, &fid, 9_999u64);
+    });
+
+    let flights = t.ctrl.get_flights_for_traveler(&traveler);
+    // Bounded to the cap — never unbounded, so the buy path can't be blocked.
+    assert_eq!(flights.len(), MAX_TRAVELER_FLIGHTS);
+    // Oldest (date 0) evicted; index now starts at date 1 and ends at the newest.
+    assert_eq!(flights.get(0).unwrap(), (fid.clone(), 1u64));
+    assert_eq!(
+        flights.get(flights.len() - 1).unwrap(),
+        (fid.clone(), 9_999u64)
+    );
 }
 
 // =========================================================================

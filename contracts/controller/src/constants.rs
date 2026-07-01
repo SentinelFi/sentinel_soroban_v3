@@ -34,6 +34,18 @@ pub(crate) const SECONDS_PER_DAY: u64 = 86_400;
 // approved buyers from silently aging out of the whitelist.
 pub(crate) const TRAVELER_FLIGHTS_TTL_LEDGERS: u32 = 180 * 24 * 60 * 12;
 
+/// Bound on the per-traveler `TravelerFlights(addr)` index. The index is a single
+/// `Vec` in one persistent entry, which Soroban limits to 65,536 bytes (~1,600
+/// entries). It is append-only and never pruned, so without a bound a heavy
+/// trader's entry would eventually grow unwritable — and because the append is
+/// on the `buy_insurance` path, that would permanently block the address from
+/// buying. This index is a frontend "My Policies" convenience, NOT canonical
+/// state (policy ownership lives in FlightPoolManager and every purchase emits an
+/// event), so once it reaches this cap the OLDEST entry is evicted to make room
+/// rather than blocking the purchase. It keeps the most recent policies on-chain;
+/// older history is reconstructable from events. Well below the entry-size limit.
+pub(crate) const MAX_TRAVELER_FLIGHTS: u32 = 1_000;
+
 // Bounds on owner-tunable parameters. Owner is single-key by default
 // (single-key owner), so a compromised key cannot brick the protocol by
 // pushing these values to extremes.
