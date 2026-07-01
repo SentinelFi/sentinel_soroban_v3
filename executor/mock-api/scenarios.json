@@ -23,5 +23,12 @@
     "origin": "KDEN",
     "destination": "KLAS",
     "aircraft_type": "B737"
+  },
+  "DUP777": {
+    "outcome": "on_time",
+    "origin": "KSEA",
+    "destination": "KORD",
+    "aircraft_type": "B738",
+    "duplicate": true
   }
 }

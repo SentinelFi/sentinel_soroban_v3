@@ -19,4 +19,6 @@ pub enum Error {
     AmountExceedsClaimableBalance = 713,
     WithdrawalQueueActive = 714,
     ExceedsFreeCapital = 715,
+    WithdrawalQueueFull = 716,
+    TooManyActiveRequests = 717,
 }

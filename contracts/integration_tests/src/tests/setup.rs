@@ -7,7 +7,11 @@ use soroban_sdk::{
 pub const PREMIUM: i128 = 10_0000000; // 10 asset (7 decimals)
 pub const PAYOFF: i128 = 50_0000000; // 50 asset
 pub const DELAY_HOURS: u32 = 3;
-pub const FLIGHT_DATE: u64 = 1_710_500_000;
+// Day-aligned (1_710_460_800 = 86_400 * 19_797). buy_insurance requires the
+// date to be a midnight-UTC boundary, so distinct test flights
+// must be spaced by whole days (SECONDS_PER_DAY), not by 1 second.
+pub const FLIGHT_DATE: u64 = 1_710_460_800;
+pub const SECONDS_PER_DAY: u64 = 86_400;
 pub const MIN_LEAD_TIME: u64 = 3_600;
 pub const CLAIM_EXPIRY_WINDOW: u64 = 5_184_000; // 60 days
 pub const DEPOSIT_AMOUNT: i128 = 1_000_0000000; // 1000 asset
@@ -40,10 +44,13 @@ pub struct TestEnv {
 impl TestEnv {
     pub fn new() -> Self {
         let env = Env::default();
-        // Required for the 3-deep contract auth chain
-        // (keeper -> controller -> pool -> vault). Plain mock_all_auths only
-        // handles root-frame auth.
-        env.mock_all_auths_allowing_non_root_auth();
+        // Plain root-frame auth is sufficient: every contract-to-contract call
+        // that requires the controller's authorization is made BY the
+        // controller directly, so no non-root contract auth is needed. This
+        // keeps the integration suite honest about production auth semantics
+        // (on-time settlement records premium income via the controller, not via
+        // a pool->vault sub-invocation).
+        env.mock_all_auths();
         env.ledger().with_mut(|l| l.timestamp = INITIAL_TIMESTAMP);
 
         let owner = Address::generate(&env);

@@ -1,22 +1,79 @@
-// ERC-4626 style deposit/withdraw/mint/redeem operations, wrapping the OZ
-// `Vault` trait with `TotalManagedAssets` tracking so the controller can
-// reason about free vs. locked capital.
+// ERC-4626 style deposit/withdraw/mint/redeem operations.
+//
+// Share pricing is computed against the vault's internal `TotalManagedAssets`
+// (TMA) — the true backing figure — NOT the raw token balance. The two differ
+// whenever the withdrawal queue has credited a `ClaimableBalance` that the
+// owner has not yet `collect`ed: those assets physically sit in the vault but no
+// longer back outstanding shares (TMA was already reduced when they were
+// credited). Pricing on the raw balance would count that owed-but-uncollected
+// value as backing and let existing holders extract it from later depositors.
+// The identity is exact: raw_balance == TMA + uncollected_claimable, so TMA is
+// the net-asset basis.
+//
+// We reuse the OpenZeppelin `Vault` share-mint/burn + transfer plumbing
+// (`deposit_internal` / `withdraw_internal`) and its event emitters, but supply
+// the share/asset amounts ourselves from the TMA basis instead of delegating to
+// `Vault::deposit`/`redeem`/etc. (which convert against the raw balance).
 
 use soroban_sdk::{contractimpl, panic_with_error, Address, Env};
+use stellar_contract_utils::math::{i128_fixed_point::mul_div_with_rounding, Rounding};
 use stellar_contract_utils::pausable::paused;
 use stellar_macros::when_not_paused;
-use stellar_tokens::vault::{FungibleVault, Vault};
+use stellar_tokens::fungible::Base;
+use stellar_tokens::vault::{emit_deposit, emit_withdraw, FungibleVault, Vault};
 
 use crate::storage::VaultKey;
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient};
 
+// Convert assets → shares against the TMA basis, mirroring the OZ formula
+// `shares = assets * (total_supply + 10^offset) / (TMA + 1)` (with the virtual
+// offset preserving the inflation-attack defense) but reading TMA rather than
+// the raw token balance.
+pub(crate) fn managed_convert_to_shares(e: &Env, assets: i128, rounding: Rounding) -> i128 {
+    if assets <= 0 {
+        return 0;
+    }
+    let pow = 10_i128
+        .checked_pow(Vault::get_decimals_offset(e))
+        .expect("decimals offset overflow");
+    let supply_plus = Base::total_supply(e)
+        .checked_add(pow)
+        .expect("supply overflow");
+    let managed_plus = RiskVault::get_total_managed_assets(e)
+        .checked_add(1)
+        .expect("managed assets overflow");
+    mul_div_with_rounding(e, assets, supply_plus, managed_plus, rounding)
+}
+
+// Convert shares → assets against the TMA basis: mirror of
+// `assets = shares * (TMA + 1) / (total_supply + 10^offset)`.
+pub(crate) fn managed_convert_to_assets(e: &Env, shares: i128, rounding: Rounding) -> i128 {
+    if shares <= 0 {
+        return 0;
+    }
+    let pow = 10_i128
+        .checked_pow(Vault::get_decimals_offset(e))
+        .expect("decimals offset overflow");
+    let managed_plus = RiskVault::get_total_managed_assets(e)
+        .checked_add(1)
+        .expect("managed assets overflow");
+    let supply_plus = Base::total_supply(e)
+        .checked_add(pow)
+        .expect("supply overflow");
+    mul_div_with_rounding(e, shares, managed_plus, supply_plus, rounding)
+}
+
 #[contractimpl]
 impl FungibleVault for RiskVault {
-    /// Deposits `assets` for `receiver`, minting shares and tracking total managed assets.
+    /// Deposits `assets` for `receiver`, minting shares priced on managed assets.
     #[when_not_paused]
     fn deposit(e: &Env, assets: i128, receiver: Address, from: Address, operator: Address) -> i128 {
         Self::extend_ttl(e);
-        let shares = Vault::deposit(e, assets, receiver, from, operator);
+        operator.require_auth();
+        let shares = managed_convert_to_shares(e, assets, Rounding::Floor);
+        // Transfer assets in + mint shares (OZ plumbing; assumes prior auth).
+        Vault::deposit_internal(e, &receiver, assets, shares, &from, &operator);
+        emit_deposit(e, &operator, &from, &receiver, assets, shares);
         let tma = Self::get_total_managed_assets(e);
         e.storage().instance().set(
             &VaultKey::TotalManagedAssets,
@@ -35,6 +92,7 @@ impl FungibleVault for RiskVault {
         operator: Address,
     ) -> i128 {
         Self::extend_ttl(e);
+        operator.require_auth();
         // Once any underwriter is queued, the queue is the canonical
         // exit path — block direct exits so a latecomer can't consume free capital
         // ahead of LPs already waiting in FIFO order. When the queue is empty this
@@ -45,7 +103,9 @@ impl FungibleVault for RiskVault {
         if assets > Self::get_free_capital(e) {
             panic_with_error!(e, Error::ExceedsFreeCapital);
         }
-        let shares = Vault::withdraw(e, assets, receiver, owner, operator);
+        let shares = managed_convert_to_shares(e, assets, Rounding::Ceil);
+        Vault::withdraw_internal(e, &receiver, &owner, assets, shares, &operator);
+        emit_withdraw(e, &operator, &receiver, &owner, assets, shares);
         let tma = Self::get_total_managed_assets(e);
         e.storage().instance().set(
             &VaultKey::TotalManagedAssets,
@@ -54,11 +114,14 @@ impl FungibleVault for RiskVault {
         shares
     }
 
-    /// Mints `shares` to `receiver`, pulling the required assets and tracking total managed assets.
+    /// Mints `shares` to `receiver`, pulling the required assets priced on managed assets.
     #[when_not_paused]
     fn mint(e: &Env, shares: i128, receiver: Address, from: Address, operator: Address) -> i128 {
         Self::extend_ttl(e);
-        let assets = Vault::mint(e, shares, receiver, from, operator);
+        operator.require_auth();
+        let assets = managed_convert_to_assets(e, shares, Rounding::Ceil);
+        Vault::deposit_internal(e, &receiver, assets, shares, &from, &operator);
+        emit_deposit(e, &operator, &from, &receiver, assets, shares);
         let tma = Self::get_total_managed_assets(e);
         e.storage().instance().set(
             &VaultKey::TotalManagedAssets,
@@ -71,28 +134,31 @@ impl FungibleVault for RiskVault {
     #[when_not_paused]
     fn redeem(e: &Env, shares: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
         Self::extend_ttl(e);
+        operator.require_auth();
         // See `withdraw` — direct redeem defers to the queue while
         // any request is pending so it can't jump the FIFO line.
         if !Self::get_withdrawal_queue(e).is_empty() {
             panic_with_error!(e, Error::WithdrawalQueueActive);
         }
-        let assets = Vault::preview_redeem(e, shares);
+        let assets = managed_convert_to_assets(e, shares, Rounding::Floor);
         if assets > Self::get_free_capital(e) {
             panic_with_error!(e, Error::ExceedsFreeCapital);
         }
-        let actual_assets = Vault::redeem(e, shares, receiver, owner, operator);
+        Vault::withdraw_internal(e, &receiver, &owner, assets, shares, &operator);
+        emit_withdraw(e, &operator, &receiver, &owner, assets, shares);
         let tma = Self::get_total_managed_assets(e);
         e.storage().instance().set(
             &VaultKey::TotalManagedAssets,
-            &tma.checked_sub(actual_assets)
-                .expect("subtraction underflow"),
+            &tma.checked_sub(assets).expect("subtraction underflow"),
         );
-        actual_assets
+        assets
     }
 
-    /// Returns the total assets held by the vault.
+    /// Returns the vault's net backing assets — the internally tracked managed
+    /// assets, NOT the raw token balance (which includes owed-but-uncollected
+    /// withdrawal liabilities).
     fn total_assets(e: &Env) -> i128 {
-        Vault::total_assets(e)
+        Self::get_total_managed_assets(e)
     }
 
     /// Returns the address of the underlying asset token.
@@ -102,32 +168,32 @@ impl FungibleVault for RiskVault {
 
     /// Converts an amount of assets to the equivalent number of shares.
     fn convert_to_shares(e: &Env, assets: i128) -> i128 {
-        Vault::convert_to_shares(e, assets)
+        managed_convert_to_shares(e, assets, Rounding::Floor)
     }
 
     /// Converts a number of shares to the equivalent amount of assets.
     fn convert_to_assets(e: &Env, shares: i128) -> i128 {
-        Vault::convert_to_assets(e, shares)
+        managed_convert_to_assets(e, shares, Rounding::Floor)
     }
 
     /// Previews the shares that would be minted for a given deposit of assets.
     fn preview_deposit(e: &Env, assets: i128) -> i128 {
-        Vault::preview_deposit(e, assets)
+        managed_convert_to_shares(e, assets, Rounding::Floor)
     }
 
     /// Previews the assets required to mint a given number of shares.
     fn preview_mint(e: &Env, shares: i128) -> i128 {
-        Vault::preview_mint(e, shares)
+        managed_convert_to_assets(e, shares, Rounding::Ceil)
     }
 
     /// Previews the shares that would be burned to withdraw a given amount of assets.
     fn preview_withdraw(e: &Env, assets: i128) -> i128 {
-        Vault::preview_withdraw(e, assets)
+        managed_convert_to_shares(e, assets, Rounding::Ceil)
     }
 
     /// Previews the assets that would be returned for redeeming a given number of shares.
     fn preview_redeem(e: &Env, shares: i128) -> i128 {
-        Vault::preview_redeem(e, shares)
+        managed_convert_to_assets(e, shares, Rounding::Floor)
     }
 
     // The executable deposit/mint/withdraw/redeem paths are all
@@ -149,32 +215,25 @@ impl FungibleVault for RiskVault {
         Vault::max_mint(e, address)
     }
 
-    /// Returns the maximum assets `owner` can withdraw (capped by free capital), or zero while paused.
+    /// Returns the maximum assets `owner` can withdraw (their share balance
+    /// priced on managed assets, capped by free capital), or zero while paused.
     fn max_withdraw(e: &Env, owner: Address) -> i128 {
         if paused(e) {
             return 0;
         }
-        let vault_max = Vault::max_withdraw(e, owner);
+        let owner_assets = managed_convert_to_assets(e, Base::balance(e, &owner), Rounding::Floor);
         let free = Self::get_free_capital(e);
-        if vault_max < free {
-            vault_max
-        } else {
-            free
-        }
+        owner_assets.min(free)
     }
 
-    /// Returns the maximum shares `owner` can redeem (capped by free capital), or zero while paused.
+    /// Returns the maximum shares `owner` can redeem (their balance capped by
+    /// the shares equivalent of free capital), or zero while paused.
     fn max_redeem(e: &Env, owner: Address) -> i128 {
         if paused(e) {
             return 0;
         }
-        let vault_max = Vault::max_redeem(e, owner);
-        let free_capital = Self::get_free_capital(e);
-        let free_shares = Vault::convert_to_shares(e, free_capital);
-        if vault_max < free_shares {
-            vault_max
-        } else {
-            free_shares
-        }
+        let owner_shares = Base::balance(e, &owner);
+        let free_shares = managed_convert_to_shares(e, Self::get_free_capital(e), Rounding::Floor);
+        owner_shares.min(free_shares)
     }
 }

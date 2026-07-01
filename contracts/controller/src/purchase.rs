@@ -1,7 +1,7 @@
 use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, Symbol};
 use stellar_macros::when_not_paused;
 
-use crate::constants::MAX_BOOK_AHEAD_SECS;
+use crate::constants::{MAX_BOOK_AHEAD_SECS, SECONDS_PER_DAY};
 use crate::events::InsuranceBought;
 use crate::interfaces::{
     FlightPoolManagerClient, FlightStatus, GovClient, OracleClient, RouteStatus, VaultClient,
@@ -25,6 +25,19 @@ impl Controller {
         date: u64,
     ) {
         traveler.require_auth();
+
+        // 0a. Require a day-aligned `date` (midnight UTC). The off-chain
+        //     executor resolves flights at calendar-day granularity
+        //     (`YYYY-MM-DD`), so the on-chain identity `(flight_id, date)` must
+        //     too — otherwise one physical flight maps to many on-chain policies
+        //     (one per distinct intraday timestamp), each independently
+        //     claimable against the same real outcome, draining the vault.
+        //     Combined with the per-traveler single-policy guard
+        //     in `add_buyer`, this caps a traveler at one policy per physical
+        //     (flight_id, day).
+        if !date.is_multiple_of(SECONDS_PER_DAY) {
+            panic_with_error!(e, Error::DateNotDayAligned);
+        }
 
         // 0. Phase 11 buyer-whitelist gate. Default-off (open buy_insurance);
         //    when the owner has flipped the toggle, only addresses an admin
@@ -109,17 +122,29 @@ impl Controller {
         );
         oracle.register_flight(&controller_addr, &flight_id, &date);
 
-        // 5. Solvency check.
+        // 5. Solvency check — enforced on AGGREGATE liabilities, not just the
+        //    new payoff. The old check compared the new payoff
+        //    alone against free capital, so with a ratio above 100% the margin
+        //    eroded toward 100% as policies accumulated (each new buy only had
+        //    to clear free capital, which already netted out prior locks). We
+        //    now require total managed assets to cover the configured ratio
+        //    applied to (existing locked + this payoff), holding the reserve
+        //    margin across the whole book.
         let vault = VaultClient::new(e, &vault_addr);
-        let free_capital = vault.get_free_capital();
+        let tma = vault.get_total_managed_assets();
+        let locked = vault.get_locked_capital();
         let solvency_ratio: u32 = e.storage().instance().get(&CtrlKey::SolvencyRatio).unwrap();
-        let required = terms
-            .payoff
+        let new_locked = locked.checked_add(terms.payoff).expect("addition overflow");
+        // required = ceil(new_locked * ratio / 100), rounded up so the reserve
+        // is never under-provisioned by integer truncation.
+        let required = new_locked
             .checked_mul(solvency_ratio as i128)
             .expect("multiplication overflow")
+            .checked_add(99)
+            .expect("addition overflow")
             .checked_div(100)
             .expect("division by zero");
-        if free_capital < required {
+        if tma < required {
             panic_with_error!(e, Error::InsufficientVaultCapital);
         }
 

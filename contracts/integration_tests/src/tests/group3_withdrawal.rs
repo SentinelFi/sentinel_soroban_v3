@@ -33,7 +33,11 @@ fn redeem_blocked_when_capital_locked() {
     // redemption.
     for _ in 0..20 {
         let buyer = Address::generate(&t.env);
-        t.buy_flight(&buyer, &symbol_short!("AA100"), FLIGHT_DATE + 1);
+        t.buy_flight(
+            &buyer,
+            &symbol_short!("AA100"),
+            FLIGHT_DATE + SECONDS_PER_DAY,
+        );
     }
     // 20 buys × 50 asset payoff = 1000 asset locked. Free is now 0.
     let shares = t.vault.balance(&t.underwriter);

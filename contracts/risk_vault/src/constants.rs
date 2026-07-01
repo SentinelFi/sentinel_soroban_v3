@@ -11,6 +11,21 @@ pub(crate) const SECONDS_PER_DAY: u64 = 86400;
 /// call.
 pub(crate) const MAX_QUEUE_BATCH: u32 = 50;
 
+/// Hard cap on the number of pending requests in the single-vector withdrawal
+/// queue. The queue shares one contract-instance ledger entry, which Soroban
+/// bounds to 65,536 bytes (~385 requests in the current layout); an unbounded
+/// queue could grow until that entry becomes unwritable, freezing all queue
+/// operations. Capping length below the limit turns that ungraceful failure
+/// into a clean, early rejection with headroom for other instance state. Full
+/// resolution (individually-keyed requests + head/tail pointers) is a larger
+/// storage migration tracked separately.
+pub(crate) const MAX_WITHDRAWAL_QUEUE_LEN: u32 = 250;
+
+/// Cap on how many pending requests one address may hold in the queue at once.
+/// Prevents a single underwriter from monopolizing the shared queue capacity
+/// and starving other underwriters' exits.
+pub(crate) const MAX_ACTIVE_REQUESTS_PER_ADDRESS: u32 = 20;
+
 /// 60 days at 5s/ledger = 60 * 24 * 60 * 12 = 1_036_800.
 /// Applied on every `ClaimableBalance(addr)` write to prevent silent archival
 /// of per-user pending asset. Layered defense:

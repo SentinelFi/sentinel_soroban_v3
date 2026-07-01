@@ -28,6 +28,27 @@ fn non_keeper_execute_panics() {
     t.ctrl.execute_settlements(&stranger);
 }
 
+#[test]
+fn on_time_settlement_records_premium_income_via_controller() {
+    // On-time settlement moves the held premiums into the vault and credits them
+    // as income. The vault's `record_premium_income` is controller-only, so the
+    // Controller — not the pool — must be the direct, authorizing caller. The
+    // fixture uses plain root-frame auth (no non-root contract auth), so a
+    // regression that recorded income via a pool->vault sub-invocation needing
+    // the controller's authorization would fail to authorize here.
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+
+    let tma_before = t.vault.get_total_managed_assets();
+    t.oracle_on_time();
+    t.classify_and_settle();
+
+    // Premium income credited to the vault; collateral released.
+    assert_eq!(t.vault.get_total_managed_assets(), tma_before + PREMIUM);
+    assert_eq!(t.vault.get_locked_capital(), 0);
+}
+
 // =========================================================================
 // Oracle-gated functions
 // =========================================================================

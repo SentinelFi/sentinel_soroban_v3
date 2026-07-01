@@ -6,7 +6,9 @@ use stellar_macros::when_not_paused;
 
 use crate::auth::require_owner_or_admin;
 use crate::events::{RouteDisabled, RouteEnabled, RouteListed, RouteRemoved, RouteUpdated};
-use crate::storage::{assert_route_terms_valid, extend_route_ttl, DataKey, RouteTerms};
+use crate::storage::{
+    assert_route_terms_valid, extend_route_index_ttl, extend_route_ttl, DataKey, RouteTerms,
+};
 use crate::{
     DelayHoursUpdate, Error, GovernanceModule, GovernanceModuleArgs, GovernanceModuleClient,
     PayoffUpdate, PremiumUpdate,
@@ -91,6 +93,7 @@ impl GovernanceModule {
         terms.approved = false;
         e.storage().persistent().set(&key, &terms);
         extend_route_ttl(e, &key);
+        extend_route_index_ttl(e, &flight_id);
 
         RouteDisabled {
             flight_id,
@@ -115,8 +118,15 @@ impl GovernanceModule {
             panic_with_error!(e, Error::RouteAlreadyActive);
         }
         terms.approved = true;
+        // Revalidate resolved terms against the CURRENT defaults before
+        // re-activating. A route that was valid when disabled can resolve to
+        // invalid economics (e.g. payoff <= premium) after a later set_defaults;
+        // enabling it anyway would advertise a route the pool would reject at
+        // registration. Force the admin to fix the terms or defaults first.
+        assert_route_terms_valid(e, &terms);
         e.storage().persistent().set(&key, &terms);
         extend_route_ttl(e, &key);
+        extend_route_index_ttl(e, &flight_id);
 
         RouteEnabled {
             flight_id,
@@ -143,10 +153,20 @@ impl GovernanceModule {
             panic_with_error!(e, Error::RouteMustBeDisabledBeforeRemoval);
         }
         e.storage().persistent().remove(&key);
-        // Free the flight_id so it can be re-mapped later.
-        e.storage()
-            .persistent()
-            .remove(&DataKey::FlightRoute(flight_id.clone()));
+        // Free the flight_id so it can be re-mapped later — but only if the
+        // uniqueness index still points at THIS route. After an index-TTL lapse
+        // a second, conflicting route can be whitelisted for the same flight_id;
+        // unconditionally deleting the index while removing the older route
+        // would then strip the newer route's ownership and reopen the flight_id
+        // for further collisions.
+        let fr_key = DataKey::FlightRoute(flight_id.clone());
+        if let Some((idx_origin, idx_dest)) =
+            e.storage().persistent().get::<_, (Symbol, Symbol)>(&fr_key)
+        {
+            if idx_origin == origin && idx_dest == dest {
+                e.storage().persistent().remove(&fr_key);
+            }
+        }
 
         RouteRemoved {
             flight_id,
@@ -196,6 +216,7 @@ impl GovernanceModule {
         assert_route_terms_valid(e, &terms);
         e.storage().persistent().set(&key, &terms);
         extend_route_ttl(e, &key);
+        extend_route_index_ttl(e, &flight_id);
 
         RouteUpdated {
             flight_id,

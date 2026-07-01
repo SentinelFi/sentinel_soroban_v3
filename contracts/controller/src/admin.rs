@@ -1,5 +1,5 @@
 use crate::constants::{
-    MAX_CLAIM_EXPIRY_WINDOW_SECS, MAX_MIN_LEAD_TIME_SECS, MAX_SOLVENCY_RATIO,
+    MAX_BOOK_AHEAD_SECS, MAX_CLAIM_EXPIRY_WINDOW_SECS, MAX_SOLVENCY_RATIO,
     MIN_CLAIM_EXPIRY_WINDOW_SECS, MIN_SOLVENCY_RATIO,
 };
 use crate::events::{ClaimExpiryWindowSet, KeeperSet, MinLeadTimeSet, SolvencyRatioSet};
@@ -17,8 +17,12 @@ fn assert_solvency_ratio(e: &Env, ratio: u32) {
 }
 
 fn assert_min_lead_time(e: &Env, seconds: u64) {
-    if seconds > MAX_MIN_LEAD_TIME_SECS {
-        panic_with_error!(e, Error::MinLeadTimeExceedsMaximum);
+    // Strictly below the booking horizon. `buy_insurance`
+    // requires `now + min_lead < date <= now + MAX_BOOK_AHEAD`; if min_lead were
+    // allowed to equal MAX_BOOK_AHEAD the interval would be empty and every
+    // purchase would revert while the config still looked valid.
+    if seconds >= MAX_BOOK_AHEAD_SECS {
+        panic_with_error!(e, Error::MinLeadTimeLeavesNoBookingWindow);
     }
 }
 

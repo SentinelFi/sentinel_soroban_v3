@@ -295,6 +295,149 @@ fn test_zero_preview_request_does_not_block_queue() {
 }
 
 #[test]
+fn test_claimable_liabilities_do_not_inflate_shares() {
+    // A processed-but-uncollected withdrawal leaves assets physically in the
+    // vault while removing them from the managed-asset backing. Share pricing
+    // is on managed assets, so existing holders cannot extract a later
+    // depositor's funds via the (inflated) raw token balance.
+    let (env, client, _owner, controller, _depositor) = setup();
+    let asset = token::Client::new(&env, &client.query_asset());
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+    let victim = Address::generate(&env);
+    asset_admin.mint(&a, &500_0000000);
+    asset_admin.mint(&b, &500_0000000);
+    asset_admin.mint(&victim, &500_0000000);
+
+    let a_shares = client.deposit(&500_0000000, &a, &a, &a);
+    let _b_shares = client.deposit(&500_0000000, &b, &b, &b);
+    assert_eq!(client.get_total_managed_assets(), 1_000_0000000);
+
+    // A exits via the queue: shares burned, ~500 credited as claimable, TMA
+    // drops to ~500, but the 1000 tokens still sit physically in the vault.
+    client.request_withdrawal(&a, &a_shares);
+    client.process_withdrawal_queue(&controller);
+    let a_claimable = client.get_claimable_balance(&a);
+    assert!(
+        a_claimable >= 4_990_000_000,
+        "A claimable too low: {}",
+        a_claimable
+    );
+    assert_eq!(asset.balance(&client.address), 1_000_0000000); // tokens stayed
+
+    // Victim deposits 500 — priced on TMA (~500), NOT the raw balance (1000).
+    let victim_shares = client.deposit(&500_0000000, &victim, &victim, &victim);
+
+    // B cashes out everything it can. It must NOT be able to seize ~1000 (the
+    // victim's money on top of its own); its fair value is ~500.
+    let b_got = client.redeem(&client.max_redeem(&b), &b, &b, &b);
+    assert!(
+        b_got <= 5_100_000_000,
+        "B extracted more than fair share: {}",
+        b_got
+    );
+
+    // The victim's stake is preserved (~500), not diluted toward zero.
+    let victim_value = client.convert_to_assets(&victim_shares);
+    assert!(
+        victim_value >= 4_900_000_000,
+        "victim diluted: {}",
+        victim_value
+    );
+
+    // A's owed funds remain fully claimable.
+    assert_eq!(client.get_claimable_balance(&a), a_claimable);
+}
+
+#[test]
+fn test_zero_value_request_returned_not_pinned() {
+    // A request valid at submission can decay to zero asset value after a payout
+    // reduces the share price. Processing must return its shares and drop it (not
+    // keep it pinned at the head), so later serviceable requests still drain.
+    let (env, client, _owner, controller, _depositor) = setup();
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+
+    let whale = Address::generate(&env);
+    let dust = Address::generate(&env);
+    let sink = Address::generate(&env);
+    asset_admin.mint(&whale, &1_000_0000000);
+    asset_admin.mint(&dust, &1_0000);
+
+    let whale_shares = client.deposit(&1_000_0000000, &whale, &whale, &whale);
+    let dust_shares = client.deposit(&1_0000, &dust, &dust, &dust);
+
+    // dust queues first (would be the pinning head), whale second.
+    client.request_withdrawal(&dust, &dust_shares);
+    client.request_withdrawal(&whale, &whale_shares);
+    assert_eq!(client.get_withdrawal_queue().len(), 2);
+
+    // A large payout crashes TMA so dust's queued request now previews to zero.
+    client.send_payout(&controller, &sink, &1_000_0000000);
+    assert_eq!(client.preview_redeem(&dust_shares), 0);
+
+    client.process_withdrawal_queue(&controller);
+
+    // Queue fully drained — the zero entry did not pin the head.
+    assert_eq!(client.get_withdrawal_queue().len(), 0);
+    // dust got its shares back and was not credited.
+    assert_eq!(client.balance(&dust), dust_shares);
+    assert_eq!(client.get_claimable_balance(&dust), 0);
+    // whale's later request was serviced.
+    assert!(client.get_claimable_balance(&whale) > 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #717)")]
+fn test_per_address_active_request_cap() {
+    let (env, client, _owner, _controller, _depositor) = setup();
+    let lp = Address::generate(&env);
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+    asset_admin.mint(&lp, &1_000_0000000);
+    let shares = client.deposit(&1_000_0000000, &lp, &lp, &lp);
+
+    // Each slice is worth well above dust. 20 requests succeed; the 21st exceeds
+    // the per-address cap and is rejected.
+    let slice = shares / 100;
+    for _ in 0..20 {
+        client.request_withdrawal(&lp, &slice);
+    }
+    client.request_withdrawal(&lp, &slice); // 21st → #717
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #716)")]
+fn test_withdrawal_queue_global_length_cap() {
+    let (env, client, _owner, _controller, _depositor) = setup();
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+
+    // Fill the queue to MAX_WITHDRAWAL_QUEUE_LEN (250) using enough distinct
+    // addresses to respect the per-address cap (20 each → 13 addresses).
+    let mut filled = 0u32;
+    'fill: for _ in 0..14 {
+        let lp = Address::generate(&env);
+        asset_admin.mint(&lp, &1_000_0000000);
+        let shares = client.deposit(&1_000_0000000, &lp, &lp, &lp);
+        let slice = shares / 100;
+        for _ in 0..20 {
+            client.request_withdrawal(&lp, &slice);
+            filled += 1;
+            if filled == 250 {
+                break 'fill;
+            }
+        }
+    }
+    assert_eq!(client.get_withdrawal_queue().len(), 250);
+
+    // A 251st request (fresh address, under its own cap) is rejected.
+    let extra = Address::generate(&env);
+    asset_admin.mint(&extra, &1_000_0000000);
+    let extra_shares = client.deposit(&1_000_0000000, &extra, &extra, &extra);
+    client.request_withdrawal(&extra, &(extra_shares / 100)); // → #716
+}
+
+#[test]
 #[should_panic]
 fn test_pause_by_non_owner_panics() {
     let env = Env::default();

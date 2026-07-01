@@ -198,8 +198,15 @@ impl Controller {
                         .checked_mul(cfg.buyer_count as i128)
                         .expect("multiplication overflow");
 
-                    // Pool transfers premiums to vault and records as income.
-                    pool.settle_on_time(&controller_addr, &flight_id, &date);
+                    // Pool moves the held premiums to the vault and returns the
+                    // transferred total. The Controller records it as vault
+                    // income directly — record_premium_income is controller-only
+                    // and the Controller (not the pool) must be the caller so its
+                    // own authorization is the one the vault sees.
+                    let premium_income = pool.settle_on_time(&controller_addr, &flight_id, &date);
+                    if premium_income > 0 {
+                        vault.record_premium_income(&controller_addr, &premium_income);
+                    }
                     // Unlock collateral.
                     if total_payoff > 0 {
                         vault.decrease_locked(&controller_addr, &total_payoff);

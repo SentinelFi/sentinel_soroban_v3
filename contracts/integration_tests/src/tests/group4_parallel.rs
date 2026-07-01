@@ -59,7 +59,7 @@ fn multiple_flights_independent_settlements() {
         &symbol_short!("UA200"),
         &symbol_short!("SFO"),
         &symbol_short!("ORD"),
-        &(FLIGHT_DATE + 1),
+        &(FLIGHT_DATE + SECONDS_PER_DAY),
     );
 
     // Flight A → delayed; flight B → on-time.
@@ -67,13 +67,13 @@ fn multiple_flights_independent_settlements() {
     t.oracle.set_estimated_arrival(
         &t.oracle_account,
         &symbol_short!("UA200"),
-        &(FLIGHT_DATE + 1),
+        &(FLIGHT_DATE + SECONDS_PER_DAY),
         &EST_ARRIVAL,
     );
     t.oracle.set_landed(
         &t.oracle_account,
         &symbol_short!("UA200"),
-        &(FLIGHT_DATE + 1),
+        &(FLIGHT_DATE + SECONDS_PER_DAY),
         &ACTUAL_ON_TIME,
     );
 
@@ -93,7 +93,7 @@ fn multiple_flights_independent_settlements() {
     // Flight B: settled on-time.
     let cfg_b = t
         .pool
-        .get_flight_config(&symbol_short!("UA200"), &(FLIGHT_DATE + 1))
+        .get_flight_config(&symbol_short!("UA200"), &(FLIGHT_DATE + SECONDS_PER_DAY))
         .unwrap();
     assert_eq!(
         cfg_b.status,
@@ -128,7 +128,7 @@ fn traveler_index_across_multiple_flights() {
         &symbol_short!("UA200"),
         &symbol_short!("SFO"),
         &symbol_short!("ORD"),
-        &(FLIGHT_DATE + 1),
+        &(FLIGHT_DATE + SECONDS_PER_DAY),
     );
 
     let flights = t.ctrl.get_flights_for_traveler(&traveler);
@@ -139,7 +139,7 @@ fn traveler_index_across_multiple_flights() {
     );
     assert_eq!(
         flights.get(1).unwrap(),
-        (symbol_short!("UA200"), FLIGHT_DATE + 1)
+        (symbol_short!("UA200"), FLIGHT_DATE + SECONDS_PER_DAY)
     );
 }
 
@@ -175,7 +175,7 @@ fn traveler_with_multiple_routes() {
         &symbol_short!("UA200"),
         &symbol_short!("SFO"),
         &symbol_short!("ORD"),
-        &(FLIGHT_DATE + 1),
+        &(FLIGHT_DATE + SECONDS_PER_DAY),
     );
     t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
@@ -183,7 +183,7 @@ fn traveler_with_multiple_routes() {
         &symbol_short!("DL300"),
         &symbol_short!("ATL"),
         &symbol_short!("BOS"),
-        &(FLIGHT_DATE + 2),
+        &(FLIGHT_DATE + 2 * SECONDS_PER_DAY),
     );
 
     assert_eq!(t.ctrl.get_flights_for_traveler(&traveler).len(), 3);

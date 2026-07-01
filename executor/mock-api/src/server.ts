@@ -13,6 +13,10 @@ interface Scenario {
   origin?: string;
   destination?: string;
   aircraft_type?: string;
+  // When true, the endpoint returns two flight records for the ident/day,
+  // simulating an ambiguous AeroAPI response (e.g. a flight number operated
+  // more than once in the day). The fetcher must refuse to guess.
+  duplicate?: boolean;
 }
 
 interface Scenarios {
@@ -240,8 +244,17 @@ app.get("/flights/:ident", (req, res) => {
   const scenarios = loadScenarios();
   const scenario = scenarios[ident];
 
+  let flights: AeroApiFlight[] = [];
+  if (scenario) {
+    flights = [buildFlight(ident, scenario, dateParam)];
+    if (scenario.duplicate) {
+      // Second candidate record for the same ident/day → ambiguous response.
+      flights.push(buildFlight(ident, scenario, dateParam));
+    }
+  }
+
   const response: AeroApiResponse = {
-    flights: scenario ? [buildFlight(ident, scenario, dateParam)] : [],
+    flights,
     links: null,
     num_pages: 1,
   };

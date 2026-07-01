@@ -17,6 +17,8 @@ pub trait GovernanceInterface {
 #[contractclient(name = "VaultClient")]
 pub trait VaultInterface {
     fn get_free_capital(env: &Env) -> i128;
+    fn get_total_managed_assets(env: &Env) -> i128;
+    fn get_locked_capital(env: &Env) -> i128;
     fn increase_locked(env: &Env, controller: Address, amount: i128);
     fn decrease_locked(env: &Env, controller: Address, amount: i128);
     fn record_premium_income(env: &Env, controller: Address, amount: i128);
@@ -53,7 +55,7 @@ pub trait FlightPoolManagerInterface {
     );
     fn get_flight_config(env: &Env, flight_id: Symbol, date: u64) -> Option<FlightConfig>;
     fn add_buyer(env: &Env, controller: Address, flight_id: Symbol, date: u64, buyer: Address);
-    fn settle_on_time(env: &Env, controller: Address, flight_id: Symbol, date: u64);
+    fn settle_on_time(env: &Env, controller: Address, flight_id: Symbol, date: u64) -> i128;
     fn settle_delayed(
         env: &Env,
         controller: Address,

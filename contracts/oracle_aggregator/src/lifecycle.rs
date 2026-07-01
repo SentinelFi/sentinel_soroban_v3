@@ -6,9 +6,11 @@ use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol, Vec};
 use stellar_macros::when_not_paused;
 
 use crate::auth::{extend_instance_ttl, require_controller, require_oracle};
-use crate::constants::{MAX_PRUNE_BATCH, SECONDS_PER_DAY, SETTLED_RETENTION_DAYS};
+use crate::constants::{
+    MAX_ACTIVE_FLIGHTS, MAX_PRUNE_BATCH, SECONDS_PER_DAY, SETTLED_RETENTION_DAYS,
+};
 use crate::events::{emit_status_event, MissingFlightDataPruned};
-use crate::storage::{extend_flight_ttl, is_valid_transition, OracleKey};
+use crate::storage::{extend_flight_ttl_to, is_valid_transition, OracleKey};
 use crate::{
     Error, FlightData, FlightStatus, OracleAggregator, OracleAggregatorArgs, OracleAggregatorClient,
 };
@@ -43,7 +45,7 @@ impl OracleAggregator {
         data.estimated_arrival_time = estimated_arrival_time;
         e.storage().persistent().set(&key, &data);
 
-        extend_flight_ttl(e, &flight_id, date);
+        extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &FlightStatus::Active);
     }
 
@@ -79,7 +81,7 @@ impl OracleAggregator {
         data.actual_arrival_time = actual_arrival_time;
         e.storage().persistent().set(&key, &data);
 
-        extend_flight_ttl(e, &flight_id, date);
+        extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &FlightStatus::Landed);
     }
 
@@ -102,7 +104,7 @@ impl OracleAggregator {
         data.status = FlightStatus::Cancelled;
         e.storage().persistent().set(&key, &data);
 
-        extend_flight_ttl(e, &flight_id, date);
+        extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &FlightStatus::Cancelled);
     }
 
@@ -118,7 +120,7 @@ impl OracleAggregator {
 
         let key = OracleKey::FlightData(flight_id.clone(), date);
         if e.storage().persistent().has(&key) {
-            extend_flight_ttl(e, &flight_id, date);
+            extend_flight_ttl_to(e, &flight_id, date, date);
             return;
         }
 
@@ -136,12 +138,18 @@ impl OracleAggregator {
             .instance()
             .get(&OracleKey::ActiveFlightList)
             .unwrap_or(Vec::new(e));
+        // Bound the single-vector active list so it can't grow into the
+        // contract-instance entry-size limit and become unwritable. Settled
+        // flights are evicted by prune_settled, freeing capacity.
+        if flights.len() >= MAX_ACTIVE_FLIGHTS {
+            panic_with_error!(e, Error::ActiveFlightListFull);
+        }
         flights.push_back((flight_id.clone(), date));
         e.storage()
             .instance()
             .set(&OracleKey::ActiveFlightList, &flights);
 
-        extend_flight_ttl(e, &flight_id, date);
+        extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &FlightStatus::NotInitiated);
     }
 
@@ -179,7 +187,7 @@ impl OracleAggregator {
         data.status = status.clone();
         e.storage().persistent().set(&key, &data);
 
-        extend_flight_ttl(e, &flight_id, date);
+        extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &status);
     }
 

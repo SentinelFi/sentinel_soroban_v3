@@ -1,6 +1,6 @@
 use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
 
-use crate::constants::TRAVELER_FLIGHTS_TTL_LEDGERS;
+use crate::constants::{MAX_TRAVELER_FLIGHTS, TRAVELER_FLIGHTS_TTL_LEDGERS};
 
 #[contracttype]
 pub enum CtrlKey {
@@ -29,6 +29,14 @@ pub enum CtrlKey {
 pub(crate) fn append_traveler_flight(e: &Env, traveler: &Address, flight_id: &Symbol, date: u64) {
     let key = CtrlKey::TravelerFlights(traveler.clone());
     let mut list: Vec<(Symbol, u64)> = e.storage().persistent().get(&key).unwrap_or(Vec::new(e));
+    // Bound the append-only index so it can't grow into the persistent
+    // entry-size limit and, since the append is on the buy path, permanently
+    // block the address from purchasing. When full, evict the oldest entry
+    // (keep the most recent MAX_TRAVELER_FLIGHTS) instead of blocking the buy —
+    // this is a convenience index, and full history is derivable from events.
+    if list.len() >= MAX_TRAVELER_FLIGHTS {
+        list.remove(0);
+    }
     list.push_back((flight_id.clone(), date));
     e.storage().persistent().set(&key, &list);
     e.storage().persistent().extend_ttl(

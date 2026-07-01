@@ -21,3 +21,15 @@ pub(crate) const BUYER_TTL_LEDGERS: u32 = 3_110_400;
 // ~180 days = Stellar's maximum persistent-entry TTL. extend_ttl panics if the
 // target exceeds the network max, so any computed extension is clamped to this.
 pub(crate) const MAX_PERSISTENT_TTL_LEDGERS: u32 = 3_110_400;
+
+/// Hard cap on `ActiveFlightList` length. The list is a single `Vec` in the
+/// contract-instance entry, which Soroban bounds to 65,536 bytes (~1,600
+/// entries in the current layout). An unbounded list could grow until that
+/// entry becomes unwritable, freezing new flight registration (and settlement,
+/// which rewrites the list on eviction). Capping length well below the limit
+/// turns that ungraceful failure into a clean, early rejection with headroom
+/// for symbol-length variance and other instance state. Settled flights are
+/// removed on settlement, freeing capacity. Matches the OracleAggregator cap for
+/// a uniform interim bound; full resolution (individually-keyed active entries)
+/// is a larger storage migration tracked separately.
+pub(crate) const MAX_ACTIVE_FLIGHTS: u32 = 1_000;

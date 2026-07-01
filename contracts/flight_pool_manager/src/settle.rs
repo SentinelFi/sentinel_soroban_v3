@@ -1,4 +1,4 @@
-use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, IntoVal, Symbol};
+use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, Symbol};
 use stellar_macros::when_not_paused;
 
 use crate::auth::require_controller;
@@ -11,9 +11,20 @@ use crate::{
 
 #[contractimpl]
 impl FlightPoolManager {
-    /// Settle on time: transfer premium*buyer_count to RiskVault as yield.
+    /// Settle on time: transfer premium*buyer_count to RiskVault as yield and
+    /// return the transferred amount so the Controller can record it as vault
+    /// income.
+    ///
+    /// The pool moves its own held premiums to the vault (a contract is
+    /// implicitly authorized to spend its own balance), but it does NOT call
+    /// the vault's controller-only `record_premium_income`. That accounting
+    /// call requires the Controller's address to authorize it; since the pool —
+    /// not the Controller — is the direct caller of the vault, the Controller's
+    /// auth does not propagate to a call the pool initiates, so the only correct
+    /// caller is the Controller itself. We therefore return the transferred
+    /// total and let the Controller credit vault income directly.
     #[when_not_paused]
-    pub fn settle_on_time(e: &Env, controller: Address, flight_id: Symbol, date: u64) {
+    pub fn settle_on_time(e: &Env, controller: Address, flight_id: Symbol, date: u64) -> i128 {
         require_controller(e, &controller);
 
         let cfg_key = PoolKey::FlightConfig(flight_id.clone(), date);
@@ -30,8 +41,9 @@ impl FlightPoolManager {
         e.storage().persistent().set(&cfg_key, &cfg);
         prune_active_list(e, &flight_id, date);
 
+        let mut total_premium: i128 = 0;
         if cfg.buyer_count > 0 {
-            let total_premium = cfg
+            total_premium = cfg
                 .premium
                 .checked_mul(cfg.buyer_count as i128)
                 .expect("multiplication overflow");
@@ -40,12 +52,6 @@ impl FlightPoolManager {
 
             let asset = token::Client::new(e, &asset_addr);
             asset.transfer(&e.current_contract_address(), &vault_addr, &total_premium);
-
-            // record_premium_income is controller-only on the vault. Forward the
-            // controller's auth (already present from this call's require_controller)
-            // so the vault's auth check sees the same address it has stored.
-            let args = (&controller, &total_premium).into_val(e);
-            e.invoke_contract::<()>(&vault_addr, &Symbol::new(e, "record_premium_income"), args);
         }
 
         FlightSettled {
@@ -55,6 +61,8 @@ impl FlightPoolManager {
             claim_expiry: 0,
         }
         .publish(e);
+
+        total_premium
     }
 
     /// Settle delayed: open the claim window. RiskVault top-up handled by

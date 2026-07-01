@@ -16,4 +16,6 @@ pub enum Error {
     DepartureTooFarInFuture = 310,
     FlightNotOpenForPurchase = 311,
     InsufficientVaultCapital = 312,
+    DateNotDayAligned = 313,
+    MinLeadTimeLeavesNoBookingWindow = 314,
 }
