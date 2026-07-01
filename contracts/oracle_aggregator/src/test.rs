@@ -3,6 +3,7 @@ use crate::storage::OracleKey;
 use sentinel_types::test_support::collect_events;
 use soroban_sdk::{
     symbol_short, testutils::Address as _, testutils::Ledger as _, Address, Env, IntoVal, Symbol,
+    Vec,
 };
 
 const FLIGHT_DATE: u64 = 1710400000; // arbitrary unix timestamp
@@ -335,6 +336,28 @@ fn test_register_flight_twice_is_idempotent() {
     let data = client.get_flight_data(&fid, &FLIGHT_DATE);
     assert_eq!(data.status, FlightStatus::NotInitiated);
     assert_eq!(client.get_active_flights().len(), 1);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #606)")]
+fn test_register_flight_rejects_when_active_list_full() {
+    // The active list is bounded so it can't grow into the contract-instance
+    // entry-size limit. Pre-seed it to the cap directly in storage, then confirm
+    // one more distinct registration is rejected.
+    use crate::constants::MAX_ACTIVE_FLIGHTS;
+    let (env, client, _owner, _oracle, controller) = setup();
+
+    env.as_contract(&client.address, || {
+        let mut list: Vec<(Symbol, u64)> = Vec::new(&env);
+        for i in 0..MAX_ACTIVE_FLIGHTS {
+            list.push_back((symbol_short!("AA100"), i as u64));
+        }
+        env.storage()
+            .instance()
+            .set(&OracleKey::ActiveFlightList, &list);
+    });
+
+    client.register_flight(&controller, &symbol_short!("ZZ999"), &99_999_999u64);
 }
 
 // --- Read function tests ---

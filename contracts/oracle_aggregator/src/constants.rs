@@ -12,6 +12,17 @@
 /// rotating cursor still sweeps the full list across repeated calls).
 pub(crate) const MAX_PRUNE_BATCH: u32 = 60;
 
+/// Hard cap on `ActiveFlightList` length. The list is a single `Vec` in the
+/// contract-instance entry, which Soroban bounds to 65,536 bytes (~1,600
+/// entries in the current layout). An unbounded list could grow until that
+/// entry becomes unwritable, freezing registration and the instance-state
+/// writes that piggyback on it. Capping length well below the limit turns that
+/// ungraceful failure into a clean, early rejection with headroom for symbol-
+/// length variance and other instance state, and keeps `prune_settled`'s
+/// full-list scan bounded. Full resolution (individually-keyed active entries
+/// + a compact index) is a larger storage migration tracked separately.
+pub(crate) const MAX_ACTIVE_FLIGHTS: u32 = 1_000;
+
 pub(crate) const PERSISTENT_TTL_EXTEND: u32 = 535_680; // ~31 days
 
 // Deadline-derived TTL inputs. A flight may be insured up to

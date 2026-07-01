@@ -269,6 +269,35 @@ fn test_route_status_disabled_when_defaults_make_terms_invalid() {
     let _ = env;
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #503)")]
+fn test_enable_route_rejects_invalid_resolved_terms() {
+    // enable_route revalidates resolved terms against current defaults: a route
+    // that became invalid via a defaults change cannot be re-activated until its
+    // terms (or the defaults) are fixed.
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    // premium=400 custom, payoff inherits default 500 → valid.
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &Some(400_0000000i128),
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.disable_route(&owner, &flight_id, &origin, &dest);
+
+    // Drop the default payoff below the route's custom premium → resolves to
+    // payoff(300) <= premium(400).
+    client.set_defaults(&50_0000000, &300_0000000, &DEFAULT_DELAY_HOURS);
+
+    // Re-enabling the now-invalid route must be rejected.
+    client.enable_route(&owner, &flight_id, &origin, &dest);
+}
+
 // =========================================================================
 // Admin management
 // =========================================================================

@@ -118,6 +118,12 @@ impl GovernanceModule {
             panic_with_error!(e, Error::RouteAlreadyActive);
         }
         terms.approved = true;
+        // Revalidate resolved terms against the CURRENT defaults before
+        // re-activating. A route that was valid when disabled can resolve to
+        // invalid economics (e.g. payoff <= premium) after a later set_defaults;
+        // enabling it anyway would advertise a route the pool would reject at
+        // registration. Force the admin to fix the terms or defaults first.
+        assert_route_terms_valid(e, &terms);
         e.storage().persistent().set(&key, &terms);
         extend_route_ttl(e, &key);
         extend_route_index_ttl(e, &flight_id);

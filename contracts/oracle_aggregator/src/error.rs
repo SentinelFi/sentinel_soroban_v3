@@ -9,4 +9,5 @@ pub enum Error {
     InvalidSettlementStatus = 603,
     NotAuthorizedOracle = 604,
     NotAuthorizedController = 605,
+    ActiveFlightListFull = 606,
 }
