@@ -3,7 +3,7 @@
 > Phase dashboard for the Phase 3 contract improvements.
 > Source of truth for subtasks: `spec/dev_steps.md`. Per-phase living docs: `spec/phases/phase-{NN}-{slug}.md` (created by `/plan-phase`).
 
-**Current Phase:** Phase 12 complete (2026-05-25). Phase 11 still `in_progress` (user-side validation pending, per phase-bundling convention). Phase 13 (deploy / Acurast / frontend) ready to plan.
+**Current Phase:** Phases 1–12 complete. Phase 11 validated and closed 2026-07-01. Phase 13 (deploy / Acurast / frontend) ready to plan.
 
 ---
 
@@ -21,7 +21,7 @@
 | 8  | RiskVault TTL — `ClaimableBalance` 60d + recovery, `SnapshotPrice` 30d temp | complete | 2026-05-03 | 2026-05-03 |
 | 9  | Oracle `FlightData` — `ttl_miss` diagnostic event                     | complete | 2026-05-03 | 2026-05-03 |
 | 10 | Integration tests — rewrite for new topology                          | complete | 2026-05-03 | 2026-05-03 |
-| 11 | Buyer whitelist — admin-toggled gate on Controller                    | in_progress | 2026-05-23 | — |
+| 11 | Buyer whitelist — admin-toggled gate on Controller                    | complete | 2026-05-23 | 2026-07-01 |
 | 12 | Executor (centralized cron) — port from phase-2                       | complete | 2026-05-25 | 2026-05-25 |
 
 Status legend: `planned` → `in_progress` → `paused` (optional) → `complete`.
