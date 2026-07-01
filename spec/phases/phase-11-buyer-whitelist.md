@@ -1,8 +1,8 @@
 # Phase 11 — Buyer whitelist on Controller (admin-toggled)
 
-Status: in_progress
+Status: complete
 Started: 2026-05-23
-Completed: —
+Completed: 2026-07-01
 
 ---
 
@@ -158,6 +158,66 @@ exhaustive unit tests cover the product space).
 
 Implementation order: interfaces → storage → auth → events → whitelist → wire
 gate → queries → mod wiring → unit tests → integration tests → docs → gate.
+
+### Session 2026-07-01 — Completed
+
+Phase validated by user. All gate conditions met:
+- `cargo test --workspace` green — **329 tests pass** (59 controller incl. 12
+  whitelist unit tests; 88 integration incl. 8 `group9_whitelist` tests; no
+  regressions in other crates).
+- `cargo clippy --workspace --all-targets` clean.
+- `cargo fmt --all --check` clean.
+- `whitelist_enabled` defaults to `false` after constructor; default-off flow
+  confirmed unchanged (`test_whitelist_disabled_by_default`,
+  `test_whitelist_disabled_allows_any_buyer`).
+- Add/remove/toggle events verified emitted with correct topics.
+
+---
+
+## Completion Summary
+
+**What was built.** An admin-managed buyer whitelist on `Controller`, gating
+`buy_insurance` behind an opt-in allowlist. Toggle defaults **off** (buy stays
+public exactly as before); when **on**, only admin-added addresses can buy.
+
+**Key decisions locked in.**
+- Whitelist state is **Controller-local** — hot path stays one Instance read
+  (toggle) plus one Persistent read (entry) only when the toggle is on; no
+  cross-contract call on the buy path.
+- Admin authority for add/remove is **reused from `GovernanceModule`** via
+  `GovClient::is_admin` (single source of truth), paid only on rare admin
+  writes. The toggle is **owner-only** (tighter kill-switch trust).
+- Admin paths are **not Pausable-gated** (admin must manage the list during a
+  pause); the buy gate lives inside the existing `#[when_not_paused]` block, so
+  a pause naturally halts whitelisted buys too.
+- Persistent entry TTL reuses `TRAVELER_FLIGHTS_TTL_LEDGERS`; an active buyer's
+  approval is refreshed on each buy via `touch_buyer_whitelisted`. Archival
+  fails safe (defaults to "not whitelisted").
+- No fuzz harness — the state machine is two booleans, covered exhaustively by
+  unit tests.
+
+**Files created.**
+- `contracts/controller/src/whitelist.rs`
+- `contracts/integration_tests/src/tests/group9_whitelist.rs`
+
+**Files modified.**
+- `contracts/controller/src/lib.rs` — `mod whitelist;`
+- `contracts/controller/src/storage.rs` — `CtrlKey::WhitelistEnabled` +
+  `CtrlKey::BuyerWhitelisted(Address)` + read/write/touch helpers.
+- `contracts/controller/src/auth.rs` — `require_owner_or_gov_admin`.
+- `contracts/controller/src/interfaces.rs` — `is_admin` on `GovernanceInterface`.
+- `contracts/controller/src/events.rs` — three event structs.
+- `contracts/controller/src/purchase.rs` — gate at top of `buy_insurance`.
+- `contracts/controller/src/queries.rs` — `is_whitelisted` + `whitelist_enabled`.
+- `contracts/controller/src/error.rs` — `NotOwnerOrGovernanceAdmin (305)`,
+  `BuyerNotWhitelisted (306)`.
+- `contracts/controller/src/test.rs` — whitelist unit tests.
+- `contracts/integration_tests/src/tests/mod.rs` — `mod group9_whitelist;`.
+- `spec/architecture.md`, `spec/progress.md` — docs.
+
+**For the next phase.** Whitelist ships **off** by default, so deployment order
+is unaffected; flipping it on is a post-deploy owner action. No known
+limitations or deferred items within this phase's scope.
 
 ---
 
