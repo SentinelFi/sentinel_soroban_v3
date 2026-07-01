@@ -20,4 +20,5 @@ pub enum Error {
     NoPolicy = 414,
     AlreadyClaimed = 415,
     ClaimWindowStillOpen = 416,
+    ActiveFlightListFull = 417,
 }

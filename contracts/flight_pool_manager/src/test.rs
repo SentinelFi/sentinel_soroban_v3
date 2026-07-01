@@ -1,7 +1,7 @@
 use super::*;
 use sentinel_types::test_support::collect_events;
 use soroban_sdk::{
-    symbol_short, testutils::Address as _, testutils::Ledger, token, Address, Env, Symbol,
+    symbol_short, testutils::Address as _, testutils::Ledger, token, Address, Env, Symbol, Vec,
 };
 
 const PREMIUM: i128 = 10_0000000; // 10 asset (7 decimals)
@@ -174,6 +174,37 @@ fn test_register_flight_success() {
     let active = t.pool.get_active_flights();
     assert_eq!(active.len(), 1);
     assert_eq!(active.get(0), Some((flight_a(), FLIGHT_DATE)));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #417)")]
+fn test_register_flight_rejects_when_active_list_full() {
+    // The active list is bounded so it can't grow into the contract-instance
+    // entry-size limit. Pre-seed it to the cap directly in storage, then confirm
+    // one more distinct registration is rejected.
+    use crate::constants::MAX_ACTIVE_FLIGHTS;
+    use crate::storage::PoolKey;
+    let t = setup();
+
+    t.env.as_contract(&t.pool_addr, || {
+        let mut list: Vec<(Symbol, u64)> = Vec::new(&t.env);
+        for i in 0..MAX_ACTIVE_FLIGHTS {
+            list.push_back((symbol_short!("AA100"), i as u64));
+        }
+        t.env
+            .storage()
+            .instance()
+            .set(&PoolKey::ActiveFlightList, &list);
+    });
+
+    t.pool.register_flight(
+        &t.controller,
+        &symbol_short!("ZZ999"),
+        &99_999_999u64,
+        &PREMIUM,
+        &PAYOFF,
+        &DELAY_HOURS,
+    );
 }
 
 #[test]

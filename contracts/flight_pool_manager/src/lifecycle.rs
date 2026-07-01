@@ -2,7 +2,7 @@ use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol, Vec};
 use stellar_macros::when_not_paused;
 
 use crate::auth::{extend_instance_ttl, require_controller};
-use crate::constants::BUYER_TTL_LEDGERS;
+use crate::constants::{BUYER_TTL_LEDGERS, MAX_ACTIVE_FLIGHTS};
 use crate::events::{BuyerAdded, FlightRegistered};
 use crate::storage::{extend_flight_ttl_to, PoolKey};
 use crate::{
@@ -82,6 +82,12 @@ impl FlightPoolManager {
             .instance()
             .get(&PoolKey::ActiveFlightList)
             .unwrap_or(Vec::new(e));
+        // Bound the single-vector active list so it can't grow into the
+        // contract-instance entry-size limit and become unwritable. Settled
+        // flights are removed on settlement, freeing capacity.
+        if list.len() >= MAX_ACTIVE_FLIGHTS {
+            panic_with_error!(e, Error::ActiveFlightListFull);
+        }
         list.push_back((flight_id.clone(), date));
         e.storage()
             .instance()
