@@ -561,6 +561,36 @@ fn test_claim_deadline_capped_to_buyer_proof_lifetime() {
 }
 
 #[test]
+fn test_truncated_claim_window_still_claimable() {
+    // Middle ground of the deadline cap: settlement late enough that the
+    // requested window is truncated, but with time left before the cap. The
+    // buyer must still be able to claim within the shortened window — the
+    // cap trades window length for the guarantee that every remaining second
+    // is provable against a live buyer key.
+    let t = setup();
+    register(&t);
+    buy(&t, &t.buyer1);
+
+    // Settle 40 days after departure: requested deadline = +100d, cap = +90d.
+    let late = FLIGHT_DATE + 40 * 86_400;
+    t.env.ledger().with_mut(|l| l.timestamp = late);
+    let requested_expiry = late + CLAIM_WINDOW_SEC;
+    t.pool
+        .settle_delayed(&t.controller, &flight_a(), &FLIGHT_DATE, &requested_expiry);
+    t.vault
+        .send_payout(&t.controller, &t.pool_addr, &(PAYOFF - PREMIUM));
+
+    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
+    assert_eq!(cfg.claim_expiry, FLIGHT_DATE + 90 * 86_400);
+    assert!(cfg.claim_expiry > t.env.ledger().timestamp());
+
+    // Claim succeeds inside the truncated window.
+    let before = t.asset.balance(&t.buyer1);
+    t.pool.claim(&t.buyer1, &flight_a(), &FLIGHT_DATE);
+    assert_eq!(t.asset.balance(&t.buyer1), before + PAYOFF);
+}
+
+#[test]
 fn test_active_flight_count_tracks_registration_and_settlement() {
     // Operators watch active-bucket occupancy against the capped list via
     // this gauge, reacting before registration starts rejecting new flights.

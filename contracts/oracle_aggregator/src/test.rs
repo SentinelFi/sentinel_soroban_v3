@@ -795,6 +795,52 @@ fn test_evict_missing_flight_owner_path() {
 }
 
 #[test]
+#[should_panic]
+fn test_evict_missing_flight_unauthorized() {
+    // Eviction frees capped-list capacity after off-chain finality
+    // confirmation — an owner-only judgment call. A stranger must not be able
+    // to remove entries.
+    let env = Env::default();
+    // No mock_all_auths — the owner auth check must fail.
+    let owner = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let contract_id = env.register(OracleAggregator, (&owner, &oracle));
+    let client = OracleAggregatorClient::new(&env, &contract_id);
+
+    client.evict_missing_flight(&symbol_short!("AA100"), &FLIGHT_DATE);
+}
+
+#[test]
+fn test_prune_settled_evicts_aged_settled_while_retaining_missing() {
+    // A retained missing-data entry must not stall the sweep: aged-out
+    // settled entries around it are still evicted in the same pass, so a
+    // stuck recovery case can't pin unrelated capacity.
+    let (env, client, _owner, oracle, controller) = setup();
+    let f_settled = flight_id(&env);
+    let f_archived = symbol_short!("BB200");
+
+    env.ledger().with_mut(|li| li.timestamp = 1_710_500_000);
+    settle_full_lifecycle(&env, &client, &oracle, &controller, &f_settled, FLIGHT_DATE);
+    client.register_flight(&controller, &f_archived, &FLIGHT_DATE);
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&OracleKey::FlightData(f_archived.clone(), FLIGHT_DATE));
+    });
+    assert_eq!(client.get_active_flight_count(), 2);
+
+    // Past the retention window: the settled flight ages out, the archived
+    // one is retained for recovery.
+    env.ledger()
+        .with_mut(|li| li.timestamp = 1_710_500_000 + RETENTION_SECONDS + 1);
+    client.prune_settled();
+
+    let remaining = client.get_active_flights();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining.get(0).unwrap(), (f_archived, FLIGHT_DATE));
+}
+
+#[test]
 fn test_prune_settled_no_op_when_no_flights_settled() {
     let (env, client, _owner, _oracle, controller) = setup();
     let fid = flight_id(&env);

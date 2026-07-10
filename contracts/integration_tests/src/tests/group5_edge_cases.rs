@@ -218,3 +218,90 @@ fn stale_unconfirmed_flight_voided_and_collateral_released() {
         .try_claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE)
         .is_err());
 }
+
+#[test]
+fn stale_flight_void_releases_full_sybil_collateral() {
+    // The capital-lockup attack is Sybil-amplified: N addresses each buy one
+    // policy for the same bogus date, locking N × payoff. The void must
+    // release the FULL locked amount and credit every premium — a partial
+    // release would leave phantom locked capital shrinking free capital
+    // forever.
+    let t = TestEnv::new();
+    let buyers: [Address; 3] = [
+        Address::generate(&t.env),
+        Address::generate(&t.env),
+        Address::generate(&t.env),
+    ];
+    for b in buyers.iter() {
+        t.buy(b);
+    }
+    let tma_before = t.vault.get_total_managed_assets();
+    assert_eq!(t.vault.get_locked_capital(), 3 * PAYOFF);
+
+    t.advance_time(FLIGHT_DATE - INITIAL_TIMESTAMP + 14 * SECONDS_PER_DAY + 1);
+    t.classify_and_settle();
+
+    assert_eq!(t.vault.get_locked_capital(), 0);
+    assert_eq!(t.vault.get_total_managed_assets(), tma_before + 3 * PREMIUM);
+    for b in buyers.iter() {
+        assert!(t
+            .pool
+            .try_claim(b, &symbol_short!("AA100"), &FLIGHT_DATE)
+            .is_err());
+    }
+}
+
+#[test]
+fn settlement_barrier_holds_through_void_classification_window() {
+    // Voiding a flight is a public disclosure of unrecognized vault PnL
+    // (its premiums become yield at settlement). Between classification and
+    // settlement the LP entry/exit barrier must be up — otherwise an LP could
+    // exit or enter at the pre-income share price — and must lift once the
+    // void settles.
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+    t.advance_time(FLIGHT_DATE - INITIAL_TIMESTAMP + 14 * SECONDS_PER_DAY + 1);
+
+    // Classify only — the void is now pending but unsettled.
+    t.ctrl.classify_flights(&t.keeper);
+    assert!(t.oracle.has_pending_outcomes());
+    let lp = Address::generate(&t.env);
+    t.asset_admin.mint(&lp, &DEPOSIT_AMOUNT);
+    assert!(t.vault.try_deposit(&DEPOSIT_AMOUNT, &lp, &lp, &lp).is_err());
+
+    // Settlement recognizes the PnL and the barrier lifts.
+    t.ctrl.execute_settlements(&t.keeper);
+    assert!(!t.oracle.has_pending_outcomes());
+    t.vault.deposit(&DEPOSIT_AMOUNT, &lp, &lp, &lp);
+}
+
+#[test]
+fn active_flight_never_voided_by_stale_timeout() {
+    // The void applies ONLY to flights that never produced any data. Once an
+    // estimated arrival is recorded (the flight is real), the row is Active
+    // and must wait for a genuine outcome no matter how much time passes —
+    // a delayed data feed must not convert a possibly-delayed flight into an
+    // on-time settlement.
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+    t.oracle.set_estimated_arrival(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &EST_ARRIVAL,
+    );
+
+    t.advance_time(FLIGHT_DATE - INITIAL_TIMESTAMP + 30 * SECONDS_PER_DAY);
+    t.classify_and_settle();
+
+    // Untouched: still Active, collateral still locked, awaiting an outcome.
+    assert_eq!(
+        t.oracle
+            .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE)
+            .status,
+        oracle_aggregator::FlightStatus::Active
+    );
+    assert_eq!(t.vault.get_locked_capital(), PAYOFF);
+}

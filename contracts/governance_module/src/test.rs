@@ -1201,6 +1201,49 @@ fn test_route_status_heals_missing_index() {
 }
 
 #[test]
+fn test_route_status_heals_missing_index_for_disabled_route() {
+    // Healing must not depend on approval state: a disabled route still owns
+    // its flight_id, and a committed status read recreates a lapsed index so
+    // no conflicting route can claim the id while this one is merely paused.
+    let (env, client, owner, _addr) = setup();
+    let (fid, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.disable_route(&owner, &fid, &origin, &dest);
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&crate::storage::DataKey::FlightRoute(fid.clone()));
+    });
+
+    assert_eq!(
+        client.route_status(&fid, &origin, &dest),
+        RouteStatus::Disabled
+    );
+
+    // The healed index re-guards the flight_id.
+    assert!(client
+        .try_whitelist_route(
+            &owner,
+            &fid,
+            &symbol_short!("SFO"),
+            &symbol_short!("ORD"),
+            &None::<i128>,
+            &None::<i128>,
+            &None::<u32>,
+        )
+        .is_err());
+}
+
+#[test]
 fn test_enable_route_heals_missing_index_and_rejects_conflict() {
     let (env, client, owner, _addr) = setup();
     let (fid, origin, dest) = route_ids();

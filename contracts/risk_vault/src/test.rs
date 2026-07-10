@@ -417,6 +417,22 @@ fn test_min_withdrawal_request_floor_enforced() {
 }
 
 #[test]
+#[should_panic]
+fn test_set_min_withdrawal_request_unauthorized() {
+    // The request-value floor is an owner-only lever (it gates queue
+    // admission); a stranger must not be able to set it.
+    let env = Env::default();
+    // No mock_all_auths — the owner auth check must fail.
+    let owner = Address::generate(&env);
+    let asset_admin = Address::generate(&env);
+    let asset_id = env.register_stellar_asset_contract_v2(asset_admin);
+    let contract_id = env.register(RiskVault, (&owner, asset_id.address()));
+    let client = RiskVaultClient::new(&env, &contract_id);
+
+    client.set_min_withdrawal_request(&1_0000000);
+}
+
+#[test]
 fn test_queue_len_query_and_request_event() {
     use soroban_sdk::symbol_short;
     // Operators watch queue occupancy via the len query and the per-request
