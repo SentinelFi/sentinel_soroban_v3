@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright @SentinelFi
+
 // Shared cross-contract types. Lives in its own crate so the canonical
 // definitions and the controller-side mirrors are guaranteed to share a
 // single XDR layout — eliminates the byte-level drift hazard.

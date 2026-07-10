@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright @SentinelFi
+
 #![no_std]
 //! # GovernanceModule — route whitelist & policy defaults
 //!

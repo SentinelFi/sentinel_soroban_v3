@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright @SentinelFi
+
 #![no_std]
 //! # FlightPoolManager — per-flight policy state
 //!
