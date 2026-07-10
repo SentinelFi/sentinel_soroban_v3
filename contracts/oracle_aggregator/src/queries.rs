@@ -28,6 +28,25 @@ impl OracleAggregator {
             .unwrap_or(Vec::new(e))
     }
 
+    /// Number of entries in the active flight list. Cheap saturation gauge
+    /// for operators: the list is capped, so occupancy approaching the cap
+    /// means new-flight registration (and thus first purchases) is about to
+    /// be rejected — prune promptly or investigate before that happens.
+    pub fn get_active_flight_count(e: &Env) -> u32 {
+        Self::get_active_flights(e).len()
+    }
+
+    /// Whether a `FlightData` entry physically exists for this key. Lets
+    /// callers distinguish a genuinely unregistered flight from one whose
+    /// entry archived past its TTL — `get_flight_data` reports both as
+    /// `NotInitiated`, but an archived entry is restorable and may still
+    /// have unresolved settlement riding on it.
+    pub fn has_flight_data(e: &Env, flight_id: Symbol, date: u64) -> bool {
+        e.storage()
+            .persistent()
+            .has(&OracleKey::FlightData(flight_id, date))
+    }
+
     /// Get flights filtered by status. Iterates active list and filters.
     pub fn get_flights_by_status(e: &Env, status: FlightStatus) -> Vec<(Symbol, u64)> {
         let all = Self::get_active_flights(e);

@@ -9,10 +9,10 @@ use crate::auth::{extend_instance_ttl, require_controller, require_oracle};
 use crate::constants::{
     MAX_ACTIVE_FLIGHTS, MAX_PRUNE_BATCH, SECONDS_PER_DAY, SETTLED_RETENTION_DAYS,
 };
-use crate::events::{emit_status_event, MissingFlightDataPruned};
+use crate::events::{emit_status_event, MissingFlightData};
 use crate::storage::{
     decrement_pending_outcomes, extend_flight_ttl_to, increment_pending_outcomes,
-    is_valid_transition, OracleKey,
+    is_valid_transition, settlement_deadline, OracleKey,
 };
 use crate::{
     Error, FlightData, FlightStatus, OracleAggregator, OracleAggregatorArgs, OracleAggregatorClient,
@@ -32,6 +32,14 @@ impl OracleAggregator {
         estimated_arrival_time: u64,
     ) {
         require_oracle(e, &oracle);
+        // Zero is the unset sentinel in FlightData, and an arrival cannot
+        // precede the departure day's midnight. Rejecting malformed values
+        // here matters because the state machine is forward-only: a bad
+        // timestamp accepted now corrupts the delay classification later with
+        // no on-chain correction path.
+        if estimated_arrival_time == 0 || estimated_arrival_time < date {
+            panic_with_error!(e, Error::InvalidTimestamp);
+        }
 
         let key = OracleKey::FlightData(flight_id.clone(), date);
         let mut data: FlightData = e
@@ -62,6 +70,14 @@ impl OracleAggregator {
         actual_arrival_time: u64,
     ) {
         require_oracle(e, &oracle);
+        // A zero actual arrival is the unset sentinel — accepted, it would
+        // saturate the delay computation to zero and settle every such flight
+        // as on-time, silently denying delayed-flight payouts with no
+        // correction path in the forward-only machine. An arrival before the
+        // departure day's midnight is equally malformed.
+        if actual_arrival_time == 0 || actual_arrival_time < date {
+            panic_with_error!(e, Error::InvalidTimestamp);
+        }
 
         let key = OracleKey::FlightData(flight_id.clone(), date);
         let mut data: FlightData = e
@@ -84,9 +100,12 @@ impl OracleAggregator {
         data.actual_arrival_time = actual_arrival_time;
         e.storage().persistent().set(&key, &data);
 
-        // Outcome is now public but not yet financially settled.
+        // Outcome is now public but not yet financially settled. From here the
+        // record must survive until keeper-driven settlement completes, so
+        // extend to the settlement horizon rather than the (typically past)
+        // flight date, whose extension bottoms out at the ~31-day floor.
         increment_pending_outcomes(e);
-        extend_flight_ttl_to(e, &flight_id, date, date);
+        extend_flight_ttl_to(e, &flight_id, date, settlement_deadline(e, date));
         emit_status_event(e, &flight_id, date, &FlightStatus::Landed);
     }
 
@@ -121,13 +140,17 @@ impl OracleAggregator {
                 data.status = FlightStatus::Cancelled;
                 e.storage().persistent().set(&key, &data);
 
-                // Outcome is now public but not yet financially settled.
+                // Outcome is now public but not yet financially settled — the
+                // record must survive until keeper-driven settlement (see
+                // `set_landed` on the extended horizon).
                 increment_pending_outcomes(e);
+                extend_flight_ttl_to(e, &flight_id, date, settlement_deadline(e, date));
             }
             None => {
                 // Pre-registration cancellation: create the tombstone record
                 // (see the doc comment — no active-list entry, no pending
-                // outcome, nothing to settle).
+                // outcome, nothing to settle). Date-based TTL suffices: the
+                // tombstone only needs to outlive the purchase window.
                 let data = FlightData {
                     status: FlightStatus::Cancelled,
                     estimated_arrival_time: 0,
@@ -135,10 +158,10 @@ impl OracleAggregator {
                     settled_at: 0,
                 };
                 e.storage().persistent().set(&key, &data);
+                extend_flight_ttl_to(e, &flight_id, date, date);
             }
         }
 
-        extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &FlightStatus::Cancelled);
     }
 
@@ -221,7 +244,9 @@ impl OracleAggregator {
         data.status = status.clone();
         e.storage().persistent().set(&key, &data);
 
-        extend_flight_ttl_to(e, &flight_id, date, date);
+        // A classified flight still awaits the money-moving settlement pass;
+        // keep it alive through the settlement horizon (see `set_landed`).
+        extend_flight_ttl_to(e, &flight_id, date, settlement_deadline(e, date));
         emit_status_event(e, &flight_id, date, &status);
     }
 
@@ -307,16 +332,21 @@ impl OracleAggregator {
                 .get::<_, FlightData>(&OracleKey::FlightData(flight_id.clone(), date))
             {
                 None => {
-                    // FlightData archived past its TTL. Keep the
-                    // prior evict behavior (a missing entry is unrecoverable
-                    // on-chain and would block pruning forever) but
-                    // surface it via a diagnostic so it is no longer silent.
-                    MissingFlightDataPruned {
+                    // FlightData archived past its TTL. RETAIN the entry: a
+                    // missing persistent read means archived, not settled —
+                    // the flight may still have unresolved premiums, payouts,
+                    // or locked collateral, and evicting it here would strip
+                    // the tuple from keeper enumeration, turning a temporary
+                    // TTL lapse into an orphaned workflow item. Emit the
+                    // diagnostic so operators restore the entry (ledger
+                    // restoration) or, once finality is confirmed off-chain,
+                    // free the slot via the owner-only `evict_missing_flight`.
+                    MissingFlightData {
                         flight_id: flight_id.clone(),
                         date,
                     }
                     .publish(e);
-                    true
+                    false
                 }
                 Some(data) => {
                     let age_seconds = now.saturating_sub(data.settled_at);

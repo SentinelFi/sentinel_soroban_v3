@@ -62,19 +62,21 @@ fn multiple_flights_independent_settlements() {
         &(FLIGHT_DATE + SECONDS_PER_DAY),
     );
 
-    // Flight A → delayed; flight B → on-time.
+    // Flight A → delayed; flight B → on-time. Flight B departs a day later,
+    // so its arrival timestamps shift by a day too (arrivals must not precede
+    // the departure date).
     t.oracle_delayed();
     t.oracle.set_estimated_arrival(
         &t.oracle_account,
         &symbol_short!("UA200"),
         &(FLIGHT_DATE + SECONDS_PER_DAY),
-        &EST_ARRIVAL,
+        &(EST_ARRIVAL + SECONDS_PER_DAY),
     );
     t.oracle.set_landed(
         &t.oracle_account,
         &symbol_short!("UA200"),
         &(FLIGHT_DATE + SECONDS_PER_DAY),
-        &ACTUAL_ON_TIME,
+        &(ACTUAL_ON_TIME + SECONDS_PER_DAY),
     );
 
     t.classify_and_settle();

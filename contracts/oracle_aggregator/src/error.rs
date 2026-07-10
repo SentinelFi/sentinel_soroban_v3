@@ -10,4 +10,7 @@ pub enum Error {
     NotAuthorizedOracle = 604,
     NotAuthorizedController = 605,
     ActiveFlightListFull = 606,
+    InvalidTimestamp = 607,
+    FlightDataStillPresent = 608,
+    FlightNotInList = 609,
 }

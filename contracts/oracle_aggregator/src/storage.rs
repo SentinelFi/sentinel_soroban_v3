@@ -51,6 +51,20 @@ pub(crate) fn extend_flight_ttl_to(e: &Env, flight_id: &Symbol, date: u64, deadl
         .extend_ttl(&key, extend_to, extend_to);
 }
 
+// Deadline handed to `extend_flight_ttl_to` for a flight whose outcome is
+// recorded but not yet financially settled. Anchored to now (or the flight
+// date, whichever is later — a cancellation can precede departure) plus the
+// settlement grace period, so a stalled keeper cannot outlast the record's
+// TTL. The date-based deadline would be in the past by outcome time and fall
+// back to the ~31-day floor.
+pub(crate) fn settlement_deadline(e: &Env, date: u64) -> u64 {
+    e.ledger()
+        .timestamp()
+        .max(date)
+        .checked_add(crate::constants::SETTLEMENT_GRACE_SECS)
+        .expect("addition overflow")
+}
+
 // Bump the pending-outcome counter when a flight's outcome first becomes public
 // (Active/NotInitiated -> Landed/Cancelled).
 pub(crate) fn increment_pending_outcomes(e: &Env) {

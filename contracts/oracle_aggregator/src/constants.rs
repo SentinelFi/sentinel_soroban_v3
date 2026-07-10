@@ -38,6 +38,17 @@ pub(crate) const LEDGERS_PER_SECOND_DEN: u64 = 5; // ~5 s per ledger on mainnet
                                                   // target exceeds the network max, so any computed extension is clamped here.
 pub(crate) const MAX_PERSISTENT_TTL_LEDGERS: u32 = 3_110_400;
 
+/// TTL horizon for a flight whose outcome is recorded but whose financial
+/// settlement has not completed (Landed/Cancelled/ToBeSettled*). Settlement is
+/// keeper-driven and can stall (keeper outage, paused protocol, RPC failure);
+/// the previous date-based extension bottomed out at the ~31-day floor once
+/// the flight date passed, so an outage longer than that could archive a
+/// record that still has premiums, payouts, and locked collateral riding on
+/// it — blocking settlement until manual ledger restoration. 90 days
+/// comfortably exceeds any plausible outage while staying (with the TTL
+/// buffer) under the 180-day network maximum.
+pub(crate) const SETTLEMENT_GRACE_SECS: u64 = 90 * SECONDS_PER_DAY;
+
 // Settled flights stay in `ActiveFlightList` for SETTLED_RETENTION_DAYS after
 // `set_settled` records their `settled_at` timestamp. Pruning is delegated to
 // the permissionless `prune_settled` entry — keeps freshly-settled flights
