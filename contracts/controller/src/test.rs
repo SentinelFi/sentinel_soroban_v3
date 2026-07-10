@@ -587,6 +587,22 @@ fn test_buy_insurance_rejected_after_oracle_cancellation() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #311)")]
+fn test_buy_insurance_rejected_for_preemptively_cancelled_flight() {
+    // A publicly cancelled flight may have no oracle record yet (registration
+    // normally happens inside the first purchase). The oracle can now write
+    // the cancellation first, and the very FIRST buyer must be rejected —
+    // otherwise every policy on the flight is a guaranteed claim against the
+    // vault.
+    let t = setup();
+    t.oracle
+        .set_cancelled(&t.oracle_account, &symbol_short!("AA100"), &FLIGHT_DATE);
+
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #313)")]
 fn test_buy_insurance_panics_on_non_day_aligned_date() {
     // A date that isn't a midnight-UTC boundary is rejected so

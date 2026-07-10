@@ -85,6 +85,99 @@ fn lifecycle_cancelled() {
     assert_eq!(t.asset.balance(&traveler), PAYOFF);
 }
 
+#[test]
+fn lifecycle_cancelled_before_eta_recorded() {
+    // A cancellation can become known before the executor ever stored an ETA
+    // (NotInitiated → Cancelled, no set_estimated_arrival). The existing
+    // policy must still settle and pay out through the normal pipeline, and
+    // later buyers must be rejected the moment the cancellation is recorded.
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+
+    t.oracle
+        .set_cancelled(&t.oracle_account, &symbol_short!("AA100"), &FLIGHT_DATE);
+
+    // A second buyer can no longer join the cancelled flight.
+    let late = Address::generate(&t.env);
+    t.asset_admin.mint(&late, &PREMIUM);
+    assert!(t
+        .ctrl
+        .try_buy_insurance(
+            &late,
+            &symbol_short!("AA100"),
+            &symbol_short!("JFK"),
+            &symbol_short!("LAX"),
+            &FLIGHT_DATE,
+        )
+        .is_err());
+
+    t.classify_and_settle();
+    t.pool
+        .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(t.asset.balance(&traveler), PAYOFF);
+}
+
+#[test]
+fn preemptive_cancellation_blocks_all_purchases_without_jamming_protocol() {
+    // A flight publicly cancelled before ANY purchase has no oracle record to
+    // close — the oracle writes the cancellation first, creating a
+    // purchase-blocking record. Every would-be buyer (Sybil sets included) is
+    // rejected, so nobody converts the known cancellation into a guaranteed
+    // claim. Because no policy exists, the record must not enter the
+    // settlement pipeline: no pending outcome blocks LP entry/exit, keeper
+    // cycles stay clean, and unrelated flights settle normally.
+    let t = TestEnv::new();
+
+    t.oracle
+        .set_cancelled(&t.oracle_account, &symbol_short!("AA100"), &FLIGHT_DATE);
+
+    // First buyer and a second (Sybil) address are both rejected.
+    for _ in 0..2 {
+        let buyer = Address::generate(&t.env);
+        t.asset_admin.mint(&buyer, &PREMIUM);
+        assert!(t
+            .ctrl
+            .try_buy_insurance(
+                &buyer,
+                &symbol_short!("AA100"),
+                &symbol_short!("JFK"),
+                &symbol_short!("LAX"),
+                &FLIGHT_DATE,
+            )
+            .is_err());
+    }
+
+    // No policies → no pending PnL: the vault's settlement barrier stays
+    // lifted and LPs can still enter.
+    assert!(!t.oracle.has_pending_outcomes());
+    let lp = Address::generate(&t.env);
+    t.asset_admin.mint(&lp, &DEPOSIT_AMOUNT);
+    t.vault.deposit(&DEPOSIT_AMOUNT, &lp, &lp, &lp);
+
+    // Keeper cycles run clean and an unrelated flight completes its full
+    // cancelled lifecycle alongside the tombstoned one.
+    let other = symbol_short!("UA200");
+    t.gov.whitelist_route(
+        &t.owner,
+        &other,
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    let traveler = Address::generate(&t.env);
+    t.buy_flight(&traveler, &other, FLIGHT_DATE);
+    t.oracle
+        .set_estimated_arrival(&t.oracle_account, &other, &FLIGHT_DATE, &EST_ARRIVAL);
+    t.oracle
+        .set_cancelled(&t.oracle_account, &other, &FLIGHT_DATE);
+    t.classify_and_settle();
+    t.pool.claim(&traveler, &other, &FLIGHT_DATE);
+    assert_eq!(t.asset.balance(&traveler), PAYOFF);
+}
+
 // =========================================================================
 // Boundary conditions on delay threshold
 // =========================================================================
