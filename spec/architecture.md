@@ -1585,8 +1585,8 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Whitelist route | Owner / Admin | `governance.whitelist_route(caller, flight_id, origin, dest, premium?, payoff?, delay_hours?)` |
 | Disable route (soft) | Owner / Admin | `governance.disable_route(caller, flight_id, origin, dest)` |
 | Enable route | Owner / Admin | `governance.enable_route(caller, flight_id, origin, dest)` |
-| Remove route (hard, must be disabled first) | Owner / Admin | `governance.remove_route(caller, flight_id, origin, dest)` |
-| Update route terms (partial) | Owner / Admin | `governance.update_route_terms(caller, flight_id, origin, dest, premium_op, payoff_op, delay_op)` |
+| Remove route (hard, must be disabled first) | Owner / Admin | `governance.remove_route(caller, flight_id, origin, dest)` (the flight_id stays reserved ~160 days; remapping it to a different origin/dest is blocked until then) |
+| Update route terms (partial) | Owner / Admin | `governance.update_route_terms(caller, flight_id, origin, dest, premium_op, payoff_op, delay_op)` (applies to not-yet-registered flight dates; already-registered dates keep their snapshotted terms) |
 | Add admin | Owner | `governance.add_admin(admin)` |
 | Remove admin | Owner | `governance.remove_admin(admin)` |
 | Read route status | Anyone | `governance.route_status(flight_id, origin, dest) -> RouteStatus` |

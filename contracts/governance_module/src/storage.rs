@@ -20,6 +20,12 @@ pub enum DataKey {
     // A flight number on a date is one physical flight, so we enforce a single
     // (origin, dest) per flight_id at whitelist time. Persistent.
     FlightRoute(Symbol), // (Symbol, Symbol) — Persistent
+    // flight_id → (origin, dest, retired_until) marker written when a route is
+    // removed. Blocks re-whitelisting the flight_id with a DIFFERENT
+    // origin/dest until `retired_until`, so downstream (flight_id, date) state
+    // from the removed route can age out before the id is remapped.
+    // Re-adding the same route (undo) stays allowed. Persistent.
+    RetiredFlight(Symbol), // (Symbol, Symbol, u64) — Persistent
 }
 
 #[contracttype]

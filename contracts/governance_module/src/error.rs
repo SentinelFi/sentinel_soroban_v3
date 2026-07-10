@@ -13,4 +13,5 @@ pub enum Error {
     RouteAlreadyActive = 507,
     RouteMustBeDisabledBeforeRemoval = 508,
     NotOwnerOrAdmin = 509,
+    FlightIdRetired = 510,
 }

@@ -587,6 +587,37 @@ fn test_buy_insurance_rejected_after_oracle_cancellation() {
 }
 
 #[test]
+fn test_second_buyer_transacts_at_snapshotted_terms_after_term_change() {
+    // The pool locks terms at the first registration of a (flight_id, date)
+    // and rejects mismatched re-registration. Later buyers therefore transact
+    // at the FIRST buyer's snapshotted terms — a governance term change must
+    // not brick further sales of an already-registered date (it applies to
+    // not-yet-registered dates only).
+    let t = setup();
+    let traveler1 = Address::generate(&t.env);
+    buy(&t, &traveler1); // registers (AA100, FLIGHT_DATE) at PREMIUM/PAYOFF
+
+    // Governance doubles the default premium (the test route inherits
+    // defaults). Without term snapshotting this would make every later buy of
+    // the registered date revert on the pool's config-mismatch check.
+    t.gov.set_defaults(&(PREMIUM * 2), &PAYOFF, &DELAY_HOURS);
+
+    // The second buyer holds exactly the ORIGINAL premium — the purchase
+    // succeeding at all proves it was priced off the snapshot, not the new
+    // defaults.
+    let traveler2 = Address::generate(&t.env);
+    buy(&t, &traveler2);
+    assert_eq!(t.asset.balance(&traveler2), 0);
+
+    let cfg = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .unwrap();
+    assert_eq!(cfg.premium, PREMIUM);
+    assert_eq!(cfg.buyer_count, 2);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #311)")]
 fn test_buy_insurance_rejected_for_preemptively_cancelled_flight() {
     // A publicly cancelled flight may have no oracle record yet (registration
