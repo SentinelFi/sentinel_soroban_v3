@@ -223,6 +223,30 @@ impl RiskVault {
                 if amount < existing {
                     panic_with_error!(e, Error::RecreditWouldUnderpay);
                 }
+                // Upper bound, symmetric to the underpay guard: the credit
+                // this write leaves behind must be covered by asset the vault
+                // holds beyond its managed total. Every legitimate credit
+                // already reduced TMA when it was made (including one whose
+                // storage entry later lapsed), so `balance − TMA` is exactly
+                // the asset available to satisfy claimable entries — this
+                // user's included. Crediting past that surplus would create a
+                // liability that `collect` could only pay by consuming asset
+                // backing outstanding shares — silent insolvency surfacing
+                // later as a failed transfer for an unrelated party. A correct
+                // restore always fits (its asset is still part of the
+                // surplus); only a mis-keyed amount is rejected. The bound is
+                // a floor, not exact accounting: other users' uncollected
+                // credits also sit in the surplus, so it cannot catch every
+                // overpay — but it caps the damage at value already owed to
+                // users, never asset backing shares.
+                let asset = token::Client::new(e, &Vault::query_asset(e));
+                let balance = asset.balance(&e.current_contract_address());
+                let surplus = balance
+                    .checked_sub(Self::get_total_managed_assets(e))
+                    .expect("subtraction overflow");
+                if amount > surplus {
+                    panic_with_error!(e, Error::RecreditExceedsRecoverableSurplus);
+                }
                 e.storage().persistent().set(&key, &amount);
                 e.storage().persistent().extend_ttl(
                     &key,

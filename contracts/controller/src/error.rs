@@ -5,7 +5,8 @@ use soroban_sdk::contracterror;
 #[repr(u32)]
 pub enum Error {
     SolvencyRatioOutOfBounds = 301,
-    MinLeadTimeExceedsMaximum = 302,
+    // 302 retired (was MinLeadTimeExceedsMaximum, never emitted; superseded
+    // by MinLeadTimeLeavesNoBookingWindow = 314). Do not reuse the code.
     ClaimExpiryWindowOutOfBounds = 303,
     NotAuthorizedKeeper = 304,
     NotOwnerOrGovernanceAdmin = 305,
@@ -19,4 +20,7 @@ pub enum Error {
     DateNotDayAligned = 313,
     MinLeadTimeLeavesNoBookingWindow = 314,
     OracleDataUnavailable = 315,
+    FlightDataStillPresent = 316,
+    FlightStillListed = 317,
+    FlightNotRegisteredInPool = 318,
 }

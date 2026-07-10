@@ -21,4 +21,5 @@ pub enum Error {
     AlreadyClaimed = 415,
     ClaimWindowStillOpen = 416,
     ActiveFlightListFull = 417,
+    PayoutNotReceived = 418,
 }

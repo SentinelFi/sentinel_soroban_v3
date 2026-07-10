@@ -147,7 +147,10 @@ fn vault_recovered_recredit_and_transfer_modes_emit_correct_topics() {
     let user_a = Address::generate(&t.env);
     let user_b = Address::generate(&t.env);
 
-    // Recredit path
+    // Recredit path — the amount must be covered by asset beyond TMA, so
+    // model the archived credit's asset still sitting in the vault.
+    let asset_admin = token::StellarAssetClient::new(&t.env, &t.asset_addr);
+    asset_admin.mint(&t.vault_addr, &100_0000000);
     t.vault
         .recover_uncollected(&user_a, &100_0000000, &risk_vault::RecoveryMode::Recredit);
     assert!(

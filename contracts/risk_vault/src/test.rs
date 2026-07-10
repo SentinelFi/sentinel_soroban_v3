@@ -199,7 +199,7 @@ fn test_withdrawal_queue_request_process_collect() {
 fn test_pause_and_unpause_gate_state_mutations() {
     // Regression: paused contract rejects deposit / withdrawal /
     // queue ops; unpausing restores normal flow. Owner-only gate.
-    let (_env, client, owner, controller, depositor) = setup();
+    let (env, client, owner, controller, depositor) = setup();
 
     assert!(!client.paused());
     client.pause(&owner);
@@ -213,7 +213,11 @@ fn test_pause_and_unpause_gate_state_mutations() {
     assert!(client.try_snapshot().is_err());
 
     // Recover_uncollected is intentionally NOT gated so the owner can
-    // settle archived entries during a pause.
+    // settle archived entries during a pause. The recredited amount must be
+    // physically present beyond TMA — model the archived credit's asset
+    // still sitting in the vault.
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+    asset_admin.mint(&client.address, &1_0000000);
     client.recover_uncollected(&depositor, &1_0000000, &RecoveryMode::Recredit);
 
     client.unpause(&owner);
@@ -918,6 +922,10 @@ fn test_recover_uncollected_recredit_sets_balance() {
     let (env, client, _owner, _controller, _depositor) = setup();
     let user = Address::generate(&env);
 
+    // The recredited amount must be covered by asset the vault holds beyond
+    // TMA — model the archived credit's asset still sitting in the vault.
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+    asset_admin.mint(&client.address, &500_0000000);
     client.recover_uncollected(&user, &500_0000000, &RecoveryMode::Recredit);
 
     // Event check FIRST — env.events().all() returns only the most-recent
@@ -948,8 +956,29 @@ fn test_recover_uncollected_recredit_can_increase_existing() {
 
     let prior = client.get_claimable_balance(&depositor);
     let bumped = prior + 100_0000000;
+    // The increase over the existing entry must itself be backed by asset
+    // beyond TMA — mint the delta into the vault first.
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+    asset_admin.mint(&client.address, &100_0000000);
     client.recover_uncollected(&depositor, &bumped, &RecoveryMode::Recredit);
     assert_eq!(client.get_claimable_balance(&depositor), bumped);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #723)")]
+fn test_recover_uncollected_recredit_exceeding_surplus_panics() {
+    // A recredit whose delta exceeds the vault's asset surplus over TMA
+    // could only ever be collected by consuming asset that backs outstanding
+    // shares. A mis-keyed amount must be rejected up front, not surface
+    // later as another party's failed transfer.
+    let (env, client, _owner, controller, depositor) = setup();
+    run_credit_flow(&env, &client, &controller, &depositor);
+
+    let prior = client.get_claimable_balance(&depositor);
+    assert!(prior > 0);
+    // No extra asset minted: the surplus covers exactly the existing credit,
+    // so any increase must refuse.
+    client.recover_uncollected(&depositor, &(prior + 1), &RecoveryMode::Recredit);
 }
 
 #[test]

@@ -72,6 +72,22 @@ pub struct FlightVoided {
     pub(crate) date: u64,
 }
 
+// Emitted when the owner terminally reconciles a flight that was evicted
+// from the oracle's active list: the pool bucket is settled like a voided
+// flight (held premiums become vault income, no payout) and the vault
+// collateral reserved for it is released. `collateral_released` is
+// payoff × buyer_count; `premium_income` is the amount the pool forwarded
+// to the vault. Indexers pair this with the oracle's eviction event to
+// close out the flight's lifecycle.
+#[contractevent(topics = ["sentinel", "evict_settled"], data_format = "map")]
+pub struct EvictedFlightSettled {
+    #[topic]
+    pub(crate) flight_id: Symbol,
+    pub(crate) date: u64,
+    pub(crate) premium_income: i128,
+    pub(crate) collateral_released: i128,
+}
+
 // Phase 11 — buyer whitelist lifecycle events. The whitelist itself is
 // stored on Controller (one source of truth on the buy path); add/remove
 // callers are validated by cross-calling GovernanceModule.is_admin.
