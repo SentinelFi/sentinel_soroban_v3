@@ -22,4 +22,6 @@ pub enum Error {
     WithdrawalQueueFull = 716,
     TooManyActiveRequests = 717,
     SettlementPending = 718,
+    RequestBelowMinimum = 719,
+    AssetsConvertToZeroShares = 720,
 }

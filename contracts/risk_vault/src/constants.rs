@@ -26,6 +26,18 @@ pub(crate) const MAX_WITHDRAWAL_QUEUE_LEN: u32 = 250;
 /// and starving other underwriters' exits.
 pub(crate) const MAX_ACTIVE_REQUESTS_PER_ADDRESS: u32 = 20;
 
+/// Runtime clamp on the owner-configured minimum withdrawal-request value:
+/// the effective floor is `min(configured, TMA / MIN_REQUEST_FLOOR_DIVISOR)`.
+/// Owner setters are bounded by convention — without the clamp, a mistaken or
+/// hostile configuration could block queue admission entirely. With it, no
+/// configured value can exclude a position above 1/2500 (0.04%) of the vault,
+/// while slot occupation stays expensive: filling all
+/// `MAX_WITHDRAWAL_QUEUE_LEN` slots at the clamped floor still escrows
+/// ~10% of managed assets. Applied at request time (not set time) so the
+/// floor self-scales with the vault and can be configured before the first
+/// deposit.
+pub(crate) const MIN_REQUEST_FLOOR_DIVISOR: i128 = 2500;
+
 /// 60 days at 5s/ledger = 60 * 24 * 60 * 12 = 1_036_800.
 /// Applied on every `ClaimableBalance(addr)` write to prevent silent archival
 /// of per-user pending asset. Layered defense:

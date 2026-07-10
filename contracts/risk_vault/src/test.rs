@@ -301,6 +301,137 @@ fn test_max_views_return_zero_while_queue_active() {
 }
 
 #[test]
+fn test_deposit_rejects_nonpositive_and_zero_share_amounts() {
+    // A deposit must never silently donate value: zero/negative inputs are
+    // rejected, and so is a positive amount small enough to floor to zero
+    // shares at the current exchange rate.
+    let (env, client, _owner, controller, depositor) = setup();
+
+    assert!(client
+        .try_deposit(&0, &depositor, &depositor, &depositor)
+        .is_err());
+    assert!(client
+        .try_deposit(&-5, &depositor, &depositor, &depositor)
+        .is_err());
+
+    // Inflate the share price: 1 asset deposited, then 1000 assets of premium
+    // income. A 1-stroop deposit now converts to zero shares under floor
+    // rounding — without the guard it would transfer the stroop in and mint
+    // nothing.
+    client.deposit(&1_0000000, &depositor, &depositor, &depositor);
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+    asset_admin.mint(&client.address, &1000_0000000);
+    client.record_premium_income(&controller, &1000_0000000);
+
+    assert_eq!(client.preview_deposit(&1), 0);
+    assert!(client
+        .try_deposit(&1, &depositor, &depositor, &depositor)
+        .is_err());
+}
+
+#[test]
+fn test_redeem_rejects_nonpositive_and_zero_asset_dust() {
+    // Redeem mirrors deposit: zero/negative share counts are rejected, and a
+    // dust redemption that floors to zero assets must not burn the caller's
+    // shares for nothing.
+    let (_env, client, _owner, _controller, depositor) = setup();
+    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+
+    assert!(client
+        .try_redeem(&0, &depositor, &depositor, &depositor)
+        .is_err());
+    assert!(client
+        .try_redeem(&-5, &depositor, &depositor, &depositor)
+        .is_err());
+
+    // 1 share against the 1000-asset pool previews to 0 assets.
+    assert_eq!(client.preview_redeem(&1), 0);
+    assert!(client
+        .try_redeem(&1, &depositor, &depositor, &depositor)
+        .is_err());
+}
+
+#[test]
+fn test_withdraw_and_mint_reject_nonpositive_inputs() {
+    let (_env, client, _owner, _controller, depositor) = setup();
+    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+
+    assert!(client
+        .try_withdraw(&0, &depositor, &depositor, &depositor)
+        .is_err());
+    assert!(client
+        .try_withdraw(&-1, &depositor, &depositor, &depositor)
+        .is_err());
+    assert!(client
+        .try_mint(&0, &depositor, &depositor, &depositor)
+        .is_err());
+    assert!(client
+        .try_mint(&-1, &depositor, &depositor, &depositor)
+        .is_err());
+}
+
+#[test]
+fn test_min_withdrawal_request_floor_enforced() {
+    // The owner-configured minimum makes each slot of the bounded queue cost
+    // real escrowed value, so the queue can't be cheaply occupied by many
+    // small requests. Enforcement is clamped to TMA/2500 at request time, so
+    // the floor can never lock ordinary positions out of the queue.
+    let (_env, client, _owner, _controller, depositor) = setup();
+    // 10,000-asset vault → the clamp caps the effective floor at 4 assets.
+    client.deposit(&10_000_0000000, &depositor, &depositor, &depositor);
+
+    // Default: no floor — a small (non-dust) request is accepted.
+    assert_eq!(client.get_min_withdrawal_request(), 0);
+    let small_shares = client.convert_to_shares(&1_0000000);
+    let id = client.request_withdrawal(&depositor, &small_shares);
+    client.cancel_withdrawal(&depositor, &id);
+
+    // Floor of 2 assets (below the clamp, so it binds): the same 1-asset
+    // request is now rejected...
+    client.set_min_withdrawal_request(&2_0000000);
+    assert_eq!(client.get_min_withdrawal_request(), 2_0000000);
+    assert!(client
+        .try_request_withdrawal(&depositor, &small_shares)
+        .is_err());
+
+    // ...while a request clearly above the floor is accepted.
+    let large_shares = client.convert_to_shares(&500_0000000);
+    let id = client.request_withdrawal(&depositor, &large_shares);
+    client.cancel_withdrawal(&depositor, &id);
+
+    // An absurd configured floor is clamped to TMA/2500 (= 4 assets here):
+    // it cannot block a normal-sized request, only sub-clamp dust.
+    client.set_min_withdrawal_request(&i128::MAX);
+    let id = client.request_withdrawal(&depositor, &large_shares);
+    client.cancel_withdrawal(&depositor, &id);
+    assert!(client
+        .try_request_withdrawal(&depositor, &small_shares)
+        .is_err());
+
+    // Setting the floor back to zero re-opens small requests; negative floors
+    // are rejected.
+    client.set_min_withdrawal_request(&0);
+    let id = client.request_withdrawal(&depositor, &small_shares);
+    client.cancel_withdrawal(&depositor, &id);
+    assert!(client.try_set_min_withdrawal_request(&-1).is_err());
+}
+
+#[test]
+fn test_queue_len_query_and_request_event() {
+    use soroban_sdk::symbol_short;
+    // Operators watch queue occupancy via the len query and the per-request
+    // event (which carries post-push occupancy), so saturation of the bounded
+    // queue is observable before the cap starts rejecting requests.
+    let (env, client, _owner, _controller, depositor) = setup();
+    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+
+    assert_eq!(client.get_withdrawal_queue_len(), 0);
+    client.request_withdrawal(&depositor, &shares);
+    assert!(count_events_with_verb(&env, &client.address, symbol_short!("wd_req")) >= 1);
+    assert_eq!(client.get_withdrawal_queue_len(), 1);
+}
+
+#[test]
 fn test_request_withdrawal_rejects_zero_preview() {
     // A dust request that previews to zero assets is rejected at
     // submission so it can never sit at the queue head and block the drain.

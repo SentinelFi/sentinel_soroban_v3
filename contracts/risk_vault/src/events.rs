@@ -42,6 +42,19 @@ pub struct SharePriceSnapshot {
     pub(crate) price: i128,
 }
 
+// Emitted on every accepted withdrawal request. `queue_len` is the queue
+// occupancy AFTER the push: the queue is a bounded shared resource, so
+// operators subscribe to this to alert when occupancy approaches the cap
+// (impending rejection of new exit requests / possible slot monopolization).
+#[contractevent(topics = ["sentinel", "wd_req"], data_format = "map")]
+pub struct WithdrawalRequested {
+    #[topic]
+    pub(crate) owner: Address,
+    pub(crate) request_id: u64,
+    pub(crate) shares: i128,
+    pub(crate) queue_len: u32,
+}
+
 // Owner-only one-time wiring of the authorized controller. Emitted for the
 // audit trail.
 #[contractevent(topics = ["sentinel", "controller_set"], data_format = "single-value")]

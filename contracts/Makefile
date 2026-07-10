@@ -55,6 +55,13 @@ deploy-testnet: build ## Deploy all contracts to testnet (override SOURCE/NETWOR
 	# blocks LP entry/exit while a flight outcome is public but not yet settled.
 	# Required — without it the barrier stays inactive.
 	stellar contract invoke --source-account $(SOURCE) --network $(NETWORK) --id risk_vault -- set_oracle --oracle oracle_aggregator
+	# Set the minimum asset value per queued withdrawal request. Required — the
+	# floor ships disabled (0), and without it one actor can cheaply occupy every
+	# slot of the bounded withdrawal queue with dust requests spread across
+	# addresses. Choose per underlying asset: meaningfully above dust, well below
+	# typical LP positions (value below matches this target's tiny test-scale
+	# premium/payoff of 100/200).
+	stellar contract invoke --source-account $(SOURCE) --network $(NETWORK) --id risk_vault -- set_min_withdrawal_request --min_assets 10
 
 clippy: ## Lint with clippy, treating warnings as errors
 	cargo clippy --all-targets -- -D warnings

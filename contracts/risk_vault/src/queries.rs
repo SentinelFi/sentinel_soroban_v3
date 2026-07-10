@@ -47,6 +47,23 @@ impl RiskVault {
             .unwrap_or(Vec::new(e))
     }
 
+    /// Return the number of pending withdrawal requests. Cheap saturation
+    /// gauge for operators: the queue is capped, so occupancy approaching the
+    /// cap means new exit requests are about to be rejected and warrants
+    /// intervention (more frequent draining, or raising the request minimum).
+    pub fn get_withdrawal_queue_len(e: &Env) -> u32 {
+        Self::get_withdrawal_queue(e).len()
+    }
+
+    /// Return the minimum asset value a queued withdrawal request must carry
+    /// (0 = no minimum configured).
+    pub fn get_min_withdrawal_request(e: &Env) -> i128 {
+        e.storage()
+            .instance()
+            .get(&VaultKey::MinWithdrawalRequest)
+            .unwrap_or(0)
+    }
+
     /// Return the claimable (collectible) balance owed to an address.
     pub fn get_claimable_balance(e: &Env, address: Address) -> i128 {
         e.storage()

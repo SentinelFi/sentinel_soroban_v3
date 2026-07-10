@@ -9,8 +9,9 @@ use stellar_tokens::vault::Vault;
 
 use crate::constants::{
     CLAIMABLE_TTL_LEDGERS, MAX_ACTIVE_REQUESTS_PER_ADDRESS, MAX_WITHDRAWAL_QUEUE_LEN,
+    MIN_REQUEST_FLOOR_DIVISOR,
 };
-use crate::events::{Collected, Recovered};
+use crate::events::{Collected, Recovered, WithdrawalRequested};
 use crate::storage::VaultKey;
 use crate::vault_ops::managed_convert_to_assets;
 use crate::{Error, RecoveryMode, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
@@ -30,8 +31,23 @@ impl RiskVault {
         // Reject dust requests that preview to zero assets on the managed-asset
         // basis. Such a request carries no value and would only consume queue
         // capacity.
-        if managed_convert_to_assets(e, shares, Rounding::Floor) <= 0 {
+        let preview = managed_convert_to_assets(e, shares, Rounding::Floor);
+        if preview <= 0 {
             panic_with_error!(e, Error::SharesRedeemToZeroAssets);
+        }
+        // Enforce the owner-configured minimum request value: each slot of the
+        // bounded queue must carry meaningful escrowed capital, or one actor
+        // could cheaply occupy every slot via many small requests spread
+        // across addresses. The floor is clamped to a small fraction of
+        // managed assets so no configuration — mistaken or hostile — can
+        // exclude ordinary positions from the queue (see
+        // MIN_REQUEST_FLOOR_DIVISOR).
+        let floor_cap = Self::get_total_managed_assets(e)
+            .checked_div(MIN_REQUEST_FLOOR_DIVISOR)
+            .expect("division by zero");
+        let effective_min = Self::get_min_withdrawal_request(e).min(floor_cap);
+        if preview < effective_min {
+            panic_with_error!(e, Error::RequestBelowMinimum);
         }
 
         let mut queue: Vec<WithdrawalRequest> = e
@@ -77,7 +93,7 @@ impl RiskVault {
 
         queue.push_back(WithdrawalRequest {
             request_id,
-            owner: caller,
+            owner: caller.clone(),
             shares,
             timestamp: e.ledger().timestamp(),
         });
@@ -85,6 +101,16 @@ impl RiskVault {
         e.storage()
             .instance()
             .set(&VaultKey::WithdrawalQueue, &queue);
+
+        // Post-push occupancy lets operators watch queue saturation and react
+        // before the cap starts rejecting exit requests.
+        WithdrawalRequested {
+            owner: caller,
+            request_id,
+            shares,
+            queue_len: queue.len(),
+        }
+        .publish(e);
 
         request_id
     }

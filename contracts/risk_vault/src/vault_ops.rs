@@ -72,7 +72,16 @@ impl FungibleVault for RiskVault {
         Self::extend_ttl(e);
         operator.require_auth();
         assert_no_settlement_pending(e);
+        if assets <= 0 {
+            panic_with_error!(e, Error::AmountMustBePositive);
+        }
         let shares = managed_convert_to_shares(e, assets, Rounding::Floor);
+        // A deposit small enough to floor to zero shares would transfer the
+        // assets in and mint nothing — silently donating the caller's value to
+        // existing holders. Reject it; the caller can deposit a larger amount.
+        if shares == 0 {
+            panic_with_error!(e, Error::AssetsConvertToZeroShares);
+        }
         // Transfer assets in + mint shares (OZ plumbing; assumes prior auth).
         Vault::deposit_internal(e, &receiver, assets, shares, &from, &operator);
         emit_deposit(e, &operator, &from, &receiver, assets, shares);
@@ -105,6 +114,9 @@ impl FungibleVault for RiskVault {
         if !Self::get_withdrawal_queue(e).is_empty() {
             panic_with_error!(e, Error::WithdrawalQueueActive);
         }
+        if assets <= 0 {
+            panic_with_error!(e, Error::AmountMustBePositive);
+        }
         if assets > Self::get_free_capital(e) {
             panic_with_error!(e, Error::ExceedsFreeCapital);
         }
@@ -125,6 +137,11 @@ impl FungibleVault for RiskVault {
         Self::extend_ttl(e);
         operator.require_auth();
         assert_no_settlement_pending(e);
+        if shares <= 0 {
+            panic_with_error!(e, Error::SharesMustBePositive);
+        }
+        // Ceil rounding on a positive share count always yields >= 1 asset, so
+        // the mint path cannot pull zero assets for a positive mint.
         let assets = managed_convert_to_assets(e, shares, Rounding::Ceil);
         Vault::deposit_internal(e, &receiver, assets, shares, &from, &operator);
         emit_deposit(e, &operator, &from, &receiver, assets, shares);
@@ -149,7 +166,16 @@ impl FungibleVault for RiskVault {
         if !Self::get_withdrawal_queue(e).is_empty() {
             panic_with_error!(e, Error::WithdrawalQueueActive);
         }
+        if shares <= 0 {
+            panic_with_error!(e, Error::SharesMustBePositive);
+        }
         let assets = managed_convert_to_assets(e, shares, Rounding::Floor);
+        // A dust redemption that floors to zero assets would burn the caller's
+        // shares and return nothing — donating their value to the remaining
+        // holders. Reject it instead.
+        if assets == 0 {
+            panic_with_error!(e, Error::SharesRedeemToZeroAssets);
+        }
         if assets > Self::get_free_capital(e) {
             panic_with_error!(e, Error::ExceedsFreeCapital);
         }

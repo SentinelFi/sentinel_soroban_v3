@@ -58,6 +58,14 @@ impl RiskVault {
         // withdrawal liabilities (and any direct donations), which no longer back
         // outstanding shares, so pricing on it would publish an inflated share
         // price to off-chain analytics.
+        //
+        // The recorded price is the exact net-backing-per-share ratio
+        // (TMA * scale / supply). It deliberately omits the virtual-offset
+        // terms (+1 / +10^offset) that the conversion helpers add as an
+        // inflation-attack defense, so at near-zero supply it can diverge
+        // slightly from preview_* results; at any real supply the two agree.
+        // Consumers should treat it as the vault's net asset value per share,
+        // not as an executable quote.
         let price = if total_supply > 0 {
             Self::get_total_managed_assets(e)
                 .checked_mul(scale)
