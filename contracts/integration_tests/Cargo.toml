@@ -1,9 +1,11 @@
 [package]
 name = "integration_tests"
 version = "0.0.0"
+description = "Cross-contract integration test suite for the Sentinel Protocol"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [lib]

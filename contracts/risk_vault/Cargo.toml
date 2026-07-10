@@ -1,9 +1,11 @@
 [package]
 name = "risk_vault"
 version = "0.0.0"
+description = "Underwriter capital vault with ERC-4626-style shares backing Sentinel insurance payouts"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [lib]

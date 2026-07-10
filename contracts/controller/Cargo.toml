@@ -1,9 +1,11 @@
 [package]
 name = "controller"
 version = "0.0.0"
+description = "Sentinel protocol orchestrator wiring governance, vault, oracle, and flight pool together"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [lib]

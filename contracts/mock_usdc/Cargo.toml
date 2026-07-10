@@ -1,9 +1,11 @@
 [package]
 name = "mock_usdc"
 version = "0.0.0"
+description = "Testnet-only mock USDC fungible token with permissionless mint and faucet; never deployed to mainnet"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [lib]

@@ -1,9 +1,11 @@
 [package]
 name = "risk_vault-fuzz"
 version = "0.0.0"
+description = "Fuzz harness for RiskVault solvency and share-accounting invariants"
 publish = false
 edition = "2021"
 license = "Apache-2.0"
+repository = "https://github.com/SentinelFi/sentinel_soroban_v3"
 
 [package.metadata]
 cargo-fuzz = true

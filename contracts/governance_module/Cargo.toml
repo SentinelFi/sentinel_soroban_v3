@@ -1,9 +1,11 @@
 [package]
 name = "governance_module"
 version = "0.0.0"
+description = "Route whitelist and policy-term defaults for the Sentinel flight-delay insurance protocol"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [lib]

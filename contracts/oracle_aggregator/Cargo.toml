@@ -1,9 +1,11 @@
 [package]
 name = "oracle_aggregator"
 version = "0.0.0"
+description = "Authoritative flight-status registry enforcing a forward-only settlement state machine"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [lib]
