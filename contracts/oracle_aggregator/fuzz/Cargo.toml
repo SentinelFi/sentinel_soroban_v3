@@ -1,9 +1,11 @@
 [package]
 name = "oracle_aggregator-fuzz"
 version = "0.0.0"
+description = "Fuzz harness for the OracleAggregator flight-status state machine"
 publish = false
 edition = "2021"
 license = "Apache-2.0"
+repository = "https://github.com/SentinelFi/sentinel_soroban_v3"
 
 [package.metadata]
 cargo-fuzz = true
