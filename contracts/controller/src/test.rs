@@ -1380,3 +1380,141 @@ fn test_whitelist_removed_event_emitted() {
     }
     assert!(found, "expected sentinel.buyer_removed event");
 }
+
+// =========================================================================
+// settle_evicted_flight (owner reconciliation after oracle eviction)
+// =========================================================================
+
+// Local mirror of the oracle's FlightData storage key. A contracttype enum
+// key encodes as [variant-name, payload...], so a mirror with the same
+// variant name and payload produces the identical ledger key — lets these
+// tests simulate an archived row by deleting it inside the oracle's context
+// (the same technique the oracle's own eviction tests use).
+#[soroban_sdk::contracttype]
+enum OracleDataKey {
+    FlightData(Symbol, u64),
+}
+
+fn archive_oracle_row(t: &TestEnv) {
+    t.env.as_contract(&t.oracle.address, || {
+        t.env
+            .storage()
+            .persistent()
+            .remove(&OracleDataKey::FlightData(
+                symbol_short!("AA100"),
+                FLIGHT_DATE,
+            ));
+    });
+}
+
+#[test]
+fn test_settle_evicted_flight_releases_collateral_and_pool_slot() {
+    // Eviction alone frees only the oracle-side slot; the pool bucket and the
+    // vault collateral must be released by the owner's follow-up
+    // reconciliation, or they stay stranded forever (the flight is outside
+    // keeper enumeration). Premiums settle to the vault as income, exactly
+    // like a voided flight — never a payout.
+    let t = setup();
+    let traveler1 = Address::generate(&t.env);
+    let traveler2 = Address::generate(&t.env);
+    buy(&t, &traveler1);
+    buy(&t, &traveler2);
+
+    assert_eq!(t.vault.get_locked_capital(), 2 * PAYOFF);
+    assert_eq!(t.asset.balance(&t.pool_addr), 2 * PREMIUM);
+    assert_eq!(t.pool.get_active_flight_count(), 1);
+
+    // Simulate the FlightData row archiving, then evict it (owner judgment;
+    // the flight never had a public outcome, so the barrier is untouched).
+    archive_oracle_row(&t);
+    t.oracle
+        .evict_missing_flight(&symbol_short!("AA100"), &FLIGHT_DATE, &false);
+    assert_eq!(t.oracle.get_active_flights().len(), 0);
+
+    let tma_before = t.vault.get_total_managed_assets();
+    t.ctrl
+        .settle_evicted_flight(&symbol_short!("AA100"), &FLIGHT_DATE);
+
+    // Collateral released, premiums recognized as vault income, pool bucket
+    // settled and its active-list slot freed.
+    assert_eq!(t.vault.get_locked_capital(), 0);
+    assert_eq!(t.vault.get_total_managed_assets(), tma_before + 2 * PREMIUM);
+    assert_eq!(t.asset.balance(&t.pool_addr), 0);
+    assert_eq!(t.pool.get_active_flight_count(), 0);
+    let cfg = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .unwrap();
+    assert_eq!(
+        cfg.status,
+        flight_pool_manager::SettlementStatus::SettledOnTime
+    );
+
+    // Non-repeatable: the bucket is no longer Active.
+    assert!(t
+        .ctrl
+        .try_settle_evicted_flight(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .is_err());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #316)")]
+fn test_settle_evicted_flight_refuses_while_data_present() {
+    // A flight with a live (or restored) FlightData row is restorable through
+    // the normal pipeline — restore-and-settle, never blind void settlement.
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    t.ctrl
+        .settle_evicted_flight(&symbol_short!("AA100"), &FLIGHT_DATE);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #317)")]
+fn test_settle_evicted_flight_refuses_while_still_listed() {
+    // Data missing but the flight not yet evicted: it is still
+    // keeper-enumerable, so the terminal reconciliation must refuse — the
+    // correct move at this point is still ledger restoration.
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    archive_oracle_row(&t);
+    t.ctrl
+        .settle_evicted_flight(&symbol_short!("AA100"), &FLIGHT_DATE);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #318)")]
+fn test_settle_evicted_flight_refuses_unknown_flight() {
+    // Never purchased: no pool bucket, nothing to reconcile.
+    let t = setup();
+    t.ctrl
+        .settle_evicted_flight(&symbol_short!("ZZ999"), &FLIGHT_DATE);
+}
+
+#[test]
+#[should_panic]
+fn test_settle_evicted_flight_unauthorized() {
+    // Owner-only: a stranger must not be able to force-settle a bucket.
+    let env = Env::default();
+    // No mock_all_auths — the owner auth check must fail before any
+    // cross-contract call is attempted.
+    let owner = Address::generate(&env);
+    let dummy = Address::generate(&env);
+    let ctrl_addr = env.register(
+        Controller,
+        (
+            &owner,
+            &dummy,
+            &dummy,
+            &dummy,
+            &dummy,
+            &dummy,
+            &dummy,
+            &MIN_LEAD_TIME,
+            &CLAIM_EXPIRY_WINDOW,
+        ),
+    );
+    let ctrl = ControllerClient::new(&env, &ctrl_addr);
+    ctrl.settle_evicted_flight(&symbol_short!("AA100"), &FLIGHT_DATE);
+}

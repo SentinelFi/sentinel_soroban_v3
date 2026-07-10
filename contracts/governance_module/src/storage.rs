@@ -9,6 +9,12 @@ pub use sentinel_types::{ResolvedTerms, RouteStatus};
 
 #[contracttype]
 pub enum DataKey {
+    // Admin flags live in Instance storage, which is a single shared ledger
+    // entry — every admin added grows that entry for all invocations. The
+    // admin set is expected to stay small (a handful of operator addresses);
+    // it is a trusted-role roster, not an open registry. If the operating
+    // model ever calls for dozens of admins, migrate these to per-address
+    // Persistent keys first.
     Admin(Address),                // bool — Instance
     DefaultPremium,                // i128 — Instance
     DefaultPayoff,                 // i128 — Instance

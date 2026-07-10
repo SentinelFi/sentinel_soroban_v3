@@ -768,15 +768,23 @@ NotInitiated -> Active -> Landed --> ToBeSettledOnTime --> Settled
   for missing entries.
 - `register_flight` is **idempotent** (audit M-05): re-registering an existing flight
   is a no-op (extends TTL).
-- **`set_landed` plausibility check** (audit L-02): asserts
-  `actual_arrival_time >= estimated_arrival_time` — a buggy or adversarial oracle
-  cannot mark a delayed flight as on-time via an actual-before-estimated report.
+- **`set_landed` / `set_estimated_arrival` input validation**: zero timestamps
+  (the unset sentinel) and arrivals before the departure day's midnight are
+  rejected (`InvalidTimestamp`). Early arrivals (`actual < estimated`) are
+  deliberately **accepted** — they are legitimate flight outcomes, and rejecting
+  them would strand such flights `Active` forever (never classifiable, collateral
+  locked). The delay math in `classify_flights` saturates a negative delay to
+  zero, so an early arrival classifies as on-time.
 - **Delayed prune.** `set_settled` records `settled_at` but does NOT remove the flight
   from `ActiveFlightList`. A separate permissionless `prune_settled()` entry is what
   evicts settled flights from the list, and only after they have been settled for at
-  least `SETTLED_RETENTION_DAYS = 30` days. **Missing `FlightData`** (e.g. an entry
-  archived past its TTL) is treated as evict-and-continue (audit H-02) — a single
-  archived entry no longer blocks all future pruning.
+  least `SETTLED_RETENTION_DAYS = 7` days. **Missing `FlightData`** (an entry
+  archived past its TTL) is **retained**, not evicted — archived is not settled, and
+  the flight may still have money riding on it. The pruner emits `MissingFlightData`
+  so operators restore the entry; freeing the slot without restoration requires the
+  owner-only `evict_missing_flight`, which must then be followed by
+  `Controller.settle_evicted_flight` to release the flight's pool bucket and vault
+  collateral.
 - **Pausable** (audit H-03). Owner-only pause halts every oracle/controller write
   entry point; `prune_settled` and `extend_ttl` stay open as permissionless
   housekeeping.
@@ -817,7 +825,7 @@ pub enum FlightStatus {
     Settled,
 }
 
-const SETTLED_RETENTION_DAYS: u64 = 30;
+const SETTLED_RETENTION_DAYS: u64 = 7;
 const SECONDS_PER_DAY: u64 = 86_400;
 ```
 
@@ -826,7 +834,7 @@ const SECONDS_PER_DAY: u64 = 86_400;
 - **`ActiveFlightList`** is in **Instance** storage. It is global single-row state — per
   Soroban best practice, it shares TTL with the contract instance. The delayed-prune
   scheme bounds the list to (active flights) + (settled-but-not-yet-evicted flights), the
-  latter capped by the 30-day retention window. List growth is bounded under realistic
+  latter capped by the 7-day retention window. List growth is bounded under realistic
   traffic.
 - **`FlightData(Symbol, u64)`** is in **Persistent** storage (per-flight, unbounded
   entries — can't move to Instance). TTL is managed via `ExtendFootprintTTLOp` cron —
@@ -1472,7 +1480,13 @@ contract atomically; `unpause(caller)` resumes. State reads and permissionless
 housekeeping (`extend_ttl`, `prune_settled`) remain available while paused so the
 operator can keep observability and TTL hygiene running during incident response.
 `recover_uncollected` on the vault is intentionally exempt so the owner can still
-settle archived claims during a pause.
+settle archived claims during a pause. Two further deliberate exemptions:
+`flight_pool_manager.claim` stays open (the claim window runs on the ledger clock;
+gating it would let a pause silently expire valid, already-funded payouts), and
+`governance.route_status` — nominally a read — still commits its protective side
+effects (route/index TTL renewals and the uniqueness-index self-heal) while the
+module is paused. Those writes grant no privilege; the pause switch halts the
+governance module's *administrative* entry points only.
 
 **Operate pause/unpause as a set.** The keeper loops call pause-gated entry points
 cross-contract (`pool.settle_*`, `oracle.set_to_be_settled` / `set_settled`), so
@@ -1500,9 +1514,13 @@ defense against inflation attacks:
 4. `get_flight_data()` never panics — returns `NotInitiated` as safe fallback.
 5. Oracle is decoupled from settlement — can only write data, not trigger payouts or
    classify outcomes. Classification is done by the Controller using on-chain business rules.
-6. **`set_landed` plausibility floor** (audit L-02): asserts
-   `actual_arrival_time >= estimated_arrival_time`. An adversarial oracle cannot mark a
-   delayed flight as on-time via an actual-before-estimated report.
+6. **Outcome-write input validation**: `set_estimated_arrival` and `set_landed`
+   reject zero timestamps and arrivals before the departure day's midnight
+   (`InvalidTimestamp`). There is deliberately NO `actual >= estimated` floor —
+   early arrivals are legitimate outcomes and rejecting them would strand flights
+   `Active` forever; the classifier saturates a negative delay to zero, so an
+   early arrival settles as on-time. The oracle remains trusted for the
+   truthfulness of the reported times themselves.
 
 **Trust assumption depends on executor backend.** With a centralized cron, trust the
 server operator. With a TEE backend (Acurast, Phala), trust the hardware attestation chain.
@@ -1640,7 +1658,8 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Prune aged-out settled flights | Anyone | `oracle.prune_settled()` |
 | Read active flight count | Anyone | `oracle.get_active_flight_count()` (alert as it nears the list cap) |
 | Check flight data physically exists | Anyone | `oracle.has_flight_data(flight_id, date)` (distinguishes archived from unregistered) |
-| Evict archived flight from list | Owner | `oracle.evict_missing_flight(flight_id, date, outcome_pending)` (only when FlightData is missing; after off-chain finality confirmation. Restore-and-settle is always preferred. `outcome_pending = true` iff the flight's outcome was already public — Landed/Cancelled/ToBeSettled\* per its event history — so the eviction releases the settlement-barrier count that settlement would have released; getting the flag wrong either strands the barrier or opens it early) |
+| Evict archived flight from list | Owner | `oracle.evict_missing_flight(flight_id, date, outcome_pending)` (only when FlightData is missing; after off-chain finality confirmation. Restore-and-settle is always preferred. `outcome_pending = true` iff the flight's outcome was already public — Landed/Cancelled/ToBeSettled\* per its event history — so the eviction releases the settlement-barrier count that settlement would have released; getting the flag wrong either strands the barrier or opens it early. **Eviction is step one of two** — follow with `controller.settle_evicted_flight`, or the flight's pool bucket and vault collateral stay stranded forever) |
+| Settle an evicted flight's bucket | Owner | `controller.settle_evicted_flight(flight_id, date)` (terminal reconciliation after `evict_missing_flight`: settles the pool bucket with void semantics — premiums to the vault, no payout — and releases the flight's locked collateral. Requires the FlightData row to still be absent and the flight to be out of the oracle active list; do not restore the row after eviction) |
 | Update keeper address | Owner | `controller.set_keeper(new_keeper)` |
 | Update oracle address | Owner | `oracle.set_oracle(new_oracle)` |
 | Set min withdrawal request size | Owner | `risk_vault.set_min_withdrawal_request(min_assets)` (0 disables; deployment must set a per-asset floor; enforcement clamped to TMA/2500) |
@@ -1804,15 +1823,18 @@ network_passphrase = "Public Global Stellar Network ; September 2015"
 
    e. Controller                 — constructor needs all addresses + config
         stellar contract deploy --wasm target/.../controller.wasm \
-          -- --governance CONTRACT_ID_GOVERNANCE \
-             --vault CONTRACT_ID_VAULT \
+          -- --owner OWNER_ADDRESS \
+             --governance CONTRACT_ID_GOVERNANCE \
+             --risk_vault CONTRACT_ID_VAULT \
              --oracle CONTRACT_ID_ORACLE \
              --flight_pool_manager CONTRACT_ID_FLIGHT_POOL_MANAGER \
-             --usdc USDC_CONTRACT_ID \
-             --solvency_ratio 100 \
+             --asset_token USDC_CONTRACT_ID \
+             --authorized_keeper KEEPER_EXECUTOR_ADDRESS \
              --min_lead_time_secs 3600 \
              --claim_expiry_window_secs 5184000
         -> returns CONTRACT_ID_CONTROLLER
+        (solvency ratio is not a constructor argument — it initializes to 100
+         and is tuned afterwards via controller.set_solvency_ratio)
 
 3. Post-deployment wiring:
         OracleAggregator.set_controller(CONTRACT_ID_CONTROLLER)   <- one-time, immutable

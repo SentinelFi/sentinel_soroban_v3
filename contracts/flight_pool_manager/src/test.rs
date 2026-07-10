@@ -311,10 +311,11 @@ fn test_config_survives_claim_window_after_quick_settle() {
     register(&t);
     buy(&t, &t.buyer1);
     let claim_expiry = t.env.ledger().timestamp() + CLAIM_WINDOW_SEC;
-    t.pool
-        .settle_delayed(&t.controller, &flight_a(), &FLIGHT_DATE, &claim_expiry);
+    // Vault top-up arrives before the claim window opens (production order).
     let topup = PAYOFF - PREMIUM;
     t.vault.send_payout(&t.controller, &t.pool_addr, &topup);
+    t.pool
+        .settle_delayed(&t.controller, &flight_a(), &FLIGHT_DATE, &claim_expiry);
 
     // Advance the ledger sequence past the old ~31-day TTL but inside the
     // 60-day claim window (timestamp unchanged, so the window is still open).
@@ -474,6 +475,9 @@ fn test_settle_delayed_success() {
     register(&t);
     buy(&t, &t.buyer1);
     let claim_expiry = t.env.ledger().timestamp() + CLAIM_WINDOW_SEC;
+    // Vault top-up arrives before the claim window opens (production order).
+    t.vault
+        .send_payout(&t.controller, &t.pool_addr, &(PAYOFF - PREMIUM));
     t.pool
         .settle_delayed(&t.controller, &flight_a(), &FLIGHT_DATE, &claim_expiry);
     let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
@@ -488,6 +492,9 @@ fn test_settle_cancelled_success() {
     register(&t);
     buy(&t, &t.buyer1);
     let claim_expiry = t.env.ledger().timestamp() + CLAIM_WINDOW_SEC;
+    // Vault top-up arrives before the claim window opens (production order).
+    t.vault
+        .send_payout(&t.controller, &t.pool_addr, &(PAYOFF - PREMIUM));
     t.pool
         .settle_cancelled(&t.controller, &flight_a(), &FLIGHT_DATE, &claim_expiry);
     let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
@@ -519,6 +526,20 @@ fn test_settle_delayed_non_controller_fails() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #418)")]
+fn test_settle_delayed_without_vault_topup_fails() {
+    // The vault's payout top-up must arrive BEFORE the claim window opens.
+    // With one buyer the pool holds only the premium here — opening the
+    // window would advertise payoffs the contract cannot fund.
+    let t = setup();
+    register(&t);
+    buy(&t, &t.buyer1);
+    let claim_expiry = t.env.ledger().timestamp() + CLAIM_WINDOW_SEC;
+    t.pool
+        .settle_delayed(&t.controller, &flight_a(), &FLIGHT_DATE, &claim_expiry);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #406)")]
 fn test_settle_delayed_past_expiry_fails() {
     let t = setup();
@@ -543,6 +564,9 @@ fn test_claim_deadline_capped_to_buyer_proof_lifetime() {
     let late = FLIGHT_DATE + 100 * 86_400;
     t.env.ledger().with_mut(|l| l.timestamp = late);
     let requested_expiry = late + CLAIM_WINDOW_SEC;
+    // Vault top-up arrives before the claim window opens (production order).
+    t.vault
+        .send_payout(&t.controller, &t.pool_addr, &(PAYOFF - PREMIUM));
     t.pool
         .settle_delayed(&t.controller, &flight_a(), &FLIGHT_DATE, &requested_expiry);
 
@@ -575,10 +599,11 @@ fn test_truncated_claim_window_still_claimable() {
     let late = FLIGHT_DATE + 40 * 86_400;
     t.env.ledger().with_mut(|l| l.timestamp = late);
     let requested_expiry = late + CLAIM_WINDOW_SEC;
-    t.pool
-        .settle_delayed(&t.controller, &flight_a(), &FLIGHT_DATE, &requested_expiry);
+    // Vault top-up arrives before the claim window opens (production order).
     t.vault
         .send_payout(&t.controller, &t.pool_addr, &(PAYOFF - PREMIUM));
+    t.pool
+        .settle_delayed(&t.controller, &flight_a(), &FLIGHT_DATE, &requested_expiry);
 
     let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
     assert_eq!(cfg.claim_expiry, FLIGHT_DATE + 90 * 86_400);
@@ -607,14 +632,16 @@ fn test_active_flight_count_tracks_registration_and_settlement() {
 // claim
 // =========================================================================
 
-// Helper: settle delayed and have RiskVault top up the pool with (payoff-premium)*buyer_count
-// (in real flow Controller calls vault.send_payout(pool, ...); here we simulate it directly).
+// Helper: have RiskVault top up the pool with (payoff-premium)*buyer_count,
+// then settle delayed — the production order: the Controller calls
+// vault.send_payout(pool, ...) BEFORE opening the claim window, and
+// settle_delayed verifies the funds are present.
 fn settle_delayed_and_topup(t: &TestEnv, n_buyers: u32) {
     let claim_expiry = t.env.ledger().timestamp() + CLAIM_WINDOW_SEC;
-    t.pool
-        .settle_delayed(&t.controller, &flight_a(), &FLIGHT_DATE, &claim_expiry);
     let topup = (PAYOFF - PREMIUM) * (n_buyers as i128);
     t.vault.send_payout(&t.controller, &t.pool_addr, &topup);
+    t.pool
+        .settle_delayed(&t.controller, &flight_a(), &FLIGHT_DATE, &claim_expiry);
 }
 
 #[test]
@@ -639,10 +666,11 @@ fn test_claim_after_cancelled_success() {
     register(&t);
     buy(&t, &t.buyer1);
     let claim_expiry = t.env.ledger().timestamp() + CLAIM_WINDOW_SEC;
-    t.pool
-        .settle_cancelled(&t.controller, &flight_a(), &FLIGHT_DATE, &claim_expiry);
+    // Vault top-up arrives before the claim window opens (production order).
     let topup = PAYOFF - PREMIUM;
     t.vault.send_payout(&t.controller, &t.pool_addr, &topup);
+    t.pool
+        .settle_cancelled(&t.controller, &flight_a(), &FLIGHT_DATE, &claim_expiry);
 
     let before = t.asset.balance(&t.buyer1);
     t.pool.claim(&t.buyer1, &flight_a(), &FLIGHT_DATE);

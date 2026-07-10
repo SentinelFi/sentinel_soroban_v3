@@ -110,14 +110,16 @@ fn recover_uncollected_recredit_path() {
     // No prior credit.
     assert_eq!(t.vault.get_claimable_balance(&user), 0);
 
+    // The recredited amount must be covered by asset the vault holds beyond
+    // TMA — model the archived credit's asset still sitting in the vault.
+    let asset_admin = token::StellarAssetClient::new(&t.env, &t.asset_addr);
+    asset_admin.mint(&t.vault_addr, &500_0000000);
+
     t.vault
         .recover_uncollected(&user, &500_0000000, &risk_vault::RecoveryMode::Recredit);
     assert_eq!(t.vault.get_claimable_balance(&user), 500_0000000);
 
     // User can collect.
-    let asset_admin = token::StellarAssetClient::new(&t.env, &t.asset_addr);
-    // Vault needs asset liquidity for collect; mint it.
-    asset_admin.mint(&t.vault_addr, &500_0000000);
     t.vault.collect(&user);
     assert_eq!(t.asset.balance(&user), 500_0000000);
 }

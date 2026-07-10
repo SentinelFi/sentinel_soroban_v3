@@ -75,6 +75,15 @@ impl OracleAggregator {
     ///
     /// Bounded: refuses to evict a flight whose data is still present — live
     /// flights can only leave the list via the normal settle-and-prune path.
+    ///
+    /// **Eviction is step one of two.** Every listed flight was registered by
+    /// a purchase, so it has buyers, escrowed premiums in the pool, and locked
+    /// vault collateral — none of which this call releases. After evicting,
+    /// the owner must run `Controller::settle_evicted_flight(flight_id, date)`
+    /// to settle the pool bucket (void semantics: premiums to the vault, no
+    /// payout) and unlock the collateral; skipping it leaves that capital
+    /// stranded forever. That reconciliation requires the `FlightData` row to
+    /// remain absent — do not restore the archived row after evicting.
     #[only_owner]
     pub fn evict_missing_flight(e: &Env, flight_id: Symbol, date: u64, outcome_pending: bool) {
         if e.storage()

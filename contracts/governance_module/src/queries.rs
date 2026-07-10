@@ -21,6 +21,13 @@ impl GovernanceModule {
     /// `Unknown` if the entry is missing (never whitelisted, removed, or
     /// storage archived) or the flight_id is mapped to a different route.
     pub fn route_status(e: &Env, flight_id: Symbol, origin: Symbol, dest: Symbol) -> RouteStatus {
+        // NOTE ON PAUSE: this reader is deliberately not pause-gated, and its
+        // side effects (TTL renewals, uniqueness-index self-heal below) still
+        // commit while the module is paused. They are protective writes that
+        // grant no privilege — gating them would let route/index entries
+        // drift toward archival during a long incident. The pause switch
+        // halts the *administrative* write entry points only.
+        //
         // Purchase traffic flows through here — renew the instance alongside
         // the route keys so ongoing use keeps the contract itself alive even
         // if the external TTL cron lapses.

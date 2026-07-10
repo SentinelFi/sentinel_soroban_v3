@@ -127,7 +127,7 @@
 | L-09 | `extend_ttl` (no auth) is callable by anyone | Low | All | 🟡 |
 | I-01 | clippy pedantic surfaces digit-grouping and fn-arity nits | Info | All | ✅ |
 | I-02 | Single-key owner; consider multisig governance | Info | All | 🟡 |
-| I-03 | No upgrade path (intentional) | Info | All | 🟡 |
+| I-03 | No upgrade path (intentional) — superseded: owner-gated `upgrade()` added later | Info | All | ✅ |
 | I-04 | `TtlMiss` diagnostic is good observability | Info | `controller` | 🟡 |
 | I-05 | Cross-contract mirror types in `controller/interfaces.rs` rely on byte-level layout | Info | `controller` | ✅ |
 | I-06 | No `cargo audit` advisory check in CI | Info | Tooling | ⏸ |
@@ -612,9 +612,7 @@ Each contract's `Owner` is one Address. No on-chain multisig or timelock require
 
 ### I-03. No upgrade path
 
-**Status:** 🟡 Accepted — intentional design choice. Trade-off: no upgrade key risk, but bug-fix requires redeploy + state migration.
-
-Contracts use `#[contract]` without an upgrade mechanism. **This is a positive** — no upgrade key risk — but **bugs cannot be fixed without a migration to new contract addresses**. The architecture should document the migration strategy (re-deploy + run a one-shot indexer to transition state).
+**Status:** ✅ Superseded — the design decision was reversed in a later phase. Every production contract now exposes an owner-gated `upgrade(wasm_hash)` (shared implementation in `sentinel_types::upgrade`, with on-chain version tracking and a `ContractUpgraded` audit event). The original "no upgrade mechanism" acceptance recorded here no longer describes the codebase; several later remediations rely on emergency Wasm upgrade as the last-resort recovery path (e.g. for barrier desync or post-eviction reconciliation gaps). The trade-off flipped accordingly: bugs are fixable in place, at the cost of upgrade-key risk — mitigated operationally by the multisig-owner recommendation in I-02.
 
 ### I-04. `TtlMiss` diagnostic is good observability
 

@@ -26,4 +26,5 @@ pub enum Error {
     AssetsConvertToZeroShares = 720,
     RequestNotFound = 721,
     AmountMustBeNonNegative = 722,
+    RecreditExceedsRecoverableSurplus = 723,
 }

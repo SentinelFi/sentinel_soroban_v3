@@ -22,6 +22,10 @@ impl FlightPoolManager {
     /// status + window + double-claim checks below), so it is safe to keep open.
     pub fn claim(e: &Env, traveler: Address, flight_id: Symbol, date: u64) {
         traveler.require_auth();
+        // Renew the instance alongside every other user-facing path so
+        // ongoing claim traffic keeps the contract alive if the TTL cron
+        // lapses (mirrors the vault's collect()).
+        extend_instance_ttl(e);
 
         let cfg_key = PoolKey::FlightConfig(flight_id.clone(), date);
         let mut cfg: FlightConfig = e

@@ -1,14 +1,15 @@
-use soroban_sdk::{contractimpl, Address, Env};
-use stellar_macros::when_not_paused;
+use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol};
+use stellar_macros::{only_owner, when_not_paused};
 
 use crate::auth::require_keeper;
 use crate::constants::{MAX_SETTLE_BATCH, SECONDS_PER_HOUR};
 use crate::events::{
-    FlightClassified, FlightConfigMissing, FlightSettledEvent, FlightVoided, TtlMiss,
+    EvictedFlightSettled, FlightClassified, FlightConfigMissing, FlightSettledEvent, FlightVoided,
+    TtlMiss,
 };
 use crate::interfaces::{FlightPoolManagerClient, FlightStatus, OracleClient, VaultClient};
 use crate::storage::CtrlKey;
-use crate::{Controller, ControllerArgs, ControllerClient};
+use crate::{Controller, ControllerArgs, ControllerClient, Error};
 
 #[contractimpl]
 impl Controller {
@@ -305,6 +306,83 @@ impl Controller {
         }
 
         e.storage().instance().set(&CtrlKey::SettleCursor, &i);
+        Controller::extend_ttl(e);
+    }
+
+    /// Terminal reconciliation for a flight the owner evicted from the
+    /// oracle's active list (`oracle.evict_missing_flight`). Eviction frees
+    /// the oracle-side list slot and releases the settlement barrier, but on
+    /// its own it would leave the flight's pool bucket `Active` forever and
+    /// its vault collateral locked forever — the flight is outside keeper
+    /// enumeration, so no settlement pass can ever reach it. This entry point
+    /// completes the release: the bucket settles like a voided flight (held
+    /// premiums forwarded to the vault as income, collateral unlocked, no
+    /// payout — with no oracle data there is no on-chain outcome to pay
+    /// against), which also frees the bucket's pool active-list slot.
+    ///
+    /// Owner-only, and restricted to flights provably outside the normal
+    /// pipeline:
+    /// - the oracle must have NO `FlightData` row (the same gate eviction
+    ///   itself enforces — a present row means the flight is restorable, and
+    ///   restore-and-settle is the correct path; note this also means the
+    ///   row must NOT be restored after eviction, or this reconciliation
+    ///   becomes unreachable);
+    /// - the flight must NOT be in the oracle active list (a listed flight
+    ///   is still keeper-enumerable and must settle through the normal
+    ///   pipeline).
+    ///
+    /// Not exempt from downstream pause gates: the pool/vault calls it makes
+    /// are `when_not_paused`, so run it after unpausing those contracts.
+    #[only_owner]
+    pub fn settle_evicted_flight(e: &Env, flight_id: Symbol, date: u64) {
+        let oracle_addr: Address = e.storage().instance().get(&CtrlKey::Oracle).unwrap();
+        let vault_addr: Address = e.storage().instance().get(&CtrlKey::RiskVault).unwrap();
+        let pool_addr: Address = e
+            .storage()
+            .instance()
+            .get(&CtrlKey::FlightPoolManager)
+            .unwrap();
+        let oracle = OracleClient::new(e, &oracle_addr);
+        let vault = VaultClient::new(e, &vault_addr);
+        let pool = FlightPoolManagerClient::new(e, &pool_addr);
+        let controller_addr = e.current_contract_address();
+
+        if oracle.has_flight_data(&flight_id, &date) {
+            panic_with_error!(e, Error::FlightDataStillPresent);
+        }
+        let listed = oracle.get_active_flights();
+        for i in 0..listed.len() {
+            if listed.get(i).unwrap() == (flight_id.clone(), date) {
+                panic_with_error!(e, Error::FlightStillListed);
+            }
+        }
+        let cfg = match pool.get_flight_config(&flight_id, &date) {
+            Some(cfg) => cfg,
+            None => panic_with_error!(e, Error::FlightNotRegisteredInPool),
+        };
+        let total_payoff = cfg
+            .payoff
+            .checked_mul(cfg.buyer_count as i128)
+            .expect("multiplication overflow");
+
+        // settle_on_time enforces the bucket is still Active (so this call is
+        // cleanly non-repeatable), moves the held premiums to the vault, and
+        // prunes the pool's active list.
+        let premium_income = pool.settle_on_time(&controller_addr, &flight_id, &date);
+        if premium_income > 0 {
+            vault.record_premium_income(&controller_addr, &premium_income);
+        }
+        if total_payoff > 0 {
+            vault.decrease_locked(&controller_addr, &total_payoff);
+        }
+
+        EvictedFlightSettled {
+            flight_id,
+            date,
+            premium_income,
+            collateral_released: total_payoff,
+        }
+        .publish(e);
         Controller::extend_ttl(e);
     }
 

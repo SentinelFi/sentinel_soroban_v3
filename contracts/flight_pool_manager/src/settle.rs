@@ -137,6 +137,26 @@ fn settle_with_claim_window(
             .expect("addition overflow"),
     );
 
+    // Defense in depth, mirroring the vault's premium-receipt check on
+    // `record_premium_income`: the vault's payout top-up is transferred to
+    // the pool BEFORE the controller opens the claim window, so by now the
+    // contract must physically hold at least this bucket's full claimable
+    // value (premiums held since purchase + the vault top-up). Catches a
+    // buggy or compromised caller opening a window it never funded. The
+    // balance is pool-wide (other buckets' escrow counts toward it), so this
+    // is a floor, not per-bucket escrow accounting.
+    if cfg.buyer_count > 0 {
+        let total_claimable = cfg
+            .payoff
+            .checked_mul(cfg.buyer_count as i128)
+            .expect("multiplication overflow");
+        let asset_addr: Address = e.storage().instance().get(&PoolKey::AssetToken).unwrap();
+        let asset = token::Client::new(e, &asset_addr);
+        if asset.balance(&e.current_contract_address()) < total_claimable {
+            panic_with_error!(e, Error::PayoutNotReceived);
+        }
+    }
+
     cfg.status = new_status.clone();
     cfg.claim_expiry = claim_expiry;
     e.storage().persistent().set(&cfg_key, &cfg);
