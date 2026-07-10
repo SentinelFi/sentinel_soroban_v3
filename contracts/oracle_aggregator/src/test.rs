@@ -193,6 +193,40 @@ fn test_full_lifecycle_delayed() {
 }
 
 #[test]
+fn test_arrival_timestamps_validated() {
+    // Zero is the unset sentinel and an arrival cannot precede the departure
+    // day's midnight. The forward-only machine has no correction path, so
+    // malformed values are rejected at the door — a zero actual arrival
+    // would otherwise saturate the delay math and settle a delayed flight
+    // as on-time, denying payouts.
+    let (env, client, _owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+
+    assert!(client
+        .try_set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &0)
+        .is_err());
+    assert!(client
+        .try_set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &(FLIGHT_DATE - 1))
+        .is_err());
+    client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);
+
+    assert!(client
+        .try_set_landed(&oracle, &fid, &FLIGHT_DATE, &0)
+        .is_err());
+    assert!(client
+        .try_set_landed(&oracle, &fid, &FLIGHT_DATE, &(FLIGHT_DATE - 1))
+        .is_err());
+    client.set_landed(&oracle, &fid, &FLIGHT_DATE, &ACT_ARRIVAL);
+    assert_eq!(
+        client
+            .get_flight_data(&fid, &FLIGHT_DATE)
+            .actual_arrival_time,
+        ACT_ARRIVAL
+    );
+}
+
+#[test]
 fn test_set_cancelled_before_registration_creates_purchase_blocking_record() {
     // A publicly known cancellation must be recordable BEFORE any purchase
     // registers the flight — otherwise the purchase gate, seeing no record,
@@ -639,17 +673,18 @@ fn test_prune_settled_no_op_before_retention_window() {
 }
 
 #[test]
-fn test_prune_settled_evicts_missing_flight_data() {
-    // Regression: a single archived FlightData entry must not panic
-    // prune_settled. The entry is dropped from the active list and the call
-    // succeeds; remaining entries are processed normally.
+fn test_prune_settled_retains_missing_flight_data() {
+    // An archived FlightData entry is NOT settled — the flight may still have
+    // unresolved settlement riding on it. Prune must keep its active-list
+    // entry (so the tuple stays discoverable for recovery), must not panic,
+    // and must process other entries normally.
     let (env, client, _owner, _oracle, controller) = setup();
     let fid_a = flight_id(&env);
     let fid_b = symbol_short!("BB200");
 
     client.register_flight(&controller, &fid_a, &FLIGHT_DATE);
     client.register_flight(&controller, &fid_b, &FLIGHT_DATE);
-    assert_eq!(client.get_active_flights().len(), 2);
+    assert_eq!(client.get_active_flight_count(), 2);
 
     // Simulate TTL archival of fid_a's persistent FlightData entry.
     env.as_contract(&client.address, || {
@@ -658,12 +693,49 @@ fn test_prune_settled_evicts_missing_flight_data() {
             .remove(&OracleKey::FlightData(fid_a.clone(), FLIGHT_DATE));
     });
 
-    // Prune must not panic; fid_a is evicted, fid_b stays.
-    client.prune_settled();
+    // has_flight_data distinguishes the archived entry from the live one —
+    // get_flight_data reports both fid_a (archived) and an unknown flight as
+    // NotInitiated.
+    assert!(!client.has_flight_data(&fid_a, &FLIGHT_DATE));
+    assert!(client.has_flight_data(&fid_b, &FLIGHT_DATE));
 
+    // Prune must not panic and must retain BOTH entries.
+    client.prune_settled();
+    assert_eq!(client.get_active_flight_count(), 2);
+}
+
+#[test]
+fn test_evict_missing_flight_owner_path() {
+    // Once the operator confirms (off-chain) that an archived flight needs no
+    // further resolution, the owner frees its capped-list slot. The eviction
+    // is bounded: it refuses flights whose data still exists and unknown
+    // tuples.
+    let (env, client, _owner, _oracle, controller) = setup();
+    let fid_a = flight_id(&env);
+    let fid_b = symbol_short!("BB200");
+
+    client.register_flight(&controller, &fid_a, &FLIGHT_DATE);
+    client.register_flight(&controller, &fid_b, &FLIGHT_DATE);
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&OracleKey::FlightData(fid_a.clone(), FLIGHT_DATE));
+    });
+
+    // Live flight cannot be evicted through this path.
+    assert!(client
+        .try_evict_missing_flight(&fid_b, &FLIGHT_DATE)
+        .is_err());
+
+    client.evict_missing_flight(&fid_a, &FLIGHT_DATE);
     let remaining = client.get_active_flights();
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining.get(0).unwrap(), (fid_b, FLIGHT_DATE));
+
+    // Already evicted — no longer in the list.
+    assert!(client
+        .try_evict_missing_flight(&fid_a, &FLIGHT_DATE)
+        .is_err());
 }
 
 #[test]

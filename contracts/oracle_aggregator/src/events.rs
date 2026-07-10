@@ -25,13 +25,24 @@ pub struct FlightStatusChange {
     pub(crate) new_status: FlightStatus,
 }
 
-// Emitted by `prune_settled` when it evicts an active-list entry
-// whose FlightData is missing (archived past its persistent TTL). Eviction is
-// retained (a missing entry is unrecoverable on-chain and would
-// otherwise block pruning forever), but it is no longer silent: off-chain
-// monitoring can detect a flight that vanished without being explicitly settled.
+// Emitted by `prune_settled` when it encounters an active-list entry whose
+// FlightData is missing (archived past its persistent TTL). The entry is
+// RETAINED — archived is not settled, and the flight may still have money
+// riding on it — so this is a recovery-required signal: operators restore the
+// archived entry via ledger restoration, or confirm finality off-chain and
+// free the slot with the owner-only `evict_missing_flight`.
 #[contractevent(topics = ["sentinel", "data_missing"], data_format = "map")]
-pub struct MissingFlightDataPruned {
+pub struct MissingFlightData {
+    #[topic]
+    pub(crate) flight_id: Symbol,
+    pub(crate) date: u64,
+}
+
+// Emitted when the owner removes an active-list entry whose FlightData is
+// missing, after confirming off-chain that the flight needs no further
+// on-chain resolution. Audit trail for the manual capacity-release path.
+#[contractevent(topics = ["sentinel", "evicted"], data_format = "map")]
+pub struct FlightEvicted {
     #[topic]
     pub(crate) flight_id: Symbol,
     pub(crate) date: u64,

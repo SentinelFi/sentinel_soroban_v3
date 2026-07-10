@@ -1610,6 +1610,9 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Execute settlements | Keeper | `controller.execute_settlements(keeper)` |
 | Drain withdrawal queue + snapshot | Keeper | `controller.run_queue_maintenance(keeper)` |
 | Prune aged-out settled flights | Anyone | `oracle.prune_settled()` |
+| Read active flight count | Anyone | `oracle.get_active_flight_count()` (alert as it nears the list cap) |
+| Check flight data physically exists | Anyone | `oracle.has_flight_data(flight_id, date)` (distinguishes archived from unregistered) |
+| Evict archived flight from list | Owner | `oracle.evict_missing_flight(flight_id, date)` (only when FlightData is missing; after off-chain finality confirmation) |
 | Update keeper address | Owner | `controller.set_keeper(new_keeper)` |
 | Update oracle address | Owner | `oracle.set_oracle(new_oracle)` |
 | Set min withdrawal request size | Owner | `risk_vault.set_min_withdrawal_request(min_assets)` (0 disables; deployment must set a per-asset floor; enforcement clamped to TMA/2500) |
