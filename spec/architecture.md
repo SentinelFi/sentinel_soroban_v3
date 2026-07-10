@@ -1568,7 +1568,9 @@ Shares issued proportional to `total_managed_assets / total_supply`.
 when `free_capital >= redemption`.
 
 **Withdraw (queued FIFO):** `RiskVault.request_withdrawal(caller, shares)` — enqueues when
-capital is locked. Specify desired withdrawal amount. Queue drains FIFO after each
+capital is locked. Specify desired withdrawal amount. The request's asset value must meet
+the owner-configured minimum (`get_min_withdrawal_request`) — a floor that keeps the
+bounded queue's slots from being occupied by dust requests. Queue drains FIFO after each
 settlement — if solvency allows, the amount is unlocked. Call `RiskVault.collect(caller)`
 to pull USDC.
 
@@ -1610,6 +1612,8 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Prune aged-out settled flights | Anyone | `oracle.prune_settled()` |
 | Update keeper address | Owner | `controller.set_keeper(new_keeper)` |
 | Update oracle address | Owner | `oracle.set_oracle(new_oracle)` |
+| Set min withdrawal request size | Owner | `risk_vault.set_min_withdrawal_request(min_assets)` (0 disables; deployment must set a per-asset floor; enforcement clamped to TMA/2500) |
+| Read queue occupancy | Anyone | `risk_vault.get_withdrawal_queue_len()` (alert as it nears the queue cap) |
 
 ---
 
@@ -1795,6 +1799,26 @@ network_passphrase = "Public Global Stellar Network ; September 2015"
                                                                       step 7's OracleAggregator.set_oracle,
                                                                       which sets the off-chain oracle
                                                                       executor address.)
+        RiskVault.set_min_withdrawal_request(MIN_ASSETS)           <- REQUIRED: minimum asset value
+                                                                      per queued withdrawal request.
+                                                                      Ships disabled (0); if left at 0,
+                                                                      one actor can occupy every slot of
+                                                                      the bounded withdrawal queue with
+                                                                      dust requests spread across many
+                                                                      addresses, locking other LPs out
+                                                                      of the exit path. Choose per
+                                                                      underlying asset: meaningfully
+                                                                      above dust, well below typical LP
+                                                                      position sizes (e.g. ~100_0000000
+                                                                      = 100 USDC at 7 decimals).
+                                                                      Owner-updatable at any time —
+                                                                      also the response lever if queue
+                                                                      saturation is observed. Bounded:
+                                                                      enforcement is clamped at request
+                                                                      time to TMA/2500, so no configured
+                                                                      value can lock positions above
+                                                                      0.04% of the vault out of the
+                                                                      queue.
 
 4. Set global defaults:
         GovernanceModule.set_defaults(premium, payoff, delay_hours)

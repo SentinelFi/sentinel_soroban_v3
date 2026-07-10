@@ -61,6 +61,29 @@ impl RiskVault {
         Self::extend_ttl(e);
     }
 
+    /// Set the minimum asset value a queued withdrawal request must carry at
+    /// submission time (owner-only). The withdrawal queue is a bounded shared
+    /// resource: without a value floor, one participant can split shares
+    /// across many addresses and occupy every slot with near-dust requests,
+    /// locking later underwriters out of the FIFO exit path. A meaningful
+    /// minimum makes each slot cost real escrowed capital. Zero disables the
+    /// floor. Choose the value in underlying-asset units, well below typical
+    /// LP position sizes so small underwriters can still queue their exits.
+    ///
+    /// The enforcement is clamped at request time to a small fraction of
+    /// managed assets (see `MIN_REQUEST_FLOOR_DIVISOR`), so no configured
+    /// value — however large — can lock ordinary positions out of the queue.
+    #[only_owner]
+    pub fn set_min_withdrawal_request(e: &Env, min_assets: i128) {
+        if min_assets < 0 {
+            panic_with_error!(e, Error::AmountMustBePositive);
+        }
+        e.storage()
+            .instance()
+            .set(&VaultKey::MinWithdrawalRequest, &min_assets);
+        Self::extend_ttl(e);
+    }
+
     /// Extend instance TTL. Called by cron as a safety net.
     pub fn extend_ttl(e: &Env) {
         e.storage()
