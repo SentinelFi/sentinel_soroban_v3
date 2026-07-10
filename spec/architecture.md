@@ -1603,6 +1603,7 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Claim payout | Traveler | `flight_pool_manager.claim(traveler, flight_id, date)` |
 | Sweep expired claims | Anyone | `flight_pool_manager.sweep_expired(flight_id, date)` |
 | Withdraw recovered (swept) | Owner | `flight_pool_manager.withdraw_recovered(amount)` |
+| Read active bucket count | Anyone | `flight_pool_manager.get_active_flight_count()` (alert as it nears the list cap) |
 | Push estimated arrival | Oracle | `oracle.set_estimated_arrival(oracle, flight_id, date, eta)` |
 | Push landed (with actual arrival) | Oracle | `oracle.set_landed(oracle, flight_id, date, actual)` |
 | Mark cancelled | Oracle | `oracle.set_cancelled(oracle, flight_id, date)` |

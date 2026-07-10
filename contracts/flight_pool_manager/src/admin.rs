@@ -48,6 +48,11 @@ impl FlightPoolManager {
     #[only_owner]
     #[when_not_paused]
     pub fn withdraw_recovered(e: &Env, amount: i128) {
+        // Renew the instance alongside this owner path: recovery actions tend
+        // to happen exactly when TTL automation may already be degraded, and
+        // an admin call that mutates instance state must not leave the
+        // contract drifting toward archival.
+        extend_instance_ttl(e);
         if amount <= 0 {
             panic_with_error!(e, Error::AmountNotPositive);
         }

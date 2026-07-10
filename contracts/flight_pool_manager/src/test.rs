@@ -527,6 +527,52 @@ fn test_settle_delayed_past_expiry_fails() {
         .settle_delayed(&t.controller, &flight_a(), &FLIGHT_DATE, &0);
 }
 
+#[test]
+fn test_claim_deadline_capped_to_buyer_proof_lifetime() {
+    // Buyer proofs are written at purchase with a fixed 180-day lifetime and
+    // cannot be renewed at settlement; the earliest purchase is 90 days
+    // before departure, so a claim deadline past date + 90 days could outlive
+    // the entitlement records it serves. A heavily delayed settlement must
+    // therefore open a window capped at that horizon rather than a full
+    // claim-expiry span whose tail nobody could prove a policy against.
+    let t = setup();
+    register(&t);
+    buy(&t, &t.buyer1);
+
+    // Settlement runs only 100 days after the flight date.
+    let late = FLIGHT_DATE + 100 * 86_400;
+    t.env.ledger().with_mut(|l| l.timestamp = late);
+    let requested_expiry = late + CLAIM_WINDOW_SEC;
+    t.pool
+        .settle_delayed(&t.controller, &flight_a(), &FLIGHT_DATE, &requested_expiry);
+
+    // The stored deadline is the cap — already in the past here, so the
+    // window is born expired: claims fail closed instead of a subset of
+    // buyers hitting NoPolicy on archived proofs, and the funds are
+    // sweepable to the recovered balance for owner-driven remediation.
+    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
+    assert_eq!(cfg.claim_expiry, FLIGHT_DATE + 90 * 86_400);
+    assert!(t
+        .pool
+        .try_claim(&t.buyer1, &flight_a(), &FLIGHT_DATE)
+        .is_err());
+    t.pool.sweep_expired(&flight_a(), &FLIGHT_DATE);
+    assert_eq!(t.pool.get_recovered_balance(), PAYOFF);
+}
+
+#[test]
+fn test_active_flight_count_tracks_registration_and_settlement() {
+    // Operators watch active-bucket occupancy against the capped list via
+    // this gauge, reacting before registration starts rejecting new flights.
+    let t = setup();
+    assert_eq!(t.pool.get_active_flight_count(), 0);
+    register(&t);
+    assert_eq!(t.pool.get_active_flight_count(), 1);
+    t.pool
+        .settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
+    assert_eq!(t.pool.get_active_flight_count(), 0);
+}
+
 // =========================================================================
 // claim
 // =========================================================================

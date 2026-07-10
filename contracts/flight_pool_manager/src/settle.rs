@@ -2,6 +2,7 @@ use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, Symbol};
 use stellar_macros::when_not_paused;
 
 use crate::auth::require_controller;
+use crate::constants::MAX_CLAIM_DEADLINE_AFTER_DATE_SECS;
 use crate::events::FlightSettled;
 use crate::storage::{extend_flight_ttl_to, prune_active_list, PoolKey};
 use crate::{
@@ -124,6 +125,17 @@ fn settle_with_claim_window(
     if claim_expiry <= e.ledger().timestamp() {
         panic_with_error!(e, Error::ClaimExpiryNotInFuture);
     }
+    // Cap the deadline at the buyer proofs' guaranteed lifetime (see
+    // MAX_CLAIM_DEADLINE_AFTER_DATE_SECS) — a later deadline would outlive
+    // the entitlement records it is supposed to serve. If settlement ran so
+    // late that the cap is already in the past, the bucket still settles
+    // (refusing would strand it and jam the settlement pipeline) but the
+    // window is born expired: `sweep_expired` then routes the funds to the
+    // recovered balance for owner-driven manual remediation.
+    let claim_expiry = claim_expiry.min(
+        date.checked_add(MAX_CLAIM_DEADLINE_AFTER_DATE_SECS)
+            .expect("addition overflow"),
+    );
 
     cfg.status = new_status.clone();
     cfg.claim_expiry = claim_expiry;

@@ -22,6 +22,15 @@ pub(crate) const BUYER_TTL_LEDGERS: u32 = 3_110_400;
 // target exceeds the network max, so any computed extension is clamped to this.
 pub(crate) const MAX_PERSISTENT_TTL_LEDGERS: u32 = 3_110_400;
 
+/// Latest claim deadline a settlement may open, measured from the flight
+/// date. Buyer proofs are written at purchase with the fixed 180-day network
+/// maximum TTL and cannot be re-extended later (there is no iterable buyer
+/// list). The earliest possible purchase is 90 days before departure, so
+/// every proof is guaranteed alive until at least `date + 90 days` — and no
+/// longer. A claim window reaching past that point would stay open while the
+/// earliest buyers' proofs archive, turning their valid claims into NoPolicy.
+pub(crate) const MAX_CLAIM_DEADLINE_AFTER_DATE_SECS: u64 = 90 * 86_400;
+
 /// Hard cap on `ActiveFlightList` length. The list is a single `Vec` in the
 /// contract-instance entry, which Soroban bounds to 65,536 bytes (~1,600
 /// entries in the current layout). An unbounded list could grow until that

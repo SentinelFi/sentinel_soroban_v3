@@ -39,6 +39,15 @@ impl FlightPoolManager {
             .unwrap_or(Vec::new(e))
     }
 
+    /// Number of currently active (unsettled) flight buckets. Cheap
+    /// saturation gauge for operators: the active list is capped, so
+    /// occupancy approaching the cap means new-bucket registration (and thus
+    /// first purchases of new flights) is about to be rejected — investigate
+    /// settlement throughput before that happens.
+    pub fn get_active_flight_count(e: &Env) -> u32 {
+        Self::get_active_flights(e).len()
+    }
+
     /// Returns the balance of unclaimed funds available for owner recovery.
     pub fn get_recovered_balance(e: &Env) -> i128 {
         e.storage()
