@@ -14,8 +14,17 @@ const ONE_HOUR_SECS = 3600n;
  * Cron #1 — FlightDataFetcher (every 2 hours)
  *
  * 1. Read active flights from OracleAggregator
- * 2. For NotInitiated flights: call AeroAPI for scheduled arrival → set_estimated_arrival
- * 3. For Active flights (past ETA + 1hr buffer): call AeroAPI for actual status → set_landed / set_cancelled
+ * 2. For NotInitiated flights: call AeroAPI; a cancellation is pushed
+ *    immediately (set_cancelled), otherwise scheduled arrival → set_estimated_arrival
+ * 3. For Active flights: call AeroAPI every cycle; a cancellation is pushed
+ *    immediately (set_cancelled), landed resolution waits for ETA + 1hr buffer → set_landed
+ *
+ * Cancellations must reach the chain in the same cycle they become visible,
+ * regardless of lifecycle stage: the on-chain purchase gate can only reject
+ * buyers once the oracle records the cancellation, and every purchase of an
+ * already-cancelled flight is a guaranteed claim against the vault. Deferring
+ * the check until after the ETA buffer would leave such a flight purchasable
+ * until well past its scheduled arrival.
  */
 export async function runFlightDataFetcher(config: Config): Promise<RunLogEntry> {
   const start = Date.now();
@@ -80,6 +89,25 @@ export async function runFlightDataFetcher(config: Config): Promise<RunLogEntry>
             continue;
           }
 
+          if (apiData.cancelled) {
+            // Already cancelled before ever going Active — push it now so the
+            // purchase gate closes; never store an ETA for a dead flight.
+            console.log(`[fetcher] ${flight.flight_id}: Cancelled (pre-active)`);
+            await client.invokeContract(
+              oracleId,
+              "set_cancelled",
+              [
+                client.addressToScVal(oraclePublicKey),
+                client.symbolToScVal(flight.flight_id),
+                client.u64ToScVal(flight.date),
+              ],
+              config.oracleSecretKey
+            );
+            console.log(`[fetcher] ${flight.flight_id}: NotInitiated → Cancelled ✓`);
+            actions.push({ flight: flight.flight_id, transition: "NotInitiated → Cancelled" });
+            continue;
+          }
+
           const eta = aeroApi.parseTimestamp(apiData.scheduled_in);
           if (eta === 0n) {
             console.log(`[fetcher] ${flight.flight_id}: No scheduled_in, skipping.`);
@@ -103,14 +131,11 @@ export async function runFlightDataFetcher(config: Config): Promise<RunLogEntry>
           console.log(`[fetcher] ${flight.flight_id}: NotInitiated → Active ✓`);
           actions.push({ flight: flight.flight_id, transition: "NotInitiated → Active" });
         } else if (status === FlightStatus.Active) {
-          // Step B: Check if flight should have landed (ETA + 1hr buffer)
-          if (estimatedArrival + ONE_HOUR_SECS > nowSecs) {
-            console.log(`[fetcher] ${flight.flight_id}: Active but ETA+1hr not passed yet, skipping.`);
-            actions.push({ flight: flight.flight_id, skipped: "ETA+1hr not passed" });
-            continue;
-          }
-
-          console.log(`[fetcher] ${flight.flight_id}: Active, ETA+1hr passed → fetching actual status...`);
+          // Step B: Fetch every cycle. Cancellation is checked FIRST, before
+          // the ETA gate — a flight can be cancelled long before its scheduled
+          // arrival, and the purchase gate stays open until the oracle records
+          // it. Only the landed resolution waits for ETA + 1hr.
+          console.log(`[fetcher] ${flight.flight_id}: Active → fetching current status...`);
 
           const apiData = await aeroApi.getFlightData(flight.flight_id, dateStr);
           if (!apiData) {
@@ -134,6 +159,10 @@ export async function runFlightDataFetcher(config: Config): Promise<RunLogEntry>
             );
             console.log(`[fetcher] ${flight.flight_id}: Active → Cancelled ✓`);
             actions.push({ flight: flight.flight_id, transition: "Active → Cancelled" });
+          } else if (estimatedArrival + ONE_HOUR_SECS > nowSecs) {
+            // Not cancelled and not yet due — landed resolution waits.
+            console.log(`[fetcher] ${flight.flight_id}: Active, not cancelled, ETA+1hr not passed yet.`);
+            actions.push({ flight: flight.flight_id, skipped: "ETA+1hr not passed" });
           } else if (apiData.actual_in) {
             // Landed — actual_in is non-null only after gate arrival.
             // Don't match on status string ("Landed", "Arrived / Gate Arrival", etc.)

@@ -193,6 +193,85 @@ fn test_full_lifecycle_delayed() {
 }
 
 #[test]
+fn test_set_cancelled_before_registration_creates_purchase_blocking_record() {
+    // A publicly known cancellation must be recordable BEFORE any purchase
+    // registers the flight — otherwise the purchase gate, seeing no record,
+    // admits buyers into a flight whose payout is already certain.
+    let (env, client, _owner, oracle, _controller) = setup();
+    let fid = flight_id(&env);
+
+    // No register_flight call — the flight has no record yet.
+    client.set_cancelled(&oracle, &fid, &FLIGHT_DATE);
+
+    // The record now reads Cancelled, which the purchase gate rejects.
+    let data = client.get_flight_data(&fid, &FLIGHT_DATE);
+    assert_eq!(data.status, FlightStatus::Cancelled);
+
+    // No policy exists, so nothing must enter the settlement pipeline: the
+    // active list stays empty (classify/settle never see the tombstone) and
+    // no pending outcome blocks the vault's entry/exit paths.
+    assert_eq!(client.get_active_flights().len(), 0);
+    assert_eq!(client.get_pending_outcomes(), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #602)")]
+fn test_set_cancelled_twice_on_preregistration_record_fails() {
+    // The tombstone is a real Cancelled record — the forward-only state
+    // machine still rejects a duplicate cancellation.
+    let (env, client, _owner, oracle, _controller) = setup();
+    let fid = flight_id(&env);
+
+    client.set_cancelled(&oracle, &fid, &FLIGHT_DATE);
+    client.set_cancelled(&oracle, &fid, &FLIGHT_DATE);
+}
+
+#[test]
+fn test_register_flight_after_preemptive_cancellation_is_noop() {
+    // register_flight is idempotent on an existing record, so a controller
+    // registration attempt cannot resurrect a preemptively cancelled flight
+    // into the purchasable or settleable state.
+    let (env, client, _owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+
+    client.set_cancelled(&oracle, &fid, &FLIGHT_DATE);
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+
+    let data = client.get_flight_data(&fid, &FLIGHT_DATE);
+    assert_eq!(data.status, FlightStatus::Cancelled);
+    assert_eq!(client.get_active_flights().len(), 0);
+    assert_eq!(client.get_pending_outcomes(), 0);
+}
+
+#[test]
+fn test_set_cancelled_from_not_initiated_enters_settlement_pipeline() {
+    // A registered flight (buyers may exist) cancelled before its ETA was ever
+    // set takes the normal pipeline: pending outcome recorded, classifiable,
+    // settleable.
+    let (env, client, _owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+    client.set_cancelled(&oracle, &fid, &FLIGHT_DATE);
+
+    assert_eq!(
+        client.get_flight_data(&fid, &FLIGHT_DATE).status,
+        FlightStatus::Cancelled
+    );
+    assert_eq!(client.get_active_flights().len(), 1);
+    assert_eq!(client.get_pending_outcomes(), 1);
+
+    client.set_to_be_settled(
+        &controller,
+        &fid,
+        &FLIGHT_DATE,
+        &FlightStatus::ToBeSettledCancelled,
+    );
+    client.set_settled(&controller, &fid, &FLIGHT_DATE);
+    assert_eq!(client.get_pending_outcomes(), 0);
+}
+
+#[test]
 fn test_full_lifecycle_cancelled() {
     let (env, client, _owner, oracle, controller) = setup();
     let fid = flight_id(&env);

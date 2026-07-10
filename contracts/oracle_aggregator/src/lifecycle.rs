@@ -90,27 +90,54 @@ impl OracleAggregator {
         emit_status_event(e, &flight_id, date, &FlightStatus::Landed);
     }
 
-    /// Mark flight as cancelled. Transitions Active → Cancelled.
+    /// Mark flight as cancelled. Transitions NotInitiated/Active → Cancelled.
+    ///
+    /// Unlike the other outcome writes, this also accepts a flight that has
+    /// never been registered. Registration normally happens as a side effect of
+    /// the first purchase, so without this path the oracle could not record a
+    /// publicly known cancellation until someone bought a policy — and the
+    /// purchase gate, seeing no oracle record, would admit buyers into a flight
+    /// whose payout is already certain. Writing the cancellation first creates
+    /// a purchase-blocking record.
+    ///
+    /// A record created this way is deliberately kept OUT of the active flight
+    /// list and the pending-outcomes counter: absence of a record proves no
+    /// policy exists (every purchase registers the flight), so there is no
+    /// premium or collateral to settle and no unrecognized vault PnL. Entering
+    /// the classify/settle pipeline would strand the flight forever on a
+    /// missing pool config and jam the vault's settlement barrier. The record
+    /// is a tombstone: it exists only so the purchase gate sees `Cancelled`.
     #[when_not_paused]
     pub fn set_cancelled(e: &Env, oracle: Address, flight_id: Symbol, date: u64) {
         require_oracle(e, &oracle);
 
         let key = OracleKey::FlightData(flight_id.clone(), date);
-        let mut data: FlightData = e
-            .storage()
-            .persistent()
-            .get(&key)
-            .expect("flight not registered");
+        match e.storage().persistent().get::<_, FlightData>(&key) {
+            Some(mut data) => {
+                if !(is_valid_transition(&data.status, &FlightStatus::Cancelled)) {
+                    panic_with_error!(e, Error::InvalidTransition);
+                }
 
-        if !(is_valid_transition(&data.status, &FlightStatus::Cancelled)) {
-            panic_with_error!(e, Error::InvalidTransition);
+                data.status = FlightStatus::Cancelled;
+                e.storage().persistent().set(&key, &data);
+
+                // Outcome is now public but not yet financially settled.
+                increment_pending_outcomes(e);
+            }
+            None => {
+                // Pre-registration cancellation: create the tombstone record
+                // (see the doc comment — no active-list entry, no pending
+                // outcome, nothing to settle).
+                let data = FlightData {
+                    status: FlightStatus::Cancelled,
+                    estimated_arrival_time: 0,
+                    actual_arrival_time: 0,
+                    settled_at: 0,
+                };
+                e.storage().persistent().set(&key, &data);
+            }
         }
 
-        data.status = FlightStatus::Cancelled;
-        e.storage().persistent().set(&key, &data);
-
-        // Outcome is now public but not yet financially settled.
-        increment_pending_outcomes(e);
         extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &FlightStatus::Cancelled);
     }
