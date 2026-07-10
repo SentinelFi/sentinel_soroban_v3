@@ -99,6 +99,10 @@ pub(crate) fn is_valid_transition(from: &FlightStatus, to: &FlightStatus) -> boo
             // Short-notice cancellation: oracle may learn the flight is
             // cancelled before it has set an estimated arrival time.
             | (FlightStatus::NotInitiated, FlightStatus::Cancelled)
+            // Void path for purchased dates that never produced any flight
+            // data: settleable as on-time (no payout) once the stale timeout
+            // has passed — `set_to_be_settled` enforces the timing.
+            | (FlightStatus::NotInitiated, FlightStatus::ToBeSettledOnTime)
             | (FlightStatus::Active, FlightStatus::Landed)
             | (FlightStatus::Active, FlightStatus::Cancelled)
             | (FlightStatus::Landed, FlightStatus::ToBeSettledOnTime)

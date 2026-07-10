@@ -175,3 +175,46 @@ fn ttl_miss_emitted_on_classify_with_missing_oracle_data() {
         "expected sentinel.ttl_miss event for NotInitiated flight"
     );
 }
+
+// =========================================================================
+// Stale unconfirmed flight — void path
+// =========================================================================
+
+#[test]
+fn stale_unconfirmed_flight_voided_and_collateral_released() {
+    // A purchase for a date that never matches a physical flight leaves the
+    // oracle row NotInitiated forever: no outcome can arrive, so without a
+    // timeout the payoff collateral and the policy bucket would be pinned
+    // indefinitely. Once the flight is well past departure with still no
+    // data, the keeper voids it — settled like an on-time flight: premiums
+    // become vault yield, collateral is released, and nothing is payable
+    // (paying out on a flight that provably never flew would let anyone mint
+    // guaranteed claims from bogus dates).
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler); // no oracle data will ever follow
+    let tma_before = t.vault.get_total_managed_assets();
+    assert_eq!(t.vault.get_locked_capital(), PAYOFF);
+
+    // Within the stale window the keeper leaves the flight alone.
+    t.classify_and_settle();
+    assert_eq!(t.vault.get_locked_capital(), PAYOFF);
+
+    // Past departure + stale timeout, the next keeper cycle voids it.
+    t.advance_time(FLIGHT_DATE - INITIAL_TIMESTAMP + 14 * SECONDS_PER_DAY + 1);
+    t.classify_and_settle();
+
+    assert_eq!(t.vault.get_locked_capital(), 0);
+    assert_eq!(t.vault.get_total_managed_assets(), tma_before + PREMIUM);
+    assert_eq!(
+        t.oracle
+            .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE)
+            .status,
+        oracle_aggregator::FlightStatus::Settled
+    );
+    assert!(!t.oracle.has_pending_outcomes());
+    assert!(t
+        .pool
+        .try_claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE)
+        .is_err());
+}

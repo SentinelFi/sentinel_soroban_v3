@@ -306,6 +306,62 @@ fn test_set_cancelled_from_not_initiated_enters_settlement_pipeline() {
 }
 
 #[test]
+fn test_stale_not_initiated_void_gated_by_timeout() {
+    // A registered flight whose data never arrived can be classified straight
+    // to ToBeSettledOnTime (the void path) — but only once the stale timeout
+    // past departure has elapsed, so a flight the executor merely hasn't
+    // fetched yet can never be voided. The void counts as a pending outcome
+    // until settled, keeping the vault's settlement barrier consistent.
+    let (env, client, _owner, _oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+
+    // Before the timeout: rejected.
+    assert!(client
+        .try_set_to_be_settled(
+            &controller,
+            &fid,
+            &FLIGHT_DATE,
+            &FlightStatus::ToBeSettledOnTime,
+        )
+        .is_err());
+
+    env.ledger()
+        .with_mut(|li| li.timestamp = FLIGHT_DATE + 14 * 86_400 + 1);
+
+    // Delayed / cancelled are never valid targets from NotInitiated — a
+    // dataless flight must not become payable.
+    assert!(client
+        .try_set_to_be_settled(
+            &controller,
+            &fid,
+            &FLIGHT_DATE,
+            &FlightStatus::ToBeSettledDelayed,
+        )
+        .is_err());
+    assert!(client
+        .try_set_to_be_settled(
+            &controller,
+            &fid,
+            &FLIGHT_DATE,
+            &FlightStatus::ToBeSettledCancelled,
+        )
+        .is_err());
+
+    // Past the timeout the void classification lands, counts as pending, and
+    // settles normally.
+    client.set_to_be_settled(
+        &controller,
+        &fid,
+        &FLIGHT_DATE,
+        &FlightStatus::ToBeSettledOnTime,
+    );
+    assert_eq!(client.get_pending_outcomes(), 1);
+    client.set_settled(&controller, &fid, &FLIGHT_DATE);
+    assert_eq!(client.get_pending_outcomes(), 0);
+}
+
+#[test]
 fn test_full_lifecycle_cancelled() {
     let (env, client, _owner, oracle, controller) = setup();
     let fid = flight_id(&env);

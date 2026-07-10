@@ -3,7 +3,9 @@ use stellar_macros::when_not_paused;
 
 use crate::auth::require_keeper;
 use crate::constants::MAX_SETTLE_BATCH;
-use crate::events::{FlightClassified, FlightConfigMissing, FlightSettledEvent, TtlMiss};
+use crate::events::{
+    FlightClassified, FlightConfigMissing, FlightSettledEvent, FlightVoided, TtlMiss,
+};
 use crate::interfaces::{FlightPoolManagerClient, FlightStatus, OracleClient, VaultClient};
 use crate::storage::CtrlKey;
 use crate::{Controller, ControllerArgs, ControllerClient};
@@ -88,18 +90,42 @@ impl Controller {
                     }
                 }
                 FlightStatus::NotInitiated => {
-                    // Oracle has no data for a flight that's already in the
-                    // active list — registered via buy_insurance, but oracle
-                    // either hasn't fetched yet or the FlightData entry has
-                    // archived. Emit a diagnostic for the off-chain TTL-
-                    // extender cron to act on. No state change; just a
-                    // warning signal.
-                    TtlMiss {
-                        flight_id: flight_id.clone(),
-                        date,
+                    let stale_at = date
+                        .checked_add(sentinel_types::timeouts::STALE_FLIGHT_TIMEOUT_SECS)
+                        .expect("addition overflow");
+                    if oracle.has_flight_data(&flight_id, &date)
+                        && e.ledger().timestamp() >= stale_at
+                    {
+                        // No flight data ever arrived and the flight is now
+                        // long past departure: the purchased date most likely
+                        // never matched a physical flight. Void it — settle
+                        // as on-time so the premiums become vault yield and
+                        // the locked collateral is released, instead of the
+                        // row pinning vault capital and a policy-bucket slot
+                        // forever. Never a payout: paying claims on a flight
+                        // that provably never flew would let anyone mint
+                        // guaranteed claims from bogus dates. The
+                        // has_flight_data guard keeps archived rows out of
+                        // this path — a missing entry is a TTL lapse needing
+                        // restoration, not proof the flight never existed.
+                        FlightVoided {
+                            flight_id: flight_id.clone(),
+                            date,
+                        }
+                        .publish(e);
+                        Some(FlightStatus::ToBeSettledOnTime)
+                    } else {
+                        // Not yet fetched by the executor (normal
+                        // pre-departure state) or archived past TTL. Emit the
+                        // diagnostic for the off-chain TTL/restoration
+                        // tooling; no state change.
+                        TtlMiss {
+                            flight_id: flight_id.clone(),
+                            date,
+                        }
+                        .publish(e);
+                        None
                     }
-                    .publish(e);
-                    None
                 }
                 _ => None,
             };

@@ -29,6 +29,21 @@ pub mod ttl {
     pub const INSTANCE_TTL_EXTEND: u32 = 535_680;
 }
 
+/// Cross-contract lifecycle timeouts. Shared between the Controller (which
+/// decides when to act) and the OracleAggregator (which validates the acting
+/// transition), so the two can never drift apart.
+pub mod timeouts {
+    /// How long after its scheduled departure a purchased flight may remain
+    /// `NotInitiated` — i.e. no oracle data was EVER recorded for it — before
+    /// the protocol may void it, settling it like an on-time flight
+    /// (premiums to the vault, collateral released, no payout). A real flight
+    /// gets its estimated arrival within one executor cycle of purchase, so a
+    /// row still bare two weeks past departure means the date never matched a
+    /// physical flight; without this timeout such a row would hold vault
+    /// collateral and a policy-bucket slot forever.
+    pub const STALE_FLIGHT_TIMEOUT_SECS: u64 = 14 * 86_400;
+}
+
 // =========================================================================
 // governance_module
 // =========================================================================

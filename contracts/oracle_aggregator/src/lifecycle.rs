@@ -241,6 +241,25 @@ impl OracleAggregator {
             panic_with_error!(e, Error::InvalidTransition);
         }
 
+        // Voiding a flight that never produced any data (NotInitiated, no
+        // outcome to classify from) is only legitimate once the stale timeout
+        // past departure has elapsed — enforced here, on the state machine
+        // itself, so no caller can void a date the executor merely hasn't
+        // fetched yet. The void counts as a pending outcome from this moment:
+        // it deterministically implies premium income the vault has not yet
+        // recognized, so LP entry/exit must be barred until it settles (the
+        // Landed/Cancelled paths increment at outcome time instead; their
+        // classification is not a new disclosure).
+        if data.status == FlightStatus::NotInitiated {
+            let stale_at = date
+                .checked_add(sentinel_types::timeouts::STALE_FLIGHT_TIMEOUT_SECS)
+                .expect("addition overflow");
+            if e.ledger().timestamp() < stale_at {
+                panic_with_error!(e, Error::StaleTimeoutNotReached);
+            }
+            increment_pending_outcomes(e);
+        }
+
         data.status = status.clone();
         e.storage().persistent().set(&key, &data);
 
