@@ -1783,6 +1783,18 @@ network_passphrase = "Public Global Stellar Network ; September 2015"
         OracleAggregator.set_controller(CONTRACT_ID_CONTROLLER)   <- one-time, immutable
         RiskVault.set_controller(CONTRACT_ID_CONTROLLER)           <- one-time, immutable
         FlightPoolManager.set_controller(CONTRACT_ID_CONTROLLER)   <- one-time, immutable
+        RiskVault.set_oracle(CONTRACT_ID_ORACLE)                   <- REQUIRED: enables the
+                                                                      settlement barrier that blocks
+                                                                      LP entry/exit while a flight
+                                                                      outcome is public but unsettled.
+                                                                      Owner-updatable. If omitted, the
+                                                                      barrier stays inactive and the
+                                                                      free-option risk is open.
+                                                                      (This is RiskVault pointing at the
+                                                                      oracle CONTRACT — distinct from
+                                                                      step 7's OracleAggregator.set_oracle,
+                                                                      which sets the off-chain oracle
+                                                                      executor address.)
 
 4. Set global defaults:
         GovernanceModule.set_defaults(premium, payoff, delay_hours)

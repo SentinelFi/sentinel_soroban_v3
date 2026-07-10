@@ -51,6 +51,16 @@ impl RiskVault {
         ControllerSet { controller }.publish(e);
     }
 
+    /// Set (or update) the OracleAggregator address the vault consults to block
+    /// entry/exit while a flight outcome is public but not yet settled. Owner-
+    /// only. Until this is set the settlement-pending gate is inactive, so a
+    /// production deployment must call it after the oracle is deployed.
+    #[only_owner]
+    pub fn set_oracle(e: &Env, oracle: Address) {
+        e.storage().instance().set(&VaultKey::Oracle, &oracle);
+        Self::extend_ttl(e);
+    }
+
     /// Extend instance TTL. Called by cron as a safety net.
     pub fn extend_ttl(e: &Env) {
         e.storage()

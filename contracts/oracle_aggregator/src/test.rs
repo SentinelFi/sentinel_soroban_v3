@@ -455,7 +455,7 @@ fn test_active_flights_not_removed_on_settlement() {
 // --- Delayed prune tests ---
 
 const SECONDS_PER_DAY: u64 = 86_400;
-const RETENTION_SECONDS: u64 = 30 * SECONDS_PER_DAY;
+const RETENTION_SECONDS: u64 = 7 * SECONDS_PER_DAY;
 
 fn settle_full_lifecycle(
     env: &Env,
@@ -549,9 +549,9 @@ fn test_prune_settled_no_op_before_retention_window() {
     env.ledger().with_mut(|li| li.timestamp = 1_710_500_000);
     settle_full_lifecycle(&env, &client, &oracle, &controller, &fid, FLIGHT_DATE);
 
-    // Advance only 29 days — still within retention window.
+    // Advance only 6 days — still within the retention window.
     env.ledger()
-        .with_mut(|li| li.timestamp = 1_710_500_000 + (29 * SECONDS_PER_DAY));
+        .with_mut(|li| li.timestamp = 1_710_500_000 + (6 * SECONDS_PER_DAY));
 
     client.prune_settled();
 

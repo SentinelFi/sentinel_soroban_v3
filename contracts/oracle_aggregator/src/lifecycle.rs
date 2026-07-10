@@ -10,7 +10,10 @@ use crate::constants::{
     MAX_ACTIVE_FLIGHTS, MAX_PRUNE_BATCH, SECONDS_PER_DAY, SETTLED_RETENTION_DAYS,
 };
 use crate::events::{emit_status_event, MissingFlightDataPruned};
-use crate::storage::{extend_flight_ttl_to, is_valid_transition, OracleKey};
+use crate::storage::{
+    decrement_pending_outcomes, extend_flight_ttl_to, increment_pending_outcomes,
+    is_valid_transition, OracleKey,
+};
 use crate::{
     Error, FlightData, FlightStatus, OracleAggregator, OracleAggregatorArgs, OracleAggregatorClient,
 };
@@ -81,6 +84,8 @@ impl OracleAggregator {
         data.actual_arrival_time = actual_arrival_time;
         e.storage().persistent().set(&key, &data);
 
+        // Outcome is now public but not yet financially settled.
+        increment_pending_outcomes(e);
         extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &FlightStatus::Landed);
     }
@@ -104,6 +109,8 @@ impl OracleAggregator {
         data.status = FlightStatus::Cancelled;
         e.storage().persistent().set(&key, &data);
 
+        // Outcome is now public but not yet financially settled.
+        increment_pending_outcomes(e);
         extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &FlightStatus::Cancelled);
     }
@@ -216,6 +223,8 @@ impl OracleAggregator {
         data.settled_at = e.ledger().timestamp();
         e.storage().persistent().set(&key, &data);
 
+        // Pending PnL for this flight is now recognized in the vault.
+        decrement_pending_outcomes(e);
         emit_status_event(e, &flight_id, date, &FlightStatus::Settled);
     }
 

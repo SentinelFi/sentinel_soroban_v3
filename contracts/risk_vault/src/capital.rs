@@ -7,7 +7,7 @@ use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
 
-use crate::auth::require_controller;
+use crate::auth::{require_controller, settlement_pending};
 use crate::constants::{CLAIMABLE_TTL_LEDGERS, MAX_QUEUE_BATCH};
 use crate::events::Credited;
 use crate::storage::VaultKey;
@@ -109,6 +109,15 @@ impl RiskVault {
     pub fn process_withdrawal_queue(e: &Env, controller: Address) {
         require_controller(e, &controller);
         Self::extend_ttl(e);
+
+        // Do not price queued exits while a public flight outcome is unsettled —
+        // that would hand the exiting LP the pre-settlement (stale) share price
+        // and shift the pending loss to the remaining LPs. The keeper drains the
+        // queue after settlement, when the vault's PnL is recognized; until then
+        // this is a no-op and the requests stay queued.
+        if settlement_pending(e) {
+            return;
+        }
 
         let queue: Vec<WithdrawalRequest> = e
             .storage()

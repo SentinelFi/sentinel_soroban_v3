@@ -59,4 +59,19 @@ impl OracleAggregator {
     pub fn get_authorized_controller(e: &Env) -> Option<Address> {
         e.storage().instance().get(&OracleKey::AuthorizedController)
     }
+
+    /// Number of flights whose outcome is publicly recorded but not yet settled.
+    pub fn get_pending_outcomes(e: &Env) -> u64 {
+        e.storage()
+            .instance()
+            .get(&OracleKey::PendingOutcomes)
+            .unwrap_or(0)
+    }
+
+    /// Whether any flight outcome is public but not yet financially settled.
+    /// The vault reads this to block entry/exit while pending PnL is
+    /// unrecognized, so LPs cannot transact at a stale share price.
+    pub fn has_pending_outcomes(e: &Env) -> bool {
+        Self::get_pending_outcomes(e) > 0
+    }
 }

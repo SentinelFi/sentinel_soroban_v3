@@ -21,7 +21,7 @@ fn prune_settled_after_30d_evicts_aged_flights() {
     // Flight is settled but still in the active list.
     assert_eq!(t.oracle.get_active_flights().len(), 1);
 
-    // Advance past the 30-day retention window.
+    // Advance well past the settled-flight retention window.
     t.advance_time(30 * SECONDS_PER_DAY + 1);
 
     t.oracle.prune_settled();
@@ -64,8 +64,8 @@ fn prune_settled_no_op_before_retention_window() {
     t.oracle_on_time();
     t.classify_and_settle();
 
-    // Only advance 29 days — flight stays in list.
-    t.advance_time(29 * SECONDS_PER_DAY);
+    // Only advance 6 days — still within the retention window, flight stays.
+    t.advance_time(6 * SECONDS_PER_DAY);
     t.oracle.prune_settled();
     assert_eq!(t.oracle.get_active_flights().len(), 1);
 }

@@ -33,6 +33,12 @@ impl RiskVault {
         e.storage().instance().get(&VaultKey::Controller).unwrap()
     }
 
+    /// Return the configured oracle address, or None if the settlement-pending
+    /// gate has not been wired yet.
+    pub fn get_oracle(e: &Env) -> Option<Address> {
+        e.storage().instance().get(&VaultKey::Oracle)
+    }
+
     /// Return the current pending withdrawal request queue.
     pub fn get_withdrawal_queue(e: &Env) -> Vec<WithdrawalRequest> {
         e.storage()

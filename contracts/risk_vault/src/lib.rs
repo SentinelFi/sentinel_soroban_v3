@@ -33,6 +33,7 @@ mod claims;
 mod constants;
 mod error;
 mod events;
+mod interfaces;
 mod queries;
 mod snapshot;
 mod storage;
