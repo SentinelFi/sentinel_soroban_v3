@@ -27,6 +27,38 @@ pub mod ttl {
     pub const INSTANCE_TTL_THRESHOLD: u32 = 120_960;
     /// ~31 days at 5s/ledger (31 * 24 * 60 * 12).
     pub const INSTANCE_TTL_EXTEND: u32 = 535_680;
+
+    /// ~7 days at 5s/ledger — threshold for flat Persistent extensions.
+    pub const PERSISTENT_TTL_THRESHOLD: u32 = 120_960;
+    /// ~31 days at 5s/ledger — flat floor for per-flight Persistent entries.
+    pub const PERSISTENT_TTL_EXTEND: u32 = 535_680;
+    /// ~30 days at 5s/ledger — safety buffer added past a business deadline
+    /// when sizing a deadline-derived TTL extension.
+    pub const TTL_BUFFER_LEDGERS: u32 = 518_400;
+    /// ~180 days — Stellar's maximum persistent-entry TTL. `extend_ttl`
+    /// panics if the target exceeds the network max, so every computed
+    /// extension must be clamped to this.
+    pub const MAX_PERSISTENT_TTL_LEDGERS: u32 = 3_110_400;
+    /// Ledger-time conversion: ~5 s per ledger on mainnet, expressed as a
+    /// ratio so the arithmetic stays integral.
+    pub const LEDGERS_PER_SECOND_NUM: u64 = 1;
+    pub const LEDGERS_PER_SECOND_DEN: u64 = 5;
+
+    /// Ledger count that keeps a Persistent entry alive until `deadline_secs`
+    /// plus the safety buffer. Never shortens: floors at
+    /// [`PERSISTENT_TTL_EXTEND`] (a deadline already in the past yields the
+    /// flat ~31-day extension) and clamps to the network maximum. Shared by
+    /// the pool's and the oracle's per-flight TTL sizing so the two can never
+    /// drift apart.
+    pub fn deadline_extension_ledgers(now: u64, deadline_secs: u64) -> u32 {
+        let secs_remaining = deadline_secs.saturating_sub(now);
+        let ledgers_remaining =
+            secs_remaining.saturating_mul(LEDGERS_PER_SECOND_NUM) / LEDGERS_PER_SECOND_DEN;
+        let ledgers_remaining_u32 = u32::try_from(ledgers_remaining).unwrap_or(u32::MAX);
+        ledgers_remaining_u32
+            .saturating_add(TTL_BUFFER_LEDGERS)
+            .clamp(PERSISTENT_TTL_EXTEND, MAX_PERSISTENT_TTL_LEDGERS)
+    }
 }
 
 /// Cross-contract lifecycle timeouts. Shared between the Controller (which

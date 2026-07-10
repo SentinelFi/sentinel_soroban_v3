@@ -675,7 +675,7 @@ fn test_cancel_withdrawal_by_request_id_is_index_independent() {
 }
 
 #[test]
-#[should_panic(expected = "request_id not found")]
+#[should_panic(expected = "Error(Contract, #721)")]
 fn test_cancel_withdrawal_with_unknown_request_id_panics() {
     let (_env, client, _owner, _controller, depositor) = setup();
     client.cancel_withdrawal(&depositor, &9999u64);
@@ -764,6 +764,39 @@ fn test_snapshot_noop_if_too_soon() {
     let day = 100_000 / 86400;
     let price = client.get_snapshot_price(&day);
     assert!(price > 0);
+}
+
+#[test]
+fn test_snapshot_records_each_calendar_day() {
+    // The once-per-day gate is aligned to calendar days (the same day number
+    // used as the storage key), not a rolling 24-hour window — a snapshot
+    // taken late in day N must not suppress day N+1's snapshot.
+    let (env, client, _owner, _controller, depositor) = setup();
+
+    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+
+    // Late in day 1 (23:00).
+    env.ledger().with_mut(|li| {
+        li.timestamp = 2 * SECONDS_PER_DAY - 3_600;
+    });
+    client.snapshot();
+    assert!(client.get_snapshot_price(&1) > 0);
+
+    // Early in day 2 (01:00) — only two hours later, but a new calendar day.
+    env.ledger().with_mut(|li| {
+        li.timestamp = 2 * SECONDS_PER_DAY + 3_600;
+    });
+    client.snapshot();
+    assert!(
+        client.get_snapshot_price(&2) > 0,
+        "day 2 must get a snapshot"
+    );
+
+    // Repeat within day 2 stays a no-op (idempotent).
+    env.ledger().with_mut(|li| {
+        li.timestamp = 2 * SECONDS_PER_DAY + 7_200;
+    });
+    client.snapshot();
 }
 
 #[test]

@@ -23,20 +23,13 @@ pub(crate) const MAX_PRUNE_BATCH: u32 = 60;
 /// + a compact index) is a larger storage migration tracked separately.
 pub(crate) const MAX_ACTIVE_FLIGHTS: u32 = 1_000;
 
-pub(crate) const PERSISTENT_TTL_EXTEND: u32 = 535_680; // ~31 days
-
-// Deadline-derived TTL inputs. A flight may be insured up to
-// 90 days before departure, but `extend_flight_ttl` only bumps FlightData by a
-// flat ~31 days — so a long-dated record could archive before the oracle ever
-// reports on it, after which every lifecycle write panics ("flight not
-// registered"). `extend_flight_ttl_to` instead sizes the extension to cover the
-// flight date plus a settlement buffer.
-pub(crate) const TTL_BUFFER_LEDGERS: u32 = 518_400; // ~30 days at 5s/ledger
-pub(crate) const LEDGERS_PER_SECOND_NUM: u64 = 1;
-pub(crate) const LEDGERS_PER_SECOND_DEN: u64 = 5; // ~5 s per ledger on mainnet
-                                                  // ~180 days = Stellar's maximum persistent-entry TTL. extend_ttl panics if the
-                                                  // target exceeds the network max, so any computed extension is clamped here.
-pub(crate) const MAX_PERSISTENT_TTL_LEDGERS: u32 = 3_110_400;
+// Deadline-derived TTL inputs (flat floor, post-deadline buffer, ledger-time
+// conversion, and network-max clamp) live in `sentinel_types::ttl`, shared
+// with the pool. A flight may be insured up to 90 days before departure, but a
+// flat ~31-day bump would let a long-dated record archive before the oracle
+// ever reports on it, after which every lifecycle write panics ("flight not
+// registered"). `extend_flight_ttl_to` instead sizes the extension to cover
+// the flight date plus a settlement buffer.
 
 /// TTL horizon for a flight whose outcome is recorded but whose financial
 /// settlement has not completed (Landed/Cancelled/ToBeSettled*). Settlement is

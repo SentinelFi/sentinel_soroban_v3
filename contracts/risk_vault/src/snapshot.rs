@@ -3,6 +3,7 @@ use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
 
+use crate::auth::settlement_pending;
 use crate::constants::{SECONDS_PER_DAY, SNAPSHOT_TTL_LEDGERS};
 use crate::events::SharePriceSnapshot;
 use crate::storage::VaultKey;
@@ -33,13 +34,20 @@ impl RiskVault {
             .get(&VaultKey::LastSnapshotTime)
             .unwrap_or(0);
 
-        // No-op if already snapshotted today (safe to call repeatedly)
-        if last != 0
-            && now
-                < last
-                    .checked_add(SECONDS_PER_DAY)
-                    .expect("addition overflow")
-        {
+        // No-op if this calendar day already has a snapshot. Gating on the
+        // day number (the same value used as the storage key) rather than a
+        // rolling 24-hour window keeps the series aligned to calendar days —
+        // a rolling gate lets the snapshot time creep forward and skip days.
+        let day = now.checked_div(SECONDS_PER_DAY).expect("division by zero");
+        if last != 0 && day == last / SECONDS_PER_DAY {
+            return;
+        }
+
+        // Skip while a public flight outcome awaits settlement: the NAV at
+        // this moment includes unrecognized PnL, so recording it would
+        // publish a price no executable path honors. The cron retries and
+        // records once settlement completes.
+        if settlement_pending(e) {
             return;
         }
 
@@ -76,7 +84,6 @@ impl RiskVault {
             scale
         };
 
-        let day = now.checked_div(SECONDS_PER_DAY).expect("division by zero");
         // SnapshotPrice lives in Temporary storage with a 30-day TTL — old
         // snapshots auto-delete with no archival rent. Historical analytics
         // are off-chain via events.

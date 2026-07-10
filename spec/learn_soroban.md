@@ -68,6 +68,19 @@ Instance and Persistent storage entries are **never permanently deleted** on Sor
 
 This changes the severity framing: most issues are "temporarily inaccessible until restored" rather than "permanently lost." However, restoration requires the operator to **notice** the archival and **know** which entries to restore — which is why prevention (TTL management) and detection (graceful error handling + events) are both important.
 
+### ⚠️ What contract code actually observes for an archived entry
+
+Several places in this document (and defensive branches in the contracts) describe an archived Persistent entry as "reads back as missing" inside contract execution — `get() → None`, `has() → false`. **That is not guaranteed by the platform and must not be relied on.** What actually happens to a transaction that touches an expired Persistent key depends on the protocol version:
+
+- **Fail-until-restored semantics:** the transaction fails at the footprint level (the entry is archived) until a `RestoreFootprintOp` brings it back — contract code never runs against the missing key.
+- **Automatic-restoration semantics (newer protocols):** the entry is restored automatically when accessed, at additional fee, with its **original value** — contract code sees the old data, not `None`.
+
+In **neither** regime does a once-written key read as absent. The `unwrap_or(...)` / `has()` fallbacks in the contracts therefore fire only for keys that were **never written** — they are defense-in-depth for genuinely-unregistered lookups, not archival handling. (The SDK test environment panics on expired-entry access, so these branches cannot be exercised by unit tests either.) Operational consequences:
+
+- Diagnostic/recovery paths keyed on "missing = archived" (`data_missing` retention, `cfg_missing` skips, `evict_missing_flight`, `has_flight_data`) act on *physically absent* entries; for genuinely archived entries the recovery tool is restoration, driven off-chain.
+- The executor must handle restore preambles (`restorePreamble` from transaction simulation) on keeper transactions so an archived entry in a scan window is restored rather than repeatedly failing the keeper call.
+- Before mainnet, confirm the target protocol's exact behavior with a deliberately-expired Persistent entry on testnet, and align runbooks with the result.
+
 ---
 
 ## OZ Crate Storage (Already Correct)

@@ -4,7 +4,7 @@ use stellar_macros::only_owner;
 
 use crate::auth::extend_instance_ttl;
 use crate::events::{ControllerSet, FlightEvicted, OracleSet};
-use crate::storage::OracleKey;
+use crate::storage::{decrement_pending_outcomes, OracleKey};
 use crate::{Error, OracleAggregator, OracleAggregatorArgs, OracleAggregatorClient};
 
 #[contractimpl]
@@ -56,12 +56,27 @@ impl OracleAggregator {
     /// archived is not settled, and permissionless eviction would strip an
     /// unresolved flight from keeper enumeration. Freeing the capped list
     /// slot therefore requires the owner to first confirm, off-chain, that
-    /// the flight needs no further on-chain resolution (or to restore the
-    /// archived entry instead, after which the normal pipeline resumes).
+    /// the flight needs no further on-chain resolution. **Restoring the
+    /// archived entry and letting the normal settle pipeline finish is always
+    /// the preferred path** — eviction removes the flight from keeper
+    /// enumeration permanently (re-registration of an existing key does not
+    /// re-add it to the list).
+    ///
+    /// `outcome_pending` must be `true` iff the flight's outcome was already
+    /// publicly recorded (it reached Landed / Cancelled / ToBeSettled*) and
+    /// therefore counted toward `PendingOutcomes`. The counter is only ever
+    /// released by settlement; evicting such a flight without releasing its
+    /// count would leave the vault's entry/exit barrier engaged forever, with
+    /// no remaining on-chain path to decrement it. The owner reconstructs the
+    /// flag from the flight's status-change events. Passing `true` for a
+    /// flight that was never counted opens the barrier early instead — both
+    /// directions are owner judgment calls, so the flag is recorded on the
+    /// audit event.
+    ///
     /// Bounded: refuses to evict a flight whose data is still present — live
     /// flights can only leave the list via the normal settle-and-prune path.
     #[only_owner]
-    pub fn evict_missing_flight(e: &Env, flight_id: Symbol, date: u64) {
+    pub fn evict_missing_flight(e: &Env, flight_id: Symbol, date: u64, outcome_pending: bool) {
         if e.storage()
             .persistent()
             .has(&OracleKey::FlightData(flight_id.clone(), date))
@@ -91,9 +106,19 @@ impl OracleAggregator {
         e.storage()
             .instance()
             .set(&OracleKey::ActiveFlightList, &flights);
+        // Release the barrier count this flight would have released at
+        // settlement — eviction is its terminal transition.
+        if outcome_pending {
+            decrement_pending_outcomes(e);
+        }
         extend_instance_ttl(e);
 
-        FlightEvicted { flight_id, date }.publish(e);
+        FlightEvicted {
+            flight_id,
+            date,
+            outcome_pending,
+        }
+        .publish(e);
     }
 
     // --- TTL management ---

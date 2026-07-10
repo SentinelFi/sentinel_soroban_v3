@@ -15,7 +15,11 @@ impl Controller {
             .unwrap_or(Vec::new(e))
     }
 
-    /// Returns aggregate stats: total policies sold, premiums collected, and payouts distributed.
+    /// Returns aggregate stats: total policies sold, premiums collected, and
+    /// payouts distributed. The payouts figure is the gross claimable value
+    /// opened by delayed/cancelled settlements (payoff × buyer_count) — it
+    /// includes the premium portion already held by the pool, not just the
+    /// vault's outflow.
     pub fn get_stats(e: &Env) -> (u64, i128, i128) {
         let sold: u64 = e
             .storage()

@@ -136,7 +136,10 @@ impl RiskVault {
                 break;
             }
         }
-        let idx = found.expect("request_id not found");
+        let idx = match found {
+            Some(i) => i,
+            None => panic_with_error!(e, Error::RequestNotFound),
+        };
         let request = queue.get(idx).unwrap();
         if request.owner != caller {
             panic_with_error!(e, Error::NotYourRequest);
@@ -160,6 +163,9 @@ impl RiskVault {
     #[when_not_paused]
     pub fn collect(e: &Env, caller: Address) {
         caller.require_auth();
+        // Renew the instance alongside every other user-facing path so
+        // ongoing use keeps the contract alive if the TTL cron lapses.
+        Self::extend_ttl(e);
 
         let key = VaultKey::ClaimableBalance(caller.clone());
         let claimable: i128 = e.storage().persistent().get(&key).unwrap_or(0);

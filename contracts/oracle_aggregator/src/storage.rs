@@ -1,9 +1,6 @@
 use soroban_sdk::{contracttype, Env, Symbol};
 
-use crate::constants::{
-    LEDGERS_PER_SECOND_DEN, LEDGERS_PER_SECOND_NUM, MAX_PERSISTENT_TTL_LEDGERS,
-    PERSISTENT_TTL_EXTEND,
-};
+use sentinel_types::ttl::deadline_extension_ledgers;
 
 // Cross-contract types live in the shared `sentinel_types` crate.
 pub use sentinel_types::{FlightData, FlightStatus};
@@ -26,22 +23,14 @@ pub enum OracleKey {
 }
 
 // Extend FlightData TTL to cover a deadline (the flight `date` pre-settlement) +
-// a settlement buffer, instead of a flat ~31 days. Mirrors
-// `flight_pool_manager::extend_flight_ttl_to`. Never shortens: floors at
-// PERSISTENT_TTL_EXTEND and clamps to the network max. Once `deadline_secs` is
-// in the past (flight already departed), the remaining term is zero so it
-// floors to the flat 31-day extension — exactly the right behavior for a flight
-// that is about to settle.
+// a settlement buffer, instead of a flat ~31 days. Never shortens: floors at
+// the flat ~31-day extension and clamps to the network max. Once
+// `deadline_secs` is in the past (flight already departed), the remaining term
+// is zero so it floors to the flat extension — exactly the right behavior for
+// a flight that is about to settle. The ledger math lives in
+// `sentinel_types::ttl` and is shared with the pool's per-flight sizing.
 pub(crate) fn extend_flight_ttl_to(e: &Env, flight_id: &Symbol, date: u64, deadline_secs: u64) {
-    use crate::constants::TTL_BUFFER_LEDGERS;
-    let now = e.ledger().timestamp();
-    let secs_remaining = deadline_secs.saturating_sub(now);
-    let ledgers_remaining =
-        secs_remaining.saturating_mul(LEDGERS_PER_SECOND_NUM) / LEDGERS_PER_SECOND_DEN;
-    let ledgers_remaining_u32 = u32::try_from(ledgers_remaining).unwrap_or(u32::MAX);
-    let extend_to = ledgers_remaining_u32
-        .saturating_add(TTL_BUFFER_LEDGERS)
-        .clamp(PERSISTENT_TTL_EXTEND, MAX_PERSISTENT_TTL_LEDGERS);
+    let extend_to = deadline_extension_ledgers(e.ledger().timestamp(), deadline_secs);
 
     let key = OracleKey::FlightData(flight_id.clone(), date);
     // Equal threshold/target forces the extension whenever the current TTL is

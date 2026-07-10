@@ -1,8 +1,7 @@
 use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
 
-use crate::constants::{
-    LEDGERS_PER_SECOND_DEN, LEDGERS_PER_SECOND_NUM, MAX_PERSISTENT_TTL_LEDGERS,
-    PERSISTENT_TTL_EXTEND, PERSISTENT_TTL_THRESHOLD, TTL_BUFFER_LEDGERS,
+use sentinel_types::ttl::{
+    deadline_extension_ledgers, PERSISTENT_TTL_EXTEND, PERSISTENT_TTL_THRESHOLD,
 };
 
 // Cross-contract types live in the shared `sentinel_types` crate.
@@ -35,16 +34,10 @@ pub(crate) fn extend_flight_ttl(e: &Env, flight_id: &Symbol, date: u64) {
 
 // Extend FlightConfig TTL to cover a deadline (claim window, or the flight date
 // itself pre-settlement) + safety buffer. Never shortens: floors at
-// PERSISTENT_TTL_EXTEND; clamped to the network max.
+// PERSISTENT_TTL_EXTEND; clamped to the network max. The ledger math lives in
+// `sentinel_types::ttl` and is shared with the oracle's per-flight sizing.
 pub(crate) fn extend_flight_ttl_to(e: &Env, flight_id: &Symbol, date: u64, deadline_secs: u64) {
-    let now = e.ledger().timestamp();
-    let secs_remaining = deadline_secs.saturating_sub(now);
-    let ledgers_remaining =
-        secs_remaining.saturating_mul(LEDGERS_PER_SECOND_NUM) / LEDGERS_PER_SECOND_DEN;
-    let ledgers_remaining_u32 = u32::try_from(ledgers_remaining).unwrap_or(u32::MAX);
-    let extend_to = ledgers_remaining_u32
-        .saturating_add(TTL_BUFFER_LEDGERS)
-        .clamp(PERSISTENT_TTL_EXTEND, MAX_PERSISTENT_TTL_LEDGERS);
+    let extend_to = deadline_extension_ledgers(e.ledger().timestamp(), deadline_secs);
 
     let key = PoolKey::FlightConfig(flight_id.clone(), date);
     // Use `extend_to` as the threshold, NOT the ~7-day

@@ -671,9 +671,9 @@ pool_client.register_flight(&controller_addr, &flight_id, &date,
 **Events emitted (audit L-03 + L-08 namespace pass; Phase 11 whitelist events):**
 
 ```
-("sentinel", "ctrl",              <traveler>, <flight_id>, <date>) → InsuranceBought             (premium)
-("sentinel", "ctrl",              <flight_id>, <date>)             → FlightClassified            (status)
-("sentinel", "ctrl",              <flight_id>, <date>)             → FlightSettledEvent          (outcome)
+("sentinel", "bought",            <traveler>, <flight_id>, <date>) → InsuranceBought             (premium)
+("sentinel", "classified",        <flight_id>, <date>)             → FlightClassified            (status)
+("sentinel", "settled",           <flight_id>, <date>)             → FlightSettledEvent          (outcome)
 ("sentinel", "ttl_miss",          <flight_id>)                     → TtlMiss                     (date)
 ("sentinel", "buyer_whitelisted", <addr>)                          → BuyerWhitelistedEvent
 ("sentinel", "buyer_removed",     <addr>)                          → BuyerWhitelistRemovedEvent
@@ -681,7 +681,9 @@ pool_client.register_flight(&controller_addr, &flight_id, &date,
 ```
 
 The first three are domain events covering the buy / classify / settle
-lifecycle. `InsuranceBought` gained `flight_id` and `date` as topics
+lifecycle, each with a distinct verb topic so indexers can discriminate at
+the topic-filter level without decoding payloads. `InsuranceBought` gained
+`flight_id` and `date` as topics
 (audit L-08) so indexers can filter by flight directly without joining
 through `BuyerAdded`. `TtlMiss` is a diagnostic warning emitted by
 `classify_flights` only — it fires once per `(flight_id, date)` per cron
@@ -1472,6 +1474,15 @@ operator can keep observability and TTL hygiene running during incident response
 `recover_uncollected` on the vault is intentionally exempt so the owner can still
 settle archived claims during a pause.
 
+**Operate pause/unpause as a set.** The keeper loops call pause-gated entry points
+cross-contract (`pool.settle_*`, `oracle.set_to_be_settled` / `set_settled`), so
+pausing the pool or the oracle alone makes `classify_flights` /
+`execute_settlements` revert wholesale rather than skip — settlement halts for
+every flight, and any already-public outcome keeps the vault's settlement barrier
+engaged (LP entry/exit blocked) until the paused contract is resumed and the
+keeper catches up. Incident procedure: pause all five contracts together, and
+unpause them together.
+
 ### Share Price Manipulation (RiskVault)
 
 The OZ Vault's virtual decimals offset (`10^3` virtual shares) combined with the overridden
@@ -1531,6 +1542,16 @@ inaccessible until restored" rather than "permanently lost."
 - **No per-underwriter capital attribution** — `locked_capital` is pool-level.
 - **Classification lag** — up to 1 hour between oracle data write and classification.
   Settlement lag is at most 5 minutes after classification.
+- **Settlement-barrier duration scales with keeper cadence.** The vault blocks LP
+  entry/exit from the moment any outcome is public until it settles. Classification
+  processes at most `MAX_SETTLE_BATCH = 25` flights per call, so at high active-flight
+  volume an hourly classifier can leave outcomes unclassified for many hours — keeping
+  the barrier engaged most of the day and making the withdrawal queue the only LP path.
+  **Operational invariant:** under load, run the classifier at the same 5-minute cadence
+  as the settler (the contracts accept any cadence; batch caps bound the per-call cost).
+  A flight that can never settle (missing pool config, stalled restore) keeps the barrier
+  on until operations resolves it — see `evict_missing_flight` for the terminal escape
+  hatch and its `outcome_pending` flag.
 - **Executor availability** — depends on backend choice and its uptime guarantees.
 - **Storage rent** — if TTL management fails and data archives, a restore transaction is
   needed. The TTL cron is the primary extender; if it stops, manual `RestoreFootprintOp`
@@ -1619,7 +1640,7 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Prune aged-out settled flights | Anyone | `oracle.prune_settled()` |
 | Read active flight count | Anyone | `oracle.get_active_flight_count()` (alert as it nears the list cap) |
 | Check flight data physically exists | Anyone | `oracle.has_flight_data(flight_id, date)` (distinguishes archived from unregistered) |
-| Evict archived flight from list | Owner | `oracle.evict_missing_flight(flight_id, date)` (only when FlightData is missing; after off-chain finality confirmation) |
+| Evict archived flight from list | Owner | `oracle.evict_missing_flight(flight_id, date, outcome_pending)` (only when FlightData is missing; after off-chain finality confirmation. Restore-and-settle is always preferred. `outcome_pending = true` iff the flight's outcome was already public — Landed/Cancelled/ToBeSettled\* per its event history — so the eviction releases the settlement-barrier count that settlement would have released; getting the flag wrong either strands the barrier or opens it early) |
 | Update keeper address | Owner | `controller.set_keeper(new_keeper)` |
 | Update oracle address | Owner | `oracle.set_oracle(new_oracle)` |
 | Set min withdrawal request size | Owner | `risk_vault.set_min_withdrawal_request(min_assets)` (0 disables; deployment must set a per-asset floor; enforcement clamped to TMA/2500) |

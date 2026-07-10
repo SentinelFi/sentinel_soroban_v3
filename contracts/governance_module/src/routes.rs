@@ -15,6 +15,15 @@ use crate::{
     PayoffUpdate, PremiumUpdate,
 };
 
+// Load a route entry or fail with the typed `RouteNotFound` error, so clients
+// get a decodable error code instead of an opaque host panic.
+fn read_route(e: &Env, key: &DataKey) -> RouteTerms {
+    match e.storage().persistent().get(key) {
+        Some(t) => t,
+        None => panic_with_error!(e, Error::RouteNotFound),
+    }
+}
+
 #[contractimpl]
 impl GovernanceModule {
     /// Whitelist a route with optional per-route term overrides.
@@ -101,11 +110,7 @@ impl GovernanceModule {
         Self::extend_ttl(e);
 
         let key = DataKey::Route(flight_id.clone(), origin.clone(), dest.clone());
-        let mut terms: RouteTerms = e
-            .storage()
-            .persistent()
-            .get(&key)
-            .expect("route not whitelisted");
+        let mut terms = read_route(e, &key);
         if !terms.approved {
             panic_with_error!(e, Error::RouteAlreadyDisabled);
         }
@@ -129,11 +134,7 @@ impl GovernanceModule {
         Self::extend_ttl(e);
 
         let key = DataKey::Route(flight_id.clone(), origin.clone(), dest.clone());
-        let mut terms: RouteTerms = e
-            .storage()
-            .persistent()
-            .get(&key)
-            .expect("route not whitelisted");
+        let mut terms = read_route(e, &key);
         if terms.approved {
             panic_with_error!(e, Error::RouteAlreadyActive);
         }
@@ -186,48 +187,49 @@ impl GovernanceModule {
         Self::extend_ttl(e);
 
         let key = DataKey::Route(flight_id.clone(), origin.clone(), dest.clone());
-        let terms: RouteTerms = e
-            .storage()
-            .persistent()
-            .get(&key)
-            .expect("route not whitelisted");
+        let terms = read_route(e, &key);
         if terms.approved {
             panic_with_error!(e, Error::RouteMustBeDisabledBeforeRemoval);
         }
         e.storage().persistent().remove(&key);
-        // Free the flight_id so it can be re-mapped later — but only if the
-        // uniqueness index still points at THIS route. After an index-TTL lapse
-        // a second, conflicting route can be whitelisted for the same flight_id;
-        // unconditionally deleting the index while removing the older route
-        // would then strip the newer route's ownership and reopen the flight_id
-        // for further collisions.
+        // Decide whether this route still owns its flight_id. Owned when the
+        // uniqueness index points at THIS route, and also when the index is
+        // absent — an absent index means it lapsed while this route entry
+        // survived, and this route was its last known owner. Only when the
+        // index points at a DIFFERENT route has the flight_id since been
+        // claimed elsewhere; deleting that index or reserving the id here
+        // would strip the newer route's ownership.
         let fr_key = DataKey::FlightRoute(flight_id.clone());
-        if let Some((idx_origin, idx_dest)) =
-            e.storage().persistent().get::<_, (Symbol, Symbol)>(&fr_key)
-        {
-            if idx_origin == origin && idx_dest == dest {
+        let index_entry: Option<(Symbol, Symbol)> = e.storage().persistent().get(&fr_key);
+        let owns_flight_id = match &index_entry {
+            Some((idx_origin, idx_dest)) => *idx_origin == origin && *idx_dest == dest,
+            None => true,
+        };
+        if owns_flight_id {
+            if index_entry.is_some() {
                 e.storage().persistent().remove(&fr_key);
-                // The freed id is only reserved, not immediately reusable:
-                // policies sold under this route may still be live downstream
-                // (booked up to 90 days ahead, claimable for the expiry window
-                // after settlement), and downstream state carries no
-                // origin/dest. The retirement marker blocks remapping until
-                // that lifetime has provably elapsed.
-                let retired_until = e
-                    .ledger()
-                    .timestamp()
-                    .checked_add(FLIGHT_ID_RETIREMENT_SECS)
-                    .expect("addition overflow");
-                let retired_key = DataKey::RetiredFlight(flight_id.clone());
-                e.storage()
-                    .persistent()
-                    .set(&retired_key, &(origin.clone(), dest.clone(), retired_until));
-                e.storage().persistent().extend_ttl(
-                    &retired_key,
-                    RETIREMENT_TTL_LEDGERS,
-                    RETIREMENT_TTL_LEDGERS,
-                );
             }
+            // The freed id is only reserved, not immediately reusable:
+            // policies sold under this route may still be live downstream
+            // (booked up to 90 days ahead, claimable for the expiry window
+            // after settlement), and downstream state carries no
+            // origin/dest. The retirement marker blocks remapping until
+            // that lifetime has provably elapsed. Written even when the
+            // index had lapsed — the downstream exposure exists either way.
+            let retired_until = e
+                .ledger()
+                .timestamp()
+                .checked_add(FLIGHT_ID_RETIREMENT_SECS)
+                .expect("addition overflow");
+            let retired_key = DataKey::RetiredFlight(flight_id.clone());
+            e.storage()
+                .persistent()
+                .set(&retired_key, &(origin.clone(), dest.clone(), retired_until));
+            e.storage().persistent().extend_ttl(
+                &retired_key,
+                RETIREMENT_TTL_LEDGERS,
+                RETIREMENT_TTL_LEDGERS,
+            );
         }
 
         RouteRemoved {
@@ -254,11 +256,7 @@ impl GovernanceModule {
         Self::extend_ttl(e);
 
         let key = DataKey::Route(flight_id.clone(), origin.clone(), dest.clone());
-        let mut terms: RouteTerms = e
-            .storage()
-            .persistent()
-            .get(&key)
-            .expect("route not whitelisted");
+        let mut terms = read_route(e, &key);
 
         match premium {
             PremiumUpdate::Keep => {}

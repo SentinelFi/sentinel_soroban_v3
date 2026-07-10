@@ -48,6 +48,12 @@ impl OracleAggregator {
     }
 
     /// Get flights filtered by status. Iterates active list and filters.
+    ///
+    /// Unbounded: performs one persistent read per active-list entry, so its
+    /// footprint grows with the list. Intended for off-chain / read-only
+    /// simulation use (frontends, executor) — on-chain callers must not
+    /// invoke it; the keeper entry points iterate with bounded batches
+    /// instead.
     pub fn get_flights_by_status(e: &Env, status: FlightStatus) -> Vec<(Symbol, u64)> {
         let all = Self::get_active_flights(e);
         let mut result = Vec::new(e);

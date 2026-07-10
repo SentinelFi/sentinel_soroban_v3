@@ -11,7 +11,7 @@ use crate::auth::{require_controller, settlement_pending};
 use crate::constants::{CLAIMABLE_TTL_LEDGERS, MAX_QUEUE_BATCH};
 use crate::events::Credited;
 use crate::storage::VaultKey;
-use crate::vault_ops::managed_convert_to_assets;
+use crate::vault_ops::convert_to_assets_with_tma;
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
 #[contractimpl]
@@ -155,7 +155,13 @@ impl RiskVault {
                 continue;
             }
 
-            let assets = managed_convert_to_assets(e, request.shares, Rounding::Floor);
+            // Price against the running TMA so every request in this pass
+            // sees a (total_assets, total_supply) pair decremented in
+            // lockstep — burns update the live share supply, and the local
+            // `tma` mirrors the assets credited so far. Otherwise share
+            // price would drift upward across the loop and later-in-queue
+            // requests would get more assets per share than earlier ones.
+            let assets = convert_to_assets_with_tma(e, request.shares, tma, Rounding::Floor);
 
             if assets > remaining_free {
                 // Not enough free capital for the head-most request: stop
@@ -202,17 +208,17 @@ impl RiskVault {
                 .checked_sub(assets)
                 .expect("subtraction underflow");
             tma = tma.checked_sub(assets).expect("subtraction underflow");
-            // Persist TMA each iteration so OZ Vault::preview_redeem in the
-            // NEXT iteration sees a consistent (total_assets, total_supply)
-            // pair — both decremented in lockstep. Otherwise share price
-            // drifts upward across the loop and later-in-queue requests
-            // get more assets per share than earlier ones.
-            e.storage()
-                .instance()
-                .set(&VaultKey::TotalManagedAssets, &tma);
             processed = processed.checked_add(1).expect("addition overflow");
         }
 
+        // Single storage write for the running total — the loop priced every
+        // request against the local `tma`, so persisting once at the end is
+        // equivalent to the per-iteration write it replaces.
+        if processed > 0 {
+            e.storage()
+                .instance()
+                .set(&VaultKey::TotalManagedAssets, &tma);
+        }
         if processed > 0 || returned_any {
             e.storage()
                 .instance()

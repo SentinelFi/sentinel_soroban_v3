@@ -45,6 +45,12 @@ impl FlightPoolManager {
 
     /// Owner withdraws funds credited to RecoveredBalance via sweep_expired.
     /// Transfers asset from the contract to the owner.
+    ///
+    /// Deliberately pause-gated, unlike the vault's `recover_uncollected`
+    /// (which is pause-exempt): recovered funds are protocol revenue with no
+    /// third party waiting on them, so nothing is lost by deferring this
+    /// withdrawal until after an incident — whereas the vault path settles
+    /// user-owed credits that must stay recoverable during a pause.
     #[only_owner]
     #[when_not_paused]
     pub fn withdraw_recovered(e: &Env, amount: i128) {
