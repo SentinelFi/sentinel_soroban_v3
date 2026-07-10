@@ -727,7 +727,13 @@ NotInitiated -> Active -> Landed --> ToBeSettledOnTime --> Settled
        |          |                  ToBeSettledDelayed --> Settled
        |          +---> Cancelled -> ToBeSettledCancelled -> Settled
        +-----------------^                                  (short-notice cancel,
-                                                            audit L-01)
+       |                                                    audit L-01)
+       +----------------------------> ToBeSettledOnTime    (void: no flight data
+                                                            ever arrived; allowed
+                                                            only >= 14 days past
+                                                            departure — premiums
+                                                            to vault, collateral
+                                                            released, no payout)
 ```
 
 | State | Meaning | Set by |

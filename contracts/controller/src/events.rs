@@ -54,6 +54,19 @@ pub struct FlightConfigMissing {
     pub(crate) date: u64,
 }
 
+// Emitted when `classify_flights` voids a purchased flight whose oracle row
+// never left NotInitiated within the stale timeout after departure — no
+// flight data ever arrived, so the date most likely never matched a physical
+// flight. The bucket settles like an on-time flight (premiums to the vault,
+// collateral released, no payout). Operators consume this to spot bogus-date
+// purchases and to distinguish voids from ordinary on-time settlements.
+#[contractevent(topics = ["sentinel", "voided"], data_format = "map")]
+pub struct FlightVoided {
+    #[topic]
+    pub(crate) flight_id: Symbol,
+    pub(crate) date: u64,
+}
+
 // Phase 11 — buyer whitelist lifecycle events. The whitelist itself is
 // stored on Controller (one source of truth on the buy path); add/remove
 // callers are validated by cross-calling GovernanceModule.is_admin.

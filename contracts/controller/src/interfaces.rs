@@ -31,6 +31,7 @@ pub trait VaultInterface {
 pub trait OracleInterface {
     fn register_flight(env: &Env, controller: Address, flight_id: Symbol, date: u64);
     fn get_flight_data(env: &Env, flight_id: Symbol, date: u64) -> FlightData;
+    fn has_flight_data(env: &Env, flight_id: Symbol, date: u64) -> bool;
     fn get_active_flights(env: &Env) -> Vec<(Symbol, u64)>;
     fn set_to_be_settled(
         env: &Env,

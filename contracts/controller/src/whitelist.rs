@@ -12,6 +12,16 @@ impl Controller {
     /// flagged as admin on `GovernanceModule`. Idempotent — re-adding an
     /// existing entry refreshes its TTL without panic. Intentionally NOT
     /// gated by Pausable so admins can keep the list current during a pause.
+    ///
+    /// Approval lifetime model (deliberate): an approval is a persistent
+    /// entry with a ~180-day TTL, refreshed on every purchase the buyer
+    /// makes. A buyer DORMANT for the full window lapses silently and must be
+    /// re-approved — the archived entry reads as not-whitelisted, and the
+    /// purchase gate rejects before any self-refresh could run. This is
+    /// treated as periodic re-attestation of inactive accounts rather than a
+    /// defect: it fails closed, and recovery is one admin call. Off-chain
+    /// tooling can watch `buyer_whitelisted` events to re-extend or alert
+    /// before dormant approvals age out.
     pub fn add_whitelisted_buyer(e: &Env, caller: Address, addr: Address) {
         require_owner_or_gov_admin(e, &caller);
         write_buyer_whitelisted(e, &addr, true);
