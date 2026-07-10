@@ -75,8 +75,11 @@ impl RiskVault {
     /// value — however large — can lock ordinary positions out of the queue.
     #[only_owner]
     pub fn set_min_withdrawal_request(e: &Env, min_assets: i128) {
+        // Zero is a valid value (disables the floor); only negatives are
+        // rejected, with a dedicated error so clients aren't misled into
+        // thinking zero is also invalid.
         if min_assets < 0 {
-            panic_with_error!(e, Error::AmountMustBePositive);
+            panic_with_error!(e, Error::AmountMustBeNonNegative);
         }
         e.storage()
             .instance()

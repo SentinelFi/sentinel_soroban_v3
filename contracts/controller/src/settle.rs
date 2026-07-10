@@ -2,7 +2,7 @@ use soroban_sdk::{contractimpl, Address, Env};
 use stellar_macros::when_not_paused;
 
 use crate::auth::require_keeper;
-use crate::constants::MAX_SETTLE_BATCH;
+use crate::constants::{MAX_SETTLE_BATCH, SECONDS_PER_HOUR};
 use crate::events::{
     FlightClassified, FlightConfigMissing, FlightSettledEvent, FlightVoided, TtlMiss,
 };
@@ -70,8 +70,9 @@ impl Controller {
                             let delay_seconds = data
                                 .actual_arrival_time
                                 .saturating_sub(data.estimated_arrival_time);
-                            let delay_hours_actual =
-                                delay_seconds.checked_div(3600).expect("division by zero");
+                            let delay_hours_actual = delay_seconds
+                                .checked_div(SECONDS_PER_HOUR)
+                                .expect("division by zero");
 
                             if delay_hours_actual >= (delay_hours as u64) {
                                 Some(FlightStatus::ToBeSettledDelayed)

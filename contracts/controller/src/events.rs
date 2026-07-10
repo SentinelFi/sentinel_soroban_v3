@@ -2,7 +2,12 @@ use soroban_sdk::{contractevent, Address, Symbol};
 
 use crate::interfaces::FlightStatus;
 
-#[contractevent(topics = ["sentinel", "ctrl"], data_format = "single-value")]
+// Domain events use distinct second topics (`bought` / `classified` /
+// `settled`) — matching the distinct-verb scheme every other contract uses —
+// so indexers can discriminate at the topic-filter level instead of decoding
+// payloads. The emitting contract address on the event envelope already
+// scopes them to the controller.
+#[contractevent(topics = ["sentinel", "bought"], data_format = "single-value")]
 pub struct InsuranceBought {
     #[topic]
     pub(crate) traveler: Address,
@@ -13,7 +18,7 @@ pub struct InsuranceBought {
     pub(crate) premium: i128,
 }
 
-#[contractevent(topics = ["sentinel", "ctrl"], data_format = "single-value")]
+#[contractevent(topics = ["sentinel", "classified"], data_format = "single-value")]
 pub struct FlightClassified {
     #[topic]
     pub(crate) flight_id: Symbol,
@@ -22,7 +27,7 @@ pub struct FlightClassified {
     pub(crate) status: FlightStatus,
 }
 
-#[contractevent(topics = ["sentinel", "ctrl"], data_format = "single-value")]
+#[contractevent(topics = ["sentinel", "settled"], data_format = "single-value")]
 pub struct FlightSettledEvent {
     #[topic]
     pub(crate) flight_id: Symbol,

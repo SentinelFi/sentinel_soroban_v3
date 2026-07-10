@@ -481,7 +481,7 @@ fn test_disable_already_disabled_panics() {
 }
 
 #[test]
-#[should_panic(expected = "route not whitelisted")]
+#[should_panic(expected = "Error(Contract, #511)")]
 fn test_disable_unknown_panics() {
     let (_env, client, owner, _addr) = setup();
     let (flight_id, origin, dest) = route_ids();
@@ -534,7 +534,7 @@ fn test_enable_already_active_panics() {
 }
 
 #[test]
-#[should_panic(expected = "route not whitelisted")]
+#[should_panic(expected = "Error(Contract, #511)")]
 fn test_enable_unknown_panics() {
     let (_env, client, owner, _addr) = setup();
     let (flight_id, origin, dest) = route_ids();
@@ -590,7 +590,7 @@ fn test_remove_active_route_panics() {
 }
 
 #[test]
-#[should_panic(expected = "route not whitelisted")]
+#[should_panic(expected = "Error(Contract, #511)")]
 fn test_remove_unknown_panics() {
     let (_env, client, owner, _addr) = setup();
     let (flight_id, origin, dest) = route_ids();
@@ -815,7 +815,7 @@ fn test_update_all_use_default_falls_back_to_resolved_defaults() {
 }
 
 #[test]
-#[should_panic(expected = "route not whitelisted")]
+#[should_panic(expected = "Error(Contract, #511)")]
 fn test_update_unknown_panics() {
     let (_env, client, owner, _addr) = setup();
     let (flight_id, origin, dest) = route_ids();
@@ -1380,4 +1380,113 @@ fn test_removed_route_can_be_readded_during_retirement() {
         client.route_status(&fid, &origin, &dest),
         RouteStatus::Active(_)
     ));
+}
+
+#[test]
+fn test_remove_route_reserves_flight_id_even_when_index_lapsed() {
+    // The retirement reservation must not depend on the uniqueness index
+    // surviving: an absent index means it lapsed while this route entry
+    // survived, and this route was its last known owner. Downstream
+    // (flight_id, date) policies sold under the removed route may still be
+    // live, so the id must stay reserved against remapping either way.
+    let (env, client, owner, _addr) = setup();
+    let (fid, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.disable_route(&owner, &fid, &origin, &dest);
+
+    // Simulate the index archiving while the route entry survives.
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&crate::storage::DataKey::FlightRoute(fid.clone()));
+    });
+
+    client.remove_route(&owner, &fid, &origin, &dest);
+
+    // A different origin/dest is still blocked during the retirement window.
+    assert!(client
+        .try_whitelist_route(
+            &owner,
+            &fid,
+            &symbol_short!("SFO"),
+            &symbol_short!("ORD"),
+            &None::<i128>,
+            &None::<i128>,
+            &None::<u32>,
+        )
+        .is_err());
+
+    // Re-adding the identical route stays allowed.
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+}
+
+#[test]
+fn test_remove_stale_route_leaves_current_owner_unaffected() {
+    // Removing a stale duplicate (the index points at a DIFFERENT route that
+    // has since claimed the flight_id) must neither delete the current
+    // owner's index nor reserve the id against the current owner.
+    let (env, client, owner, _addr) = setup();
+    let (fid, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    // Index lapses; a conflicting route claims the id.
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&crate::storage::DataKey::FlightRoute(fid.clone()));
+    });
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+
+    // Remove the stale duplicate.
+    client.disable_route(&owner, &fid, &origin, &dest);
+    client.remove_route(&owner, &fid, &origin, &dest);
+
+    // The current owner is untouched: still purchasable, and re-listing it
+    // is not blocked by any retirement marker.
+    assert!(matches!(
+        client.route_status(&fid, &symbol_short!("SFO"), &symbol_short!("ORD")),
+        RouteStatus::Active(_)
+    ));
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
 }

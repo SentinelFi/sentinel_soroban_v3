@@ -5,7 +5,7 @@
 // payload deserialization is the indexer's job.
 
 use super::setup::*;
-use soroban_sdk::{symbol_short, testutils::Address as _, token, Address};
+use soroban_sdk::{symbol_short, testutils::Address as _, token, Address, Symbol};
 
 // =========================================================================
 // buy_insurance event chain
@@ -25,10 +25,10 @@ fn buy_path_emits_full_chain() {
         &FLIGHT_DATE,
     );
 
-    // Controller's InsuranceBought event uses ["ctrl"] single-prefix.
+    // Controller's InsuranceBought event uses ["bought"] single-prefix.
     assert!(
-        count_events_with_single_prefix(&t.env, &t.ctrl_addr, symbol_short!("ctrl")) >= 1,
-        "expected ctrl event from controller"
+        count_events_with_single_prefix(&t.env, &t.ctrl_addr, symbol_short!("bought")) >= 1,
+        "expected bought event from controller"
     );
 
     // FlightPoolManager's FlightRegistered event uses ["register"].
@@ -65,8 +65,9 @@ fn classify_emits_flight_classified_and_oracle_status_event() {
 
     // Controller's FlightClassified event.
     assert!(
-        count_events_with_single_prefix(&t.env, &t.ctrl_addr, symbol_short!("ctrl")) >= 1,
-        "expected ctrl event from classify"
+        count_events_with_single_prefix(&t.env, &t.ctrl_addr, Symbol::new(&t.env, "classified"))
+            >= 1,
+        "expected classified event from classify"
     );
     // Oracle's status-change event when set_to_be_settled fires.
     assert!(
@@ -89,10 +90,10 @@ fn settle_emits_full_chain() {
 
     t.ctrl.execute_settlements(&t.keeper);
 
-    // Controller's FlightSettledEvent (ctrl prefix).
+    // Controller's FlightSettledEvent (settled prefix).
     assert!(
-        count_events_with_single_prefix(&t.env, &t.ctrl_addr, symbol_short!("ctrl")) >= 1,
-        "expected ctrl event from execute_settlements"
+        count_events_with_single_prefix(&t.env, &t.ctrl_addr, symbol_short!("settled")) >= 1,
+        "expected settled event from execute_settlements"
     );
     // FPM's FlightSettled (settle prefix).
     assert!(

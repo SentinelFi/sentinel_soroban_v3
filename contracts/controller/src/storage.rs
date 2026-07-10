@@ -16,6 +16,11 @@ pub enum CtrlKey {
     ClaimExpiryWindow,
     TotalPoliciesSold,
     TotalPremiumsCollected,
+    // i128 — gross claimable value opened by delayed/cancelled settlements:
+    // payoff × buyer_count per flight. This includes the premium portion the
+    // pool already held, so it is NOT the vault's outflow (that is
+    // (payoff − premium) × buyer_count) nor the amount travelers actually
+    // collected (unclaimed payoffs expire to RecoveredBalance).
     TotalPayoutsDistributed,
     WhitelistEnabled, // bool — Phase 11 buyer whitelist kill-switch
     ClassifyCursor,   // u32 — rotating index into the oracle active list

@@ -322,3 +322,32 @@ fn payouts_distributed_counter_tracks_payouts() {
     let (_, _, distributed_after) = t.ctrl.get_stats();
     assert_eq!(distributed_after, PAYOFF);
 }
+
+// =========================================================================
+// Snapshot vs settlement barrier
+// =========================================================================
+
+#[test]
+fn snapshot_skipped_while_outcome_pending() {
+    // The daily share-price snapshot must not record a NAV that includes
+    // unrecognized PnL: while an outcome is public but unsettled, snapshot()
+    // is a no-op and the cron records once settlement completes.
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+    t.oracle_cancelled(); // outcome public, not yet settled
+
+    let now = t.env.ledger().timestamp();
+    let day = now / SECONDS_PER_DAY;
+    t.vault.snapshot();
+    assert_eq!(
+        t.vault.get_snapshot_price(&day),
+        0,
+        "no snapshot may be recorded during a pending-outcome window"
+    );
+
+    // After settlement the PnL is recognized and the snapshot records.
+    t.classify_and_settle();
+    t.vault.snapshot();
+    assert!(t.vault.get_snapshot_price(&day) > 0);
+}

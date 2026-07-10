@@ -119,11 +119,24 @@ impl Controller {
         //     every buyer of one physical flight transacts at identical terms.
         let pool = FlightPoolManagerClient::new(e, &pool_addr);
         let terms = match pool.get_flight_config(&flight_id, &date) {
-            Some(cfg) => ResolvedTerms {
-                premium: cfg.premium,
-                payoff: cfg.payoff,
-                delay_hours: cfg.delay_hours,
-            },
+            Some(cfg) => {
+                // A registered bucket must have a live oracle row — the two
+                // are created together at first purchase. If the pool config
+                // exists but the oracle row is physically absent, the
+                // flight's status (possibly an already-public outcome) is
+                // unobservable and the NotInitiated fallback in gate 3c is
+                // meaningless. Refuse the purchase until the row is restored;
+                // selling into a bucket whose outcome may already be known
+                // would hand the buyer a guaranteed claim.
+                if !oracle.has_flight_data(&flight_id, &date) {
+                    panic_with_error!(e, Error::OracleDataUnavailable);
+                }
+                ResolvedTerms {
+                    premium: cfg.premium,
+                    payoff: cfg.payoff,
+                    delay_hours: cfg.delay_hours,
+                }
+            }
             None => terms,
         };
 

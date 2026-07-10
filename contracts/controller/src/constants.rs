@@ -25,6 +25,11 @@ pub(crate) const MAX_SETTLE_BATCH: u32 = 25;
 /// claim each one against the same real outcome.
 pub(crate) const SECONDS_PER_DAY: u64 = 86_400;
 
+/// Seconds per hour — converts the oracle's second-denominated arrival delta
+/// into the whole hours the per-route `delay_hours` threshold is compared
+/// against.
+pub(crate) const SECONDS_PER_HOUR: u64 = 3_600;
+
 // 180 days at 5s/ledger = 180 * 24 * 60 * 12 = 3_110_400.
 // Sized to cover the maximum policy lifecycle (up to a 180-day claim-expiry
 // window) rather than a flat 60 days, so the per-traveler "My Policies" index

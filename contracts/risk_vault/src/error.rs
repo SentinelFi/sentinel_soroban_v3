@@ -24,4 +24,6 @@ pub enum Error {
     SettlementPending = 718,
     RequestBelowMinimum = 719,
     AssetsConvertToZeroShares = 720,
+    RequestNotFound = 721,
+    AmountMustBeNonNegative = 722,
 }

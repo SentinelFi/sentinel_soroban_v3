@@ -18,4 +18,5 @@ pub enum Error {
     InsufficientVaultCapital = 312,
     DateNotDayAligned = 313,
     MinLeadTimeLeavesNoBookingWindow = 314,
+    OracleDataUnavailable = 315,
 }

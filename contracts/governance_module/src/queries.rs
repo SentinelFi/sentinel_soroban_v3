@@ -38,6 +38,15 @@ impl GovernanceModule {
                 // (flight_id, date) state with the index owner's. If the index
                 // archived while the route stayed live, recreate it from this
                 // record so a later whitelist can't map the id elsewhere.
+                // Healing is deliberately independent of the approval flag: a
+                // disabled route still owns its flight_id while paused. The
+                // known limit is first-reader-wins — if TWO route entries for
+                // one flight_id survive a repeated index lapse (possible only
+                // after a prior lapse let a conflicting whitelist through),
+                // whichever entry is read first on a committing call reclaims
+                // the id and the other reads Unknown until an admin removes
+                // the stale one. There is no local signal to prefer one entry;
+                // prevention is the lockstep index/route TTL extension.
                 let fr_key = DataKey::FlightRoute(flight_id.clone());
                 match e.storage().persistent().get::<_, (Symbol, Symbol)>(&fr_key) {
                     Some((idx_origin, idx_dest)) => {

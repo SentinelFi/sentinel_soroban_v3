@@ -49,15 +49,27 @@ pub(crate) fn managed_convert_to_shares(e: &Env, assets: i128, rounding: Roundin
 // Convert shares → assets against the TMA basis: mirror of
 // `assets = shares * (TMA + 1) / (total_supply + 10^offset)`.
 pub(crate) fn managed_convert_to_assets(e: &Env, shares: i128, rounding: Rounding) -> i128 {
+    convert_to_assets_with_tma(e, shares, RiskVault::get_total_managed_assets(e), rounding)
+}
+
+// Same conversion against an explicitly supplied managed-asset figure. The
+// queue processor prices many requests in one pass while tracking the running
+// total locally (share supply is read live — burns update it in place), so it
+// can defer the storage write of TMA to the end of the loop without the
+// per-request share price drifting.
+pub(crate) fn convert_to_assets_with_tma(
+    e: &Env,
+    shares: i128,
+    tma: i128,
+    rounding: Rounding,
+) -> i128 {
     if shares <= 0 {
         return 0;
     }
     let pow = 10_i128
         .checked_pow(Vault::get_decimals_offset(e))
         .expect("decimals offset overflow");
-    let managed_plus = RiskVault::get_total_managed_assets(e)
-        .checked_add(1)
-        .expect("managed assets overflow");
+    let managed_plus = tma.checked_add(1).expect("managed assets overflow");
     let supply_plus = Base::total_supply(e)
         .checked_add(pow)
         .expect("supply overflow");

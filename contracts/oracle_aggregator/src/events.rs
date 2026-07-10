@@ -41,11 +41,15 @@ pub struct MissingFlightData {
 // Emitted when the owner removes an active-list entry whose FlightData is
 // missing, after confirming off-chain that the flight needs no further
 // on-chain resolution. Audit trail for the manual capacity-release path.
+// `outcome_pending` records the owner's judgment that the flight's outcome
+// had been counted toward the vault barrier (its count was released as part
+// of the eviction) — indexers use it to reconcile the pending-outcome series.
 #[contractevent(topics = ["sentinel", "evicted"], data_format = "map")]
 pub struct FlightEvicted {
     #[topic]
     pub(crate) flight_id: Symbol,
     pub(crate) date: u64,
+    pub(crate) outcome_pending: bool,
 }
 
 pub(crate) fn emit_status_event(e: &Env, flight_id: &Symbol, date: u64, new_status: &FlightStatus) {

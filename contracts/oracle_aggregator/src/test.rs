@@ -780,18 +780,49 @@ fn test_evict_missing_flight_owner_path() {
 
     // Live flight cannot be evicted through this path.
     assert!(client
-        .try_evict_missing_flight(&fid_b, &FLIGHT_DATE)
+        .try_evict_missing_flight(&fid_b, &FLIGHT_DATE, &false)
         .is_err());
 
-    client.evict_missing_flight(&fid_a, &FLIGHT_DATE);
+    client.evict_missing_flight(&fid_a, &FLIGHT_DATE, &false);
     let remaining = client.get_active_flights();
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining.get(0).unwrap(), (fid_b, FLIGHT_DATE));
+    // fid_a never had a public outcome, so the barrier counter is untouched.
+    assert_eq!(client.get_pending_outcomes(), 0);
 
     // Already evicted — no longer in the list.
     assert!(client
-        .try_evict_missing_flight(&fid_a, &FLIGHT_DATE)
+        .try_evict_missing_flight(&fid_a, &FLIGHT_DATE, &false)
         .is_err());
+}
+
+#[test]
+fn test_evict_missing_flight_releases_pending_outcome() {
+    // A flight whose outcome was already publicly recorded counts toward
+    // PendingOutcomes, and only settlement decrements the counter. If such a
+    // flight's data goes missing and the owner evicts it, the eviction must
+    // release its count — otherwise the vault's entry/exit barrier would stay
+    // engaged forever with no remaining on-chain path to clear it.
+    let (env, client, _owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+    client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);
+    client.set_landed(&oracle, &fid, &FLIGHT_DATE, &ACT_ARRIVAL);
+    assert_eq!(client.get_pending_outcomes(), 1);
+    assert!(client.has_pending_outcomes());
+
+    // Simulate the flight's FlightData going missing before settlement.
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&OracleKey::FlightData(fid.clone(), FLIGHT_DATE));
+    });
+
+    client.evict_missing_flight(&fid, &FLIGHT_DATE, &true);
+    assert_eq!(client.get_active_flights().len(), 0);
+    assert_eq!(client.get_pending_outcomes(), 0);
+    assert!(!client.has_pending_outcomes());
 }
 
 #[test]
@@ -807,7 +838,7 @@ fn test_evict_missing_flight_unauthorized() {
     let contract_id = env.register(OracleAggregator, (&owner, &oracle));
     let client = OracleAggregatorClient::new(&env, &contract_id);
 
-    client.evict_missing_flight(&symbol_short!("AA100"), &FLIGHT_DATE);
+    client.evict_missing_flight(&symbol_short!("AA100"), &FLIGHT_DATE, &false);
 }
 
 #[test]
