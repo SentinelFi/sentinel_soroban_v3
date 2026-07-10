@@ -16,15 +16,41 @@ impl GovernanceModule {
     }
 
     /// Typed status reader. Returns `Active(ResolvedTerms)` (defaults folded)
-    /// if the entry exists and is approved; `Disabled` if the entry exists
-    /// but is not approved; `Unknown` if the entry is missing (never
-    /// whitelisted, removed, or storage archived).
+    /// if the entry exists, is approved, and owns its flight_id per the
+    /// uniqueness index; `Disabled` if the entry exists but is not approved;
+    /// `Unknown` if the entry is missing (never whitelisted, removed, or
+    /// storage archived) or the flight_id is mapped to a different route.
     pub fn route_status(e: &Env, flight_id: Symbol, origin: Symbol, dest: Symbol) -> RouteStatus {
-        let key = DataKey::Route(flight_id.clone(), origin, dest);
+        // Purchase traffic flows through here — renew the instance alongside
+        // the route keys so ongoing use keeps the contract itself alive even
+        // if the external TTL cron lapses.
+        Self::extend_ttl(e);
+        let key = DataKey::Route(flight_id.clone(), origin.clone(), dest.clone());
         let terms: Option<RouteTerms> = e.storage().persistent().get(&key);
         match terms {
             None => RouteStatus::Unknown,
             Some(t) => {
+                // Verify this route still OWNS its flight_id before advertising
+                // it. Route entry and uniqueness index are separate persistent
+                // keys that can archive/restore independently; if the index now
+                // points at a different origin/dest, this record is a stale
+                // duplicate and selling it would collide downstream
+                // (flight_id, date) state with the index owner's. If the index
+                // archived while the route stayed live, recreate it from this
+                // record so a later whitelist can't map the id elsewhere.
+                let fr_key = DataKey::FlightRoute(flight_id.clone());
+                match e.storage().persistent().get::<_, (Symbol, Symbol)>(&fr_key) {
+                    Some((idx_origin, idx_dest)) => {
+                        if !(idx_origin == origin && idx_dest == dest) {
+                            return RouteStatus::Unknown;
+                        }
+                        extend_route_index_ttl(e, &flight_id);
+                    }
+                    None => {
+                        e.storage().persistent().set(&fr_key, &(origin, dest));
+                        extend_route_ttl(e, &fr_key);
+                    }
+                }
                 // Refresh the route's TTL whenever it is read on a
                 // committing call (e.g. the controller's buy_insurance path).
                 // Route keys were otherwise extended only on write, so an
@@ -33,11 +59,6 @@ impl GovernanceModule {
                 // Read-only simulations don't persist this, so frontend queries
                 // are unaffected.
                 extend_route_ttl(e, &key);
-                // Keep the uniqueness index alive in lockstep:
-                // otherwise it could archive while this route stays hot, letting
-                // a later whitelist map the same flight_id to a conflicting
-                // route.
-                extend_route_index_ttl(e, &flight_id);
                 if !t.approved {
                     RouteStatus::Disabled
                 } else {

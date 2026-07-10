@@ -6,7 +6,7 @@
 
 use soroban_sdk::{contractclient, Address, Env, Symbol, Vec};
 
-pub use sentinel_types::{FlightConfig, FlightData, FlightStatus, RouteStatus};
+pub use sentinel_types::{FlightConfig, FlightData, FlightStatus, ResolvedTerms, RouteStatus};
 
 #[contractclient(name = "GovClient")]
 pub trait GovernanceInterface {

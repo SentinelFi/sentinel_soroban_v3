@@ -1,6 +1,8 @@
 use super::*;
 use sentinel_types::test_support::collect_events;
-use soroban_sdk::{symbol_short, testutils::Address as _, Address, Env, Symbol};
+use soroban_sdk::{
+    symbol_short, testutils::Address as _, testutils::Ledger as _, Address, Env, Symbol,
+};
 
 const DEFAULT_PREMIUM: i128 = 50_0000000; // 50 asset (7 decimals)
 const DEFAULT_PAYOFF: i128 = 500_0000000; // 500 asset
@@ -1023,10 +1025,12 @@ fn test_whitelist_route_rejects_conflicting_flight_id() {
 }
 
 #[test]
-fn test_remove_route_frees_flight_id_mapping() {
-    // Removing a route frees its flight_id so it can later be mapped to a
-    // different (origin, dest).
-    let (_env, client, owner, _addr) = setup();
+fn test_remove_route_frees_flight_id_mapping_after_retirement() {
+    // Removing a route frees its flight_id for a different (origin, dest) —
+    // but only after the retirement window, so downstream (flight_id, date)
+    // state written under the old route can no longer be live when the id is
+    // remapped.
+    let (env, client, owner, _addr) = setup();
     let fid = symbol_short!("AA100");
     client.whitelist_route(
         &owner,
@@ -1040,7 +1044,11 @@ fn test_remove_route_frees_flight_id_mapping() {
     client.disable_route(&owner, &fid, &symbol_short!("JFK"), &symbol_short!("LAX"));
     client.remove_route(&owner, &fid, &symbol_short!("JFK"), &symbol_short!("LAX"));
 
-    // A different route for the same flight_id is now allowed.
+    // Once the longest possible downstream policy lifetime has elapsed, a
+    // different route may take over the flight_id.
+    let now = env.ledger().timestamp();
+    env.ledger()
+        .with_mut(|li| li.timestamp = now + 160 * 86_400 + 1);
     client.whitelist_route(
         &owner,
         &fid,
@@ -1095,4 +1103,238 @@ fn test_whitelist_existing_route_overwrites_terms() {
 fn test_extend_ttl_is_callable() {
     let (_env, client, _owner, _addr) = setup();
     client.extend_ttl();
+}
+
+// =========================================================================
+// Route / uniqueness-index consistency and flight-id retirement
+// =========================================================================
+
+#[test]
+fn test_route_status_rejects_route_when_index_points_elsewhere() {
+    // If the uniqueness index maps the flight_id to a different origin/dest
+    // (divergence after an index-TTL lapse), the stale route entry must not
+    // be advertised: selling it would collide downstream (flight_id, date)
+    // state with the index owner's.
+    let (env, client, owner, _addr) = setup();
+    let (fid, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+
+    // Simulate the index archiving while the route entry survives.
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&crate::storage::DataKey::FlightRoute(fid.clone()));
+    });
+
+    // With no index, a conflicting route can be whitelisted — it claims the id.
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+
+    // The old route is now a stale duplicate: not purchasable. The index
+    // owner resolves normally.
+    assert_eq!(
+        client.route_status(&fid, &origin, &dest),
+        RouteStatus::Unknown
+    );
+    assert!(matches!(
+        client.route_status(&fid, &symbol_short!("SFO"), &symbol_short!("ORD")),
+        RouteStatus::Active(_)
+    ));
+}
+
+#[test]
+fn test_route_status_heals_missing_index() {
+    // If the index archived while the route stayed live, a committed
+    // route_status read recreates it — after which a conflicting whitelist is
+    // rejected again instead of silently splitting the flight_id.
+    let (env, client, owner, _addr) = setup();
+    let (fid, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&crate::storage::DataKey::FlightRoute(fid.clone()));
+    });
+
+    assert!(matches!(
+        client.route_status(&fid, &origin, &dest),
+        RouteStatus::Active(_)
+    ));
+
+    // The healed index re-guards the flight_id.
+    assert!(client
+        .try_whitelist_route(
+            &owner,
+            &fid,
+            &symbol_short!("SFO"),
+            &symbol_short!("ORD"),
+            &None::<i128>,
+            &None::<i128>,
+            &None::<u32>,
+        )
+        .is_err());
+}
+
+#[test]
+fn test_enable_route_heals_missing_index_and_rejects_conflict() {
+    let (env, client, owner, _addr) = setup();
+    let (fid, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.disable_route(&owner, &fid, &origin, &dest);
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&crate::storage::DataKey::FlightRoute(fid.clone()));
+    });
+
+    // Enabling with the index absent recreates it from this route...
+    client.enable_route(&owner, &fid, &origin, &dest);
+    assert!(client
+        .try_whitelist_route(
+            &owner,
+            &fid,
+            &symbol_short!("SFO"),
+            &symbol_short!("ORD"),
+            &None::<i128>,
+            &None::<i128>,
+            &None::<u32>,
+        )
+        .is_err());
+
+    // ...but if another route claimed the id in the meantime, re-enabling the
+    // old one is rejected instead of colliding the two.
+    client.disable_route(&owner, &fid, &origin, &dest);
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&crate::storage::DataKey::FlightRoute(fid.clone()));
+    });
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    assert!(client
+        .try_enable_route(&owner, &fid, &origin, &dest)
+        .is_err());
+}
+
+#[test]
+fn test_removed_flight_id_reserved_against_remapping() {
+    // Removing a route reserves its flight_id: downstream policy/oracle state
+    // is keyed by (flight_id, date) only, so remapping to a different physical
+    // route while old policies can still be live would collide their records.
+    let (env, client, owner, _addr) = setup();
+    let (fid, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.disable_route(&owner, &fid, &origin, &dest);
+    client.remove_route(&owner, &fid, &origin, &dest);
+
+    // A different origin/dest is blocked during the retirement window.
+    assert!(client
+        .try_whitelist_route(
+            &owner,
+            &fid,
+            &symbol_short!("SFO"),
+            &symbol_short!("ORD"),
+            &None::<i128>,
+            &None::<i128>,
+            &None::<u32>,
+        )
+        .is_err());
+
+    // After the longest possible downstream policy lifetime, the id frees up.
+    let now = env.ledger().timestamp();
+    env.ledger()
+        .with_mut(|li| li.timestamp = now + 160 * 86_400 + 1);
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+}
+
+#[test]
+fn test_removed_route_can_be_readded_during_retirement() {
+    // Re-adding the IDENTICAL route (undoing a removal) is safe — downstream
+    // state keyed by the flight_id belongs to the same physical route.
+    let (_env, client, owner, _addr) = setup();
+    let (fid, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.disable_route(&owner, &fid, &origin, &dest);
+    client.remove_route(&owner, &fid, &origin, &dest);
+
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    assert!(matches!(
+        client.route_status(&fid, &origin, &dest),
+        RouteStatus::Active(_)
+    ));
 }

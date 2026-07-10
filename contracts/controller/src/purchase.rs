@@ -4,7 +4,8 @@ use stellar_macros::when_not_paused;
 use crate::constants::{MAX_BOOK_AHEAD_SECS, SECONDS_PER_DAY};
 use crate::events::InsuranceBought;
 use crate::interfaces::{
-    FlightPoolManagerClient, FlightStatus, GovClient, OracleClient, RouteStatus, VaultClient,
+    FlightPoolManagerClient, FlightStatus, GovClient, OracleClient, ResolvedTerms, RouteStatus,
+    VaultClient,
 };
 use crate::storage::{
     append_traveler_flight, read_buyer_whitelisted, read_whitelist_enabled,
@@ -108,10 +109,27 @@ impl Controller {
             panic_with_error!(e, Error::FlightNotOpenForPurchase);
         }
 
+        // 3d. Bind this purchase to the terms snapshotted by the FIRST buyer of
+        //     this (flight_id, date), if it is already registered. The pool
+        //     locks terms at registration and rejects a mismatched
+        //     re-registration, so pricing later buyers off the CURRENT route
+        //     terms would brick further sales for this date the moment
+        //     governance updates the route or the global defaults. Term
+        //     changes therefore apply only to flight dates not yet registered;
+        //     every buyer of one physical flight transacts at identical terms.
+        let pool = FlightPoolManagerClient::new(e, &pool_addr);
+        let terms = match pool.get_flight_config(&flight_id, &date) {
+            Some(cfg) => ResolvedTerms {
+                premium: cfg.premium,
+                payoff: cfg.payoff,
+                delay_hours: cfg.delay_hours,
+            },
+            None => terms,
+        };
+
         // 4. Register flight on the pool + oracle. Both calls are idempotent:
         //    no precheck needed, no revert if a parallel buyer
         //    in the same ledger registered first.
-        let pool = FlightPoolManagerClient::new(e, &pool_addr);
         pool.register_flight(
             &controller_addr,
             &flight_id,
