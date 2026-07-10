@@ -521,6 +521,50 @@ fn test_snapshot() {
 }
 
 #[test]
+fn test_snapshot_uses_managed_assets_not_physical_balance() {
+    // The snapshot price must use the managed-asset basis (like the executable
+    // conversions), not the raw token balance — otherwise a processed-but-
+    // uncollected withdrawal (whose tokens still sit in the vault) inflates the
+    // published price.
+    let (env, client, _owner, controller, _depositor) = setup();
+    let asset = token::Client::new(&env, &client.query_asset());
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+    asset_admin.mint(&a, &1_000_0000000);
+    asset_admin.mint(&b, &1_000_0000000);
+
+    let a_shares = client.deposit(&1_000_0000000, &a, &a, &a);
+    client.deposit(&1_000_0000000, &b, &b, &b);
+
+    // A exits via the queue → shares burned, claimable credited, TMA reduced,
+    // but A's tokens physically remain in the vault (uncollected).
+    client.request_withdrawal(&a, &a_shares);
+    client.process_withdrawal_queue(&controller);
+    assert!(client.get_claimable_balance(&a) > 0);
+
+    let tma = client.get_total_managed_assets();
+    let physical = asset.balance(&client.address);
+    assert!(
+        physical > tma,
+        "uncollected claimable should make physical > TMA"
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 1_710_500_000);
+    client.snapshot();
+    let day = 1_710_500_000u64 / SECONDS_PER_DAY;
+    let snap = client.get_snapshot_price(&day);
+
+    let supply = client.total_supply();
+    let scale = 10i128.pow(asset.decimals());
+    // Snapshot equals the managed-asset price, and is strictly below the
+    // (inflated) physical-balance price.
+    assert_eq!(snap, tma * scale / supply);
+    assert!(snap < physical * scale / supply);
+}
+
+#[test]
 fn test_snapshot_noop_if_too_soon() {
     let (env, client, _owner, _controller, depositor) = setup();
 

@@ -10,6 +10,10 @@ pub enum VaultKey {
     WithdrawalQueue,
     NextRequestId,
     LastSnapshotTime,
+    // OracleAggregator address. When set, entry/exit are blocked while the oracle
+    // reports an unsettled public flight outcome, so no LP can transact at a
+    // stale share price during the outcome-public-but-not-yet-settled window.
+    Oracle,
 
     // Persistent — TTL extended on every write to prevent silent archival
     ClaimableBalance(Address),

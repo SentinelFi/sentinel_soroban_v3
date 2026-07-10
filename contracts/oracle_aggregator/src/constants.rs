@@ -43,5 +43,11 @@ pub(crate) const MAX_PERSISTENT_TTL_LEDGERS: u32 = 3_110_400;
 // the permissionless `prune_settled` entry — keeps freshly-settled flights
 // visible to off-chain monitoring / indexers / observability tooling for the
 // retention window before they disappear from the list.
-pub(crate) const SETTLED_RETENTION_DAYS: u64 = 30;
+//
+// Kept deliberately short (7 days, not 30): the active list is a single
+// capped vector, and settled flights lingering in it consume capacity that new
+// registrations need. Every settlement already emits an event, so off-chain
+// consumers do not depend on this on-chain window — 7 days is ample for direct
+// queries while quadrupling the settled-flight throughput the cap tolerates.
+pub(crate) const SETTLED_RETENTION_DAYS: u64 = 7;
 pub(crate) const SECONDS_PER_DAY: u64 = 86_400;

@@ -156,6 +156,86 @@ fn lead_time_gate_blocks_short_notice() {
 }
 
 // =========================================================================
+// Settlement barrier — no LP entry/exit while an outcome is unsettled
+// =========================================================================
+
+#[test]
+fn lp_cannot_transact_at_stale_price_during_pending_outcome() {
+    // After an outcome is public (oracle Cancelled) but before the keeper
+    // settles, the vault's share price still reflects the pre-loss state. An LP
+    // must not be able to exit at that stale price (dumping the loss on passive
+    // LPs), nor deposit to capture not-yet-booked income. Both are blocked until
+    // settlement recognizes the PnL.
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler); // locks collateral against the underwriter capital
+
+    // Outcome is public but not yet classified/settled.
+    t.oracle_cancelled();
+
+    // Exit at the stale (pre-loss) price is rejected.
+    let shares = t.vault.balance(&t.underwriter);
+    let redeem = t
+        .vault
+        .try_redeem(&shares, &t.underwriter, &t.underwriter, &t.underwriter);
+    assert!(
+        redeem.is_err(),
+        "redeem must be blocked while an outcome is unsettled"
+    );
+
+    // Entry at the stale (pre-income) price is likewise rejected.
+    let newcomer = Address::generate(&t.env);
+    t.asset_admin.mint(&newcomer, &DEPOSIT_AMOUNT);
+    let deposit = t
+        .vault
+        .try_deposit(&DEPOSIT_AMOUNT, &newcomer, &newcomer, &newcomer);
+    assert!(
+        deposit.is_err(),
+        "deposit must be blocked while an outcome is unsettled"
+    );
+
+    // Once the keeper settles, the PnL is recognized and the barrier lifts.
+    t.classify_and_settle();
+    let out = t
+        .vault
+        .redeem(&shares, &t.underwriter, &t.underwriter, &t.underwriter);
+    assert!(
+        out > 0,
+        "redeem should succeed at the post-settlement price"
+    );
+}
+
+#[test]
+fn withdrawal_queue_stays_open_during_pending_outcome() {
+    // The barrier blocks direct exits during a pending outcome but must NOT
+    // freeze exits entirely: the queued path stays open, and it is priced only
+    // after settlement (never at the stale pre-loss rate).
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+    t.buy(&traveler);
+    t.oracle_cancelled(); // outcome public, not yet settled
+
+    let shares = t.vault.balance(&t.underwriter);
+    // Direct exit blocked, but request_withdrawal is allowed (no price locked).
+    assert!(t
+        .vault
+        .try_redeem(&shares, &t.underwriter, &t.underwriter, &t.underwriter)
+        .is_err());
+    t.vault.request_withdrawal(&t.underwriter, &shares);
+    assert_eq!(t.vault.get_withdrawal_queue().len(), 1);
+
+    // Draining is a no-op while the outcome is unsettled (would price stale).
+    t.ctrl.run_queue_maintenance(&t.keeper);
+    assert_eq!(t.vault.get_withdrawal_queue().len(), 1);
+    assert_eq!(t.vault.get_claimable_balance(&t.underwriter), 0);
+
+    // After settlement recognizes the loss, the queue drains at the correct rate.
+    t.classify_and_settle();
+    assert_eq!(t.vault.get_withdrawal_queue().len(), 0);
+    assert!(t.vault.get_claimable_balance(&t.underwriter) > 0);
+}
+
+// =========================================================================
 // Money flow on buy
 // =========================================================================
 

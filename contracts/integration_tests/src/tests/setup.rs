@@ -110,6 +110,10 @@ impl TestEnv {
         oracle.set_controller(&ctrl_addr);
         pool.set_controller(&ctrl_addr);
 
+        // Wire the oracle into the vault so entry/exit are blocked while a public
+        // flight outcome is unsettled (settlement-barrier for the free-option gap).
+        vault.set_oracle(&oracle_addr);
+
         // Whitelist the default test route.
         gov.whitelist_route(
             &owner,

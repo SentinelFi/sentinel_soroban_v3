@@ -21,4 +21,5 @@ pub enum Error {
     ExceedsFreeCapital = 715,
     WithdrawalQueueFull = 716,
     TooManyActiveRequests = 717,
+    SettlementPending = 718,
 }

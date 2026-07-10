@@ -15,6 +15,11 @@ pub enum OracleKey {
     AuthorizedController,
     ActiveFlightList,
     PruneCursor, // u32 — rotating index into ActiveFlightList
+    // Count of flights whose outcome is publicly recorded (Landed/Cancelled or
+    // any ToBeSettled*) but not yet financially settled. The vault reads this to
+    // block entry/exit while pending PnL is unrecognized, so no LP can transact
+    // at a stale share price after an outcome is public but before settlement.
+    PendingOutcomes, // u64
 
     // Persistent — keyed multi-row state
     FlightData(Symbol, u64),
@@ -44,6 +49,32 @@ pub(crate) fn extend_flight_ttl_to(e: &Env, flight_id: &Symbol, date: u64, deadl
     e.storage()
         .persistent()
         .extend_ttl(&key, extend_to, extend_to);
+}
+
+// Bump the pending-outcome counter when a flight's outcome first becomes public
+// (Active/NotInitiated -> Landed/Cancelled).
+pub(crate) fn increment_pending_outcomes(e: &Env) {
+    let n: u64 = e
+        .storage()
+        .instance()
+        .get(&OracleKey::PendingOutcomes)
+        .unwrap_or(0);
+    e.storage()
+        .instance()
+        .set(&OracleKey::PendingOutcomes, &n.saturating_add(1));
+}
+
+// Drop the pending-outcome counter when a flight is financially settled
+// (ToBeSettled* -> Settled). Saturating so it can never underflow.
+pub(crate) fn decrement_pending_outcomes(e: &Env) {
+    let n: u64 = e
+        .storage()
+        .instance()
+        .get(&OracleKey::PendingOutcomes)
+        .unwrap_or(0);
+    e.storage()
+        .instance()
+        .set(&OracleKey::PendingOutcomes, &n.saturating_sub(1));
 }
 
 /// Forward-only state machine — accepted edges.

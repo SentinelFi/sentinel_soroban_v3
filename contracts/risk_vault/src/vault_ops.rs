@@ -22,6 +22,7 @@ use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::{emit_deposit, emit_withdraw, FungibleVault, Vault};
 
+use crate::auth::assert_no_settlement_pending;
 use crate::storage::VaultKey;
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient};
 
@@ -70,6 +71,7 @@ impl FungibleVault for RiskVault {
     fn deposit(e: &Env, assets: i128, receiver: Address, from: Address, operator: Address) -> i128 {
         Self::extend_ttl(e);
         operator.require_auth();
+        assert_no_settlement_pending(e);
         let shares = managed_convert_to_shares(e, assets, Rounding::Floor);
         // Transfer assets in + mint shares (OZ plumbing; assumes prior auth).
         Vault::deposit_internal(e, &receiver, assets, shares, &from, &operator);
@@ -93,6 +95,9 @@ impl FungibleVault for RiskVault {
     ) -> i128 {
         Self::extend_ttl(e);
         operator.require_auth();
+        // Block direct exit while a public flight outcome is unsettled — the LP
+        // must use the withdrawal queue, which prices only after settlement.
+        assert_no_settlement_pending(e);
         // Once any underwriter is queued, the queue is the canonical
         // exit path — block direct exits so a latecomer can't consume free capital
         // ahead of LPs already waiting in FIFO order. When the queue is empty this
@@ -119,6 +124,7 @@ impl FungibleVault for RiskVault {
     fn mint(e: &Env, shares: i128, receiver: Address, from: Address, operator: Address) -> i128 {
         Self::extend_ttl(e);
         operator.require_auth();
+        assert_no_settlement_pending(e);
         let assets = managed_convert_to_assets(e, shares, Rounding::Ceil);
         Vault::deposit_internal(e, &receiver, assets, shares, &from, &operator);
         emit_deposit(e, &operator, &from, &receiver, assets, shares);
@@ -135,6 +141,9 @@ impl FungibleVault for RiskVault {
     fn redeem(e: &Env, shares: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
         Self::extend_ttl(e);
         operator.require_auth();
+        // Block direct exit while a public flight outcome is unsettled — the LP
+        // must use the withdrawal queue, which prices only after settlement.
+        assert_no_settlement_pending(e);
         // See `withdraw` — direct redeem defers to the queue while
         // any request is pending so it can't jump the FIFO line.
         if !Self::get_withdrawal_queue(e).is_empty() {

@@ -52,8 +52,14 @@ impl RiskVault {
             .expect("decimals power overflow");
 
         let total_supply = Base::total_supply(e);
+        // Price on the internal managed-asset basis, the same figure the
+        // executable deposit/redeem conversions use — NOT the raw token balance.
+        // The raw balance additionally includes processed-but-uncollected
+        // withdrawal liabilities (and any direct donations), which no longer back
+        // outstanding shares, so pricing on it would publish an inflated share
+        // price to off-chain analytics.
         let price = if total_supply > 0 {
-            Vault::total_assets(e)
+            Self::get_total_managed_assets(e)
                 .checked_mul(scale)
                 .expect("multiplication overflow")
                 .checked_div(total_supply)
