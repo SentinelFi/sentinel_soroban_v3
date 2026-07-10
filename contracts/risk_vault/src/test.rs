@@ -269,6 +269,38 @@ fn test_max_views_return_zero_when_paused() {
 }
 
 #[test]
+fn test_max_views_return_zero_while_queue_active() {
+    // Direct withdraw/redeem revert while any withdrawal request is queued, so
+    // max_withdraw/max_redeem must report zero for every LP during that window —
+    // otherwise integrations build direct exits guaranteed to fail. Deposits stay
+    // open, so max_deposit/max_mint are unaffected by the queue.
+    let (env, client, _owner, controller, depositor) = setup();
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+
+    let other = Address::generate(&env);
+    asset_admin.mint(&other, &1_000_0000000);
+    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let other_shares = client.deposit(&1_000_0000000, &other, &other, &other);
+
+    assert!(client.max_withdraw(&depositor) > 0);
+    assert!(client.max_redeem(&depositor) > 0);
+
+    // `other` queues a request — the views must now report zero even for the
+    // non-queued depositor, matching the executable paths' rejection.
+    client.request_withdrawal(&other, &other_shares);
+    assert_eq!(client.max_withdraw(&depositor), 0);
+    assert_eq!(client.max_redeem(&depositor), 0);
+    assert!(client.max_deposit(&depositor) > 0);
+    assert!(client.max_mint(&depositor) > 0);
+
+    // Draining the queue reopens the direct exit path and the views follow.
+    client.process_withdrawal_queue(&controller);
+    assert!(client.get_withdrawal_queue().is_empty());
+    assert!(client.max_withdraw(&depositor) > 0);
+    assert!(client.max_redeem(&depositor) > 0);
+}
+
+#[test]
 fn test_request_withdrawal_rejects_zero_preview() {
     // A dust request that previews to zero assets is rejected at
     // submission so it can never sit at the queue head and block the drain.
