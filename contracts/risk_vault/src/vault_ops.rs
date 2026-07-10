@@ -22,7 +22,7 @@ use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::{emit_deposit, emit_withdraw, FungibleVault, Vault};
 
-use crate::auth::assert_no_settlement_pending;
+use crate::auth::{assert_no_settlement_pending, settlement_pending};
 use crate::storage::VaultKey;
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient};
 
@@ -205,29 +205,33 @@ impl FungibleVault for RiskVault {
         managed_convert_to_assets(e, shares, Rounding::Floor)
     }
 
-    // The executable deposit/mint/withdraw/redeem paths are all
-    // `#[when_not_paused]`, so the `max_*` views must report zero while paused.
-    // Otherwise integrations read a positive limit and submit transactions that
-    // revert during a pause.
+    // The `max_*` views must report zero whenever the corresponding executable
+    // path is globally disabled, or integrations read a positive limit and
+    // submit transactions guaranteed to revert. Each view therefore mirrors
+    // every global gate of its operation: the pause switch and the settlement
+    // barrier for all four, plus the active-queue guard for the direct exits
+    // (`withdraw`/`redeem` defer to the queue while any request is pending).
     fn max_deposit(e: &Env, address: Address) -> i128 {
-        if paused(e) {
+        if paused(e) || settlement_pending(e) {
             return 0;
         }
         Vault::max_deposit(e, address)
     }
 
-    /// Returns the maximum shares mintable for `address`, or zero while paused.
+    /// Returns the maximum shares mintable for `address`, or zero while
+    /// deposits are globally disabled (paused or settlement pending).
     fn max_mint(e: &Env, address: Address) -> i128 {
-        if paused(e) {
+        if paused(e) || settlement_pending(e) {
             return 0;
         }
         Vault::max_mint(e, address)
     }
 
     /// Returns the maximum assets `owner` can withdraw (their share balance
-    /// priced on managed assets, capped by free capital), or zero while paused.
+    /// priced on managed assets, capped by free capital), or zero while direct
+    /// exits are globally disabled (paused, settlement pending, or queue active).
     fn max_withdraw(e: &Env, owner: Address) -> i128 {
-        if paused(e) {
+        if paused(e) || settlement_pending(e) || !Self::get_withdrawal_queue(e).is_empty() {
             return 0;
         }
         let owner_assets = managed_convert_to_assets(e, Base::balance(e, &owner), Rounding::Floor);
@@ -236,9 +240,10 @@ impl FungibleVault for RiskVault {
     }
 
     /// Returns the maximum shares `owner` can redeem (their balance capped by
-    /// the shares equivalent of free capital), or zero while paused.
+    /// the shares equivalent of free capital), or zero while direct exits are
+    /// globally disabled (paused, settlement pending, or queue active).
     fn max_redeem(e: &Env, owner: Address) -> i128 {
-        if paused(e) {
+        if paused(e) || settlement_pending(e) || !Self::get_withdrawal_queue(e).is_empty() {
             return 0;
         }
         let owner_shares = Base::balance(e, &owner);

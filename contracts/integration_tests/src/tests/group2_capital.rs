@@ -194,8 +194,17 @@ fn lp_cannot_transact_at_stale_price_during_pending_outcome() {
         "deposit must be blocked while an outcome is unsettled"
     );
 
+    // The max_* views must mirror the barrier: while every entry/exit path
+    // reverts, each view reports zero so integrations don't build doomed calls.
+    assert_eq!(t.vault.max_deposit(&newcomer), 0);
+    assert_eq!(t.vault.max_mint(&newcomer), 0);
+    assert_eq!(t.vault.max_withdraw(&t.underwriter), 0);
+    assert_eq!(t.vault.max_redeem(&t.underwriter), 0);
+
     // Once the keeper settles, the PnL is recognized and the barrier lifts.
     t.classify_and_settle();
+    assert!(t.vault.max_deposit(&newcomer) > 0);
+    assert!(t.vault.max_redeem(&t.underwriter) > 0);
     let out = t
         .vault
         .redeem(&shares, &t.underwriter, &t.underwriter, &t.underwriter);
