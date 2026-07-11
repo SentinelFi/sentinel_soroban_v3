@@ -13,6 +13,7 @@
 
 use libfuzzer_sys::fuzz_target;
 use risk_vault::{RiskVault, RiskVaultClient, RecoveryMode};
+use sentinel_types::test_support::MockPendingOracle;
 use soroban_sdk::{
     testutils::arbitrary::{arbitrary, Arbitrary},
     testutils::Address as _,
@@ -58,7 +59,11 @@ fuzz_target!(|input: Input| {
     let asset_admin_client = token::StellarAssetClient::new(&env, &asset_id.address());
     let asset = token::Client::new(&env, &asset_id.address());
 
-    let vault_id = env.register(RiskVault, (&owner, asset_id.address()));
+    // Settlement barrier consults the constructor-wired oracle on every
+    // entry/exit; the mock reports no pending outcomes so the barrier stays
+    // open and the fuzzer exercises the full op set.
+    let oracle_id = env.register(MockPendingOracle, ());
+    let vault_id = env.register(RiskVault, (&owner, asset_id.address(), &oracle_id));
     let client = RiskVaultClient::new(&env, &vault_id);
     client.set_controller(&controller);
 
@@ -85,7 +90,7 @@ fuzz_target!(|input: Input| {
             }
             Op::MintShares { user, shares } => {
                 let u = pick(user);
-                let _ = client.try_mint_shares(&shares, &u, &u, &u);
+                let _ = client.try_mint(&shares, &u, &u, &u);
             }
             Op::Redeem { user, shares } => {
                 let u = pick(user);

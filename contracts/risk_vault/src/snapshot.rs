@@ -25,6 +25,13 @@ impl RiskVault {
     /// - is idempotent and rate-limited — it no-ops if a snapshot already
     ///   exists for the current day (see the guard below), so repeated or
     ///   adversarial calls cost the caller gas but change nothing.
+    ///
+    /// One residual caller degree of freedom: WHICH moment within the day is
+    /// recorded. An early caller can pin the day's price before that day's
+    /// settlements land (the pending-outcomes guard below only defers while
+    /// an outcome is already public). Consumers of the daily series must
+    /// treat the intra-day sample point as untrusted — it is analytics data,
+    /// never an executable quote or a pricing input.
     #[when_not_paused]
     pub fn snapshot(e: &Env) {
         let now = e.ledger().timestamp();

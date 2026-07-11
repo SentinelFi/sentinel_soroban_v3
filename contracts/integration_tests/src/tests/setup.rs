@@ -70,16 +70,22 @@ impl TestEnv {
         );
         let gov = governance_module::GovernanceModuleClient::new(&env, &gov_addr);
 
-        // RiskVault
-        let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
-        let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
-
-        // OracleAggregator
+        // OracleAggregator (before the vault — its address is a vault
+        // constructor argument, mirroring the production deploy order)
         let oracle_addr = env.register(
             oracle_aggregator::OracleAggregator,
             (&owner, &oracle_account),
         );
         let oracle = oracle_aggregator::OracleAggregatorClient::new(&env, &oracle_addr);
+
+        // RiskVault — the constructor wires the settlement barrier's oracle,
+        // so entry/exit are blocked from genesis while a public flight
+        // outcome is unsettled (no fail-open window to forget).
+        let vault_addr = env.register(
+            risk_vault::RiskVault,
+            (&owner, &asset_id.address(), &oracle_addr),
+        );
+        let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
         // FlightPoolManager
         let pool_addr = env.register(
@@ -109,10 +115,6 @@ impl TestEnv {
         vault.set_controller(&ctrl_addr);
         oracle.set_controller(&ctrl_addr);
         pool.set_controller(&ctrl_addr);
-
-        // Wire the oracle into the vault so entry/exit are blocked while a public
-        // flight outcome is unsettled (settlement-barrier for the free-option gap).
-        vault.set_oracle(&oracle_addr);
 
         // Whitelist the default test route.
         gov.whitelist_route(

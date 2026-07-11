@@ -1851,8 +1851,13 @@ network_passphrase = "Public Global Stellar Network ; September 2015"
         -> returns CONTRACT_ID_ORACLE
 
    c. RiskVault                  — constructor needs: owner + USDC token address
+                                   + OracleAggregator contract address
+        (must deploy AFTER OracleAggregator — the oracle address is a
+         constructor argument that wires the settlement barrier at genesis,
+         so there is no unwired fail-open window between deploy and wiring)
         stellar contract deploy --wasm target/.../risk_vault.wasm \
-          -- --owner OWNER_ADDRESS --asset_token <USDC_CONTRACT_ID>
+          -- --owner OWNER_ADDRESS --asset_token <USDC_CONTRACT_ID> \
+             --oracle CONTRACT_ID_ORACLE
         (the share-decimals offset is hardcoded to 3 in the constructor)
         -> returns CONTRACT_ID_VAULT
 
@@ -1882,18 +1887,13 @@ network_passphrase = "Public Global Stellar Network ; September 2015"
         OracleAggregator.set_controller(CONTRACT_ID_CONTROLLER)   <- one-time, immutable
         RiskVault.set_controller(CONTRACT_ID_CONTROLLER)           <- one-time, immutable
         FlightPoolManager.set_controller(CONTRACT_ID_CONTROLLER)   <- one-time, immutable
-        RiskVault.set_oracle(CONTRACT_ID_ORACLE)                   <- REQUIRED: enables the
-                                                                      settlement barrier that blocks
-                                                                      LP entry/exit while a flight
-                                                                      outcome is public but unsettled.
-                                                                      Owner-updatable. If omitted, the
-                                                                      barrier stays inactive and the
-                                                                      free-option risk is open.
-                                                                      (This is RiskVault pointing at the
-                                                                      oracle CONTRACT — distinct from
-                                                                      step 7's OracleAggregator.set_oracle,
-                                                                      which sets the off-chain oracle
-                                                                      executor address.)
+        (RiskVault's settlement-barrier oracle is wired in the constructor,
+         step 2c — no post-deploy call needed. RiskVault.set_oracle exists
+         only to rotate it if the oracle contract is ever redeployed; it and
+         set_min_withdrawal_request emit `oracle_set` / `min_wd_req_set`
+         audit events. Note set_oracle points at the oracle CONTRACT —
+         distinct from OracleAggregator.set_oracle, which sets the off-chain
+         oracle executor address.)
         RiskVault.set_min_withdrawal_request(MIN_ASSETS)           <- REQUIRED: minimum asset value
                                                                       per queued withdrawal request.
                                                                       Ships disabled (0); if left at 0,

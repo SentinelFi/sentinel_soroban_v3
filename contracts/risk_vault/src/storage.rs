@@ -10,9 +10,10 @@ pub enum VaultKey {
     WithdrawalQueue,
     NextRequestId,
     LastSnapshotTime,
-    // OracleAggregator address. When set, entry/exit are blocked while the oracle
-    // reports an unsettled public flight outcome, so no LP can transact at a
-    // stale share price during the outcome-public-but-not-yet-settled window.
+    // OracleAggregator address, wired at construction (owner-rotatable via
+    // set_oracle). Entry/exit are blocked while the oracle reports an
+    // unsettled public flight outcome, so no LP can transact at a stale
+    // share price during the outcome-public-but-not-yet-settled window.
     Oracle,
     // Minimum asset value (at request time) a queued withdrawal must carry.
     // Owner-tuned per deployment; 0 (the default) disables the floor. Raises
@@ -27,13 +28,16 @@ pub enum VaultKey {
     SnapshotPrice(u64),
 }
 
+// No timestamp field: request time is never read on-chain (the queue is
+// strict-FIFO by position, not by age) and the `wd_req` event already
+// timestamps each request via its ledger. Omitting it keeps the size-capped
+// single-entry queue as small as possible.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct WithdrawalRequest {
     pub request_id: u64,
     pub owner: Address,
     pub shares: i128,
-    pub timestamp: u64,
 }
 
 /// Mode for `recover_uncollected` — owner-driven manual recovery of an

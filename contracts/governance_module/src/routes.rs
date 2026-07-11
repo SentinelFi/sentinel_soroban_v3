@@ -26,7 +26,10 @@ fn read_route(e: &Env, key: &DataKey) -> RouteTerms {
 
 #[contractimpl]
 impl GovernanceModule {
-    /// Whitelist a route with optional per-route term overrides.
+    /// Whitelist a NEW route with optional per-route term overrides.
+    /// Re-listing an existing entry is rejected unless it is byte-identical
+    /// and still approved (idempotent refresh) — term changes must go through
+    /// `update_route_terms`, re-activation through `enable_route`.
     #[when_not_paused]
     pub fn whitelist_route(
         e: &Env,
@@ -71,6 +74,28 @@ impl GovernanceModule {
         }
 
         let key = DataKey::Route(flight_id.clone(), origin.clone(), dest.clone());
+
+        // whitelist_route is single-purpose: it CREATES a listing. If an
+        // entry already exists, silently overwriting it would replace the
+        // route's term overrides (a re-list with the Options left `None`
+        // resets every override to default-tracking) and would re-approve a
+        // disabled route without `enable_route`'s revalidation. Reject
+        // everything except the exact idempotent re-listing (identical term
+        // overrides, still approved) — that case falls through and re-runs
+        // the normal write path (a no-op rewrite that refreshes TTLs and
+        // re-emits the listing event). Term changes go through
+        // `update_route_terms`; re-activation goes through `enable_route`;
+        // a REMOVED route has no entry, so re-adding it stays possible.
+        if let Some(existing) = e.storage().persistent().get::<_, RouteTerms>(&key) {
+            if !(existing.approved
+                && existing.premium == premium
+                && existing.payoff == payoff
+                && existing.delay_hours == delay_hours)
+            {
+                panic_with_error!(e, Error::RouteAlreadyListed);
+            }
+        }
+
         let terms = RouteTerms {
             premium,
             payoff,

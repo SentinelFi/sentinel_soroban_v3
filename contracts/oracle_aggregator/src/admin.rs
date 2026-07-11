@@ -110,8 +110,17 @@ impl OracleAggregator {
             None => panic_with_error!(e, Error::FlightNotInList),
         };
 
+        // Swap-remove: the active list is an unordered set (prune and the
+        // keeper cursors tolerate reordering), so move the tail into the gap
+        // and pop instead of shifting every trailing element — same idiom as
+        // the pool's prune_active_list.
         let mut flights = flights;
-        flights.remove(idx);
+        let last = flights.len() - 1;
+        if idx != last {
+            let tail = flights.get(last).unwrap();
+            flights.set(idx, tail);
+        }
+        flights.pop_back();
         e.storage()
             .instance()
             .set(&OracleKey::ActiveFlightList, &flights);

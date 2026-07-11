@@ -19,15 +19,18 @@ pub(crate) fn require_controller(e: &Env, controller: &Address) {
     }
 }
 
-/// Whether any flight outcome is public but not yet financially settled, per the
-/// configured oracle. Returns false when no oracle is configured (the gate is
-/// inactive until the deployment wires it via `set_oracle`).
+/// Whether any flight outcome is public but not yet financially settled, per
+/// the configured oracle. The oracle is wired at construction, so a missing
+/// entry is unreachable state — panic loudly rather than silently disabling
+/// the barrier (the old `None => false` fallback was fail-open: an unwired
+/// vault accepted deposits with no stale-price protection at all).
 pub(crate) fn settlement_pending(e: &Env) -> bool {
-    let oracle: Option<Address> = e.storage().instance().get(&VaultKey::Oracle);
-    match oracle {
-        Some(addr) => OracleClient::new(e, &addr).has_pending_outcomes(),
-        None => false,
-    }
+    let oracle: Address = e
+        .storage()
+        .instance()
+        .get(&VaultKey::Oracle)
+        .expect("oracle not set");
+    OracleClient::new(e, &oracle).has_pending_outcomes()
 }
 
 /// Block LP entry/exit while pending PnL is unrecognized. Pricing a deposit,

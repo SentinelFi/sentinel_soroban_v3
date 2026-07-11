@@ -111,10 +111,13 @@ fn non_owner_set_keeper_panics() {
         governance_module::GovernanceModule,
         (&owner, &PREMIUM, &PAYOFF, &DELAY_HOURS),
     );
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
     let oracle_addr = env.register(
         oracle_aggregator::OracleAggregator,
         (&owner, &Address::generate(&env)),
+    );
+    let vault_addr = env.register(
+        risk_vault::RiskVault,
+        (&owner, &asset_id.address(), &oracle_addr),
     );
     let pool_addr = env.register(
         flight_pool_manager::FlightPoolManager,
@@ -146,7 +149,12 @@ fn non_owner_recover_uncollected_panics() {
     let owner = Address::generate(&env);
     let asset_admin_addr = Address::generate(&env);
     let asset_id = env.register_stellar_asset_contract_v2(asset_admin_addr);
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
+    // Oracle never consulted on this path — any address satisfies the
+    // constructor.
+    let vault_addr = env.register(
+        risk_vault::RiskVault,
+        (&owner, &asset_id.address(), &Address::generate(&env)),
+    );
     let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
     let stranger = Address::generate(&env);

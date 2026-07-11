@@ -3,7 +3,37 @@
 // builds don't pull in soroban-sdk's testutils.
 
 use soroban_sdk::xdr::{ContractEventBody, ScAddress, ScVal};
-use soroban_sdk::{testutils::Events as _, Address, Env, TryFromVal, Val, Vec};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short, testutils::Events as _, Address, Env, TryFromVal, Val,
+    Vec,
+};
+
+/// Minimal OracleAggregator stand-in for unit tests. The RiskVault requires an
+/// oracle address at construction (its settlement barrier consults
+/// `has_pending_outcomes` on every LP entry/exit), so suites that don't want
+/// the full OracleAggregator register this instead: it answers with a settable
+/// flag, defaulting to `false` (barrier open).
+#[contract]
+pub struct MockPendingOracle;
+
+#[contractimpl]
+impl MockPendingOracle {
+    /// Set the value `has_pending_outcomes` reports.
+    pub fn set_pending_outcomes(e: &Env, pending: bool) {
+        e.storage()
+            .instance()
+            .set(&symbol_short!("pending"), &pending);
+    }
+
+    /// Mirror of `OracleAggregator::has_pending_outcomes` — the only entry
+    /// point the vault's settlement barrier calls.
+    pub fn has_pending_outcomes(e: &Env) -> bool {
+        e.storage()
+            .instance()
+            .get(&symbol_short!("pending"))
+            .unwrap_or(false)
+    }
+}
 
 /// Decode the testutils `ContractEvents` wrapper (soroban-sdk 25+) back into
 /// the pre-25 `(contract_address, topics, data)` tuple shape every contract's

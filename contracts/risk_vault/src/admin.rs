@@ -5,7 +5,7 @@ use stellar_tokens::fungible::{Base, FungibleToken};
 use stellar_tokens::vault::Vault;
 
 use crate::auth::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
-use crate::events::ControllerSet;
+use crate::events::{ControllerSet, MinWithdrawalRequestSet, OracleSet};
 use crate::storage::VaultKey;
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient};
 
@@ -18,9 +18,16 @@ impl RiskVault {
     ///   upgrade, recover uncollected balances).
     /// * `asset_token` - SAC address of the underlying asset the vault
     ///   custodies and denominates its shares against.
-    pub fn __constructor(e: &Env, owner: Address, asset_token: Address) {
+    /// * `oracle` - Address of the OracleAggregator the settlement barrier
+    ///   consults. Required at construction so the barrier is active from
+    ///   genesis: a deposit-accepting vault whose barrier is silently unwired
+    ///   would let LPs enter/exit at stale share prices during
+    ///   outcome-public-but-unsettled windows. (The deploy order places the
+    ///   oracle before the vault, so the address is always available here.)
+    pub fn __constructor(e: &Env, owner: Address, asset_token: Address, oracle: Address) {
         ownable::set_owner(e, &owner);
         Vault::set_asset(e, asset_token);
+        e.storage().instance().set(&VaultKey::Oracle, &oracle);
         Vault::set_decimals_offset(e, 3);
         Base::set_metadata(
             e,
@@ -51,14 +58,20 @@ impl RiskVault {
         ControllerSet { controller }.publish(e);
     }
 
-    /// Set (or update) the OracleAggregator address the vault consults to block
-    /// entry/exit while a flight outcome is public but not yet settled. Owner-
-    /// only. Until this is set the settlement-pending gate is inactive, so a
-    /// production deployment must call it after the oracle is deployed.
+    /// Rotate the OracleAggregator address the vault consults to block
+    /// entry/exit while a flight outcome is public but not yet settled.
+    /// Owner-only. The initial oracle is wired at construction, so this
+    /// exists only for the (redeploy-the-oracle) contingency; note the
+    /// asymmetry with `set_controller`, which is deliberately one-time —
+    /// the barrier target must stay rotatable because the vault cannot
+    /// function safely against a dead oracle, while a controller swap has
+    /// no such recovery need. Emits `oracle_set` so monitoring catches any
+    /// re-wire of the barrier target.
     #[only_owner]
     pub fn set_oracle(e: &Env, oracle: Address) {
         e.storage().instance().set(&VaultKey::Oracle, &oracle);
         Self::extend_ttl(e);
+        OracleSet { oracle }.publish(e);
     }
 
     /// Set the minimum asset value a queued withdrawal request must carry at
@@ -85,6 +98,7 @@ impl RiskVault {
             .instance()
             .set(&VaultKey::MinWithdrawalRequest, &min_assets);
         Self::extend_ttl(e);
+        MinWithdrawalRequestSet { min_assets }.publish(e);
     }
 
     /// Extend instance TTL. Called by cron as a safety net.

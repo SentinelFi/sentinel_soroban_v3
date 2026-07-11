@@ -1153,6 +1153,7 @@ version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
  "risk_vault",
+ "sentinel_types",
  "soroban-sdk",
 ]
 

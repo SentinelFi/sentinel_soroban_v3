@@ -33,8 +33,9 @@ impl RiskVault {
         e.storage().instance().get(&VaultKey::Controller).unwrap()
     }
 
-    /// Return the configured oracle address, or None if the settlement-pending
-    /// gate has not been wired yet.
+    /// Return the configured oracle address. Wired at construction, so this
+    /// is always `Some` on a live vault; the `Option` shape is kept for ABI
+    /// stability with existing tooling.
     pub fn get_oracle(e: &Env) -> Option<Address> {
         e.storage().instance().get(&VaultKey::Oracle)
     }

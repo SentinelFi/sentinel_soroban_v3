@@ -95,7 +95,6 @@ impl RiskVault {
             request_id,
             owner: caller.clone(),
             shares,
-            timestamp: e.ledger().timestamp(),
         });
 
         e.storage()

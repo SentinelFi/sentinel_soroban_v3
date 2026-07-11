@@ -15,4 +15,5 @@ pub enum Error {
     NotOwnerOrAdmin = 509,
     FlightIdRetired = 510,
     RouteNotFound = 511,
+    RouteAlreadyListed = 512,
 }

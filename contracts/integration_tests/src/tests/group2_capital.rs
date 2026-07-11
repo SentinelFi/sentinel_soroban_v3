@@ -64,14 +64,18 @@ fn solvency_gate_blocks_undercollateralized_purchase() {
     );
     let gov = governance_module::GovernanceModuleClient::new(&env, &gov_addr);
 
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
-    let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
-
     let oracle_addr = env.register(
         oracle_aggregator::OracleAggregator,
         (&owner, &oracle_account),
     );
     let oracle = oracle_aggregator::OracleAggregatorClient::new(&env, &oracle_addr);
+
+    // Oracle before vault: the barrier's oracle is a constructor argument.
+    let vault_addr = env.register(
+        risk_vault::RiskVault,
+        (&owner, &asset_id.address(), &oracle_addr),
+    );
+    let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
     let pool_addr = env.register(
         flight_pool_manager::FlightPoolManager,

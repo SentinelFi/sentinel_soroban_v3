@@ -39,6 +39,9 @@ pub(crate) fn append_traveler_flight(e: &Env, traveler: &Address, flight_id: &Sy
     // block the address from purchasing. When full, evict the oldest entry
     // (keep the most recent MAX_TRAVELER_FLIGHTS) instead of blocking the buy —
     // this is a convenience index, and full history is derivable from events.
+    // `remove(0)` (not swap-remove) because chronological order is the point
+    // of the index; the shift is one host call whose cost is dwarfed by
+    // reading/writing the whole entry, which this function does regardless.
     if list.len() >= MAX_TRAVELER_FLIGHTS {
         list.remove(0);
     }

@@ -41,9 +41,12 @@ optimize: ## Build and optimize the contract wasm artifacts
 
 deploy-testnet: build ## Deploy all contracts to testnet (override SOURCE/NETWORK as needed)
 	stellar contract deploy --wasm $(WASM_DIR)/mock_usdc.wasm --source-account $(SOURCE) --network $(NETWORK) --alias mock_usdc -- --admin $(SOURCE)
-	stellar contract deploy --wasm $(WASM_DIR)/flight_pool_manager.wasm --source-account $(SOURCE) --network $(NETWORK) --alias flight_pool_manager -- --owner $(SOURCE) --asset_token $(SOURCE) --risk_vault $(SOURCE)
-	stellar contract deploy --wasm $(WASM_DIR)/risk_vault.wasm --source-account $(SOURCE) --network $(NETWORK) --alias risk_vault -- --owner $(SOURCE) --asset_token $(SOURCE)
+	# Oracle before vault: the vault constructor wires the settlement barrier
+	# (which blocks LP entry/exit while a flight outcome is public but not yet
+	# settled) to the oracle contract at genesis — no post-deploy set_oracle step.
 	stellar contract deploy --wasm $(WASM_DIR)/oracle_aggregator.wasm --source-account $(SOURCE) --network $(NETWORK) --alias oracle_aggregator -- --owner $(SOURCE) --authorized_oracle $(SOURCE)
+	stellar contract deploy --wasm $(WASM_DIR)/risk_vault.wasm --source-account $(SOURCE) --network $(NETWORK) --alias risk_vault -- --owner $(SOURCE) --asset_token $(SOURCE) --oracle oracle_aggregator
+	stellar contract deploy --wasm $(WASM_DIR)/flight_pool_manager.wasm --source-account $(SOURCE) --network $(NETWORK) --alias flight_pool_manager -- --owner $(SOURCE) --asset_token $(SOURCE) --risk_vault risk_vault
 	stellar contract deploy --wasm $(WASM_DIR)/governance_module.wasm --source-account $(SOURCE) --network $(NETWORK) --alias governance_module -- --owner $(SOURCE) --default_premium 100 --default_payoff 200 --default_delay_hours 3
 	stellar contract deploy --wasm $(WASM_DIR)/controller.wasm --source-account $(SOURCE) --network $(NETWORK) --alias controller -- --owner $(SOURCE) --governance $(SOURCE) --risk_vault $(SOURCE) --oracle $(SOURCE) --flight_pool_manager $(SOURCE) --asset_token $(SOURCE) --authorized_keeper $(SOURCE) --min_lead_time_secs 3600 --claim_expiry_window_secs 86500
 	# Post-deploy wiring (aliases resolve to the deployed contract IDs).
@@ -51,10 +54,6 @@ deploy-testnet: build ## Deploy all contracts to testnet (override SOURCE/NETWOR
 	stellar contract invoke --source-account $(SOURCE) --network $(NETWORK) --id oracle_aggregator -- set_controller --controller controller
 	stellar contract invoke --source-account $(SOURCE) --network $(NETWORK) --id risk_vault -- set_controller --controller controller
 	stellar contract invoke --source-account $(SOURCE) --network $(NETWORK) --id flight_pool_manager -- set_controller --controller controller
-	# ... and wire the oracle into the vault to enable the settlement barrier that
-	# blocks LP entry/exit while a flight outcome is public but not yet settled.
-	# Required — without it the barrier stays inactive.
-	stellar contract invoke --source-account $(SOURCE) --network $(NETWORK) --id risk_vault -- set_oracle --oracle oracle_aggregator
 	# Set the minimum asset value per queued withdrawal request. Required — the
 	# floor ships disabled (0), and without it one actor can cheaply occupy every
 	# slot of the bounded withdrawal queue with dust requests spread across

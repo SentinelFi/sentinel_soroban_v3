@@ -50,8 +50,11 @@ fn setup() -> TestEnv {
     let asset = token::Client::new(&env, &asset_addr);
     let asset_admin_client = token::StellarAssetClient::new(&env, &asset_addr);
 
-    // RiskVault — needs OZ FungibleVault wired around asset.
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_addr));
+    // RiskVault — needs OZ FungibleVault wired around asset, plus an oracle
+    // for the constructor-wired settlement barrier (the mock reports no
+    // pending outcomes, keeping the barrier open for the deposit below).
+    let mock_oracle = env.register(sentinel_types::test_support::MockPendingOracle, ());
+    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_addr, &mock_oracle));
     let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
     // FlightPoolManager
@@ -144,7 +147,12 @@ fn test_set_controller_no_auth_fails() {
     let owner = Address::generate(&env);
     let asset_admin = Address::generate(&env);
     let asset_id = env.register_stellar_asset_contract_v2(asset_admin);
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
+    // Oracle never consulted on this path — any address satisfies the
+    // vault constructor.
+    let vault_addr = env.register(
+        risk_vault::RiskVault,
+        (&owner, &asset_id.address(), &Address::generate(&env)),
+    );
     let pool_addr = env.register(
         FlightPoolManager,
         (&owner, &asset_id.address(), &vault_addr),
@@ -888,7 +896,12 @@ fn test_withdraw_recovered_no_auth_fails() {
     let owner = Address::generate(&env);
     let asset_admin = Address::generate(&env);
     let asset_id = env.register_stellar_asset_contract_v2(asset_admin);
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
+    // Oracle never consulted on this path — any address satisfies the
+    // vault constructor.
+    let vault_addr = env.register(
+        risk_vault::RiskVault,
+        (&owner, &asset_id.address(), &Address::generate(&env)),
+    );
     let pool_addr = env.register(
         FlightPoolManager,
         (&owner, &asset_id.address(), &vault_addr),

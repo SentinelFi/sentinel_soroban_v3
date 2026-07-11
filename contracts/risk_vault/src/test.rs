@@ -1,5 +1,5 @@
 use super::*;
-use sentinel_types::test_support::collect_events;
+use sentinel_types::test_support::{collect_events, MockPendingOracle, MockPendingOracleClient};
 use soroban_sdk::{
     testutils::Address as _, testutils::Ledger, Address, Env, String, Symbol, TryFromVal,
 };
@@ -19,7 +19,12 @@ fn setup() -> (Env, RiskVaultClient<'static>, Address, Address, Address) {
     let asset_id = env.register_stellar_asset_contract_v2(asset_admin.clone());
     let asset_client = token::StellarAssetClient::new(&env, &asset_id.address());
 
-    let contract_id = env.register(RiskVault, (&owner, asset_id.address()));
+    // The settlement barrier consults the oracle on every entry/exit; the
+    // mock answers `has_pending_outcomes = false` so the barrier stays open
+    // in tests that don't exercise it.
+    let oracle_id = env.register(MockPendingOracle, ());
+
+    let contract_id = env.register(RiskVault, (&owner, asset_id.address(), &oracle_id));
     let client = RiskVaultClient::new(&env, &contract_id);
 
     // Set up a controller
@@ -430,7 +435,12 @@ fn test_set_min_withdrawal_request_unauthorized() {
     let owner = Address::generate(&env);
     let asset_admin = Address::generate(&env);
     let asset_id = env.register_stellar_asset_contract_v2(asset_admin);
-    let contract_id = env.register(RiskVault, (&owner, asset_id.address()));
+    // Oracle never consulted on this path — any address satisfies the
+    // constructor.
+    let contract_id = env.register(
+        RiskVault,
+        (&owner, asset_id.address(), Address::generate(&env)),
+    );
     let client = RiskVaultClient::new(&env, &contract_id);
 
     client.set_min_withdrawal_request(&1_0000000);
@@ -564,9 +574,7 @@ fn test_zero_value_request_returned_not_pinned() {
 
     // The drop is announced (checked before any further contract call —
     // collect_events only surfaces the most recent invocation's events).
-    assert!(
-        count_events_with_verb(&env, &client.address, Symbol::new(&env, "wd_dropped")) >= 1
-    );
+    assert!(count_events_with_verb(&env, &client.address, Symbol::new(&env, "wd_dropped")) >= 1);
 
     // Queue fully drained — the zero entry did not pin the head.
     assert_eq!(client.get_withdrawal_queue().len(), 0);
@@ -634,7 +642,12 @@ fn test_pause_by_non_owner_panics() {
     let owner = Address::generate(&env);
     let asset_admin = Address::generate(&env);
     let asset_id = env.register_stellar_asset_contract_v2(asset_admin);
-    let contract_id = env.register(RiskVault, (&owner, asset_id.address()));
+    // Oracle never consulted on this path — any address satisfies the
+    // constructor.
+    let contract_id = env.register(
+        RiskVault,
+        (&owner, asset_id.address(), Address::generate(&env)),
+    );
     let client = RiskVaultClient::new(&env, &contract_id);
 
     let stranger = Address::generate(&env);
@@ -1059,7 +1072,12 @@ fn test_recover_uncollected_unauthorized() {
     let owner = Address::generate(&env);
     let asset_admin = Address::generate(&env);
     let asset_id = env.register_stellar_asset_contract_v2(asset_admin);
-    let contract_id = env.register(RiskVault, (&owner, asset_id.address()));
+    // Oracle never consulted on this path — any address satisfies the
+    // constructor.
+    let contract_id = env.register(
+        RiskVault,
+        (&owner, asset_id.address(), Address::generate(&env)),
+    );
     let client = RiskVaultClient::new(&env, &contract_id);
 
     let stranger = Address::generate(&env);
@@ -1197,4 +1215,57 @@ fn test_max_withdraw_clamped_by_locked_capital() {
 fn test_extend_ttl_is_callable() {
     let (_env, client, _owner, _controller, _depositor) = setup();
     client.extend_ttl();
+}
+
+// =========================================================================
+// Settlement-barrier wiring (constructor-supplied oracle)
+// =========================================================================
+
+#[test]
+fn test_constructor_wires_settlement_barrier() {
+    // The oracle is a constructor argument, so the barrier is active from
+    // genesis — no post-deploy set_oracle step exists to forget. Verify the
+    // wiring is observable and that the barrier actually closes entry/exit
+    // the moment the oracle reports a pending outcome.
+    let (env, client, _owner, _controller, depositor) = setup();
+    let oracle_addr = client.get_oracle().expect("constructor must wire oracle");
+    let oracle = MockPendingOracleClient::new(&env, &oracle_addr);
+
+    // Barrier open (mock defaults to no pending outcomes): deposit works.
+    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+
+    // An outcome becomes public → every entry/exit path closes and the
+    // max_* views report zero.
+    oracle.set_pending_outcomes(&true);
+    assert!(client
+        .try_deposit(&1_0000000, &depositor, &depositor, &depositor)
+        .is_err());
+    assert!(client
+        .try_withdraw(&1_0000000, &depositor, &depositor, &depositor)
+        .is_err());
+    assert_eq!(client.max_deposit(&depositor), 0);
+    assert_eq!(client.max_withdraw(&depositor), 0);
+
+    // Settlement completes → barrier reopens.
+    oracle.set_pending_outcomes(&false);
+    client.deposit(&1_0000000, &depositor, &depositor, &depositor);
+}
+
+#[test]
+fn test_owner_setter_events_emitted() {
+    // set_oracle and set_min_withdrawal_request are security-relevant owner
+    // levers (barrier target, queue admission floor); both must leave an
+    // on-chain audit trail like every other owner setter in the system.
+    let (env, client, _owner, _controller, _depositor) = setup();
+
+    let new_oracle = env.register(MockPendingOracle, ());
+    client.set_oracle(&new_oracle);
+    assert!(count_events_with_verb(&env, &client.address, Symbol::new(&env, "oracle_set")) >= 1);
+    assert_eq!(client.get_oracle(), Some(new_oracle));
+
+    client.set_min_withdrawal_request(&5_0000000);
+    assert!(
+        count_events_with_verb(&env, &client.address, Symbol::new(&env, "min_wd_req_set")) >= 1
+    );
+    assert_eq!(client.get_min_withdrawal_request(), 5_0000000);
 }

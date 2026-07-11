@@ -88,3 +88,22 @@ pub struct ControllerSet {
     #[topic]
     pub(crate) controller: Address,
 }
+
+// Owner rotated the OracleAggregator address the settlement barrier consults.
+// The barrier is the vault's core LP-pricing protection, so a re-wire is a
+// security-relevant configuration change — off-chain monitoring subscribes to
+// this to detect an unexpected (or missing) barrier target. Mirrors the
+// oracle contract's own `oracle_set` audit event.
+#[contractevent(topics = ["sentinel", "oracle_set"], data_format = "single-value")]
+pub struct OracleSet {
+    #[topic]
+    pub(crate) oracle: Address,
+}
+
+// Owner tuned the minimum asset value a queued withdrawal request must carry
+// (anti dust-squatting floor for the bounded queue; 0 disables it). Emitted
+// for the audit trail, matching the controller's owner-setter events.
+#[contractevent(topics = ["sentinel", "min_wd_req_set"], data_format = "single-value")]
+pub struct MinWithdrawalRequestSet {
+    pub(crate) min_assets: i128,
+}

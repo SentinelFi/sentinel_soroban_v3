@@ -13,6 +13,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 risk_vault = { path = ".." }
+sentinel_types = { path = "../../sentinel_types", features = ["testutils"] }
 soroban-sdk = { version = "25.3.1", features = ["testutils"] }
 
 [[bin]]

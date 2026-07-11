@@ -1069,7 +1069,13 @@ fn test_remove_route_frees_flight_id_mapping_after_retirement() {
 // =========================================================================
 
 #[test]
-fn test_whitelist_existing_route_overwrites_terms() {
+#[should_panic(expected = "Error(Contract, #512)")]
+fn test_whitelist_existing_route_with_different_terms_rejected() {
+    // whitelist_route only CREATES listings: re-listing with different term
+    // overrides must not silently replace the stored ones (an admin passing
+    // `None`s for an intended no-op re-approve would otherwise reset every
+    // override to default-tracking). Term changes go through
+    // update_route_terms.
     let (_env, client, owner, _addr) = setup();
     let (flight_id, origin, dest) = route_ids();
 
@@ -1079,6 +1085,63 @@ fn test_whitelist_existing_route_overwrites_terms() {
         &origin,
         &dest,
         &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &Some(75_0000000i128),
+        &None::<i128>,
+        &None::<u32>,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #512)")]
+fn test_whitelist_disabled_route_rejected() {
+    // Re-approving a disabled route must go through enable_route (which
+    // revalidates resolved terms), not through a fresh whitelist call.
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    client.disable_route(&owner, &flight_id, &origin, &dest);
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+}
+
+#[test]
+fn test_whitelist_identical_relisting_is_idempotent() {
+    // The exact re-listing (same overrides, still approved) stays allowed as
+    // a TTL-refreshing no-op, so operational re-attestation scripts don't
+    // have to special-case already-listed routes.
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &Some(75_0000000i128),
         &None::<i128>,
         &None::<u32>,
     );

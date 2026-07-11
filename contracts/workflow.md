@@ -85,11 +85,11 @@ stellar contract build --optimize
 ```bash
 stellar contract deploy --wasm target/wasm32v1-none/release/mock_usdc.wasm --source-account alice --network testnet --alias mock_usdc -- --admin alice
 
-stellar contract deploy --wasm target/wasm32v1-none/release/flight_pool_manager.wasm --source-account alice --network testnet --alias flight_pool_manager -- --owner alice --asset_token alice --risk_vault alice
+stellar contract deploy --wasm target/wasm32v1-none/release/oracle_aggregator.wasm --source-account alice --network testnet --alias oracle_aggregator -- --owner alice --authorized_oracle alice
 
-stellar contract deploy --wasm target/wasm32v1-none/release/risk_vault.wasm --source-account alice --network testnet --alias risk_vault -- --owner alice --asset_token alice
+stellar contract deploy --wasm target/wasm32v1-none/release/risk_vault.wasm --source-account alice --network testnet --alias risk_vault -- --owner alice --asset_token alice --oracle oracle_aggregator
 
-stellar contract deploy --wasm target/wasm32v1-none/release/oracle_aggregator.wasm --source-account alice --network testnet --alias oracle_aggregator -- --owner alice --authorized_oracle alice 
+stellar contract deploy --wasm target/wasm32v1-none/release/flight_pool_manager.wasm --source-account alice --network testnet --alias flight_pool_manager -- --owner alice --asset_token alice --risk_vault risk_vault
 
 stellar contract deploy --wasm target/wasm32v1-none/release/governance_module.wasm --source-account alice --network testnet --alias governance_module -- --owner alice --default_premium 100 --default_payoff 200 --default_delay_hours 3 
 

@@ -72,16 +72,20 @@ fn setup() -> TestEnv {
     );
     let gov = governance_module::GovernanceModuleClient::new(&env, &gov_addr);
 
-    // RiskVault
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
-    let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
-
     // OracleAggregator
     let oracle_addr = env.register(
         oracle_aggregator::OracleAggregator,
         (&owner, &oracle_account),
     );
     let oracle = oracle_aggregator::OracleAggregatorClient::new(&env, &oracle_addr);
+
+    // RiskVault — the settlement barrier's oracle is a constructor argument,
+    // so the oracle is registered first (mirrors the production deploy order).
+    let vault_addr = env.register(
+        risk_vault::RiskVault,
+        (&owner, &asset_id.address(), &oracle_addr),
+    );
+    let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
     // FlightPoolManager
     let pool_addr = env.register(
@@ -319,10 +323,13 @@ fn test_unauthorized_set_keeper() {
         governance_module::GovernanceModule,
         (&owner, &PREMIUM, &PAYOFF, &DELAY_HOURS),
     );
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
     let oracle_addr = env.register(
         oracle_aggregator::OracleAggregator,
         (&owner, &Address::generate(&env)),
+    );
+    let vault_addr = env.register(
+        risk_vault::RiskVault,
+        (&owner, &asset_id.address(), &oracle_addr),
     );
     let pool_addr = env.register(
         flight_pool_manager::FlightPoolManager,
@@ -734,14 +741,18 @@ fn test_buy_insurance_panics_on_solvency_gate() {
     );
     let gov = governance_module::GovernanceModuleClient::new(&env, &gov_addr);
 
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
-    let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
-
     let oracle_addr = env.register(
         oracle_aggregator::OracleAggregator,
         (&owner, &oracle_account),
     );
     let oracle = oracle_aggregator::OracleAggregatorClient::new(&env, &oracle_addr);
+
+    // Oracle before vault: the barrier's oracle is a constructor argument.
+    let vault_addr = env.register(
+        risk_vault::RiskVault,
+        (&owner, &asset_id.address(), &oracle_addr),
+    );
+    let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
     let pool_addr = env.register(
         flight_pool_manager::FlightPoolManager,
@@ -1266,10 +1277,13 @@ fn test_non_owner_set_whitelist_enabled_panics() {
         governance_module::GovernanceModule,
         (&owner, &PREMIUM, &PAYOFF, &DELAY_HOURS),
     );
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
     let oracle_addr = env.register(
         oracle_aggregator::OracleAggregator,
         (&owner, &Address::generate(&env)),
+    );
+    let vault_addr = env.register(
+        risk_vault::RiskVault,
+        (&owner, &asset_id.address(), &oracle_addr),
     );
     let pool_addr = env.register(
         flight_pool_manager::FlightPoolManager,

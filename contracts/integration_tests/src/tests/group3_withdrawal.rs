@@ -152,7 +152,12 @@ fn recover_uncollected_unauthorized_panics() {
     let owner = Address::generate(&env);
     let asset_admin_addr = Address::generate(&env);
     let asset_id = env.register_stellar_asset_contract_v2(asset_admin_addr);
-    let vault_addr = env.register(risk_vault::RiskVault, (&owner, &asset_id.address()));
+    // Oracle never consulted on this path — any address satisfies the
+    // constructor.
+    let vault_addr = env.register(
+        risk_vault::RiskVault,
+        (&owner, &asset_id.address(), &Address::generate(&env)),
+    );
     let vault = risk_vault::RiskVaultClient::new(&env, &vault_addr);
 
     let stranger = Address::generate(&env);

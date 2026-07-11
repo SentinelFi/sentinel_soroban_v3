@@ -1,9 +1,8 @@
 # Contract Deploy & Call Order
 
 Canonical order for deploying the Sentinel contracts and wiring them together.
-Every step below matters: the contracts reference each other by address, two of
-the references are **one-time writes**, and one optional-looking step
-(`risk_vault.set_oracle`) is load-bearing for LP protection. For CLI syntax
+Every step below matters: the contracts reference each other by address and
+three of the references are **one-time writes**. For CLI syntax
 details (identities, build, bindings) see [workflow.md](workflow.md); for the
 full design rationale see [../spec/architecture.md](../spec/architecture.md).
 
@@ -13,7 +12,7 @@ full design rationale see [../spec/architecture.md](../spec/architecture.md).
 mock_usdc / USDC SAC          (no dependencies — must exist first)
 governance_module             (no contract dependencies)
 oracle_aggregator             (no contract dependencies at deploy time)
-risk_vault                    (needs: asset address)
+risk_vault                    (needs: asset address, oracle_aggregator address)
 flight_pool_manager           (needs: asset address, risk_vault address)
 controller                    (needs: ALL of the above)
 ```
@@ -68,15 +67,22 @@ stellar contract deploy --wasm target/wasm32v1-none/release/oracle_aggregator.wa
 ```
 
 `authorized_oracle` can be a placeholder at deploy time — it is
-owner-updatable later via `set_oracle` (step 12).
+owner-updatable later via `set_oracle` (step 11).
 
 ### 4. RiskVault
 
 ```bash
 stellar contract deploy --wasm target/wasm32v1-none/release/risk_vault.wasm \
   --source-account <deployer> --network <net> --alias risk_vault \
-  -- --owner <OWNER> --asset_token <ASSET>
+  -- --owner <OWNER> --asset_token <ASSET> --oracle <ORACLE_AGGREGATOR>
 ```
+
+`oracle` is the OracleAggregator **contract** deployed in step 3 (not the
+off-chain executor account). It wires the vault's settlement barrier at
+genesis: entry/exit are blocked while a flight outcome is public but
+unsettled, so LPs can never transact at a stale share price — and because it
+is a constructor argument, there is no unwired fail-open window to forget.
+Owner-rotatable later via `risk_vault.set_oracle` (emits `oracle_set`).
 
 ### 5. FlightPoolManager
 
@@ -122,25 +128,22 @@ Order within this phase matters where noted. All calls are made by `<OWNER>`.
  7. oracle_aggregator.set_controller(CONTROLLER)     # ONE-TIME, irreversible
  8. risk_vault.set_controller(CONTROLLER)            # ONE-TIME, irreversible
  9. flight_pool_manager.set_controller(CONTROLLER)   # ONE-TIME, irreversible
-10. risk_vault.set_oracle(ORACLE_AGGREGATOR)         # REQUIRED — see below
-11. risk_vault.set_min_withdrawal_request(MIN)       # REQUIRED — see below
-12. oracle_aggregator.set_oracle(ORACLE_EXECUTOR)    # off-chain oracle key
-13. controller.set_keeper(KEEPER_EXECUTOR)           # off-chain keeper key
-    (12/13 only needed if the constructor values were placeholders)
+10. risk_vault.set_min_withdrawal_request(MIN)       # REQUIRED — see below
+11. oracle_aggregator.set_oracle(ORACLE_EXECUTOR)    # off-chain oracle key
+12. controller.set_keeper(KEEPER_EXECUTOR)           # off-chain keeper key
+    (11/12 only needed if the constructor values were placeholders)
 ```
 
 Steps 7–9 are **one-time writes** — each panics on a second call. Verify the
 controller address before submitting; a mistake here cannot be corrected
 without redeploying the affected contract.
 
-Step 10 is easy to miss and must not be skipped: it points the vault at the
-oracle **contract** (distinct from step 12, which sets the off-chain oracle
-**executor account** on the oracle contract). Until it is set, the vault's
-settlement barrier is inactive — LPs could enter/exit at a stale share price
-while a flight outcome is public but unsettled. It is owner-updatable, so it
-can also be fixed later, but the gap is open until then.
+(The vault's settlement-barrier oracle is no longer wired here — it is a
+`risk_vault` constructor argument, step 4. `risk_vault.set_oracle` remains
+available to the owner for the oracle-redeploy contingency only; both it and
+step 10 emit audit events, `oracle_set` and `min_wd_req_set`.)
 
-Step 11 ships disabled (0). Left at 0, one actor can occupy every slot of the
+Step 10 ships disabled (0). Left at 0, one actor can occupy every slot of the
 bounded withdrawal queue with dust requests spread across addresses, locking
 other LPs out of the exit path. Pick a per-asset value meaningfully above dust
 and well below typical LP positions (e.g. `100_0000000` = 100 USDC at
@@ -150,22 +153,25 @@ configured value can lock ordinary positions out.
 ## Phase 4 — Configure the protocol
 
 ```
-14. governance_module.set_defaults(premium, payoff, delay_hours)
+13. governance_module.set_defaults(premium, payoff, delay_hours)
       (only if the constructor defaults need changing)
-15. governance_module.add_admin(ADMIN)                    # per route manager
-16. governance_module.whitelist_route(caller, flight_id, origin, dest,
+14. governance_module.add_admin(ADMIN)                    # per route manager
+15. governance_module.whitelist_route(caller, flight_id, origin, dest,
                                       premium?, payoff?, delay_hours?)
-      # one per route; omit optional terms to inherit the defaults
-17. controller.set_solvency_ratio(ratio)                  # optional, default 100
-18. (optional) controller.set_whitelist_enabled(true)
+      # one per NEW route; omit optional terms to inherit the defaults.
+      # Re-listing an existing route is rejected (RouteAlreadyListed) unless
+      # identical — term changes go through update_route_terms, re-activation
+      # through enable_route.
+16. controller.set_solvency_ratio(ratio)                  # optional, default 100
+17. (optional) controller.set_whitelist_enabled(true)
       + controller.add_whitelisted_buyer(caller, addr)    # per buyer
 ```
 
 ## Phase 5 — Start the executor
 
 ```
-19. Fund ORACLE_EXECUTOR and KEEPER_EXECUTOR accounts with XLM (tx fees).
-20. Start the executor backend (executor/) with the contract IDs + keys:
+18. Fund ORACLE_EXECUTOR and KEEPER_EXECUTOR accounts with XLM (tx fees).
+19. Start the executor backend (executor/) with the contract IDs + keys:
       - FlightDataFetcher   (oracle key,  ~2 h)  → oracle set_estimated_arrival /
                                                     set_landed / set_cancelled
       - FlightClassifier    (keeper key,  ~1 h;  → controller.classify_flights

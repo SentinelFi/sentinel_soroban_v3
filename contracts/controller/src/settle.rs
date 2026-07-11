@@ -324,9 +324,13 @@ impl Controller {
     /// pipeline:
     /// - the oracle must have NO `FlightData` row (the same gate eviction
     ///   itself enforces — a present row means the flight is restorable, and
-    ///   restore-and-settle is the correct path; note this also means the
-    ///   row must NOT be restored after eviction, or this reconciliation
-    ///   becomes unreachable);
+    ///   restore-and-settle is the correct path). A row restored AFTER
+    ///   eviction blocks this reconciliation, but only temporarily: an
+    ///   evicted flight is outside keeper enumeration and past its purchase
+    ///   window, so nothing ever rewrites the restored row and it re-archives
+    ///   when its restoration TTL lapses, at which point this entry point
+    ///   works again. Prefer not restoring post-eviction — it only delays
+    ///   the collateral release by the restored row's TTL;
     /// - the flight must NOT be in the oracle active list (a listed flight
     ///   is still keeper-enumerable and must settle through the normal
     ///   pipeline).
