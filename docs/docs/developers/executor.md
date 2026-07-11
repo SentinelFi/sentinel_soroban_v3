@@ -7,7 +7,7 @@ title: Off-Chain Executor
 
 The executor is a TypeScript service in [`executor/centralized_cron/`](https://github.com/SentinelFi/sentinel_soroban_v3/tree/main/executor/centralized_cron) that drives protocol automation. It uses the Stellar SDK, node-cron, and Express.
 
-The oracle backend is intentionally swappable: contracts only check authorization against owner-rotatable addresses, so migrating to a decentralized backend such as Acurast requires one owner transaction per contract, not a redeploy.
+The oracle backend is intentionally swappable: contracts only check authorization against owner-rotatable addresses, so migrating to a different backend requires one owner transaction per contract, not a redeploy.
 
 ## Jobs
 
@@ -18,6 +18,8 @@ The oracle backend is intentionally swappable: contracts only check authorizatio
 | Settlement executor | Every 5 minutes | `execute_settlements` on the controller | Keeper key |
 | Queue maintainer | Every 5 minutes, offset | `run_queue_maintenance` on the controller | Keeper key |
 | TTL extender | Daily | Extends storage TTLs for flight, claim, and route entries | Any funded key |
+
+Schedules are defaults defined in `src/index.ts`, not on-chain constraints. Adjust them to your own operational needs.
 
 ## Configuration
 

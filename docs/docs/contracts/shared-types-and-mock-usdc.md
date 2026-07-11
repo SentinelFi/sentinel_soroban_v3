@@ -11,7 +11,7 @@ title: Shared Types and Mock USDC
 
 Keeping these in one crate guarantees that all contracts and their generated clients agree on a single XDR layout.
 
-:::warning Field order is load-bearing
+:::warning[Field order is load-bearing]
 The Soroban type codec depends on field and variant order. Types in this crate must never be reordered without a coordinated version bump across all contracts.
 :::
 

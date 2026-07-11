@@ -49,4 +49,6 @@ flowchart LR
 | Process withdrawal queue | Keeper executor | Cron, every 5 minutes |
 | Claim payouts | Travelers | Self-service |
 
-Flight data comes from the FlightAware AeroAPI today, delivered by a centralized executor. The oracle backend is swappable by design, with a migration to [Acurast](https://acurast.com) trusted execution environments planned, so that data delivery itself becomes decentralized.
+The cron cadences are the current executor defaults, not protocol rules. Timing is off-chain configuration and can be tuned freely, as long as the oracle and keeper run often enough for timely settlement.
+
+Flight data comes from the FlightAware AeroAPI today, delivered by a centralized executor. The oracle backend is swappable by design, so data delivery can migrate to a decentralized backend without redeploying the contracts.

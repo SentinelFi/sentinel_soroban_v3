@@ -105,10 +105,6 @@ const config: Config = {
               label: 'Medium',
               href: 'https://medium.com/@sentineldefi/',
             },
-            {
-              label: 'Stellar Community Fund',
-              href: 'https://communityfund.stellar.org/submissions/recvmpd1gNE6KIGt6/',
-            },
           ],
         },
         {

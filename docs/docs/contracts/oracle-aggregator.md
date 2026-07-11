@@ -23,7 +23,7 @@ stateDiagram-v2
 
 Each flight stores `FlightData`: status, estimated arrival time, actual arrival time, and settlement timestamp.
 
-:::info Scheduled, not estimated
+:::info[Scheduled, not estimated]
 The estimated arrival time must be the published schedule (AeroAPI `scheduled_in`), never the live ETA. Comparing against a live ETA would misclassify delayed flights as on time.
 :::
 
