@@ -55,6 +55,32 @@ pub struct WithdrawalRequested {
     pub(crate) queue_len: u32,
 }
 
+// Emitted when an underwriter cancels a queued request. Mirrors
+// `WithdrawalRequested` (including post-removal occupancy) so indexers can
+// reconstruct queue state and escrowed-share totals from events alone —
+// without this, a cancelled request would look forever-pending off-chain.
+#[contractevent(topics = ["sentinel", "wd_cancel"], data_format = "map")]
+pub struct WithdrawalCancelled {
+    #[topic]
+    pub(crate) owner: Address,
+    pub(crate) request_id: u64,
+    pub(crate) shares: i128,
+    pub(crate) queue_len: u32,
+}
+
+// Emitted when queue processing drops a request whose asset value decayed to
+// zero (share price fell after it was queued) and returns the escrowed shares
+// to the owner. No `Credited` fires for such a request, so this is the only
+// signal that closes it out for queue-tracking indexers — and it tells the
+// owner their exit did NOT happen and must be re-requested.
+#[contractevent(topics = ["sentinel", "wd_dropped"], data_format = "map")]
+pub struct RequestDropped {
+    #[topic]
+    pub(crate) owner: Address,
+    pub(crate) request_id: u64,
+    pub(crate) shares: i128,
+}
+
 // Owner-only one-time wiring of the authorized controller. Emitted for the
 // audit trail.
 #[contractevent(topics = ["sentinel", "controller_set"], data_format = "single-value")]

@@ -265,6 +265,24 @@ fn test_register_flight_zero_premium_fails() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #419)")]
+fn test_register_flight_zero_delay_hours_fails() {
+    // Defense in depth, same tier as the payoff/premium checks: a zero delay
+    // threshold would classify every landed flight as delayed (guaranteed
+    // payout), so registration must reject it even though governance already
+    // validates its own write paths.
+    let t = setup();
+    t.pool.register_flight(
+        &t.controller,
+        &flight_a(),
+        &FLIGHT_DATE,
+        &PREMIUM,
+        &PAYOFF,
+        &0u32,
+    );
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #409)")]
 fn test_register_flight_payoff_not_above_premium_fails() {
     // Defense in depth — a route that resolves (against mutable

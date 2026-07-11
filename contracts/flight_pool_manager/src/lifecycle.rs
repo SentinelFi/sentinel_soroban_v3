@@ -44,6 +44,14 @@ impl FlightPoolManager {
         if payoff <= premium {
             panic_with_error!(e, Error::PayoffNotAbovePremium);
         }
+        // Same defense-in-depth tier as the payoff/premium checks above: a
+        // zero threshold would classify every landed flight as delayed
+        // (`delay >= 0` always holds), turning the bucket into a guaranteed
+        // payout. Governance validates this on its own write paths; reject it
+        // here too so no caller-side gap can ever store such a config.
+        if delay_hours == 0 {
+            panic_with_error!(e, Error::DelayHoursNotPositive);
+        }
 
         let key = PoolKey::FlightConfig(flight_id.clone(), date);
         if let Some(existing) = e.storage().persistent().get::<_, FlightConfig>(&key) {

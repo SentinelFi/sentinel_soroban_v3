@@ -1,6 +1,7 @@
 use soroban_sdk::{panic_with_error, Address, Env};
 
-use crate::interfaces::OracleClient;
+use sentinel_types::interfaces::OracleClient;
+
 use crate::storage::VaultKey;
 use crate::Error;
 
