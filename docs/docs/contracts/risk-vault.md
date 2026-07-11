@@ -1,0 +1,41 @@
+---
+sidebar_position: 3
+title: Risk Vault
+---
+
+# Risk Vault
+
+The Risk Vault holds all underwriter capital. It is built on the OpenZeppelin `FungibleVault`, an ERC-4626 equivalent for Soroban. Depositors receive transferable share tokens named **RiskVault Share (RVS)**.
+
+## Share accounting
+
+- The vault prices shares against an internal **total managed assets** counter rather than its raw token balance, so direct token transfers to the vault cannot manipulate the share price.
+- A virtual share offset (`decimals_offset = 3`) defends against inflation attacks on an empty vault.
+- Rounding always favors the vault, protecting solvency.
+
+## Capital states
+
+- **Locked capital** backs outstanding policies. It is increased when a policy is sold and decreased at settlement.
+- **Free capital** equals total managed assets minus locked capital. Withdrawals and new policy sales draw only on free capital.
+
+## Underwriter functions
+
+- `deposit(assets, receiver, from)` and `mint`: enter the vault.
+- `redeem` and `withdraw`: exit immediately, capped to free capital.
+- `request_withdrawal(shares)`: join the FIFO withdrawal queue, shares are escrowed, returns a stable request id.
+- `cancel_withdrawal(caller, request_id)`: cancel a pending request.
+- `collect()`: pull USDC credited by processed withdrawal requests.
+- `snapshot()`: permissionless, records the daily share price (kept 30 days).
+
+## Controller-only functions
+
+`increase_locked`, `decrease_locked`, `send_payout`, `process_withdrawal_queue`, and `record_premium_income` can only be called by the Controller.
+
+## Settlement barrier
+
+The vault is wired at construction with the Oracle Aggregator address. While any flight outcome is publicly known but not yet settled, deposits and withdrawals are blocked so nobody can trade against a stale share price.
+
+## Owner functions
+
+- `set_min_withdrawal_request(amount)`: anti-dust floor for queue entries (clamped at request time).
+- `recover_uncollected(user, amount, mode)`: recovery path for archived claimable balances, either re-crediting the user or transferring out.
