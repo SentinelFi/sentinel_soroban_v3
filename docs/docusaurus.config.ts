@@ -12,12 +12,10 @@ const config: Config = {
   },
 
   // Production URL of the docs site.
-  // TODO: replace with the real custom domain before deploying.
-  url: 'https://docs.example.com',
-  // Serving from a custom domain uses '/'.
-  // If serving from https://sentinelfi.github.io/sentinel_soroban_v3/ instead,
-  // change this to '/sentinel_soroban_v3/'.
-  baseUrl: '/',
+  // When switching to a custom domain, change url to the domain
+  // and baseUrl to '/'.
+  url: 'https://sentinelfi.github.io',
+  baseUrl: '/sentinel_soroban_v3/',
 
   organizationName: 'SentinelFi',
   projectName: 'sentinel_soroban_v3',
