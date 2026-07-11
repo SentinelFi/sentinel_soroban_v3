@@ -75,6 +75,21 @@ pub mod timeouts {
     /// physical flight; without this timeout such a row would hold vault
     /// collateral and a policy-bucket slot forever.
     pub const STALE_FLIGHT_TIMEOUT_SECS: u64 = 14 * 86_400;
+
+    /// How long past its SCHEDULED arrival an `Active` flight may wait for a
+    /// terminal oracle outcome (`Landed` / `Cancelled`) before the protocol
+    /// may void it, settling it like an on-time flight (premiums to the
+    /// vault, collateral released, no payout). `Active` is the only
+    /// collateral-locking state that previously had no bounded exit: if the
+    /// oracle pipeline stopped after writing the estimated arrival, the row
+    /// stayed `Active` forever, pinning the full payoff in the vault and an
+    /// active-list slot in both the oracle and the pool. Two weeks past the
+    /// scheduled arrival every real outcome is long since public, so a row
+    /// still bare of one means the oracle cannot resolve this flight; voiding
+    /// (never paying) is the safe default — paying without an attested
+    /// outcome would let a data outage mint claims. The oracle can still
+    /// write a real outcome any time before the void is classified.
+    pub const ACTIVE_FLIGHT_TIMEOUT_SECS: u64 = 14 * 86_400;
 }
 
 // =========================================================================

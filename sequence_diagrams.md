@@ -136,6 +136,9 @@ sequenceDiagram
     Note over Ctrl: enforce min lead time and max booking horizon
     Ctrl->>Oracle: get_flight_data(flight_id, date)
     Oracle-->>Ctrl: status (must be NotInitiated | Active)
+    Ctrl->>Oracle: is_sale_open(flight_id, date)
+    Oracle-->>Ctrl: must be true — live oracle sale attestation
+    Note over Ctrl: revert SaleNotOpen if missing, lapsed or closed
 
     Ctrl->>Pool: register_flight(flight_id, date, premium, payoff, delay_hours)
     Ctrl->>Oracle: register_flight(flight_id, date)
@@ -224,6 +227,14 @@ sequenceDiagram
     participant Pool as Pool
     participant Vault as Vault
     participant Asset as Asset
+
+    rect rgb(245, 235, 255)
+    Note over OB,Oracle: Phase 0 — attest sales (SaleAuthorizer cron)
+    OB->>Oracle: open_sale(flight_id, date, expires_at)
+    Note right of Oracle: verified scheduled + not cancelled — max 24h validity
+    OB->>Oracle: close_sale() | set_cancelled()
+    Note right of Oracle: unverifiable → close, cancelled → tombstone
+    end
 
     rect rgb(235, 244, 255)
     Note over OB,Oracle: Phase 1 — push outcomes (FlightDataFetcher cron)

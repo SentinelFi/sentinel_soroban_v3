@@ -52,6 +52,28 @@ pub struct FlightEvicted {
     pub(crate) outcome_pending: bool,
 }
 
+// Emitted when the oracle opens (or refreshes) the sale window for a flight
+// instance — its attestation that the flight was verified scheduled and not
+// cancelled at write time. `expires_at` is the freshness deadline: purchases
+// after it require a newer attestation.
+#[contractevent(topics = ["sentinel", "sale_open"], data_format = "map")]
+pub struct SaleOpened {
+    #[topic]
+    pub(crate) flight_id: Symbol,
+    pub(crate) date: u64,
+    pub(crate) expires_at: u64,
+}
+
+// Emitted when the oracle closes a live sale window ahead of its expiry
+// (directly via `close_sale`; `set_cancelled` clears the window too but the
+// cancellation status event already records that).
+#[contractevent(topics = ["sentinel", "sale_close"], data_format = "map")]
+pub struct SaleClosed {
+    #[topic]
+    pub(crate) flight_id: Symbol,
+    pub(crate) date: u64,
+}
+
 pub(crate) fn emit_status_event(e: &Env, flight_id: &Symbol, date: u64, new_status: &FlightStatus) {
     FlightStatusChange {
         flight_id: flight_id.clone(),

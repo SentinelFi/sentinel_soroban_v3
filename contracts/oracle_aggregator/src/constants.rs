@@ -55,3 +55,20 @@ pub(crate) const SETTLEMENT_GRACE_SECS: u64 = 90 * SECONDS_PER_DAY;
 // queries while quadrupling the settled-flight throughput the cap tolerates.
 pub(crate) const SETTLED_RETENTION_DAYS: u64 = 7;
 pub(crate) const SECONDS_PER_DAY: u64 = 86_400;
+
+/// Hard cap on how far ahead a sale authorization (`open_sale`) may expire.
+/// The authorization is the oracle's attestation that the flight was
+/// verified scheduled-and-not-cancelled AT WRITE TIME, so its remaining
+/// validity is exactly how stale that attestation may be when a purchase
+/// consumes it. 24 hours bounds the worst-case window in which a publicly
+/// cancelled flight is still purchasable (executor outage included) while
+/// keeping the oracle's refresh duty to one write per flight instance per
+/// day; the executor is expected to refresh far more often and to tombstone
+/// observed cancellations immediately, which closes the window regardless of
+/// any live authorization.
+pub(crate) const SALE_AUTH_MAX_VALIDITY_SECS: u64 = SECONDS_PER_DAY;
+
+/// TTL slack past a sale authorization's expiry timestamp (~1 hour of
+/// ledgers). The entry only needs to outlive its own expiry check; the
+/// buffer absorbs ledger-time drift from the nominal 5 s cadence.
+pub(crate) const SALE_AUTH_TTL_BUFFER_LEDGERS: u32 = 720;

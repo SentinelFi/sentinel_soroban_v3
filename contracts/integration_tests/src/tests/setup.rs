@@ -16,6 +16,8 @@ pub const MIN_LEAD_TIME: u64 = 3_600;
 pub const CLAIM_EXPIRY_WINDOW: u64 = 5_184_000; // 60 days
 pub const DEPOSIT_AMOUNT: i128 = 1_000_0000000; // 1000 asset
 pub const INITIAL_TIMESTAMP: u64 = 1_710_400_000;
+// Mirrors the oracle's on-chain cap on sale-authorization validity (24h).
+pub const SALE_AUTH_MAX_VALIDITY_SECS: u64 = 86_400;
 pub const EST_ARRIVAL: u64 = 1_710_500_000;
 pub const ACTUAL_ON_TIME: u64 = 1_710_501_800; // 30min late (< 3h)
 pub const ACTUAL_DELAYED: u64 = 1_710_510_800; // ~3h late (>= 3h)
@@ -153,10 +155,36 @@ impl TestEnv {
         }
     }
 
+    /// Open (or refresh) the oracle sale window for a flight instance — the
+    /// affirmative attestation `buy_insurance` requires. Mirrors the
+    /// executor: never authorizes a flight with a recorded outcome (so tests
+    /// exercising the status gate still reach it) and bounds the expiry to
+    /// the on-chain validity cap. No-op when a valid expiry can't be formed
+    /// (flight date already reached), letting the purchase gates reject.
+    #[allow(dead_code)]
+    pub fn open_sale(&self, flight_id: &Symbol, date: u64) {
+        let status = self.oracle.get_flight_data(flight_id, &date).status;
+        if !matches!(
+            status,
+            sentinel_types::FlightStatus::NotInitiated | sentinel_types::FlightStatus::Active
+        ) {
+            return;
+        }
+        let now = self.env.ledger().timestamp();
+        let expires_at = date.min(now + SALE_AUTH_MAX_VALIDITY_SECS);
+        if expires_at <= now {
+            return;
+        }
+        self.oracle
+            .open_sale(&self.oracle_account, flight_id, &date, &expires_at);
+    }
+
     /// Mint PREMIUM asset to the traveler and call `controller.buy_insurance`
-    /// for the default route + FLIGHT_DATE.
+    /// for the default route + FLIGHT_DATE (opening the sale window first,
+    /// as the executor would).
     #[allow(dead_code)]
     pub fn buy(&self, traveler: &Address) {
+        self.open_sale(&symbol_short!("AA100"), FLIGHT_DATE);
         self.asset_admin.mint(traveler, &PREMIUM);
         self.ctrl.buy_insurance(
             traveler,
@@ -170,6 +198,7 @@ impl TestEnv {
     /// Same as `buy` but for an arbitrary flight_id + date (default origin/dest).
     #[allow(dead_code)]
     pub fn buy_flight(&self, traveler: &Address, flight_id: &Symbol, date: u64) {
+        self.open_sale(flight_id, date);
         self.asset_admin.mint(traveler, &PREMIUM);
         self.ctrl.buy_insurance(
             traveler,

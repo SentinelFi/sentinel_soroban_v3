@@ -136,6 +136,7 @@ fn toggle_off_then_on_then_off_buy_cycle() {
     // Off again → strangers can buy without being on the list.
     t.ctrl.set_whitelist_enabled(&false);
     let traveler3 = Address::generate(&t.env);
+    t.open_sale(&symbol_short!("UA200"), FLIGHT_DATE_2);
     t.asset_admin.mint(&traveler3, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler3,

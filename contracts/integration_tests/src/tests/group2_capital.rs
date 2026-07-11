@@ -113,7 +113,14 @@ fn solvency_gate_blocks_undercollateralized_purchase() {
         &None::<u32>,
     );
 
-    // Vault has 0 free capital — purchase must panic.
+    // Vault has 0 free capital — purchase must panic. The sale window is
+    // opened first so the solvency gate (not the sale gate) is what rejects.
+    oracle.open_sale(
+        &oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &FLIGHT_DATE,
+    );
     let traveler = Address::generate(&env);
     asset_admin.mint(&traveler, &PREMIUM);
     ctrl.buy_insurance(

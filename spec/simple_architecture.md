@@ -180,10 +180,16 @@ state machine.
 ```
 NotInitiated
     -> Active                   (oracle: estimated arrival pushed)
+    -> Cancelled                (oracle: short-notice / pre-purchase cancellation)
+    -> ToBeSettledOnTime        (controller: void — no data ever arrived,
+                                 only >= 14 days past departure)
 
 Active
     -> Landed                   (oracle: actual arrival pushed)
     -> Cancelled                (oracle: cancellation pushed)
+    -> ToBeSettledOnTime        (controller: void — terminal outcome never
+                                 arrived, only >= 14 days past the recorded
+                                 scheduled arrival)
 
 Landed
     -> ToBeSettledOnTime        (controller: classify)
@@ -196,8 +202,14 @@ ToBeSettled*
     -> Settled                  (controller: execute settlement)
 ```
 
+Both void edges settle as on-time (no payout) so a dead row can never pin
+vault collateral forever — and never pay against an unattested outcome.
+
 **Key operations:**
 - Oracle-only: set_estimated_arrival, set_landed, set_cancelled.
+- Oracle-only sale window: open_sale / close_sale — a short-lived (max 24h)
+  attestation that the flight instance is scheduled and not cancelled;
+  buy_insurance requires a live one and fails closed without it.
 - Controller-only: register_flight, set_to_be_settled (classification),
   set_settled (terminal).
 - Anyone: prune_settled (removes flights past a retention window from the
@@ -225,7 +237,8 @@ counters and a per-traveler purchase index.
   the "my policies" frontend without scanning all flights.
 
 **Key operations:**
-- Traveler: buy_insurance — validates route, checks lead time, registers
+- Traveler: buy_insurance — validates route, checks lead time, requires the
+  oracle's live sale authorization (no attestation, no sale), registers
   flight if new, checks solvency, transfers premium, locks collateral,
   records buyer, updates index.
 - Keeper: classify_flights — iterates oracle's active list, classifies
@@ -372,6 +385,10 @@ Traveler
 Controller:
    1. Read Governance.route_status(flight_id, origin, dest) — must be Active.
    2. Check lead time (date > now + min_lead_time).
+   2b. Oracle status must be NotInitiated or Active (no recorded outcome),
+       AND Oracle.is_sale_open(flight_id, date) must be true — the oracle's
+       live attestation that the flight is scheduled and not cancelled.
+       Missing / lapsed / closed authorization -> revert (fail closed).
    3. If flight not yet registered:
         - Pool.register_flight(flight_id, date, premium, payoff, delay_hours)
         - Oracle.register_flight(flight_id, date)
@@ -387,6 +404,8 @@ Controller:
 
 ```
 Oracle account
+   -> Oracle.open_sale(flight_id, date, expires_at)   (sale-window refresh,
+   -> Oracle.close_sale(flight_id, date)               cron #0)
    -> Oracle.set_estimated_arrival(flight_id, date, eta)
    -> Oracle.set_landed(flight_id, date, actual_arrival)
    -> Oracle.set_cancelled(flight_id, date)
@@ -402,7 +421,11 @@ Controller iterates oracle's active list:
    - Cancelled            -> Oracle.set_to_be_settled(.., ToBeSettledCancelled)
    - Landed (on time)     -> Oracle.set_to_be_settled(.., ToBeSettledOnTime)
    - Landed (delayed >=N) -> Oracle.set_to_be_settled(.., ToBeSettledDelayed)
-   - NotInitiated         -> emit warning event (oracle hasn't fetched)
+   - NotInitiated         -> emit warning event (oracle hasn't fetched);
+                             >= 14 days past departure with data present:
+                             void -> ToBeSettledOnTime
+   - Active               -> nothing until >= 14 days past the recorded
+                             scheduled arrival; then void -> ToBeSettledOnTime
 ```
 
 ### Execute Settlements (off-chain cron #3)
@@ -512,6 +535,7 @@ Underwriter
 | Pool: sweep_expired | Anyone |
 | Pool: withdraw_recovered | Owner |
 | Oracle: set_estimated / set_landed / set_cancelled | Authorized oracle |
+| Oracle: open_sale / close_sale | Authorized oracle |
 | Oracle: register_flight / set_to_be_settled / set_settled | Controller only |
 | Oracle: prune_settled | Anyone |
 | Controller: buy_insurance | Traveler (self) |

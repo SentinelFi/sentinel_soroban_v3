@@ -150,7 +150,33 @@ fn setup() -> TestEnv {
     }
 }
 
+// Mirrors the oracle's on-chain cap on sale-authorization validity (24h).
+const SALE_AUTH_MAX_VALIDITY_SECS: u64 = 86_400;
+
+/// Open (or refresh) the oracle sale window for a flight instance — the
+/// affirmative attestation `buy_insurance` requires. Mirrors the executor:
+/// never authorizes a flight with a recorded outcome (so tests exercising
+/// the status gate still reach it) and bounds the expiry to the on-chain
+/// validity cap. No-op when a valid expiry can't be formed.
+fn open_sale(t: &TestEnv, flight_id: &Symbol, date: u64) {
+    let status = t.oracle.get_flight_data(flight_id, &date).status;
+    if !matches!(
+        status,
+        crate::interfaces::FlightStatus::NotInitiated | crate::interfaces::FlightStatus::Active
+    ) {
+        return;
+    }
+    let now = t.env.ledger().timestamp();
+    let expires_at = date.min(now + SALE_AUTH_MAX_VALIDITY_SECS);
+    if expires_at <= now {
+        return;
+    }
+    t.oracle
+        .open_sale(&t.oracle_account, flight_id, &date, &expires_at);
+}
+
 fn buy(t: &TestEnv, traveler: &Address) {
+    open_sale(t, &symbol_short!("AA100"), FLIGHT_DATE);
     t.asset_admin.mint(traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         traveler,
@@ -437,6 +463,7 @@ fn test_buy_insurance_traveler_index_for_multiple_flights() {
 
     buy(&t, &traveler);
 
+    open_sale(&t, &symbol_short!("UA200"), FLIGHT_DATE + SECONDS_PER_DAY);
     t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,
@@ -658,6 +685,83 @@ fn test_buy_insurance_panics_on_non_day_aligned_date() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #319)")]
+fn test_buy_insurance_panics_without_sale_authorization() {
+    // Absence of an on-chain outcome is NOT proof the flight is insurable —
+    // a publicly cancelled flight the oracle hasn't written yet looks
+    // identical to a valid unreported one. Purchases therefore require the
+    // oracle's affirmative, unexpired sale authorization and fail closed
+    // without it.
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    t.asset_admin.mint(&traveler, &PREMIUM);
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &FLIGHT_DATE,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #319)")]
+fn test_buy_insurance_panics_on_expired_sale_authorization() {
+    // A lapsed authorization must not admit purchases: the attestation is
+    // only as fresh as its expiry, and an oracle that stopped re-attesting
+    // may be failing to observe a public cancellation.
+    let t = setup();
+    let now = t.env.ledger().timestamp();
+    t.oracle.open_sale(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &(now + 3_600),
+    );
+
+    // Two hours later the authorization has expired; the flight is still
+    // outside the min-lead cutoff, so the sale gate is what rejects.
+    t.env.ledger().with_mut(|l| l.timestamp = now + 7_200);
+    let traveler = Address::generate(&t.env);
+    t.asset_admin.mint(&traveler, &PREMIUM);
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &FLIGHT_DATE,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #319)")]
+fn test_buy_insurance_panics_after_sale_closed() {
+    // The oracle can revoke a live authorization ahead of its expiry (e.g.
+    // on losing confidence in the flight's identity); the gate must reject
+    // immediately, not at the original expiry.
+    let t = setup();
+    let now = t.env.ledger().timestamp();
+    t.oracle.open_sale(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &(now + 3_600),
+    );
+    t.oracle
+        .close_sale(&t.oracle_account, &symbol_short!("AA100"), &FLIGHT_DATE);
+
+    let traveler = Address::generate(&t.env);
+    t.asset_admin.mint(&traveler, &PREMIUM);
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &FLIGHT_DATE,
+    );
+}
+
+#[test]
 fn test_classify_and_settle_multiple_flights_in_one_batch() {
     // The bounded rotating-cursor loop must still process every
     // flight when several are active. Three distinct flights settle in one pass.
@@ -701,6 +805,7 @@ fn test_classify_and_settle_multiple_flights_in_one_batch() {
 
     for (fid, o, d) in flights.iter() {
         let traveler = Address::generate(&t.env);
+        open_sale(&t, fid, FLIGHT_DATE);
         t.asset_admin.mint(&traveler, &PREMIUM);
         t.ctrl.buy_insurance(&traveler, fid, o, d, &FLIGHT_DATE);
         t.oracle
@@ -790,7 +895,14 @@ fn test_buy_insurance_panics_on_solvency_gate() {
         &None::<u32>,
     );
 
-    // NO underwriter capital — vault has 0 free capital.
+    // NO underwriter capital — vault has 0 free capital. The sale window is
+    // opened first so the solvency gate (not the sale gate) is what rejects.
+    oracle.open_sale(
+        &oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &FLIGHT_DATE,
+    );
     let traveler = Address::generate(&env);
     asset_admin.mint(&traveler, &PREMIUM);
     ctrl.buy_insurance(
@@ -908,6 +1020,100 @@ fn test_classify_flights_emits_ttl_miss_for_not_initiated() {
         }
     }
     assert!(found, "expected sentinel.ttl_miss event for AA100");
+}
+
+#[test]
+fn test_classify_flights_leaves_stuck_active_flight_before_timeout() {
+    // An Active flight missing its terminal outcome must NOT be voided while
+    // the timeout past its scheduled arrival has not elapsed — the oracle may
+    // simply be late.
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    t.oracle.set_estimated_arrival(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &EST_ARRIVAL,
+    );
+
+    t.env.ledger().with_mut(|l| {
+        l.timestamp = EST_ARRIVAL + sentinel_types::timeouts::ACTIVE_FLIGHT_TIMEOUT_SECS - 1
+    });
+    t.ctrl.classify_flights(&t.keeper);
+
+    let data = t
+        .oracle
+        .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(data.status, oracle_aggregator::FlightStatus::Active);
+}
+
+#[test]
+fn test_classify_flights_times_out_stuck_active_flight() {
+    // An Active flight whose terminal outcome never arrives must not lock
+    // vault collateral forever: once the timeout past its scheduled arrival
+    // elapses, classification voids it (settled as on-time, no payout) and
+    // settlement releases the locked payoff and forwards the premium.
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    t.oracle.set_estimated_arrival(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &EST_ARRIVAL,
+    );
+    assert_eq!(t.vault.get_locked_capital(), PAYOFF);
+
+    t.env.ledger().with_mut(|l| {
+        l.timestamp = EST_ARRIVAL + sentinel_types::timeouts::ACTIVE_FLIGHT_TIMEOUT_SECS
+    });
+    t.ctrl.classify_flights(&t.keeper);
+
+    // The distinct timeout event is emitted alongside the classification.
+    let mut found = false;
+    for (event_addr, topics, _data) in collect_events(&t.env).iter() {
+        if event_addr != t.ctrl_addr {
+            continue;
+        }
+        if topics.len() < 3 {
+            continue;
+        }
+        let t0 = Symbol::try_from_val(&t.env, &topics.get(0).unwrap()).ok();
+        let t1 = Symbol::try_from_val(&t.env, &topics.get(1).unwrap()).ok();
+        let t2 = Symbol::try_from_val(&t.env, &topics.get(2).unwrap()).ok();
+        if t0 == Some(symbol_short!("sentinel"))
+            && t1 == Some(symbol_short!("timed_out"))
+            && t2 == Some(symbol_short!("AA100"))
+        {
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "expected sentinel.timed_out event for AA100");
+
+    let data = t
+        .oracle
+        .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(
+        data.status,
+        oracle_aggregator::FlightStatus::ToBeSettledOnTime
+    );
+    // The void is a newly disclosed outcome — the LP barrier engages until
+    // settlement recognizes it.
+    assert!(t.oracle.has_pending_outcomes());
+
+    t.ctrl.execute_settlements(&t.keeper);
+
+    let data = t
+        .oracle
+        .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(data.status, oracle_aggregator::FlightStatus::Settled);
+    assert_eq!(t.vault.get_locked_capital(), 0);
+    assert!(!t.oracle.has_pending_outcomes());
+    // No payout: the traveler's premium became vault income.
+    assert_eq!(t.asset.balance(&traveler), 0);
+    assert_eq!(t.vault.get_total_managed_assets(), DEPOSIT_AMOUNT + PREMIUM);
 }
 
 #[test]
@@ -1193,6 +1399,7 @@ fn test_whitelist_toggle_round_trip() {
     t.ctrl.set_whitelist_enabled(&false);
     assert!(!t.ctrl.whitelist_enabled());
     let stranger = Address::generate(&t.env);
+    open_sale(&t, &symbol_short!("AA100"), FLIGHT_DATE + SECONDS_PER_DAY);
     t.asset_admin.mint(&stranger, &PREMIUM);
     t.ctrl.buy_insurance(
         &stranger,

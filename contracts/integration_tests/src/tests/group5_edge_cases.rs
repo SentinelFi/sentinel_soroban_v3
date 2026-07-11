@@ -277,12 +277,14 @@ fn settlement_barrier_holds_through_void_classification_window() {
 }
 
 #[test]
-fn active_flight_never_voided_by_stale_timeout() {
-    // The void applies ONLY to flights that never produced any data. Once an
-    // estimated arrival is recorded (the flight is real), the row is Active
-    // and must wait for a genuine outcome no matter how much time passes —
-    // a delayed data feed must not convert a possibly-delayed flight into an
-    // on-time settlement.
+fn active_flight_not_voided_before_terminal_timeout() {
+    // The NotInitiated stale-void never applies once an estimated arrival is
+    // recorded: the flight is real and must wait for a genuine outcome — a
+    // delayed data feed must not convert a possibly-delayed flight into an
+    // on-time settlement. The wait is bounded, not infinite: the row holds
+    // through the entire active timeout past its scheduled arrival, and only
+    // then does the terminal-liveness fallback void it (see
+    // lifecycle_active_timeout_void in group 1).
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);
     t.buy(&traveler);
@@ -293,7 +295,10 @@ fn active_flight_never_voided_by_stale_timeout() {
         &EST_ARRIVAL,
     );
 
-    t.advance_time(FLIGHT_DATE - INITIAL_TIMESTAMP + 30 * SECONDS_PER_DAY);
+    // One second short of the active timeout — long past the stale timeout
+    // that voids dataless rows.
+    let now = t.env.ledger().timestamp();
+    t.advance_time(EST_ARRIVAL + sentinel_types::timeouts::ACTIVE_FLIGHT_TIMEOUT_SECS - 1 - now);
     t.classify_and_settle();
 
     // Untouched: still Active, collateral still locked, awaiting an outcome.

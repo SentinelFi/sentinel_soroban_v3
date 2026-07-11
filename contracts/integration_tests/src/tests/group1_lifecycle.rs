@@ -312,6 +312,90 @@ fn claim_panics_double_claim() {
         .claim(&traveler, &symbol_short!("AA100"), &FLIGHT_DATE);
 }
 
+// =========================================================================
+// Active-timeout void — bounded exit for flights whose terminal outcome
+// never arrives after the schedule was recorded
+// =========================================================================
+
+#[test]
+fn lifecycle_active_timeout_void() {
+    let t = TestEnv::new();
+    let traveler = Address::generate(&t.env);
+
+    t.buy(&traveler);
+    let tma_before = t.vault.get_total_managed_assets();
+    assert_eq!(t.vault.get_locked_capital(), PAYOFF);
+
+    // The oracle records the schedule (Active) and then goes silent — no
+    // terminal outcome ever arrives.
+    t.oracle.set_estimated_arrival(
+        &t.oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &EST_ARRIVAL,
+    );
+
+    // Before the timeout the flight stays Active and collateral stays locked.
+    t.classify_and_settle();
+    assert_eq!(t.vault.get_locked_capital(), PAYOFF);
+
+    // Past the timeout the keeper voids and settles it like an on-time
+    // flight: premium becomes vault yield, collateral is released, no payout,
+    // and both active-list slots free up on the normal pipeline.
+    let now = t.env.ledger().timestamp();
+    t.advance_time(EST_ARRIVAL + sentinel_types::timeouts::ACTIVE_FLIGHT_TIMEOUT_SECS - now);
+    t.classify_and_settle();
+
+    assert_eq!(t.vault.get_total_managed_assets(), tma_before + PREMIUM);
+    assert_eq!(t.vault.get_locked_capital(), 0);
+    assert_eq!(t.asset.balance(&traveler), 0);
+    let data = t
+        .oracle
+        .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(data.status, oracle_aggregator::FlightStatus::Settled);
+}
+
+// =========================================================================
+// Sale-authorization freshness — purchases fail closed once the oracle's
+// attestation lapses, and reopen on a fresh attestation
+// =========================================================================
+
+#[test]
+fn sale_window_lapse_fails_closed_until_reattested() {
+    let t = TestEnv::new();
+    // Far enough out that the authorization hits the 24h validity cap
+    // (not the departure-day boundary).
+    let date = FLIGHT_DATE + 2 * SECONDS_PER_DAY;
+
+    t.open_sale(&symbol_short!("AA100"), date);
+
+    // A day later nothing has refreshed the attestation — the purchase gate
+    // fails closed even though the flight is still days from departure.
+    t.advance_time(SALE_AUTH_MAX_VALIDITY_SECS + 1);
+    let buyer = Address::generate(&t.env);
+    t.asset_admin.mint(&buyer, &PREMIUM);
+    assert!(t
+        .ctrl
+        .try_buy_insurance(
+            &buyer,
+            &symbol_short!("AA100"),
+            &symbol_short!("JFK"),
+            &symbol_short!("LAX"),
+            &date,
+        )
+        .is_err());
+
+    // A fresh attestation re-opens the sale.
+    t.open_sale(&symbol_short!("AA100"), date);
+    t.ctrl.buy_insurance(
+        &buyer,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &date,
+    );
+}
+
 #[test]
 #[should_panic(expected = "Error(Contract, #413)")]
 fn claim_panics_after_expiry() {

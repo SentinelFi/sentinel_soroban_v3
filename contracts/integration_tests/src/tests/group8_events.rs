@@ -16,6 +16,7 @@ fn buy_path_emits_full_chain() {
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);
 
+    t.open_sale(&symbol_short!("AA100"), FLIGHT_DATE);
     t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,

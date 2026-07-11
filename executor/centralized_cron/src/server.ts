@@ -3,6 +3,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 import type { Config } from "./types.js";
 import { getLogs, getHealth, logRun } from "./run_log.js";
 import { SorobanClient } from "./soroban_client.js";
+import { runSaleAuthorizer } from "./sale_authorizer.js";
 import { runFlightDataFetcher } from "./flight_data_fetcher.js";
 import { runFlightClassifier } from "./flight_classifier.js";
 import { runSettlementExecutor } from "./settlement_executor.js";
@@ -60,6 +61,16 @@ export function startServer(config: Config): void {
   });
 
   // Manual trigger endpoints
+  app.post("/api/trigger/sale_authorizer", async (_req, res) => {
+    try {
+      const entry = await runSaleAuthorizer(config);
+      logRun(entry);
+      res.json(entry);
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
   app.post("/api/trigger/fetcher", async (_req, res) => {
     try {
       const entry = await runFlightDataFetcher(config);
@@ -114,6 +125,6 @@ export function startServer(config: Config): void {
     console.log(`[server] API listening on http://localhost:${port}`);
     console.log(`[server]   GET  /api/health`);
     console.log(`[server]   GET  /api/logs`);
-    console.log(`[server]   POST /api/trigger/{fetcher,classifier,settler,queue_maintainer,ttl_extender}`);
+    console.log(`[server]   POST /api/trigger/{sale_authorizer,fetcher,classifier,settler,queue_maintainer,ttl_extender}`);
   });
 }

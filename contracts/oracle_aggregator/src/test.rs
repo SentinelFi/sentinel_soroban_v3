@@ -362,6 +362,200 @@ fn test_stale_not_initiated_void_gated_by_timeout() {
 }
 
 #[test]
+fn test_active_timeout_void_gated_by_timeout() {
+    // An Active flight whose terminal outcome never arrives can be classified
+    // straight to ToBeSettledOnTime (the void path) — but only once the
+    // active timeout past its recorded scheduled arrival has elapsed, so a
+    // flight the oracle is merely late in resolving can never be voided. The
+    // void counts as a pending outcome until settled, keeping the vault's
+    // settlement barrier consistent.
+    let (env, client, _owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+    client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);
+
+    // Before the timeout: rejected.
+    env.ledger()
+        .with_mut(|li| li.timestamp = EST_ARRIVAL + 14 * 86_400 - 1);
+    assert!(client
+        .try_set_to_be_settled(
+            &controller,
+            &fid,
+            &FLIGHT_DATE,
+            &FlightStatus::ToBeSettledOnTime,
+        )
+        .is_err());
+
+    env.ledger()
+        .with_mut(|li| li.timestamp = EST_ARRIVAL + 14 * 86_400);
+
+    // Delayed / cancelled are never valid targets from Active — a flight
+    // without an attested outcome must not become payable.
+    assert!(client
+        .try_set_to_be_settled(
+            &controller,
+            &fid,
+            &FLIGHT_DATE,
+            &FlightStatus::ToBeSettledDelayed,
+        )
+        .is_err());
+    assert!(client
+        .try_set_to_be_settled(
+            &controller,
+            &fid,
+            &FLIGHT_DATE,
+            &FlightStatus::ToBeSettledCancelled,
+        )
+        .is_err());
+
+    // Past the timeout the void classification lands, counts as pending, and
+    // settles normally.
+    client.set_to_be_settled(
+        &controller,
+        &fid,
+        &FLIGHT_DATE,
+        &FlightStatus::ToBeSettledOnTime,
+    );
+    assert_eq!(client.get_pending_outcomes(), 1);
+    client.set_settled(&controller, &fid, &FLIGHT_DATE);
+    assert_eq!(client.get_pending_outcomes(), 0);
+}
+
+// --- Sale authorization (purchase-gate attestation) ---
+
+#[test]
+fn test_open_sale_round_trip_and_expiry() {
+    let (env, client, _owner, oracle, _controller) = setup();
+    let fid = flight_id(&env);
+
+    // No authorization → closed.
+    assert!(!client.is_sale_open(&fid, &FLIGHT_DATE));
+    assert_eq!(client.get_sale_auth(&fid, &FLIGHT_DATE), None);
+
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600);
+    assert!(client.is_sale_open(&fid, &FLIGHT_DATE));
+    assert_eq!(client.get_sale_auth(&fid, &FLIGHT_DATE), Some(3_600));
+
+    // At the expiry timestamp the window is closed — the stored expiry, not
+    // the storage lifetime, is what gates purchases.
+    env.ledger().with_mut(|li| li.timestamp = 3_600);
+    assert!(!client.is_sale_open(&fid, &FLIGHT_DATE));
+
+    // A refresh re-opens it.
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &(3_600 + 7_200));
+    assert!(client.is_sale_open(&fid, &FLIGHT_DATE));
+}
+
+#[test]
+fn test_open_sale_validates_expiry() {
+    let (env, client, _owner, oracle, _controller) = setup();
+    let fid = flight_id(&env);
+
+    // Expiry must be strictly in the future...
+    assert!(client
+        .try_open_sale(&oracle, &fid, &FLIGHT_DATE, &0)
+        .is_err());
+    // ...within the max validity cap (24h)...
+    assert!(client
+        .try_open_sale(&oracle, &fid, &FLIGHT_DATE, &(86_400 + 1))
+        .is_err());
+    assert!(client
+        .try_open_sale(&oracle, &fid, &FLIGHT_DATE, &86_400)
+        .is_ok());
+
+    // ...and never past the departure-day boundary.
+    env.ledger().with_mut(|li| li.timestamp = FLIGHT_DATE - 100);
+    assert!(client
+        .try_open_sale(&oracle, &fid, &FLIGHT_DATE, &(FLIGHT_DATE + 1))
+        .is_err());
+    assert!(client
+        .try_open_sale(&oracle, &fid, &FLIGHT_DATE, &FLIGHT_DATE)
+        .is_ok());
+}
+
+#[test]
+fn test_open_sale_allowed_pre_outcome_only() {
+    // NotInitiated (registered, no data) and Active rows are attestable;
+    // any recorded outcome makes the sale window unopenable.
+    let (env, client, _owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600);
+
+    client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600);
+
+    client.set_landed(&oracle, &fid, &FLIGHT_DATE, &ACT_ARRIVAL);
+    assert!(client
+        .try_open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600)
+        .is_err());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #602)")]
+fn test_open_sale_panics_on_cancelled_tombstone() {
+    // A pre-registration cancellation tombstone must not be overridden by a
+    // sale authorization — the flight is dead.
+    let (env, client, _owner, oracle, _controller) = setup();
+    let fid = flight_id(&env);
+
+    client.set_cancelled(&oracle, &fid, &FLIGHT_DATE);
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600);
+}
+
+#[test]
+fn test_close_sale_removes_authorization() {
+    let (env, client, _owner, oracle, _controller) = setup();
+    let fid = flight_id(&env);
+
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600);
+    assert!(client.is_sale_open(&fid, &FLIGHT_DATE));
+
+    client.close_sale(&oracle, &fid, &FLIGHT_DATE);
+    assert!(!client.is_sale_open(&fid, &FLIGHT_DATE));
+    assert_eq!(client.get_sale_auth(&fid, &FLIGHT_DATE), None);
+
+    // Idempotent — closing an absent window is a silent no-op.
+    client.close_sale(&oracle, &fid, &FLIGHT_DATE);
+}
+
+#[test]
+fn test_set_cancelled_clears_sale_authorization() {
+    let (env, client, _owner, oracle, controller) = setup();
+
+    // Registered flight: the cancellation write kills the live window in the
+    // same transaction.
+    let fid = flight_id(&env);
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600);
+    client.set_cancelled(&oracle, &fid, &FLIGHT_DATE);
+    assert!(!client.is_sale_open(&fid, &FLIGHT_DATE));
+
+    // Unregistered flight: the tombstone write clears the window too.
+    let fid2 = symbol_short!("UA200");
+    client.open_sale(&oracle, &fid2, &FLIGHT_DATE, &3_600);
+    client.set_cancelled(&oracle, &fid2, &FLIGHT_DATE);
+    assert!(!client.is_sale_open(&fid2, &FLIGHT_DATE));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #604)")]
+fn test_open_sale_requires_oracle() {
+    let (env, client, _owner, _oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.open_sale(&controller, &fid, &FLIGHT_DATE, &3_600);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #604)")]
+fn test_close_sale_requires_oracle() {
+    let (env, client, _owner, _oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.close_sale(&controller, &fid, &FLIGHT_DATE);
+}
+
+#[test]
 fn test_full_lifecycle_cancelled() {
     let (env, client, _owner, oracle, controller) = setup();
     let fid = flight_id(&env);

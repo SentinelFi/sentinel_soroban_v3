@@ -4,8 +4,8 @@ use stellar_macros::{only_owner, when_not_paused};
 use crate::auth::require_keeper;
 use crate::constants::{MAX_SETTLE_BATCH, SECONDS_PER_HOUR};
 use crate::events::{
-    EvictedFlightSettled, FlightClassified, FlightConfigMissing, FlightSettledEvent, FlightVoided,
-    TtlMiss,
+    EvictedFlightSettled, FlightClassified, FlightConfigMissing, FlightSettledEvent,
+    FlightTimedOutActive, FlightVoided, TtlMiss,
 };
 use crate::interfaces::{FlightPoolManagerClient, FlightStatus, OracleClient, VaultClient};
 use crate::storage::CtrlKey;
@@ -89,6 +89,36 @@ impl Controller {
                             .publish(e);
                             None
                         }
+                    }
+                }
+                FlightStatus::Active => {
+                    let timeout_at = data
+                        .estimated_arrival_time
+                        .checked_add(sentinel_types::timeouts::ACTIVE_FLIGHT_TIMEOUT_SECS)
+                        .expect("addition overflow");
+                    if e.ledger().timestamp() >= timeout_at {
+                        // The scheduled arrival was recorded but no terminal
+                        // outcome (Landed/Cancelled) ever followed, and the
+                        // flight is now long past that arrival: the oracle
+                        // pipeline cannot resolve it. Void it — settle as
+                        // on-time so the premiums become vault yield and the
+                        // locked collateral is released, instead of the row
+                        // pinning vault capital and two active-list slots
+                        // forever. Never a payout: paying without an attested
+                        // outcome would let a data outage mint claims. Until
+                        // the void is classified the oracle can still write
+                        // the real outcome, which then settles normally. The
+                        // distinct event lets operators tell an oracle-
+                        // liveness void from an ordinary on-time settlement.
+                        FlightTimedOutActive {
+                            flight_id: flight_id.clone(),
+                            date,
+                        }
+                        .publish(e);
+                        Some(FlightStatus::ToBeSettledOnTime)
+                    } else {
+                        // Normal in-flight state — terminal outcome pending.
+                        None
                     }
                 }
                 FlightStatus::NotInitiated => {

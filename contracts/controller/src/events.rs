@@ -72,6 +72,20 @@ pub struct FlightVoided {
     pub(crate) date: u64,
 }
 
+// Emitted when `classify_flights` voids an Active flight whose terminal
+// oracle outcome (Landed/Cancelled) never arrived within the active timeout
+// past its recorded scheduled arrival — the oracle pipeline stopped resolving
+// this flight after the estimated-arrival write. The bucket settles like an
+// on-time flight (premiums to the vault, collateral released, no payout).
+// Distinct from `FlightVoided` (no data ever arrived) and from an ordinary
+// on-time settlement so operators can spot oracle-liveness gaps.
+#[contractevent(topics = ["sentinel", "timed_out"], data_format = "map")]
+pub struct FlightTimedOutActive {
+    #[topic]
+    pub(crate) flight_id: Symbol,
+    pub(crate) date: u64,
+}
+
 // Emitted when the owner terminally reconciles a flight that was evicted
 // from the oracle's active list: the pool bucket is settled like a voided
 // flight (held premiums become vault income, no payout) and the vault

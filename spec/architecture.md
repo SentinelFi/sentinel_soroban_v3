@@ -729,7 +729,14 @@ NotInitiated -> Active -> Landed --> ToBeSettledOnTime --> Settled
        |          |                  ToBeSettledDelayed --> Settled
        |          +---> Cancelled -> ToBeSettledCancelled -> Settled
        +-----------------^                                  (short-notice cancel,
-       |                                                    audit L-01)
+       |          |                                         audit L-01)
+       |          +-----------------> ToBeSettledOnTime    (void: terminal outcome
+       |                                                    never arrived; allowed
+       |                                                    only >= 14 days past the
+       |                                                    recorded scheduled
+       |                                                    arrival — premiums to
+       |                                                    vault, collateral
+       |                                                    released, no payout)
        +----------------------------> ToBeSettledOnTime    (void: no flight data
                                                             ever arrived; allowed
                                                             only >= 14 days past
@@ -737,6 +744,14 @@ NotInitiated -> Active -> Landed --> ToBeSettledOnTime --> Settled
                                                             to vault, collateral
                                                             released, no payout)
 ```
+
+Every state that locks vault collateral has a bounded terminal path: `Landed`
+and `Cancelled` settle through classification; a `NotInitiated` row that never
+receives data voids via the stale timeout; an `Active` row whose terminal
+outcome never arrives voids via the active timeout. Both voids settle as
+on-time (never a payout — paying without an attested outcome would let a data
+outage mint claims), and the oracle can still write the real outcome at any
+moment before the void is classified.
 
 | State | Meaning | Set by |
 |-------|---------|--------|
@@ -806,6 +821,11 @@ pub enum OracleKey {
 
     // Persistent — keyed multi-row state
     FlightData(Symbol, u64),         // FlightData
+
+    // Temporary — short-lived sale authorizations (value: expiry timestamp).
+    // Temporary storage is deliberate: a lapsed authorization must vanish,
+    // and archival-restoration semantics must never resurrect one.
+    SaleAuth(Symbol, u64),           // u64 (expires_at)
 }
 
 #[contracttype]
@@ -857,6 +877,23 @@ fn set_landed(env: Env, oracle: Address,
               actual_arrival_time: u64);                   // Active -> Landed
 fn set_cancelled(env: Env, oracle: Address,
                  flight_id: Symbol, date: u64);            // Active -> Cancelled
+                                                           // also deletes any live
+                                                           // sale authorization
+
+// Oracle-only — sale window (purchase-gate attestation). A live, unexpired
+// authorization is the oracle's affirmative statement that the flight
+// instance was verified scheduled-and-not-cancelled at write time; the
+// Controller's buy_insurance requires one and fails closed without it.
+fn open_sale(env: Env, oracle: Address,
+             flight_id: Symbol, date: u64,
+             expires_at: u64);                             // expires_at bounded by
+                                                           // now + 24h and the
+                                                           // departure-day boundary;
+                                                           // rejected once an outcome
+                                                           // is recorded
+fn close_sale(env: Env, oracle: Address,
+              flight_id: Symbol, date: u64);               // revoke ahead of expiry;
+                                                           // idempotent
 
 // Controller-only
 fn register_flight(env: Env, controller: Address,
@@ -879,6 +916,10 @@ fn prune_settled(env: Env);                                // evicts entries wit
 fn get_flight_data(env: Env, flight_id: Symbol, date: u64) -> FlightData;
 fn get_active_flights(env: Env) -> Vec<(Symbol, u64)>;
 fn get_flights_by_status(env: Env, status: FlightStatus) -> Vec<(Symbol, u64)>;
+fn is_sale_open(env: Env, flight_id: Symbol, date: u64) -> bool;   // purchase gate;
+                                                                   // fails closed
+fn get_sale_auth(env: Env, flight_id: Symbol, date: u64) -> Option<u64>; // expiry, for
+                                                                   // frontend/executor
 ```
 
 **Shared types.** `FlightStatus` and `FlightData` live in the workspace-wide
@@ -898,10 +939,11 @@ updatable addresses.
 
 **Implementation status (Phase 12, 2026-05-25):** the centralized cron backend
 lives at `executor/centralized_cron/`. Stack: TypeScript + Node + tsx +
-`@stellar/stellar-sdk` v14 + `node-cron` + `express` + `dotenv`. Five cron
-jobs (FlightDataFetcher, FlightClassifier, SettlementExecutor, QueueMaintainer,
-TTLExtender), one HTTP API for health / logs / manual triggers, and a
-single-shot CLI (`npm run {fetch,classify,settle,queue,ttl}`) for ops + tests.
+`@stellar/stellar-sdk` v14 + `node-cron` + `express` + `dotenv`. Six cron
+jobs (SaleAuthorizer, FlightDataFetcher, FlightClassifier, SettlementExecutor,
+QueueMaintainer, TTLExtender), one HTTP API for health / logs / manual
+triggers, and a single-shot CLI (`npm run
+{authorize,fetch,classify,settle,queue,ttl}`) for ops + tests.
 Acurast TEE backend planned as a sibling under `executor/acurast/` in a
 later phase — same core logic, different deployment manifest.
 
@@ -909,10 +951,46 @@ later phase — same core logic, different deployment manifest.
 
 | Cron | Name | Frequency | On-chain target | Authorization |
 |------|------|-----------|-----------------|---------------|
+| #0 | **SaleAuthorizer** | Every 2 hours (offset :30) | `OracleAggregator.open_sale()` / `close_sale()` / `set_cancelled()` | `authorized_oracle` |
 | #1 | **FlightDataFetcher** | Every 2 hours | `OracleAggregator` | `authorized_oracle` |
 | #2 | **FlightClassifier** | Every 1 hour | `Controller.classify_flights()` | `authorized_keeper` |
 | #3 | **SettlementExecutor** | Every 5 minutes | `Controller.execute_settlements()` | `authorized_keeper` |
 | #3b | **QueueMaintainer** | Every 5 minutes | `Controller.run_queue_maintenance()` | `authorized_keeper` |
+
+### Cron #0 — SaleAuthorizer (Oracle, every 2 hours at :30)
+
+Keeps the purchase gate's sale windows attested. `buy_insurance` requires a
+live, unexpired `open_sale` authorization — absence of an on-chain outcome is
+not evidence the real flight is insurable (a publicly cancelled flight looks
+identical to a valid unreported one until the cancellation write lands), so
+the oracle attests insurability affirmatively and purchases fail closed
+without it.
+
+For every flight number in `SALE_AUTH_FLIGHT_IDS` and every day within
+`SALE_AUTH_HORIZON_DAYS` (default 90, matching the booking horizon), each run:
+
+1. queries AeroAPI for the (flight, day) schedule;
+2. pushes `set_cancelled` the moment a cancellation is visible — the
+   tombstone closes sales instantly (and deletes the live authorization)
+   without waiting for it to lapse;
+3. `close_sale`s a window whose instance became unverifiable (no data /
+   ambiguous candidates) — fail closed, never guess;
+4. otherwise opens/refreshes the window with expiry
+   `min(flight date, now + SALE_AUTH_VALIDITY_SECS)` (default 6h; the
+   contract caps validity at 24h).
+
+Ops invariants:
+
+- **The flight-id list must track the governance route whitelist.** A
+  whitelisted route missing from the list is never sellable.
+- **Cadence must stay well inside the validity window**, or every sale
+  window lapses between runs and sales halt protocol-wide. That halt is the
+  intended fail-safe when the authorizer is down — availability degrades,
+  never safety.
+- Days beyond the provider's schedule visibility return no data and stay
+  closed; the effective sale horizon is `min(horizon, provider visibility)`.
+- Runs on the oracle key, off-tempo from the fetcher (:30 vs :00) to avoid
+  sequence-number contention.
 
 ### Cron #1 — FlightDataFetcher (Oracle, every 2 hours)
 
@@ -1206,6 +1284,13 @@ Traveler -> Controller.buy_insurance(flight_id, origin, dest, date)
                 |               Disabled      => revert "route is disabled"
                 |               Unknown       => revert "route not whitelisted" }
                 +-> enforce minimum_lead_time                     revert if departure too soon
+                +-> OracleAggregator.get_flight_data(flight_id, date).status
+                |       must be NotInitiated or Active            revert if outcome recorded
+                +-> OracleAggregator.is_sale_open(flight_id, date)
+                |       must be true — a live, unexpired oracle   revert "sale not open"
+                |       attestation that the flight instance is
+                |       scheduled and not cancelled (fails closed
+                |       when missing, lapsed, closed, or archived)
                 |
                 +-> flight exists in FlightPoolManager for (flight_id, date)?
                 |       +- YES -> skip registration
@@ -1583,15 +1668,29 @@ inaccessible until restored" rather than "permanently lost."
   than they can recapture — so this is accepted; running the classifier at the 5-minute
   cadence recommended under load minimizes the window.
 - **An extended oracle outage can void real flights.** The stale-void timeout assumes a
-  row still `NotInitiated` 14 days past departure never matched a physical flight. That
-  premise fails under a partial outage: if the oracle executor stops writing while the
-  keeper keeps classifying, real flights purchased during the outage cross the timeout and
-  are voided as on-time — travelers on genuinely delayed flights lose both payout and
-  premium, irreversibly (the state machine is forward-only). **Operational requirement:**
-  on any oracle-executor outage, pause the Controller (or stop the classifier) well before
-  day 14, and alert off the `sentinel.ttl_miss` event stream — it already fires on every
-  classifier pass for each overdue `NotInitiated` flight and is the natural early-warning
-  signal.
+  row still `NotInitiated` 14 days past departure never matched a physical flight, and
+  the active-void timeout assumes a row still `Active` 14 days past its recorded
+  scheduled arrival will never receive a terminal outcome. Both premises fail under a
+  partial outage: if the oracle executor stops writing while the keeper keeps
+  classifying, real flights cross their timeout and are voided as on-time — travelers on
+  genuinely delayed or cancelled flights lose both payout and premium, irreversibly (the
+  state machine is forward-only). **Operational requirement:** on any oracle-executor
+  outage, pause the Controller (or stop the classifier) well before day 14, and alert
+  off the `sentinel.ttl_miss` event stream (fires for overdue `NotInitiated` flights) —
+  overdue `Active` flights have no periodic diagnostic before the void, so monitor the
+  oracle executor's own health directly. The void events (`sentinel.voided` for
+  dataless rows, `sentinel.timed_out` for stuck-`Active` rows) are the after-the-fact
+  audit trail.
+- **Sale availability depends on the authorizer.** `buy_insurance` requires a live
+  oracle sale authorization (max validity 24h), so sales are only as available as the
+  SaleAuthorizer cron: if it stops, every window lapses within its validity and new
+  purchases halt protocol-wide (existing policies settle normally). This is the intended
+  failure direction — an oracle that cannot verify flights must not admit new risk. The
+  residual purchase-time exposure is bounded by the authorization's remaining validity
+  plus the authorizer's observation cadence: a cancellation that becomes public
+  immediately after a refresh stays purchasable until the next authorizer pass writes
+  the tombstone (or the window lapses), so keep the cadence tight relative to
+  `SALE_AUTH_VALIDITY_SECS`.
 - **Correlated event risk** — simultaneous delays across many flights are protected only
   by `minimum_solvency_ratio`. At 100% the vault covers all; underwriters bear correlated risk.
 - **No per-underwriter capital attribution** — `locked_capital` is pool-level.
@@ -1688,7 +1787,10 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Read active bucket count | Anyone | `flight_pool_manager.get_active_flight_count()` (alert as it nears the list cap) |
 | Push estimated arrival | Oracle | `oracle.set_estimated_arrival(oracle, flight_id, date, eta)` |
 | Push landed (with actual arrival) | Oracle | `oracle.set_landed(oracle, flight_id, date, actual)` |
-| Mark cancelled | Oracle | `oracle.set_cancelled(oracle, flight_id, date)` |
+| Mark cancelled | Oracle | `oracle.set_cancelled(oracle, flight_id, date)` (also deletes any live sale authorization) |
+| Open / refresh sale window | Oracle | `oracle.open_sale(oracle, flight_id, date, expires_at)` (required by `buy_insurance`; validity capped at 24h) |
+| Close sale window early | Oracle | `oracle.close_sale(oracle, flight_id, date)` |
+| Check sale window | Anyone | `oracle.is_sale_open(flight_id, date)` / `oracle.get_sale_auth(flight_id, date)` |
 | Classify flights | Keeper | `controller.classify_flights(keeper)` |
 | Execute settlements | Keeper | `controller.execute_settlements(keeper)` |
 | Drain withdrawal queue + snapshot | Keeper | `controller.run_queue_maintenance(keeper)` |

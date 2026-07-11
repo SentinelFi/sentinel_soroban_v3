@@ -2,6 +2,7 @@
  * Run a single cron job once — for testing and debugging.
  *
  * Usage:
+ *   npm run authorize # SaleAuthorizer
  *   npm run fetch     # FlightDataFetcher
  *   npm run classify  # FlightClassifier
  *   npm run settle    # SettlementExecutor
@@ -10,6 +11,7 @@
  */
 
 import { loadConfig } from "./config.js";
+import { runSaleAuthorizer } from "./sale_authorizer.js";
 import { runFlightDataFetcher } from "./flight_data_fetcher.js";
 import { runFlightClassifier } from "./flight_classifier.js";
 import { runSettlementExecutor } from "./settlement_executor.js";
@@ -20,6 +22,9 @@ const job = process.argv[2];
 const config = loadConfig();
 
 switch (job) {
+  case "authorize":
+    await runSaleAuthorizer(config);
+    break;
   case "fetch":
     await runFlightDataFetcher(config);
     break;
@@ -36,6 +41,6 @@ switch (job) {
     await runTTLExtender(config);
     break;
   default:
-    console.error(`Unknown job: ${job}. Use: fetch, classify, settle, queue, or ttl`);
+    console.error(`Unknown job: ${job}. Use: authorize, fetch, classify, settle, queue, or ttl`);
     process.exit(1);
 }

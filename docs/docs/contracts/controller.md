@@ -15,11 +15,12 @@ The single purchase flow:
 
 1. Resolves the route through the Governance Module and rejects unknown or disabled routes.
 2. Enforces the minimum lead time before departure.
-3. On the first purchase for a flight instance, registers the flight with the Flight Pool Manager and Oracle Aggregator.
-4. Checks vault solvency: free capital must cover the payoff scaled by the solvency ratio.
-5. Transfers the premium from the traveler to the Flight Pool Manager.
-6. Locks the payoff amount in the Risk Vault and records the buyer.
-7. Appends the flight to the traveler's on-chain policy index.
+3. Requires the flight to be open for sale on the Oracle Aggregator: no outcome recorded yet, and a live, unexpired sale authorization (the oracle's attestation that the flight is scheduled and not cancelled). Without one the purchase fails closed — absence of on-chain data is never treated as proof a flight is insurable.
+4. On the first purchase for a flight instance, registers the flight with the Flight Pool Manager and Oracle Aggregator.
+5. Checks vault solvency: free capital must cover the payoff scaled by the solvency ratio.
+6. Transfers the premium from the traveler to the Flight Pool Manager.
+7. Locks the payoff amount in the Risk Vault and records the buyer.
+8. Appends the flight to the traveler's on-chain policy index.
 
 If a buyer whitelist is enabled (off by default), only whitelisted addresses can buy.
 

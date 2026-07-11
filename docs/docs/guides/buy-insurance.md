@@ -12,13 +12,14 @@ This guide describes the traveler flow.
 - A funded Stellar account (testnet accounts can be funded with [Friendbot](https://developers.stellar.org/docs/build/guides/basics/create-account)).
 - USDC to pay the premium. On testnet, Mock USDC has a permissionless `faucet` function that mints 10,000 USDC per call.
 - The flight you want to insure must be on a whitelisted route, and the purchase must happen before the minimum lead time (1 hour on testnet) ahead of departure.
+- The flight's sale window must be open: the oracle periodically attests that each sellable flight instance is scheduled and not cancelled, and purchases without a live attestation are rejected. Check `is_sale_open(flight_id, date)` on the Oracle Aggregator (frontends do this for you). A closed window usually means the flight is cancelled, too far out for the schedule provider to verify, or awaiting the next attestation pass.
 
 ## Buying a policy
 
 Call `buy_insurance` on the Controller with your address, the flight number, origin, destination, and departure date. The Controller will:
 
 1. Verify the route is whitelisted and resolve its terms (premium, payoff, delay threshold).
-2. Check the lead time and vault solvency.
+2. Check the lead time, the flight's sale window (a live oracle attestation that it is scheduled and not cancelled), and vault solvency.
 3. Transfer the premium from your account to the Flight Pool Manager.
 4. Lock the payoff amount in the Risk Vault and register you as a buyer.
 

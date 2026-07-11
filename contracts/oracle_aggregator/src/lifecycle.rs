@@ -7,12 +7,13 @@ use stellar_macros::when_not_paused;
 
 use crate::auth::{extend_instance_ttl, require_controller, require_oracle};
 use crate::constants::{
-    MAX_ACTIVE_FLIGHTS, MAX_PRUNE_BATCH, SECONDS_PER_DAY, SETTLED_RETENTION_DAYS,
+    MAX_ACTIVE_FLIGHTS, MAX_PRUNE_BATCH, SALE_AUTH_MAX_VALIDITY_SECS, SECONDS_PER_DAY,
+    SETTLED_RETENTION_DAYS,
 };
-use crate::events::{emit_status_event, MissingFlightData};
+use crate::events::{emit_status_event, MissingFlightData, SaleClosed, SaleOpened};
 use crate::storage::{
-    decrement_pending_outcomes, extend_flight_ttl_to, increment_pending_outcomes,
-    is_valid_transition, settlement_deadline, OracleKey,
+    decrement_pending_outcomes, extend_flight_ttl_to, extend_sale_auth_ttl,
+    increment_pending_outcomes, is_valid_transition, settlement_deadline, OracleKey,
 };
 use crate::{
     Error, FlightData, FlightStatus, OracleAggregator, OracleAggregatorArgs, OracleAggregatorClient,
@@ -21,6 +22,78 @@ use crate::{
 #[contractimpl]
 impl OracleAggregator {
     // --- Oracle-only write functions ---
+
+    /// Open (or refresh) the sale window for a flight instance. The purchase
+    /// gate requires a live, unexpired authorization, so this write is the
+    /// oracle's AFFIRMATIVE attestation — made after verifying the flight
+    /// off-chain — that `(flight_id, date)` matches a scheduled,
+    /// not-cancelled physical flight. Absence of an on-chain outcome proves
+    /// nothing about the real flight (a publicly cancelled one looks
+    /// identical to a valid unreported one until the cancellation write
+    /// lands), so insurability must be attested, not inferred.
+    ///
+    /// The attestation is only as fresh as its remaining validity:
+    /// `expires_at` must lie within `SALE_AUTH_MAX_VALIDITY_SECS` of now
+    /// (and never past the departure-day boundary, beyond which the
+    /// controller's lead-time gate blocks purchases anyway). Sales stay open
+    /// only while the oracle keeps re-attesting; if it stops — outage,
+    /// provider gap, unverifiable flight — the window lapses and purchases
+    /// fail closed.
+    #[when_not_paused]
+    pub fn open_sale(e: &Env, oracle: Address, flight_id: Symbol, date: u64, expires_at: u64) {
+        require_oracle(e, &oracle);
+
+        let now = e.ledger().timestamp();
+        let latest_allowed = now
+            .checked_add(SALE_AUTH_MAX_VALIDITY_SECS)
+            .expect("addition overflow");
+        if expires_at <= now || expires_at > latest_allowed || expires_at > date {
+            panic_with_error!(e, Error::InvalidTimestamp);
+        }
+
+        // A flight with a recorded outcome is not insurable; opening a sale
+        // window for it would contradict the state machine the purchase gate
+        // also checks. NotInitiated (no row, or registered pre-outcome) and
+        // Active (in-flight, pre-outcome) are the only attestable states.
+        let key = OracleKey::FlightData(flight_id.clone(), date);
+        if let Some(data) = e.storage().persistent().get::<_, FlightData>(&key) {
+            if !matches!(
+                data.status,
+                FlightStatus::NotInitiated | FlightStatus::Active
+            ) {
+                panic_with_error!(e, Error::InvalidTransition);
+            }
+        }
+
+        let auth_key = OracleKey::SaleAuth(flight_id.clone(), date);
+        e.storage().temporary().set(&auth_key, &expires_at);
+        extend_sale_auth_ttl(e, &flight_id, date, expires_at);
+
+        SaleOpened {
+            flight_id,
+            date,
+            expires_at,
+        }
+        .publish(e);
+    }
+
+    /// Close the sale window for a flight instance ahead of its expiry —
+    /// used when the oracle observes a cancellation or loses confidence in
+    /// the flight's identity and cannot wait for the authorization to lapse.
+    /// Idempotent: closing an absent window is a silent no-op (no event).
+    /// `set_cancelled` also closes the window as a side effect.
+    #[when_not_paused]
+    pub fn close_sale(e: &Env, oracle: Address, flight_id: Symbol, date: u64) {
+        require_oracle(e, &oracle);
+
+        let auth_key = OracleKey::SaleAuth(flight_id.clone(), date);
+        if !e.storage().temporary().has(&auth_key) {
+            return;
+        }
+        e.storage().temporary().remove(&auth_key);
+
+        SaleClosed { flight_id, date }.publish(e);
+    }
 
     /// Set estimated arrival time. Transitions NotInitiated → Active.
     #[when_not_paused]
@@ -129,6 +202,13 @@ impl OracleAggregator {
     #[when_not_paused]
     pub fn set_cancelled(e: &Env, oracle: Address, flight_id: Symbol, date: u64) {
         require_oracle(e, &oracle);
+
+        // A cancelled flight must not remain purchasable for a second: kill
+        // any live sale authorization in the same transaction that records
+        // the cancellation, rather than waiting for it to lapse.
+        e.storage()
+            .temporary()
+            .remove(&OracleKey::SaleAuth(flight_id.clone(), date));
 
         let key = OracleKey::FlightData(flight_id.clone(), date);
         match e.storage().persistent().get::<_, FlightData>(&key) {
@@ -256,6 +336,26 @@ impl OracleAggregator {
                 .expect("addition overflow");
             if e.ledger().timestamp() < stale_at {
                 panic_with_error!(e, Error::StaleTimeoutNotReached);
+            }
+            increment_pending_outcomes(e);
+        }
+
+        // Voiding an Active flight whose terminal outcome (Landed/Cancelled)
+        // never arrived is only legitimate once the active timeout past the
+        // recorded scheduled arrival has elapsed — enforced here, on the
+        // state machine itself, so no caller can void a flight the oracle is
+        // merely late in resolving. The transition table restricts the
+        // Active source to ToBeSettledOnTime, so this void never pays out.
+        // Like the NotInitiated void, it is a new outcome disclosure: it
+        // deterministically implies premium income the vault has not yet
+        // recognized, so it counts as a pending outcome from this moment.
+        if data.status == FlightStatus::Active {
+            let timeout_at = data
+                .estimated_arrival_time
+                .checked_add(sentinel_types::timeouts::ACTIVE_FLIGHT_TIMEOUT_SECS)
+                .expect("addition overflow");
+            if e.ledger().timestamp() < timeout_at {
+                panic_with_error!(e, Error::ActiveTimeoutNotReached);
             }
             increment_pending_outcomes(e);
         }

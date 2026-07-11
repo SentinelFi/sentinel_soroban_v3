@@ -23,4 +23,5 @@ pub enum Error {
     FlightDataStillPresent = 316,
     FlightStillListed = 317,
     FlightNotRegisteredInPool = 318,
+    SaleNotOpen = 319,
 }

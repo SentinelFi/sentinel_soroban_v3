@@ -38,6 +38,12 @@ NotInitiated -> Active -> Landed -> ToBeSettled -> Settled
 
 A status can never regress, so a compromised oracle cannot rewrite history for an already landed or settled flight.
 
+Every state that locks vault collateral also has a bounded exit: a flight that never receives oracle data is voided 14 days past departure, and a flight that goes `Active` but never receives a terminal outcome is voided 14 days past its recorded scheduled arrival. Both voids settle with no payout — premiums become vault yield and the locked collateral is released — so a data outage can pause the protocol but can never pin underwriter capital forever.
+
+## Sale attestation
+
+Purchases require a live, short-lived sale authorization written by the oracle after verifying the flight is scheduled and not cancelled. Absence of an on-chain outcome is never treated as proof a flight is insurable — a publicly cancelled flight would look identical to a valid unreported one until the cancellation reaches the chain. If the oracle stops attesting, sale windows lapse (24 hours at most) and new purchases halt: availability degrades, never safety.
+
 ## Other safeguards
 
 - Checked arithmetic and overflow checks are enabled in release builds.

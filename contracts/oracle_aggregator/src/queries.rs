@@ -47,6 +47,33 @@ impl OracleAggregator {
             .has(&OracleKey::FlightData(flight_id, date))
     }
 
+    /// Whether the sale window for `(flight_id, date)` is currently open:
+    /// a sale authorization exists and its expiry timestamp is still in the
+    /// future. The controller's purchase gate consumes this — no live
+    /// authorization means no sale. Fails closed on every degraded state:
+    /// never written, explicitly closed, lapsed past its expiry timestamp,
+    /// or archived out of temporary storage.
+    pub fn is_sale_open(e: &Env, flight_id: Symbol, date: u64) -> bool {
+        match e
+            .storage()
+            .temporary()
+            .get::<_, u64>(&OracleKey::SaleAuth(flight_id, date))
+        {
+            Some(expires_at) => e.ledger().timestamp() < expires_at,
+            None => false,
+        }
+    }
+
+    /// Expiry timestamp of the sale authorization for `(flight_id, date)`,
+    /// or None if none is live. Off-chain convenience (frontends show the
+    /// purchase deadline, the executor decides which authorizations need a
+    /// refresh); the on-chain gate is `is_sale_open`.
+    pub fn get_sale_auth(e: &Env, flight_id: Symbol, date: u64) -> Option<u64> {
+        e.storage()
+            .temporary()
+            .get(&OracleKey::SaleAuth(flight_id, date))
+    }
+
     /// Get flights filtered by status. Iterates active list and filters.
     ///
     /// Unbounded: performs one persistent read per active-list entry, so its

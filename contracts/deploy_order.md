@@ -172,6 +172,11 @@ configured value can lock ordinary positions out.
 ```
 18. Fund ORACLE_EXECUTOR and KEEPER_EXECUTOR accounts with XLM (tx fees).
 19. Start the executor backend (executor/) with the contract IDs + keys:
+      - SaleAuthorizer      (oracle key,  ~2 h)  → oracle open_sale / close_sale /
+                             set_cancelled. Set SALE_AUTH_FLIGHT_IDS to the
+                             whitelisted routes' flight numbers — buy_insurance
+                             requires a live sale authorization (max 24 h), so
+                             nothing sells until this job has run
       - FlightDataFetcher   (oracle key,  ~2 h)  → oracle set_estimated_arrival /
                                                     set_landed / set_cancelled
       - FlightClassifier    (keeper key,  ~1 h;  → controller.classify_flights
