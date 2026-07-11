@@ -5,11 +5,17 @@ title: Security
 
 # Security
 
+## Disclaimer
+
+:::warning
+While we strive to ensure this software functions as intended, it is provided "as is" with no warranties or guarantees of any kind. Smart contracts are inherently complex and may contain bugs, vulnerabilities, or unintended behaviors. By using this software, you acknowledge and agree that you use it entirely at your own risk. You should perform your own due diligence, and it is strongly recommended to consult qualified professionals (e.g., security auditors, legal advisors).
+:::
+
 ## Audits
 
-The codebase has gone through four internal, AI-assisted audit rounds (May to July 2026), with per-contract reports and tracked remediations. All reports live in the repository under [`audits/`](https://github.com/SentinelFi/sentinel_soroban_v3/tree/main/audits), with fixes documented in `audits/remediations/`.
+The codebase has gone through multiple internal, AI-assisted audit rounds, with per-contract reports and tracked remediations. All reports live in the repository under [`audits/`](https://github.com/SentinelFi/sentinel_soroban_v3/tree/main/audits), with fixes documented in `audits/remediations/`.
 
-The latest review (July 2026) found no high-severity issues and confirmed the core safety properties: correct authorization gates, checked arithmetic, checks-effects-interactions ordering, the forward-only oracle state machine, manipulation-resistant share pricing, and fund conservation on every money path. Remaining medium and low findings relate to Soroban storage archival edge cases and settlement barrier liveness, and are tracked in the reports.
+The most recent review found no high-severity issues and confirmed the core safety properties: correct authorization gates, checked arithmetic, checks-effects-interactions ordering, the forward-only oracle state machine, manipulation-resistant share pricing, and fund conservation on every money path. Remaining medium and low findings relate to Soroban storage archival edge cases and settlement barrier liveness, and are tracked in the reports.
 
 These are not independent third-party audits. Treat testnet as a test environment.
 

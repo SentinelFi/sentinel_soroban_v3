@@ -37,7 +37,7 @@ There are two paths:
 
 A minimum withdrawal request size applies (100 USDC on testnet) to prevent dust spam.
 
-:::info Settlement barrier
+:::info[Settlement barrier]
 Deposits and withdrawals are briefly blocked while a flight outcome is publicly known but not yet settled on-chain. This protects existing shareholders from being front-run at a stale share price. Retry after settlement completes, which usually takes minutes.
 :::
 

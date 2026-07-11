@@ -28,6 +28,17 @@
   flex-wrap: wrap;
 }
 
+.heroOutlineButton {
+  color: #fff;
+  border-color: #fff;
+}
+
+.heroOutlineButton:hover {
+  color: #000;
+  background-color: #fff;
+  border-color: #fff;
+}
+
 .features {
   display: flex;
   align-items: center;

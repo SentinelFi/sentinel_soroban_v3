@@ -24,7 +24,7 @@ function HomepageHeader() {
             Get Started
           </Link>
           <Link
-            className="button button--secondary button--outline button--lg"
+            className={clsx('button button--outline button--lg', styles.heroOutlineButton)}
             to="/docs/contracts/overview">
             Smart Contracts
           </Link>

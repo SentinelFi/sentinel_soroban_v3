@@ -5,7 +5,7 @@ title: Buy Insurance
 
 # Buy Insurance
 
-This guide describes the traveler flow. On testnet you can interact through the dApp frontend or directly with the contracts using the Stellar CLI.
+This guide describes the traveler flow.
 
 ## Prerequisites
 
@@ -56,7 +56,7 @@ stellar contract invoke \
 
 The full payoff is transferred to your account. Each policy can be claimed once.
 
-:::warning Claim window
+:::warning[Claim window]
 Claims expire after the claim window (60 days on testnet). Unclaimed payouts after expiry are swept into a recovery balance. Claim promptly.
 :::
 
