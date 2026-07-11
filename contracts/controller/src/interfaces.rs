@@ -4,9 +4,14 @@
 // source of truth, no byte-layout drift hazard.
 #![allow(dead_code)]
 
-use soroban_sdk::{contractclient, Address, Env, Symbol, Vec};
+use soroban_sdk::{contractclient, Address, Env, Symbol};
 
-pub use sentinel_types::{FlightConfig, FlightData, FlightStatus, ResolvedTerms, RouteStatus};
+pub use sentinel_types::{FlightConfig, FlightStatus, ResolvedTerms, RouteStatus};
+
+// The oracle client is shared with the risk vault (settlement-barrier read)
+// and therefore lives in `sentinel_types` alongside the data types — one
+// definition, no per-consumer signature drift.
+pub use sentinel_types::interfaces::OracleClient;
 
 #[contractclient(name = "GovClient")]
 pub trait GovernanceInterface {
@@ -25,22 +30,6 @@ pub trait VaultInterface {
     fn send_payout(env: &Env, controller: Address, to: Address, amount: i128);
     fn process_withdrawal_queue(env: &Env, controller: Address);
     fn snapshot(env: &Env);
-}
-
-#[contractclient(name = "OracleClient")]
-pub trait OracleInterface {
-    fn register_flight(env: &Env, controller: Address, flight_id: Symbol, date: u64);
-    fn get_flight_data(env: &Env, flight_id: Symbol, date: u64) -> FlightData;
-    fn has_flight_data(env: &Env, flight_id: Symbol, date: u64) -> bool;
-    fn get_active_flights(env: &Env) -> Vec<(Symbol, u64)>;
-    fn set_to_be_settled(
-        env: &Env,
-        controller: Address,
-        flight_id: Symbol,
-        date: u64,
-        status: FlightStatus,
-    );
-    fn set_settled(env: &Env, controller: Address, flight_id: Symbol, date: u64);
 }
 
 #[contractclient(name = "FlightPoolManagerClient")]

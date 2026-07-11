@@ -562,6 +562,12 @@ fn test_zero_value_request_returned_not_pinned() {
 
     client.process_withdrawal_queue(&controller);
 
+    // The drop is announced (checked before any further contract call —
+    // collect_events only surfaces the most recent invocation's events).
+    assert!(
+        count_events_with_verb(&env, &client.address, Symbol::new(&env, "wd_dropped")) >= 1
+    );
+
     // Queue fully drained — the zero entry did not pin the head.
     assert_eq!(client.get_withdrawal_queue().len(), 0);
     // dust got its shares back and was not credited.
@@ -676,6 +682,16 @@ fn test_cancel_withdrawal_by_request_id_is_index_independent() {
 
     // The remaining queued request still belongs to `other`.
     assert_eq!(client.get_withdrawal_queue().get(0).unwrap().owner, other,);
+}
+
+#[test]
+fn test_cancel_withdrawal_emits_event() {
+    use soroban_sdk::symbol_short;
+    let (env, client, _owner, _controller, depositor) = setup();
+    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let id = client.request_withdrawal(&depositor, &shares);
+    client.cancel_withdrawal(&depositor, &id);
+    assert!(count_events_with_verb(&env, &client.address, symbol_short!("wd_cancel")) >= 1);
 }
 
 #[test]

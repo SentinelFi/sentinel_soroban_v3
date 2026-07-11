@@ -751,7 +751,11 @@ NotInitiated -> Active -> Landed --> ToBeSettledOnTime --> Settled
 
 **Flight data stored per flight:**
 
-- `estimated_arrival_time: u64` — set by oracle when transitioning `NotInitiated -> Active`
+- `estimated_arrival_time: u64` — set by oracle when transitioning `NotInitiated -> Active`.
+  This is the flight's **published scheduled arrival** (AeroAPI `scheduled_in`). It is the
+  baseline that delay classification measures against, so the oracle must never write a
+  delay-adjusted live estimate (AeroAPI `estimated_in`) here — a live ETA absorbs announced
+  delays and would classify genuinely delayed flights as on-time.
 - `actual_arrival_time: u64` — set by oracle when transitioning `Active -> Landed`
 - `settled_at: u64` — set by controller when transitioning `ToBeSettled* -> Settled`
   (`0` means not-yet-settled). Drives the delayed-prune logic on `ActiveFlightList`.
@@ -914,6 +918,12 @@ later phase — same core logic, different deployment manifest.
 
 Fetches flight data from AeroAPI and writes it to the OracleAggregator. This cron is the
 only off-chain process that talks to external APIs.
+
+> **Semantics contract:** the "estimated arrival time" written on-chain in Step A is
+> AeroAPI's **`scheduled_in`** (the published schedule), NOT the live `estimated_in`
+> ETA. The classifier computes delay as `actual − estimated`, so writing a
+> delay-adjusted ETA would systematically classify delayed flights as on-time. Every
+> executor backend (cron, Acurast, Phala) must preserve this.
 
 ```
 FlightDataFetcher
@@ -1360,16 +1370,20 @@ Underwriter -> RiskVault.request_withdrawal(caller, shares) -> request_id
                 (queue drains after each settlement via process_withdrawal_queue)
                     +-> walks FIFO list in order
                     +-> for each request: if solvency allows, amount is "unlocked"
-                    +-> ClaimableBalance(caller) += redemption amount
+                    +-> shares burned; ClaimableBalance(caller) += redemption amount
+                    +-> total_managed_assets -= redemption amount   <- TMA reduced HERE,
+                                                                       at credit time
                     +-> TTL extended to 60 days on ClaimableBalance write
 
 Underwriter -> RiskVault.collect(caller)
     +-> caller.require_auth()
     +-> amount = ClaimableBalance(caller)
     +-> panic if zero
-    +-> ClaimableBalance(caller) = 0
-    +-> total_managed_assets -= amount
+    +-> ClaimableBalance(caller) removed
     +-> usdc_client.transfer(vault, caller, amount)
+        (total_managed_assets is NOT touched here — it was already reduced when
+         the queue processor credited the balance; uncollected credits sit in the
+         vault's raw token balance but outside TMA)
 ```
 
 **FIFO withdrawal semantics:** Underwriters are in a list. When flights are settled and
@@ -1521,6 +1535,10 @@ defense against inflation attacks:
    `Active` forever; the classifier saturates a negative delay to zero, so an
    early arrival settles as on-time. The oracle remains trusted for the
    truthfulness of the reported times themselves.
+7. **Delay baseline is the published schedule.** `estimated_arrival_time` must carry
+   the scheduled arrival (`scheduled_in`), never a delay-adjusted live ETA — see the
+   FlightDataFetcher semantics contract above. The contracts cannot enforce this
+   distinction; it is part of the trusted-oracle contract.
 
 **Trust assumption depends on executor backend.** With a centralized cron, trust the
 server operator. With a TEE backend (Acurast, Phala), trust the hardware attestation chain.
@@ -1555,6 +1573,25 @@ inaccessible until restored" rather than "permanently lost."
   Multi-oracle aggregation is a future enhancement.
 - **Front-running** — Stellar's transaction ordering is validator-determined. A mempool
   watcher could theoretically front-run `buy_insurance`, but this is a legitimate purchase.
+- **Void-path barrier lag** — for a flight voided via the stale timeout, the outcome
+  (premiums become vault income) is deterministically computable from on-chain state the
+  moment `date + 14 days` passes, but the vault's settlement barrier only engages when the
+  classifier writes `ToBeSettledOnTime`. In that gap (up to one classifier cycle, longer
+  under batch-cursor rotation) an LP can deposit at the pre-income share price and capture
+  a pro-rata slice of the pending premium income. Exposure is bounded by the voided
+  flights' premiums — and an attacker seeding bogus flights always loses more in premiums
+  than they can recapture — so this is accepted; running the classifier at the 5-minute
+  cadence recommended under load minimizes the window.
+- **An extended oracle outage can void real flights.** The stale-void timeout assumes a
+  row still `NotInitiated` 14 days past departure never matched a physical flight. That
+  premise fails under a partial outage: if the oracle executor stops writing while the
+  keeper keeps classifying, real flights purchased during the outage cross the timeout and
+  are voided as on-time — travelers on genuinely delayed flights lose both payout and
+  premium, irreversibly (the state machine is forward-only). **Operational requirement:**
+  on any oracle-executor outage, pause the Controller (or stop the classifier) well before
+  day 14, and alert off the `sentinel.ttl_miss` event stream — it already fires on every
+  classifier pass for each overdue `NotInitiated` flight and is the natural early-warning
+  signal.
 - **Correlated event risk** — simultaneous delays across many flights are protected only
   by `minimum_solvency_ratio`. At 100% the vault covers all; underwriters bear correlated risk.
 - **No per-underwriter capital attribution** — `locked_capital` is pool-level.
@@ -1808,18 +1845,23 @@ network_passphrase = "Public Global Stellar Network ; September 2015"
         stellar contract deploy --wasm target/.../governance_module.wasm
         -> returns CONTRACT_ID_GOVERNANCE
 
-   b. OracleAggregator           — no dependencies at deploy time
-        stellar contract deploy --wasm target/.../oracle_aggregator.wasm
+   b. OracleAggregator           — constructor needs: owner + authorized oracle address
+        stellar contract deploy --wasm target/.../oracle_aggregator.wasm \
+          -- --owner OWNER_ADDRESS --authorized_oracle ORACLE_EXECUTOR_ADDRESS
         -> returns CONTRACT_ID_ORACLE
 
-   c. FlightPoolManager          — no dependencies at deploy time
-        stellar contract deploy --wasm target/.../flight_pool_manager.wasm
-        -> returns CONTRACT_ID_FLIGHT_POOL_MANAGER
-
-   d. RiskVault                  — constructor needs: USDC token address
+   c. RiskVault                  — constructor needs: owner + USDC token address
         stellar contract deploy --wasm target/.../risk_vault.wasm \
-          -- --asset <USDC_CONTRACT_ID> --offset 3
+          -- --owner OWNER_ADDRESS --asset_token <USDC_CONTRACT_ID>
+        (the share-decimals offset is hardcoded to 3 in the constructor)
         -> returns CONTRACT_ID_VAULT
+
+   d. FlightPoolManager          — constructor needs: owner + USDC + RiskVault address
+        (must deploy AFTER RiskVault — the vault address is a constructor argument)
+        stellar contract deploy --wasm target/.../flight_pool_manager.wasm \
+          -- --owner OWNER_ADDRESS --asset_token <USDC_CONTRACT_ID> \
+             --risk_vault CONTRACT_ID_VAULT
+        -> returns CONTRACT_ID_FLIGHT_POOL_MANAGER
 
    e. Controller                 — constructor needs all addresses + config
         stellar contract deploy --wasm target/.../controller.wasm \

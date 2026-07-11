@@ -13,6 +13,7 @@
 
 use soroban_sdk::contracttype;
 
+pub mod interfaces;
 pub mod upgrade;
 
 #[cfg(feature = "testutils")]
@@ -117,6 +118,15 @@ pub enum FlightStatus {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FlightData {
     pub status: FlightStatus,
+    /// The flight's SCHEDULED arrival time (unix seconds) — the timetable
+    /// value, written once at `NotInitiated → Active`. Delay classification
+    /// computes `actual_arrival_time − estimated_arrival_time` against the
+    /// per-route `delay_hours` threshold, so this field is the baseline every
+    /// payout decision is measured from. Oracle executors MUST write the
+    /// published schedule (AeroAPI `scheduled_in`), NEVER a delay-adjusted
+    /// live estimate (`estimated_in`) — a live ETA absorbs announced delays
+    /// and would classify genuinely delayed flights as on-time, silently
+    /// denying valid claims.
     pub estimated_arrival_time: u64,
     pub actual_arrival_time: u64,
     pub settled_at: u64,

@@ -11,7 +11,7 @@ use crate::constants::{
     CLAIMABLE_TTL_LEDGERS, MAX_ACTIVE_REQUESTS_PER_ADDRESS, MAX_WITHDRAWAL_QUEUE_LEN,
     MIN_REQUEST_FLOOR_DIVISOR,
 };
-use crate::events::{Collected, Recovered, WithdrawalRequested};
+use crate::events::{Collected, Recovered, WithdrawalCancelled, WithdrawalRequested};
 use crate::storage::VaultKey;
 use crate::vault_ops::managed_convert_to_assets;
 use crate::{Error, RecoveryMode, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
@@ -157,6 +157,16 @@ impl RiskVault {
         e.storage()
             .instance()
             .set(&VaultKey::WithdrawalQueue, &queue);
+
+        // Post-removal occupancy, mirroring WithdrawalRequested — lets
+        // indexers track queue state from events alone.
+        WithdrawalCancelled {
+            owner: caller,
+            request_id,
+            shares: request.shares,
+            queue_len: queue.len(),
+        }
+        .publish(e);
     }
 
     /// Collect (transfer out) the caller's accrued claimable balance.

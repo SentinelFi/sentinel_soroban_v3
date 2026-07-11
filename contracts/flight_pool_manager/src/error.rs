@@ -22,4 +22,5 @@ pub enum Error {
     ClaimWindowStillOpen = 416,
     ActiveFlightListFull = 417,
     PayoutNotReceived = 418,
+    DelayHoursNotPositive = 419,
 }

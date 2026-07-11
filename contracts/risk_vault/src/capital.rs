@@ -9,7 +9,7 @@ use stellar_tokens::vault::Vault;
 
 use crate::auth::{require_controller, settlement_pending};
 use crate::constants::{CLAIMABLE_TTL_LEDGERS, MAX_QUEUE_BATCH};
-use crate::events::Credited;
+use crate::events::{Credited, RequestDropped};
 use crate::storage::VaultKey;
 use crate::vault_ops::convert_to_assets_with_tma;
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
@@ -178,6 +178,15 @@ impl RiskVault {
             // re-request. Dropping it advances the queue instead of pinning it.
             if assets == 0 {
                 Base::update(e, Some(&vault_addr), Some(&request.owner), request.shares);
+                // No Credited fires for a dropped request — emit the drop so
+                // indexers can close it out and the owner learns their exit
+                // did not happen and must be re-requested.
+                RequestDropped {
+                    owner: request.owner.clone(),
+                    request_id: request.request_id,
+                    shares: request.shares,
+                }
+                .publish(e);
                 returned_any = true;
                 continue;
             }
