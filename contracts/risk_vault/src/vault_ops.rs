@@ -52,6 +52,30 @@ pub(crate) fn managed_convert_to_assets(e: &Env, shares: i128, rounding: Roundin
     convert_to_assets_with_tma(e, shares, RiskVault::get_total_managed_assets(e), rounding)
 }
 
+// Convert assets → shares against an explicitly supplied managed-asset
+// figure — the inverse of `convert_to_assets_with_tma`, used by the queue
+// processor to size a partial fill of the head request from the free capital
+// still available in the pass. Floor rounding guarantees the floor-floor
+// round trip (assets → shares → assets) never exceeds the input amount.
+pub(crate) fn convert_to_shares_with_tma(
+    e: &Env,
+    assets: i128,
+    tma: i128,
+    rounding: Rounding,
+) -> i128 {
+    if assets <= 0 {
+        return 0;
+    }
+    let pow = 10_i128
+        .checked_pow(Vault::get_decimals_offset(e))
+        .expect("decimals offset overflow");
+    let supply_plus = Base::total_supply(e)
+        .checked_add(pow)
+        .expect("supply overflow");
+    let managed_plus = tma.checked_add(1).expect("managed assets overflow");
+    mul_div_with_rounding(e, assets, supply_plus, managed_plus, rounding)
+}
+
 // Same conversion against an explicitly supplied managed-asset figure. The
 // queue processor prices many requests in one pass while tracking the running
 // total locally (share supply is read live — burns update it in place), so it

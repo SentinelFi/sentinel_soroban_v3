@@ -68,6 +68,21 @@ pub struct WithdrawalCancelled {
     pub(crate) queue_len: u32,
 }
 
+// Emitted when queue processing funds part of the head request from the free
+// capital available in the pass. The request stays at the head with
+// `shares_remaining` still escrowed; `Credited` fires separately for the asset
+// amount. Without this, an indexer reconciling `WithdrawalRequested` shares
+// against `Credited` amounts could not tell a partial fill from a completed
+// request followed by an unrelated credit.
+#[contractevent(topics = ["sentinel", "wd_partial"], data_format = "map")]
+pub struct RequestPartiallyFilled {
+    #[topic]
+    pub(crate) owner: Address,
+    pub(crate) request_id: u64,
+    pub(crate) shares_filled: i128,
+    pub(crate) shares_remaining: i128,
+}
+
 // Emitted when queue processing drops a request whose asset value decayed to
 // zero (share price fell after it was queued) and returns the escrowed shares
 // to the owner. No `Credited` fires for such a request, so this is the only

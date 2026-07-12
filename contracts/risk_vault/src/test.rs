@@ -201,6 +201,63 @@ fn test_withdrawal_queue_request_process_collect() {
 }
 
 #[test]
+fn test_oversized_head_request_partial_fills_instead_of_pinning_queue() {
+    // An unfundable head request must not freeze the exit path: free capital
+    // is paid to the head as a partial fill, the remainder stays at the head,
+    // and every later request keeps its FIFO place. Without this, one
+    // oversized request blocked all queued exits AND all direct exits (which
+    // defer to a non-empty queue) while free capital sat idle.
+    let (env, client, _owner, controller, depositor) = setup();
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+
+    // A holds 1000, B holds 100; policies lock 1000, leaving 100 free.
+    let other = Address::generate(&env);
+    asset_admin.mint(&other, &100_0000000);
+    let shares_a = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let shares_b = client.deposit(&100_0000000, &other, &other, &other);
+    client.increase_locked(&controller, &1_000_0000000);
+    let free = client.get_free_capital();
+    assert_eq!(free, 100_0000000);
+
+    // A queues its full position (priced ~1000, unfundable from 100 free);
+    // B queues a smaller request that free capital could cover.
+    client.request_withdrawal(&depositor, &shares_a);
+    client.request_withdrawal(&other, &(shares_b / 2));
+
+    client.process_withdrawal_queue(&controller);
+    // (Asserted first: collect_events only surfaces the most recent
+    // invocation's events.)
+    assert_eq!(
+        count_events_with_verb(&env, &client.address, Symbol::new(&env, "wd_partial")),
+        1
+    );
+
+    // The head was filled up to free capital instead of pinning the queue:
+    // A's credit consumes (all but rounding dust of) the free capital, the
+    // head keeps A's remainder escrowed, and B stays behind it in FIFO order
+    // with no credit — free capital never bypasses the oldest request.
+    let credited_a = client.get_claimable_balance(&depositor);
+    assert!(credited_a > 0 && credited_a <= free);
+    assert!(free - credited_a < 100);
+    let queue = client.get_withdrawal_queue();
+    assert_eq!(queue.len(), 2);
+    let head = queue.get(0).unwrap();
+    assert_eq!(head.owner, depositor);
+    assert!(head.shares < shares_a);
+    assert_eq!(client.get_claimable_balance(&other), 0);
+    assert_eq!(client.get_free_capital(), free - credited_a);
+
+    // Settlement releases the collateral; the queue then drains fully in
+    // FIFO order — the head remainder first, then B.
+    client.decrease_locked(&controller, &1_000_0000000);
+    client.process_withdrawal_queue(&controller);
+    assert_eq!(client.get_withdrawal_queue().len(), 0);
+    // Both LPs received their full position value (within rounding dust).
+    assert!(client.get_claimable_balance(&depositor) >= 1_000_0000000 - 100);
+    assert!(client.get_claimable_balance(&other) >= 50_0000000 - 100);
+}
+
+#[test]
 fn test_pause_and_unpause_gate_state_mutations() {
     // Regression: paused contract rejects deposit / withdrawal /
     // queue ops; unpausing restores normal flow. Owner-only gate.

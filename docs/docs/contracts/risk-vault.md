@@ -24,6 +24,8 @@ The Risk Vault holds all underwriter capital. It is built on the OpenZeppelin `F
 - `redeem` and `withdraw`: exit immediately, capped to free capital.
 - `request_withdrawal(shares)`: join the FIFO withdrawal queue, shares are escrowed, returns a stable request id.
 - `cancel_withdrawal(caller, request_id)`: cancel a pending request.
+
+Queue processing is strict FIFO with **head partial fills**: if the oldest request is worth more than the currently free capital, the fundable slice is paid out immediately (shares burned, value credited) and the remainder stays at the head of the queue. Free capital always flows to the oldest request first, and a single oversized request can never freeze everyone else's exit while free capital sits idle. Partial fills emit a `wd_partial` event alongside the regular credit.
 - `collect()`: pull USDC credited by processed withdrawal requests.
 - `snapshot()`: permissionless, records the daily share price (kept 30 days).
 

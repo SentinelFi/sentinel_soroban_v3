@@ -3,7 +3,7 @@
 // Generates a random sequence of flight-status mutations and asserts that:
 //   1. The stored FlightStatus is always one of the 8 valid variants.
 //   2. status == Settled  ⇒  settled_at > 0 (set_settled records the timestamp).
-//   3. ActiveFlightList only contains flights whose FlightData exists OR are
+//   3. The active set only contains flights whose FlightData exists OR are
 //      due for pruning — prune_settled / register_flight maintain consistency.
 //   4. No invalid state transition succeeds (is_valid_transition gating).
 //

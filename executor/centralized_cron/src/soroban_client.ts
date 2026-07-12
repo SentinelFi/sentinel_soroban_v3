@@ -149,6 +149,11 @@ export class SorobanClient {
     return nativeToScVal(val, { type: "u64" });
   }
 
+  /** Helper: convert a u32 number to an ScVal. */
+  u32ToScVal(val: number): xdr.ScVal {
+    return nativeToScVal(val, { type: "u32" });
+  }
+
   /** Helper: convert an i128 bigint to an ScVal. */
   i128ToScVal(val: bigint): xdr.ScVal {
     return nativeToScVal(val, { type: "i128" });

@@ -36,6 +36,10 @@ policy exists, creating a purchase-blocking tombstone.
 
 Each flight stores `FlightData`: status, estimated arrival time, actual arrival time, and settlement timestamp.
 
+## Active-flight set
+
+Registered flights are enumerable through a **paginated active set**: pages of up to 100 entries, each its own ledger entry, plus a reverse index for constant-time removal and an O(1) count. Capacity scales with pages instead of competing with the contract-instance size limit, so flight registration has no practical protocol-wide ceiling (the remaining cap is a 100,000-entry sanity bound). The keeper iterates the set in bounded windows via `get_active_flights_page`, touching at most two pages per call.
+
 :::info[Scheduled, not estimated]
 The estimated arrival time must be the published schedule (AeroAPI `scheduled_in`), never the live ETA. Comparing against a live ETA would misclassify delayed flights as on time.
 :::
@@ -66,5 +70,5 @@ Called by the authorized oracle executor:
 ## Reads
 
 - `get_flight_data(flight_id, date)`: never panics, returns `NotInitiated` for unknown flights.
-- `get_active_flights`, `get_flights_by_status`.
+- `get_active_flights` (whole set, off-chain use), `get_active_flights_page(offset, limit)` (bounded window), `get_active_flight_count` (O(1)), `is_flight_listed(flight_id, date)` (exact membership), `get_flights_by_status`.
 - `is_sale_open(flight_id, date)`: whether an unexpired sale authorization exists — fails closed on every degraded state. `get_sale_auth` exposes the raw expiry for frontends and the executor.

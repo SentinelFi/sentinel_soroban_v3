@@ -13,6 +13,7 @@
 
 use soroban_sdk::contracttype;
 
+pub mod active_set;
 pub mod interfaces;
 pub mod upgrade;
 

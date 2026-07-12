@@ -18,6 +18,8 @@ Each flight instance, keyed by flight number and date, stores a `FlightConfig`:
 
 Registration is idempotent for matching terms but rejects re-registration with different terms.
 
+Active (unsettled) buckets are enumerable through the same **paginated active set** structure the Oracle Aggregator uses: pages of up to 100 entries plus a reverse index and an O(1) count, so bucket registration has no practical protocol-wide ceiling. Settlement removes the bucket from the set.
+
 ## Money flow
 
 - Premiums arrive at purchase time and stay in the pool while the flight is active.
@@ -42,4 +44,4 @@ Registration is idempotent for matching terms but rejects re-registration with d
 
 ## Reads
 
-`get_flight_config`, `has_policy`, `has_claimed`, `get_active_flights`, `get_recovered_balance`.
+`get_flight_config`, `has_policy`, `has_claimed`, `get_active_flights`, `get_active_flights_page`, `get_active_flight_count`, `get_recovered_balance`.

@@ -31,21 +31,28 @@ impl FlightPoolManager {
             .unwrap_or(false)
     }
 
-    /// Returns the list of currently active (unsettled) flights.
+    /// Returns the currently active (unsettled) flights — the whole
+    /// paginated active set. Footprint grows with the set's page count (one
+    /// ledger entry per ~100 flights); off-chain / simulation convenience.
     pub fn get_active_flights(e: &Env) -> Vec<(Symbol, u64)> {
-        e.storage()
-            .instance()
-            .get(&PoolKey::ActiveFlightList)
-            .unwrap_or(Vec::new(e))
+        sentinel_types::active_set::get_all(e)
     }
 
-    /// Number of currently active (unsettled) flight buckets. Cheap
-    /// saturation gauge for operators: the active list is capped, so
-    /// occupancy approaching the cap means new-bucket registration (and thus
-    /// first purchases of new flights) is about to be rejected — investigate
+    /// Up to `limit` active-set entries starting at slot `offset` — the
+    /// bounded enumeration for footprint-sensitive callers. The set is
+    /// unordered and removal reshuffles slots.
+    pub fn get_active_flights_page(e: &Env, offset: u32, limit: u32) -> Vec<(Symbol, u64)> {
+        sentinel_types::active_set::get_range(e, offset, limit)
+    }
+
+    /// Number of currently active (unsettled) flight buckets — O(1) from the
+    /// stored count. Cheap saturation gauge for operators: the set is capped
+    /// (a sanity bound, no longer a storage-entry limit), so occupancy
+    /// approaching the cap means new-bucket registration (and thus first
+    /// purchases of new flights) is about to be rejected — investigate
     /// settlement throughput before that happens.
     pub fn get_active_flight_count(e: &Env) -> u32 {
-        Self::get_active_flights(e).len()
+        sentinel_types::active_set::count(e)
     }
 
     /// Returns the balance of unclaimed funds available for owner recovery.

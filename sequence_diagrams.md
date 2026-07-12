@@ -247,7 +247,7 @@ sequenceDiagram
     rect rgb(255, 244, 235)
     Note over Keeper,Pool: Phase 2 — classify (FlightClassifier cron)
     Keeper->>Ctrl: classify_flights(keeper)
-    Ctrl->>Oracle: get_active_flights()
+    Ctrl->>Oracle: get_active_flights_page(cursor, batch)
     loop each flight in batch
         Ctrl->>Oracle: get_flight_data(flight_id, date)
         opt Landed (needs delay threshold)
@@ -260,7 +260,7 @@ sequenceDiagram
     rect rgb(235, 255, 240)
     Note over Keeper,Asset: Phase 3 — execute (SettlementExecutor cron)
     Keeper->>Ctrl: execute_settlements(keeper)
-    Ctrl->>Oracle: get_active_flights()
+    Ctrl->>Oracle: get_active_flights_page(cursor, batch)
     loop each ToBeSettled* flight in batch
         Ctrl->>Pool: get_flight_config(flight_id, date)
         alt ToBeSettledOnTime
