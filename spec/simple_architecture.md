@@ -246,8 +246,10 @@ counters and a per-traveler purchase index.
   estimated arrival times against the route's delay threshold.
 - Keeper: execute_settlements — iterates oracle's active list, processes
   every ToBeSettled* flight (moves money between pool and vault, marks
-  oracle as Settled), then drains the underwriter withdrawal queue and
-  takes a share-price snapshot.
+  oracle as Settled).
+- Keeper: run_queue_maintenance — drains the underwriter withdrawal queue
+  and takes a share-price snapshot. Decoupled from settlement so a heavy
+  settlement batch can never block underwriter exits.
 - Owner: rotate keeper address, set tunables.
 - Anyone: read flights for a traveler, read aggregate stats.
 
@@ -342,10 +344,16 @@ only required on chains with storage-rent / archival semantics (see
 
 - Calls `Controller.execute_settlements()`.
 - The controller iterates the oracle's active list, processes every
-  `ToBeSettled*` flight (moves money, marks Settled), then drains the
+  `ToBeSettled*` flight (moves money, marks Settled).
+- Higher cadence than classifier so payouts are prompt.
+- Authorized as the keeper role.
+
+### Cron 3b — QueueMaintainer (Keeper, every ~5 minutes, offset)
+
+- Calls `Controller.run_queue_maintenance()`, which drains the underwriter
   withdrawal queue and snapshots share price.
-- Higher cadence than classifier so payouts and underwriter exits are
-  prompt.
+- Runs on its own cadence (offset from the settler) so settlement gas
+  pressure can never starve underwriter exits.
 - Authorized as the keeper role.
 
 ### Cron 4 — Storage Maintenance (chain-dependent)
@@ -392,7 +400,9 @@ Controller:
    3. If flight not yet registered:
         - Pool.register_flight(flight_id, date, premium, payoff, delay_hours)
         - Oracle.register_flight(flight_id, date)
-   4. Check Vault.get_free_capital() >= payoff * (solvency_ratio / 100).
+   4. Check Vault.get_total_managed_assets() >=
+      ceil((Vault.get_locked_capital() + payoff) * solvency_ratio / 100) —
+      the ratio is enforced on aggregate liabilities, not just the new payoff.
    5. Stablecoin.transfer(traveler -> Pool, premium).
    6. Vault.increase_locked(payoff).
    7. Pool.add_buyer(flight_id, date, traveler).
@@ -446,12 +456,18 @@ For each ToBeSettled* flight:
    ToBeSettledDelayed | ToBeSettledCancelled:
       Vault.send_payout(Pool, (payoff - premium) * buyer_count)
       Vault.decrease_locked(payoff * buyer_count)
-      Pool.settle_delayed_or_cancelled(flight_id, date, claim_expiry)
+      Pool.settle_delayed(flight_id, date, claim_expiry)
+         | Pool.settle_cancelled(flight_id, date, claim_expiry)
       Oracle.set_settled(flight_id, date)
+```
 
-After loop:
-   Vault.process_withdrawal_queue()
-   Vault.snapshot()
+### Queue Maintenance (off-chain cron #3b)
+
+```
+Keeper account
+   -> Controller.run_queue_maintenance()
+      -> Vault.process_withdrawal_queue()
+      -> Vault.snapshot()
 ```
 
 ### Traveler Claims Payout
@@ -489,8 +505,8 @@ Underwriter
       - Vault transfers shares from underwriter to itself (escrow).
       - Vault appends request to withdrawal queue.
 
-Later, during execute_settlements:
-   - Controller.execute_settlements()
+Later, during queue maintenance:
+   - Controller.run_queue_maintenance()
       -> Vault.process_withdrawal_queue()
          For each request from head, while free capital allows:
            - Burn escrowed shares.
@@ -508,8 +524,8 @@ Underwriter
 ## Invariants
 
 1. **Solvency:** `Locked Capital <= Total Managed Assets` at all times.
-2. **Solvency on new policy:** `Free Capital >= payoff * solvency_ratio` at
-   buy time.
+2. **Solvency on new policy:** `Total Managed Assets >= (Locked Capital +
+   payoff) * solvency_ratio` at buy time (aggregate, not per-policy).
 3. **No double claim:** a traveler can claim at most once per (flight, date).
 4. **No double sweep:** sweep is idempotent (claimed_count == buyer_count
    after sweep).
