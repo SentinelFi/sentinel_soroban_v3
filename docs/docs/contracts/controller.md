@@ -9,7 +9,7 @@ The Controller is the protocol orchestrator. It is the only contract with policy
 
 ## Traveler entry point
 
-### `buy_insurance(traveler, flight_id, origin, destination, date)`
+### `buy_insurance(traveler, flight_id, origin, dest, date)`
 
 The single purchase flow:
 

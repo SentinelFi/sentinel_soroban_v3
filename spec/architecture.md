@@ -14,7 +14,7 @@
   - [Cron #1 — FlightDataFetcher (Oracle, every 2 hours)](#cron-1--flightdatafetcher-oracle-every-2-hours)
   - [Cron #2 — FlightClassifier (Keeper, every 1 hour)](#cron-2--flightclassifier-keeper-every-1-hour)
   - [Cron #3 — SettlementExecutor (Keeper, every 5 minutes)](#cron-3--settlementexecutor-keeper-every-5-minutes)
-  - [Cron #4 — TTL Extender (ExtendFootprintTTLOp, every 24 hours)](#cron-4--ttl-extender-extendfootprintttlop-every-24-hours)
+  - [Cron #4 — TTL Extender (instance `extend_ttl` + prune, every 24 hours)](#cron-4--ttl-extender-instance-extend_ttl--prune-every-24-hours)
   - [Why three separate crons?](#why-three-separate-crons)
   - [The Executor Interface](#the-executor-interface)
   - [Executor project structure](#executor-project-structure)
@@ -246,6 +246,7 @@ event envelope) discriminates between governance and the rest.
 ("sentinel", "gov_defaults")    → (premium, payoff, delay_hours)
 ("sentinel", "gov_admin_added") → (admin)
 ("sentinel", "gov_admin_removed") → (admin)
+("sentinel", "gov_term_limits") → (max_payoff, max_payoff_ratio)
 ```
 
 `flight_id` is also the third event topic for every `route_*` event (after the two-symbol
@@ -266,9 +267,10 @@ with an independent TTL. Instance is wrong at scale — every contract invocatio
 Instance entries into the transaction footprint, so thousands of routes (realistic at hub
 airports with multi-leg itineraries) would blow past per-tx limits. `RouteList` was removed
 for the same reason: a single `Vec` of all routes is a footprint hazard at any storage tier.
-TTL on every `Route(...)` write maintains a 60-day window for actively edited routes; idle
-routes are kept alive by the off-chain TTL cron (Cron #4) which folds `Route(...)` keys into
-its `ExtendFootprintTTLOp` footprint using the indexer's enumeration.
+TTL on every `Route(...)` write maintains a 120-day window for actively edited routes; a
+route idle past that window archives but stays restorable via `RestoreFootprintOp`. Folding
+idle `Route(...)` keys into a key-level `ExtendFootprintTTLOp` executor job (using the
+indexer's enumeration) is planned future work.
 
 ---
 
@@ -579,9 +581,9 @@ If on time:
 | Global config (Controller, UsdcToken, etc.) | Instance | Existing cron `extend_ttl()` — no change |
 | Active-flight set (`ActivePage`/`ActiveIdx`/`ActiveCount`) | Persistent pages + index, Instance count | Pages re-extended on every write and paged read; index extended to flight date (+ buffer) on write; archived pages restorable (`sentinel.page_miss` diagnostic) |
 | `RecoveredBalance` | Instance | Kept alive with all other instance data — no separate management |
-| `FlightConfig(id, date)` | Persistent | `extend_flight_ttl` (31d) on register; **on settle**, `extend_flight_ttl_to(claim_expiry + 30d)` so the claim window is self-sufficient on-chain (audit C-01). `ExtendFootprintTTLOp` cron is the long-term layer. |
-| `Buyer(id, date, addr)` | Persistent | TTL set to `claim_expiry + 30 days` on write — no cron needed |
-| `Claimed(id, date, addr)` | Persistent | TTL set to `claim_expiry + 30 days` on write — no cron needed |
+| `FlightConfig(id, date)` | Persistent | `extend_flight_ttl` (31d) on register; **on settle**, `extend_flight_ttl_to(claim_expiry + 30d)` so the claim window is self-sufficient on-chain (audit C-01). A key-level `ExtendFootprintTTLOp` executor job is the planned long-term layer. |
+| `Buyer(id, date, addr)` | Persistent | Fixed 180-day (network-max) TTL at write, never re-extended — claim expiry is unknown at purchase time, and 180d comfortably covers the max 60d claim window |
+| `Claimed(id, date, addr)` | Persistent | Fixed 180-day (network-max) TTL at write, never re-extended |
 
 ---
 
@@ -905,9 +907,11 @@ const SECONDS_PER_DAY: u64 = 86_400;
   restore it. The delayed-prune scheme still bounds the set to (active flights) +
   (settled-but-not-yet-evicted flights), the latter capped by the 7-day retention window.
 - **`FlightData(Symbol, u64)`** is in **Persistent** storage (per-flight, unbounded
-  entries — can't move to Instance). TTL is managed via `ExtendFootprintTTLOp` cron —
-  the same cron that extends FlightPoolManager's `FlightConfig` entries iterates active
-  flights and extends each `FlightData` entry.
+  entries — can't move to Instance). TTL is self-managed: every oracle write extends the
+  entry to the flight date (or, once an outcome is recorded, to a settlement deadline)
+  plus a buffer via `extend_flight_ttl_to`, so the record outlives its own settlement
+  window without external help. A key-level `ExtendFootprintTTLOp` executor job remains
+  a planned backstop for idle entries.
 
 **Key functions:**
 
@@ -1182,27 +1186,29 @@ QueueMaintainer -> signs + submits Soroban tx:
 Same authorized_keeper as #3; separate keeper job (or the same one looping both)
 because the two should not share resource budget.
 
-### Cron #4 — TTL Extender (ExtendFootprintTTLOp, every 24 hours)
+### Cron #4 — TTL Extender (instance `extend_ttl` + prune, every 24 hours)
 
-A permissionless cron that extends TTL on per-flight Persistent entries across both
-FlightPoolManager and OracleAggregator. This is a raw Soroban `ExtendFootprintTTLOp`
-operation — not an in-contract function call.
+A permissionless cron that keeps the contract instances (and everything in their
+Instance storage) alive, and prunes settled flights from the oracle's active set.
 
 ```
 TTL Extender
     |
-    +-> reads FlightPoolManager.get_active_flights() via Stellar RPC
-    |       returns all (flight_id, date) tuples
+    +-> calls extend_ttl() on all five contracts
+    |       (instance + code TTL; covers Routes, WithdrawalQueue,
+    |        active-set count, and all other Instance state)
     |
-    +-> builds one ExtendFootprintTTLOp transaction covering:
-    |       - Each PoolKey::FlightConfig(id, date) in FlightPoolManager
-    |       - Each OracleKey::FlightData(id, date) in OracleAggregator
-    |
-    +-> submits the transaction
+    +-> calls OracleAggregator.prune_settled()
+            (removes Settled flights past the 7-day retention window
+             from the active set)
 ```
 
-Also extends TTL on:
-- `TravelerFlights(Address)` entries in Controller (for active travelers)
+Per-flight Persistent entries (`FlightConfig`, `FlightData`) are self-extending: their
+TTL is bumped on every contract read/write that touches them. Deeper key-level TTL
+extension via a raw Soroban `ExtendFootprintTTLOp` (covering idle `FlightConfig` /
+`FlightData` / `Route` / `TravelerFlights` / `ClaimableBalance` entries enumerated
+off-chain) is a planned, separate executor concern — not part of this cron. Archived
+Persistent entries remain restorable via `RestoreFootprintOp` in the meantime.
 
 ### Why three separate crons?
 
@@ -1331,7 +1337,7 @@ Owner or Admin -> GovernanceModule.whitelist_route(flight_id, origin, dest,
     +-> route stored in Persistent storage, keyed Route(flight_id, origin, dest)
         if custom terms provided -> stored per-route
         if not -> will fall back to global defaults when queried via route_status()
-        Route TTL extended (60-day window) on this write
+        Route TTL extended (120-day window) on this write
         emits route.listed event -> off-chain indexer materializes the row
         NO flight entry created yet — lazy creation on first purchase
 ```
@@ -1469,7 +1475,7 @@ Traveler -> FlightPoolManager.claim(traveler, flight_id, date)
     +-> panic if flight not settled as delayed or cancelled
     +-> panic if caller has no policy for (flight_id, date)
     +-> panic if caller already claimed for (flight_id, date)
-    +-> panic if env.ledger().timestamp() > claim_expiry
+    +-> panic if env.ledger().timestamp() >= claim_expiry
     +-> set Claimed(flight_id, date, traveler) = true
     +-> usdc_client.transfer(contract_address, traveler, payoff)
 ```
@@ -1704,19 +1710,22 @@ the contracts — only the authorized address changes.
 All contracts must manage TTL (time-to-live) to prevent data archival:
 
 - **Instance storage** (contract config, global state): TTL extended via existing cron
-  `extend_ttl()` calls. Routes, WithdrawalQueue, the active-set count, and other global
+  `extend_ttl()` calls. WithdrawalQueue, the active-set count, and other global
   state are in Instance storage — they share TTL with the contract instance. (The
   active-flight set's pages and reverse index are Persistent — self-extending on every
-  write and paged read, restorable if they archive anyway.)
-- **Persistent storage** (per-flight data, per-user data): TTL extended via
-  `ExtendFootprintTTLOp` cron for active flight entries (FlightConfig, FlightData). Per-user
-  entries (Buyer, Claimed, ClaimableBalance) get TTL set on write proportional to claim window.
-  TravelerFlights entries are extended by the TTL cron for active travelers.
+  write and paged read, restorable if they archive anyway. `Route(...)` entries are
+  Persistent too, with a 120-day TTL refreshed on every route write.)
+- **Persistent storage** (per-flight data, per-user data): self-extending — TTL is
+  bumped on every contract read/write that touches the entry (FlightConfig, FlightData,
+  Route). Per-user entries (Buyer, Claimed, ClaimableBalance) get TTL set on write
+  proportional to the claim window.
 - **Temporary storage** (SnapshotPrice): Used for disposable data with natural timeout.
   Permanent deletion after TTL — no archival rent.
 
-The `ExtendFootprintTTLOp` cron (Cron #4) iterates active flights and extends per-flight
-Persistent entries in both FlightPoolManager and OracleAggregator in a single transaction.
+A future `ExtendFootprintTTLOp` executor job (enumerating idle Persistent entries
+off-chain and extending them in bulk) is planned but not part of the current
+centralized-cron backend; Cron #4 today performs instance-level `extend_ttl()` plus
+`prune_settled()` only.
 
 **`RestoreFootprintOp` safety net:** Instance and Persistent entries are never permanently
 deleted — they are archived and can be restored via `RestoreFootprintOp`. Only Temporary
@@ -2103,9 +2112,9 @@ network_passphrase = "Public Global Stellar Network ; September 2015"
         stellar keys generate keeper-executor
 
    b. Configure and start executor (e.g. centralized cron):
-        cd executor && cp .env.example .env
+        cd executor/centralized_cron && cp .env.example .env
         # Set: AERO_API_KEY, STELLAR_RPC_URL, SECRET_KEYS, contract IDs
-        npm run start:cron
+        npm run start
 
 7. Register executor addresses on-chain:
         OracleAggregator.set_oracle(ORACLE_EXECUTOR_ADDRESS)
