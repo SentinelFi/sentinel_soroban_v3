@@ -793,6 +793,42 @@ fn test_active_set_spans_pages_and_swap_removes_across_them() {
     assert_eq!(client.get_active_flights().len(), 104);
 }
 
+#[test]
+#[should_panic(expected = "restore it before adding")]
+fn test_active_set_add_fails_closed_on_archived_tail_page() {
+    // An archived tail page must block new registrations, not be silently
+    // overwritten: writing a fresh one-entry vector over the archived key
+    // would leave that page's flights permanently unenumerable AND
+    // unrestorable (restoration needs the key to be dead).
+    use sentinel_types::active_set::ActiveSetKey;
+    let (env, client, _owner, _oracle, controller) = setup();
+    client.register_flight(&controller, &symbol_short!("AA100"), &FLIGHT_DATE);
+
+    // Simulate the tail page archiving past its TTL.
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&ActiveSetKey::ActivePage(0));
+    });
+
+    client.register_flight(&controller, &symbol_short!("UA200"), &FLIGHT_DATE);
+}
+
+#[test]
+#[should_panic(expected = "entry already in active set")]
+fn test_active_set_add_rejects_duplicate_entry() {
+    // Both consumers gate on their own flight entry before calling add; the
+    // set still refuses a duplicate outright so a future third consumer (or
+    // a refactor that drops the caller-side gate) cannot corrupt the
+    // count/index invariants.
+    let (env, client, _owner, _oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+    env.as_contract(&client.address, || {
+        sentinel_types::active_set::add(&env, &fid, FLIGHT_DATE);
+    });
+}
+
 // --- Read function tests ---
 
 #[test]

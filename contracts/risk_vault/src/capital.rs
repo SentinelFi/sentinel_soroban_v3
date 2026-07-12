@@ -137,21 +137,22 @@ impl RiskVault {
         // Examine at most MAX_QUEUE_BATCH entries per call.
         // Entries beyond the window are carried over untouched and drained on a
         // later call. `kept` accumulates everything that survives this pass
-        // (skipped, deferred, or out-of-window) so removals don't have to be a
-        // contiguous head prefix.
+        // (skipped or deferred) so removals don't have to be a contiguous head
+        // prefix; the out-of-window tail is appended in one bulk copy after
+        // the loop.
         let limit = queue.len().min(MAX_QUEUE_BATCH);
         let mut kept: Vec<WithdrawalRequest> = Vec::new(e);
         let mut hit_capacity = false;
         let mut returned_any = false;
         let mut partially_filled = false;
 
-        for i in 0..queue.len() {
+        for i in 0..limit {
             let request = queue.get(i).unwrap();
 
-            // Out-of-batch-window, or we already hit a request we can't fund:
-            // preserve FIFO liquidity ordering by keeping this and all later
-            // requests for a future call.
-            if i >= limit || hit_capacity {
+            // We already hit a request we can't fund: preserve FIFO liquidity
+            // ordering by keeping this and all later requests for a future
+            // call.
+            if hit_capacity {
                 kept.push_back(request);
                 continue;
             }
@@ -287,6 +288,12 @@ impl RiskVault {
                 .expect("subtraction underflow");
             tma = tma.checked_sub(assets).expect("subtraction underflow");
             processed = processed.checked_add(1).expect("addition overflow");
+        }
+
+        // Requests beyond the batch window were never examined — carry them
+        // over in one bulk copy instead of per-entry host calls.
+        if limit < queue.len() {
+            kept.append(&queue.slice(limit..));
         }
 
         // Single storage write for the running total — the loop priced every

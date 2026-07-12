@@ -432,6 +432,7 @@ export const REGISTRY: ContractEntry[] = [
         DEST,
       ], "Active(ResolvedTerms) | Disabled | Unknown"),
       fn("get_defaults", "public", true, "Global default terms", [], "(premium, payoff, delay_hours)"),
+      fn("get_term_limits", "public", true, "Route-term magnitude bounds", [], "(max_payoff, max_payoff_ratio)"),
       fn("is_admin", "public", true, "Whether an address has route-admin rights", [
         a("addr", "address", undefined, true),
       ], "bool"),
@@ -481,6 +482,10 @@ export const REGISTRY: ContractEntry[] = [
         a("premium", "amount7"),
         a("payoff", "amount7"),
         a("delay_hours", "u32"),
+      ]),
+      fn("set_term_limits", "owner", false, "Bound the economics any route write may carry", [
+        a("max_payoff", "amount7", "Absolute per-policy payoff ceiling; 0 disables"),
+        a("max_payoff_ratio", "i128", "Max payoff/premium multiple (min 2)"),
       ]),
       fn("add_admin", "owner", false, "Grant route-admin rights", [a("admin", "address")]),
       fn("remove_admin", "owner", false, "Revoke route-admin rights", [a("admin", "address")]),

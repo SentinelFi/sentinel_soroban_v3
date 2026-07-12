@@ -3,8 +3,8 @@
 use soroban_sdk::{contractimpl, Address, Env, Symbol};
 
 use crate::storage::{
-    extend_route_index_ttl, extend_route_ttl, read_defaults, resolve_terms, resolved_terms_valid,
-    DataKey, RouteTerms,
+    extend_route_index_ttl, extend_route_ttl, read_defaults, read_term_limits, resolve_terms,
+    resolved_terms_valid, DataKey, RouteTerms,
 };
 use crate::{GovernanceModule, GovernanceModuleArgs, GovernanceModuleClient, RouteStatus};
 
@@ -13,6 +13,13 @@ impl GovernanceModule {
     /// Return the global default premium, payoff, and delay hours.
     pub fn get_defaults(e: &Env) -> (i128, i128, u32) {
         read_defaults(e)
+    }
+
+    /// Return `(max_payoff, max_payoff_ratio)` — the owner-configured bounds
+    /// every route's resolved terms must satisfy. `max_payoff == 0` means the
+    /// absolute cap is disabled; the ratio bound is always active.
+    pub fn get_term_limits(e: &Env) -> (i128, i128) {
+        read_term_limits(e)
     }
 
     /// Typed status reader. Returns `Active(ResolvedTerms)` (defaults folded)
@@ -80,11 +87,12 @@ impl GovernanceModule {
                 } else {
                     let resolved = resolve_terms(&t, read_defaults(e));
                     // A mutable-defaults change can leave a partially-defaulted
-                    // route resolving to invalid economics. Do
+                    // route resolving to invalid economics, and a term-limits
+                    // change can leave it exceeding the current bounds. Do
                     // not advertise such a route as purchasable — report it as
                     // Disabled so the controller rejects the buy cleanly instead
                     // of proceeding into a downstream registration revert.
-                    if !resolved_terms_valid(&resolved) {
+                    if !resolved_terms_valid(e, &resolved) {
                         RouteStatus::Disabled
                     } else {
                         RouteStatus::Active(resolved)

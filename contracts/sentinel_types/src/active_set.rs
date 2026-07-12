@@ -32,8 +32,9 @@
 //! date (+ buffer), matching the per-flight data entries whose lifetime they
 //! shadow. An archived page degrades availability, not integrity: reads skip
 //! it (emitting [`ActivePageMissing`] so operators restore it), removals
-//! fall back to a full-page scan when the index is missing, and ledger
-//! restoration brings everything back.
+//! fall back to a full-page scan when the index is missing, appends that
+//! would land on an archived tail page are rejected rather than overwrite
+//! it, and ledger restoration brings everything back.
 
 // Module-level because `#[contracttype]` re-emits the enum without item
 // attributes: the shared `Active` prefix is load-bearing — variant names ARE
@@ -159,12 +160,34 @@ fn scan_position(e: &Env, flight_id: &Symbol, date: u64) -> Option<u32> {
 /// Append `(flight_id, date)`. The caller is responsible for the not-
 /// already-present guard (both contracts gate registration on the flight's
 /// own persistent entry) and for any capacity policy.
+///
+/// Panics if the tail page is archived: appending would have to overwrite
+/// the archived key, permanently shadowing its entries. Restore the page
+/// first (registration is blocked until then).
 pub fn add(e: &Env, flight_id: &Symbol, date: u64) {
+    // Backstop for the caller-side guard: a duplicate would occupy two
+    // slots under one index entry, silently corrupting the count and the
+    // swap-remove bookkeeping. One cheap read on this path.
+    if e.storage()
+        .persistent()
+        .has(&ActiveSetKey::ActiveIdx(flight_id.clone(), date))
+    {
+        panic!("entry already in active set");
+    }
+
     let n = count(e);
     let page_no = n / ACTIVE_SET_PAGE_SIZE;
-    let mut page = read_page(e, page_no).unwrap_or(Vec::new(e));
-    // The slot derives from the page's actual length so the index stays
-    // correct even if the tail page lost entries to archival.
+    // Fail closed like the readers: when the count says the tail page holds
+    // live entries, a `None` read means the page archived past its TTL, and
+    // writing a fresh vector over that key would make its entries permanently
+    // unenumerable AND unrestorable (restoration needs the key to be dead).
+    // A missing page is legitimate only at a page boundary, where the next
+    // page genuinely starts empty.
+    let mut page = match read_page(e, page_no) {
+        Some(p) => p,
+        None if n.is_multiple_of(ACTIVE_SET_PAGE_SIZE) => Vec::new(e),
+        None => panic!("active-set tail page archived; restore it before adding"),
+    };
     let slot = page_no * ACTIVE_SET_PAGE_SIZE + page.len();
     page.push_back((flight_id.clone(), date));
     write_page(e, page_no, &page);

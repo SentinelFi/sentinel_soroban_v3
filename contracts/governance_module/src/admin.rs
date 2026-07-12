@@ -1,11 +1,11 @@
-use soroban_sdk::{contractimpl, Address, Env};
+use soroban_sdk::{contractimpl, panic_with_error, Address, Env};
 use stellar_access::ownable;
 use stellar_macros::{only_owner, when_not_paused};
 
 use crate::auth::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
-use crate::events::{GovAdminAdded, GovAdminRemoved, GovDefaults};
+use crate::events::{GovAdminAdded, GovAdminRemoved, GovDefaults, GovTermLimits};
 use crate::storage::{assert_terms_valid, DataKey};
-use crate::{GovernanceModule, GovernanceModuleArgs, GovernanceModuleClient};
+use crate::{Error, GovernanceModule, GovernanceModuleArgs, GovernanceModuleClient};
 
 #[contractimpl]
 impl GovernanceModule {
@@ -61,6 +61,42 @@ impl GovernanceModule {
             premium,
             payoff,
             delay_hours,
+        }
+        .publish(e);
+    }
+
+    /// Bound the economics any route write may carry (owner-only). Route
+    /// lifecycle calls are open to admins — a deliberately weaker role than
+    /// owner — so these limits cap the blast radius of a single compromised
+    /// admin key, in the same spirit as the controller's bounded owner
+    /// setters: without them, one signature could whitelist a dust-premium,
+    /// vault-sized-payoff route and any naturally delayed or cancelled
+    /// flight on it would hand the vault's free capital to the buyer.
+    ///
+    /// `max_payoff` is an absolute per-policy payoff ceiling in asset units
+    /// (0 disables it — pick a deployment-appropriate value at wiring time).
+    /// `max_payoff_ratio` caps `payoff / premium`; it is unit-free, defaults
+    /// to a generous constant from genesis, and cannot be disabled (a ratio
+    /// below 2 would reject every valid route, since payoff must exceed
+    /// premium). Both are enforced on every route write and on
+    /// `set_defaults`, and `route_status` stops advertising a route that
+    /// exceeds the current limits — lowering them retroactively de-lists
+    /// oversized routes.
+    #[only_owner]
+    #[when_not_paused]
+    pub fn set_term_limits(e: &Env, max_payoff: i128, max_payoff_ratio: i128) {
+        if max_payoff < 0 || max_payoff_ratio < 2 {
+            panic_with_error!(e, Error::InvalidTermLimits);
+        }
+        Self::extend_ttl(e);
+        e.storage().instance().set(&DataKey::MaxPayoff, &max_payoff);
+        e.storage()
+            .instance()
+            .set(&DataKey::MaxPayoffRatio, &max_payoff_ratio);
+
+        GovTermLimits {
+            max_payoff,
+            max_payoff_ratio,
         }
         .publish(e);
     }

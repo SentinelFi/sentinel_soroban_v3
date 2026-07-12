@@ -13,6 +13,10 @@ impl FungibleToken for RiskVault {
 #[contractimpl(contracttrait)]
 impl Ownable for RiskVault {}
 
+// Pause/unpause renew the instance TTL: they are incident actions, likely to
+// run exactly when the external TTL cron is degraded, and they mutate
+// instance state — leaving the instance unrenewed there could archive the
+// contract right after an emergency intervention.
 #[contractimpl(contracttrait)]
 impl Pausable for RiskVault {
     fn pause(e: &Env, caller: Address) {
@@ -21,6 +25,7 @@ impl Pausable for RiskVault {
         let _ = caller;
         let owner = ownable::get_owner(e).expect("owner not set");
         owner.require_auth();
+        RiskVault::extend_ttl(e);
         pausable::pause(e);
     }
 
@@ -28,6 +33,7 @@ impl Pausable for RiskVault {
         let _ = caller;
         let owner = ownable::get_owner(e).expect("owner not set");
         owner.require_auth();
+        RiskVault::extend_ttl(e);
         pausable::unpause(e);
     }
 }

@@ -155,17 +155,28 @@ configured value can lock ordinary positions out.
 ```
 13. governance_module.set_defaults(premium, payoff, delay_hours)
       (only if the constructor defaults need changing)
-14. governance_module.add_admin(ADMIN)                    # per route manager
-15. governance_module.whitelist_route(caller, flight_id, origin, dest,
+14. governance_module.set_term_limits(max_payoff, max_payoff_ratio)  # REQUIRED — see below
+15. governance_module.add_admin(ADMIN)                    # per route manager
+16. governance_module.whitelist_route(caller, flight_id, origin, dest,
                                       premium?, payoff?, delay_hours?)
       # one per NEW route; omit optional terms to inherit the defaults.
       # Re-listing an existing route is rejected (RouteAlreadyListed) unless
       # identical — term changes go through update_route_terms, re-activation
       # through enable_route.
-16. controller.set_solvency_ratio(ratio)                  # optional, default 100
-17. (optional) controller.set_whitelist_enabled(true)
+17. controller.set_solvency_ratio(ratio)                  # optional, default 100
+18. (optional) controller.set_whitelist_enabled(true)
       + controller.add_whitelisted_buyer(caller, addr)    # per buyer
 ```
+
+Step 14 caps the blast radius of a single admin key: route writes are open to
+admins, and without a `max_payoff` one compromised admin signature could
+whitelist a route whose single policy locks the vault's entire free capital.
+The `max_payoff_ratio` (payoff ≤ ratio × premium) is unit-free and already
+active by default (100); the absolute `max_payoff` ships disabled (0) because
+it is asset-denominated — pick a per-asset ceiling well above legitimate route
+payoffs and well below vault scale (e.g. `1000_0000000` = 1,000 USDC at
+7 decimals). Both limits are enforced on every route write, and lowering them
+retroactively de-lists oversized routes from `route_status`.
 
 ## Phase 5 — Start the executor
 
@@ -201,6 +212,7 @@ risk_vault.get_min_withdrawal_request()       >  0
 oracle_aggregator.get_authorized_oracle()     == ORACLE_EXECUTOR
 controller.get_keeper()                       == KEEPER_EXECUTOR
 governance_module.get_defaults()              == expected terms
+governance_module.get_term_limits()           == (max_payoff > 0, expected ratio)
 controller.get_solvency_ratio()               == expected ratio
 <each contract>.version()                     == 1
 ```

@@ -16,4 +16,7 @@ pub enum Error {
     FlightIdRetired = 510,
     RouteNotFound = 511,
     RouteAlreadyListed = 512,
+    PayoffExceedsCap = 513,
+    PayoffExceedsPremiumRatio = 514,
+    InvalidTermLimits = 515,
 }

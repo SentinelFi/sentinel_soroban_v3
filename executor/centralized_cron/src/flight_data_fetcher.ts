@@ -273,6 +273,15 @@ function parseFlightStatus(raw: any): FlightStatus {
 /**
  * Convert a u64 date to a YYYY-MM-DD string.
  * Supports both unix timestamps and YYYYMMDD integer format.
+ *
+ * DAY-KEY CONTRACT: the string MUST be the UTC calendar day (hence
+ * toISOString, which is always UTC), matching the on-chain `date` key
+ * (midnight UTC of the departure day). Deriving it from a LOCAL date would
+ * make the oracle's outcome writes fail the contracts' arrival-timestamp
+ * floor for early-morning flights east of UTC, stranding them `Active`
+ * until the void timeout forfeits the travelers' premiums. Every backend
+ * migration (Acurast, Phala) must preserve this — see the FlightDataFetcher
+ * day-key contract in spec/architecture.md.
  */
 function dateToString(date: bigint): string {
   const num = Number(date);
