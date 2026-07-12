@@ -9,9 +9,9 @@ use stellar_tokens::vault::Vault;
 
 use crate::auth::{require_controller, settlement_pending};
 use crate::constants::{CLAIMABLE_TTL_LEDGERS, MAX_QUEUE_BATCH};
-use crate::events::{Credited, RequestDropped};
+use crate::events::{Credited, RequestDropped, RequestPartiallyFilled};
 use crate::storage::VaultKey;
-use crate::vault_ops::convert_to_assets_with_tma;
+use crate::vault_ops::{convert_to_assets_with_tma, convert_to_shares_with_tma};
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
 #[contractimpl]
@@ -143,6 +143,7 @@ impl RiskVault {
         let mut kept: Vec<WithdrawalRequest> = Vec::new(e);
         let mut hit_capacity = false;
         let mut returned_any = false;
+        let mut partially_filled = false;
 
         for i in 0..queue.len() {
             let request = queue.get(i).unwrap();
@@ -164,10 +165,78 @@ impl RiskVault {
             let assets = convert_to_assets_with_tma(e, request.shares, tma, Rounding::Floor);
 
             if assets > remaining_free {
-                // Not enough free capital for the head-most request: stop
-                // servicing and defer the rest (strict FIFO).
+                // The head-most request exceeds free capital. Fund the part
+                // free capital covers NOW (burn that share slice, credit its
+                // asset value) and keep the remainder at the head. Without the
+                // partial fill, one oversized request would pin the queue —
+                // and, because direct exits are disabled while the queue is
+                // non-empty, freeze every underwriter exit — until enough
+                // collateral unlocked to cover it in full, even while free
+                // capital sat idle. With it, the queue makes progress whenever
+                // any free capital exists, and strict FIFO fairness holds:
+                // free capital always goes to the oldest request first, so no
+                // later request ever executes ahead of an earlier one.
+                let fillable_shares =
+                    convert_to_shares_with_tma(e, remaining_free, tma, Rounding::Floor);
+                // Floor-floor round trip: assets_part <= remaining_free, and
+                // fillable_shares < request.shares whenever the full request
+                // exceeds free capital, so the remainder is always >= 1 share.
+                let assets_part =
+                    convert_to_assets_with_tma(e, fillable_shares, tma, Rounding::Floor);
+                if fillable_shares > 0 && assets_part > 0 {
+                    Base::update(e, Some(&vault_addr), None, fillable_shares);
+
+                    let owner = request.owner.clone();
+                    let key = VaultKey::ClaimableBalance(owner.clone());
+                    let claimable: i128 = e.storage().persistent().get(&key).unwrap_or(0);
+                    let new_balance = claimable
+                        .checked_add(assets_part)
+                        .expect("addition overflow");
+                    e.storage().persistent().set(&key, &new_balance);
+                    e.storage().persistent().extend_ttl(
+                        &key,
+                        CLAIMABLE_TTL_LEDGERS,
+                        CLAIMABLE_TTL_LEDGERS,
+                    );
+
+                    let shares_remaining = request
+                        .shares
+                        .checked_sub(fillable_shares)
+                        .expect("subtraction underflow");
+                    Credited {
+                        user: owner.clone(),
+                        amount: assets_part,
+                        new_balance,
+                    }
+                    .publish(e);
+                    RequestPartiallyFilled {
+                        owner,
+                        request_id: request.request_id,
+                        shares_filled: fillable_shares,
+                        shares_remaining,
+                    }
+                    .publish(e);
+
+                    remaining_free = remaining_free
+                        .checked_sub(assets_part)
+                        .expect("subtraction underflow");
+                    tma = tma.checked_sub(assets_part).expect("subtraction underflow");
+                    partially_filled = true;
+
+                    kept.push_back(WithdrawalRequest {
+                        request_id: request.request_id,
+                        owner: request.owner,
+                        shares: shares_remaining,
+                    });
+                } else {
+                    // Free capital too small to fund even one share of the
+                    // head request — keep it untouched.
+                    kept.push_back(request);
+                }
+                // Whatever free capital remains cannot fund another share of
+                // the (older) head remainder, so servicing anything behind it
+                // would break FIFO. Defer the rest.
                 hit_capacity = true;
-                kept.push_back(request);
                 continue;
             }
 
@@ -223,12 +292,12 @@ impl RiskVault {
         // Single storage write for the running total — the loop priced every
         // request against the local `tma`, so persisting once at the end is
         // equivalent to the per-iteration write it replaces.
-        if processed > 0 {
+        if processed > 0 || partially_filled {
             e.storage()
                 .instance()
                 .set(&VaultKey::TotalManagedAssets, &tma);
         }
-        if processed > 0 || returned_any {
+        if processed > 0 || returned_any || partially_filled {
             e.storage()
                 .instance()
                 .set(&VaultKey::WithdrawalQueue, &kept);

@@ -616,11 +616,15 @@ This architecture targets any chain with:
   and oracle inside a single transaction. If either side panics, both
   rollback. Atomicity assumed.
 - **Withdrawal-queue ordering must be FIFO** for fairness — preserve insert
-  order regardless of underlying storage primitive.
+  order regardless of underlying storage primitive. When the oldest request
+  exceeds currently-free capital, fund the part free capital covers (partial
+  fill) and keep the remainder at the head — an oversized head request must
+  degrade into slower progress, never into a frozen exit path.
 - **Per-traveler index can grow unbounded** for heavy users. Frontends should
   paginate; the on-chain index is append-only by design.
-- **Active flight lists** (in oracle and pool) need bounded size in practice.
-  At the protocol layer this is governed by the keeper's classification
+- **Active flight lists** (in oracle and pool) are paginated sets — capacity
+  scales without a protocol-wide registration ceiling, and enumeration is by
+  bounded windows. Keeper throughput is still governed by classification
   cadence — don't whitelist more flights than the cron budget can iterate.
 
 ---

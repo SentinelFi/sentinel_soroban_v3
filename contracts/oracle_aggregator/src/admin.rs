@@ -1,4 +1,4 @@
-use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol, Vec};
+use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol};
 use stellar_access::ownable;
 use stellar_macros::only_owner;
 
@@ -93,37 +93,13 @@ impl OracleAggregator {
             panic_with_error!(e, Error::FlightDataStillPresent);
         }
 
-        let flights: Vec<(Symbol, u64)> = e
-            .storage()
-            .instance()
-            .get(&OracleKey::ActiveFlightList)
-            .unwrap_or(Vec::new(e));
-        let mut found: Option<u32> = None;
-        for i in 0..flights.len() {
-            if flights.get(i).unwrap() == (flight_id.clone(), date) {
-                found = Some(i);
-                break;
-            }
+        // Swap-remove from the paginated active set (the set is unordered;
+        // prune and the keeper cursors tolerate reordering). `remove` falls
+        // back to a page scan if the reverse index archived, so a `false`
+        // here genuinely means "not listed" (or its page needs restoring).
+        if !sentinel_types::active_set::remove(e, &flight_id, date) {
+            panic_with_error!(e, Error::FlightNotInList);
         }
-        let idx = match found {
-            Some(i) => i,
-            None => panic_with_error!(e, Error::FlightNotInList),
-        };
-
-        // Swap-remove: the active list is an unordered set (prune and the
-        // keeper cursors tolerate reordering), so move the tail into the gap
-        // and pop instead of shifting every trailing element — same idiom as
-        // the pool's prune_active_list.
-        let mut flights = flights;
-        let last = flights.len() - 1;
-        if idx != last {
-            let tail = flights.get(last).unwrap();
-            flights.set(idx, tail);
-        }
-        flights.pop_back();
-        e.storage()
-            .instance()
-            .set(&OracleKey::ActiveFlightList, &flights);
         // Release the barrier count this flight would have released at
         // settlement — eviction is its terminal transition.
         if outcome_pending {

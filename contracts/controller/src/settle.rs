@@ -32,16 +32,18 @@ impl Controller {
         let pool = FlightPoolManagerClient::new(e, &pool_addr);
         let controller_addr = e.current_contract_address();
 
-        let flights = oracle.get_active_flights();
-        let len = flights.len();
+        let len = oracle.get_active_flight_count();
         if len == 0 {
             Controller::extend_ttl(e);
             return;
         }
 
-        // Scan at most MAX_SETTLE_BATCH entries per call, starting
-        // at a persisted rotating cursor, so per-call cost is bounded by the
-        // batch size rather than the (unbounded) active-list length.
+        // Scan at most MAX_SETTLE_BATCH entries per call, starting at a
+        // persisted rotating cursor, so per-call cost is bounded by the
+        // batch size rather than the (unbounded) active-set length. The
+        // paged fetch pulls only the window this call inspects — the oracle
+        // set lives in ~100-entry pages, so one batch touches at most two
+        // page ledger entries instead of the whole list.
         let mut cursor: u32 = e
             .storage()
             .instance()
@@ -50,11 +52,11 @@ impl Controller {
         if cursor >= len {
             cursor = 0;
         }
-        let batch = MAX_SETTLE_BATCH.min(len);
+        let batch = MAX_SETTLE_BATCH.min(len - cursor);
+        let flights = oracle.get_active_flights_page(&cursor, &batch);
 
-        let mut i = cursor;
-        for _ in 0..batch {
-            let (flight_id, date) = flights.get(i).unwrap();
+        for j in 0..flights.len() {
+            let (flight_id, date) = flights.get(j).unwrap();
             let data = oracle.get_flight_data(&flight_id, &date);
 
             let new_status = match data.status {
@@ -172,11 +174,16 @@ impl Controller {
                 }
                 .publish(e);
             }
-
-            i = (i + 1) % len;
         }
 
-        e.storage().instance().set(&CtrlKey::ClassifyCursor, &i);
+        // Advance to the end of the inspected window; wrap at the end of the
+        // set. Slots reshuffle as settled flights are pruned, but the scan is
+        // idempotent and re-callable, so eventual full coverage still holds.
+        let stop = cursor.saturating_add(batch);
+        let next_cursor = if stop >= len { 0 } else { stop };
+        e.storage()
+            .instance()
+            .set(&CtrlKey::ClassifyCursor, &next_cursor);
         Controller::extend_ttl(e);
     }
 
@@ -214,14 +221,13 @@ impl Controller {
             .checked_add(claim_window)
             .expect("addition overflow");
 
-        let flights = oracle.get_active_flights();
-        let len = flights.len();
+        let len = oracle.get_active_flight_count();
         if len == 0 {
             Controller::extend_ttl(e);
             return;
         }
 
-        // Bounded rotating scan — see classify_flights.
+        // Bounded rotating scan over a paged window — see classify_flights.
         let mut cursor: u32 = e
             .storage()
             .instance()
@@ -230,12 +236,11 @@ impl Controller {
         if cursor >= len {
             cursor = 0;
         }
-        let batch = MAX_SETTLE_BATCH.min(len);
+        let batch = MAX_SETTLE_BATCH.min(len - cursor);
+        let flights = oracle.get_active_flights_page(&cursor, &batch);
 
-        let mut i = cursor;
-        for _ in 0..batch {
-            let (flight_id, date) = flights.get(i).unwrap();
-            i = (i + 1) % len;
+        for j in 0..flights.len() {
+            let (flight_id, date) = flights.get(j).unwrap();
             let data = oracle.get_flight_data(&flight_id, &date);
             let outcome = data.status.clone();
 
@@ -335,7 +340,13 @@ impl Controller {
             }
         }
 
-        e.storage().instance().set(&CtrlKey::SettleCursor, &i);
+        // Advance past the inspected window; wrap at the end of the set (see
+        // classify_flights on reshuffle tolerance).
+        let stop = cursor.saturating_add(batch);
+        let next_cursor = if stop >= len { 0 } else { stop };
+        e.storage()
+            .instance()
+            .set(&CtrlKey::SettleCursor, &next_cursor);
         Controller::extend_ttl(e);
     }
 
@@ -384,11 +395,11 @@ impl Controller {
         if oracle.has_flight_data(&flight_id, &date) {
             panic_with_error!(e, Error::FlightDataStillPresent);
         }
-        let listed = oracle.get_active_flights();
-        for i in 0..listed.len() {
-            if listed.get(i).unwrap() == (flight_id.clone(), date) {
-                panic_with_error!(e, Error::FlightStillListed);
-            }
+        // Exact membership check (the oracle falls back to a page scan if its
+        // reverse index archived) — a listed flight is still keeper-enumerable
+        // and must settle through the normal pipeline.
+        if oracle.is_flight_listed(&flight_id, &date) {
+            panic_with_error!(e, Error::FlightStillListed);
         }
         let cfg = match pool.get_flight_config(&flight_id, &date) {
             Some(cfg) => cfg,

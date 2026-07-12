@@ -2,7 +2,7 @@
 //! registration/classification/settlement, and the permissionless pruning of
 //! aged-out settled flights from the active list.
 
-use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol, Vec};
+use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol};
 use stellar_macros::when_not_paused;
 
 use crate::auth::{extend_instance_ttl, require_controller, require_oracle};
@@ -269,22 +269,14 @@ impl OracleAggregator {
         };
         e.storage().persistent().set(&key, &data);
 
-        // Append to active flight list (Instance — auto-extended with contract instance TTL)
-        let mut flights: Vec<(Symbol, u64)> = e
-            .storage()
-            .instance()
-            .get(&OracleKey::ActiveFlightList)
-            .unwrap_or(Vec::new(e));
-        // Bound the single-vector active list so it can't grow into the
-        // contract-instance entry-size limit and become unwritable. Settled
+        // Append to the paginated active set (per-page persistent entries +
+        // reverse index — see `sentinel_types::active_set`). The cap is an
+        // operational sanity bound, not a storage-entry limit: settled
         // flights are evicted by prune_settled, freeing capacity.
-        if flights.len() >= MAX_ACTIVE_FLIGHTS {
+        if sentinel_types::active_set::count(e) >= MAX_ACTIVE_FLIGHTS {
             panic_with_error!(e, Error::ActiveFlightListFull);
         }
-        flights.push_back((flight_id.clone(), date));
-        e.storage()
-            .instance()
-            .set(&OracleKey::ActiveFlightList, &flights);
+        sentinel_types::active_set::add(e, &flight_id, date);
 
         extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &FlightStatus::NotInitiated);
@@ -371,7 +363,7 @@ impl OracleAggregator {
 
     /// Mark flight as settled. Transitions ToBeSettled* → Settled.
     /// Records `settled_at` so the delayed-prune window starts ticking.
-    /// Does NOT remove the flight from `ActiveFlightList` — eviction is
+    /// Does NOT remove the flight from the active set — eviction is
     /// delegated to the permissionless `prune_settled` entry, which only
     /// removes entries older than `SETTLED_RETENTION_DAYS`. Does NOT renew
     /// flight TTL — settled entries naturally expire.
@@ -401,29 +393,24 @@ impl OracleAggregator {
 
     // --- Permissionless housekeeping ---
 
-    /// Remove settled flights from `ActiveFlightList` once they have been
+    /// Remove settled flights from the active set once they have been
     /// settled for at least `SETTLED_RETENTION_DAYS`. Permissionless —
     /// anyone may call (matches `flight_pool_manager::sweep_expired`
     /// pattern). Idempotent: re-callable with no panic; no-op if nothing
     /// has aged out.
     pub fn prune_settled(e: &Env) {
         let now = e.ledger().timestamp();
-        let list: Vec<(Symbol, u64)> = e
-            .storage()
-            .instance()
-            .get(&OracleKey::ActiveFlightList)
-            .unwrap_or(Vec::new(e));
-
-        let len = list.len();
+        let len = sentinel_types::active_set::count(e);
         if len == 0 {
             extend_instance_ttl(e);
             return;
         }
 
-        // Only inspect a bounded window [cursor, cursor+batch) of
-        // the list per call. Entries outside the window are kept untouched (no
-        // persistent lookup), bounding the expensive storage reads. The cursor
-        // rotates across calls so the whole list is eventually swept.
+        // Only inspect a bounded window [cursor, cursor+batch) of the set per
+        // call — the paged fetch reads just the one or two pages the window
+        // spans (and re-extends their TTL), bounding the expensive storage
+        // reads. The cursor rotates across calls so the whole set is
+        // eventually swept.
         let mut cursor: u32 = e
             .storage()
             .instance()
@@ -433,16 +420,9 @@ impl OracleAggregator {
             cursor = 0;
         }
         let stop = cursor.saturating_add(MAX_PRUNE_BATCH).min(len);
+        let window = sentinel_types::active_set::get_range(e, cursor, stop - cursor);
 
-        let mut kept: Vec<(Symbol, u64)> = Vec::new(e);
-        let mut removed_any = false;
-        for i in 0..len {
-            let entry = list.get(i).unwrap();
-            if i < cursor || i >= stop {
-                // Outside the inspection window — carry over without a lookup.
-                kept.push_back(entry);
-                continue;
-            }
+        for entry in window.iter() {
             let flight_id = entry.0.clone();
             let date = entry.1;
             let aged_out = match e
@@ -475,18 +455,15 @@ impl OracleAggregator {
                 }
             };
             if aged_out {
-                removed_any = true;
-            } else {
-                kept.push_back(entry);
+                // Removal is by key against live storage — the window is a
+                // snapshot, so the swap-remove reshuffle cannot corrupt this
+                // loop. A reshuffled entry may escape this sweep; the
+                // rotating, re-callable scan picks it up on a later pass.
+                sentinel_types::active_set::remove(e, &flight_id, date);
             }
         }
 
-        if removed_any {
-            e.storage()
-                .instance()
-                .set(&OracleKey::ActiveFlightList, &kept);
-        }
-        // Advance (wrap at end). Indices shift after removals, but pruning is
+        // Advance (wrap at end). Slots shift after removals, but pruning is
         // idempotent and re-callable, so eventual full coverage still holds.
         let next_cursor = if stop >= len { 0 } else { stop };
         e.storage()

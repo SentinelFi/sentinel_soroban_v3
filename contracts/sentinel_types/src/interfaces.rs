@@ -16,6 +16,9 @@ pub trait OracleInterface {
     fn is_sale_open(env: &Env, flight_id: Symbol, date: u64) -> bool;
     fn has_flight_data(env: &Env, flight_id: Symbol, date: u64) -> bool;
     fn get_active_flights(env: &Env) -> Vec<(Symbol, u64)>;
+    fn get_active_flights_page(env: &Env, offset: u32, limit: u32) -> Vec<(Symbol, u64)>;
+    fn get_active_flight_count(env: &Env) -> u32;
+    fn is_flight_listed(env: &Env, flight_id: Symbol, date: u64) -> bool;
     fn set_to_be_settled(
         env: &Env,
         controller: Address,

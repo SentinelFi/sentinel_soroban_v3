@@ -11,7 +11,7 @@ import type { Config, RunLogEntry, TTLResult } from "./types.js";
  *    state mutation.
  *
  * 2. Call OracleAggregator.prune_settled() to evict flights that have been
- *    in `Settled` status for at least 30 days from ActiveFlightList
+ *    in `Settled` status for at least 30 days from the active set
  *    (Phase 6 permissionless cleanup, no auth required).
  *
  * Contract list updated from phase-2: recovery_pool is gone (folded into
@@ -53,8 +53,8 @@ export async function runTTLExtender(config: Config): Promise<RunLogEntry> {
     }
   }
 
-  // Phase 6 — permissionless prune of aged-settled flights from
-  // OracleAggregator.ActiveFlightList. Idempotent; safe to run daily.
+  // Phase 6 — permissionless prune of aged-settled flights from the
+  // OracleAggregator active set. Idempotent; safe to run daily.
   try {
     await client.invokeContract(
       config.oracleAggregatorId,

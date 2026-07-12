@@ -288,6 +288,13 @@ vault is composable with any vault-aware tooling.
     After each settlement cycle the keeper calls `run_queue_maintenance()`, which drives
     `process_withdrawal_queue()` and credits fulfilled requests to `claimable_balance`.
     Underwriters call `collect()` to pull USDC.
+  - **Head partial fill.** When the oldest request prices above current free capital,
+    `process_withdrawal_queue` funds the share slice free capital covers (burn + credit),
+    keeps the remainder at the head, and defers everything behind it. Strict FIFO fairness
+    holds — free capital always goes to the oldest request first — but one oversized
+    request can no longer pin the queue (and with it every direct exit, which defers to a
+    non-empty queue) while free capital sits idle. Each partial pass emits `Credited` plus
+    `RequestPartiallyFilled(request_id, shares_filled, shares_remaining)`.
 - `cancel_withdrawal(caller, request_id)` cancels a pending request by its stable id and
   releases reserved shares. Indices shift when earlier requests drain — request_id stays
   put.
@@ -362,10 +369,11 @@ pub struct WithdrawalRequest {
 **Events emitted (audit L-03, L-05 namespace pass):**
 
 ```
-("sentinel", "credited",  <user>)  → Credited            (amount, new_balance)
-("sentinel", "collected", <user>)  → Collected           (amount)
-("sentinel", "recovered", <user>)  → Recovered           (amount, mode: RecoveryMode)
-("sentinel", "snapshot",  <day>)   → SharePriceSnapshot  (price)
+("sentinel", "credited",   <user>)  → Credited               (amount, new_balance)
+("sentinel", "collected",  <user>)  → Collected              (amount)
+("sentinel", "recovered",  <user>)  → Recovered              (amount, mode: RecoveryMode)
+("sentinel", "snapshot",   <day>)   → SharePriceSnapshot     (price)
+("sentinel", "wd_partial", <owner>) → RequestPartiallyFilled (request_id, shares_filled, shares_remaining)
 ```
 
 `Credited` / `Collected` / `Recovered` power the off-chain indexer (Improvement #9)
@@ -434,7 +442,6 @@ pub enum PoolKey {
     Controller,              // Address
     UsdcToken,               // Address
     RiskVault,               // Address
-    ActiveFlightList,        // Vec<(Symbol, u64)> — pruned on settlement
     RecoveredBalance,        // i128 (total swept funds)
 
     // Per-flight — Persistent storage, keyed by (flight_id, date)
@@ -504,7 +511,10 @@ fn withdraw_recovered(env: Env, amount: i128);
 fn get_flight_config(env: Env, flight_id: Symbol, date: u64) -> Option<FlightConfig>;
 fn has_policy(env: Env, flight_id: Symbol, date: u64, traveler: Address) -> bool;
 fn has_claimed(env: Env, flight_id: Symbol, date: u64, traveler: Address) -> bool;
-fn get_active_flights(env: Env) -> Vec<(Symbol, u64)>;
+fn get_active_flights(env: Env) -> Vec<(Symbol, u64)>;       // whole set — off-chain use
+fn get_active_flights_page(env: Env, offset: u32, limit: u32)
+    -> Vec<(Symbol, u64)>;                                   // bounded window
+fn get_active_flight_count(env: Env) -> u32;                 // O(1)
 fn get_recovered_balance(env: Env) -> i128;
 ```
 
@@ -547,7 +557,7 @@ If on time:
 | Entry | Storage tier | TTL management |
 |-------|-------------|----------------|
 | Global config (Controller, UsdcToken, etc.) | Instance | Existing cron `extend_ttl()` — no change |
-| `ActiveFlightList` | Instance | Kept alive with all other instance data — no separate management |
+| Active-flight set (`ActivePage`/`ActiveIdx`/`ActiveCount`) | Persistent pages + index, Instance count | Pages re-extended on every write and paged read; index extended to flight date (+ buffer) on write; archived pages restorable (`sentinel.page_miss` diagnostic) |
 | `RecoveredBalance` | Instance | Kept alive with all other instance data — no separate management |
 | `FlightConfig(id, date)` | Persistent | `extend_flight_ttl` (31d) on register; **on settle**, `extend_flight_ttl_to(claim_expiry + 30d)` so the claim window is self-sufficient on-chain (audit C-01). `ExtendFootprintTTLOp` cron is the long-term layer. |
 | `Buyer(id, date, addr)` | Persistent | TTL set to `claim_expiry + 30 days` on write — no cron needed |
@@ -817,7 +827,6 @@ pub enum OracleKey {
     Owner,
     AuthorizedOracle,
     AuthorizedController,
-    ActiveFlightList,                // Vec<(Symbol, u64)>
 
     // Persistent — keyed multi-row state
     FlightData(Symbol, u64),         // FlightData
@@ -827,6 +836,12 @@ pub enum OracleKey {
     // and archival-restoration semantics must never resurrect one.
     SaleAuth(Symbol, u64),           // u64 (expires_at)
 }
+
+// The live active-flight set is the shared paginated structure in
+// sentinel_types::active_set (used by both the oracle and the pool):
+//   ActivePage(u32)        — Persistent: Vec<(Symbol, u64)> pages (≤ 100 entries)
+//   ActiveIdx(Symbol, u64) — Persistent: the entry's global slot (O(1) removal)
+//   ActiveCount            — Instance:  total entries (O(1) saturation gauge)
 
 #[contracttype]
 pub struct FlightData {
@@ -855,11 +870,20 @@ const SECONDS_PER_DAY: u64 = 86_400;
 
 **Storage tier rationale:**
 
-- **`ActiveFlightList`** is in **Instance** storage. It is global single-row state — per
-  Soroban best practice, it shares TTL with the contract instance. The delayed-prune
-  scheme bounds the list to (active flights) + (settled-but-not-yet-evicted flights), the
-  latter capped by the 7-day retention window. List growth is bounded under realistic
-  traffic.
+- **The active-flight set is paginated Persistent storage** (`sentinel_types::active_set`):
+  pages of at most 100 `(flight_id, date)` tuples, a per-entry reverse index for O(1)
+  swap-removal, and an Instance-tier count. The previous single Instance `Vec` shared the
+  65,536-byte contract-instance entry and had to be capped at 1,000 flights — at the cap,
+  `register_flight` rejected every first purchase of a new flight protocol-wide. Pages
+  scale independently of instance state (the remaining `MAX_ACTIVE_FLIGHTS = 100,000` cap
+  is a pure sanity bound), and readers pay only for the pages they touch: a keeper batch
+  reads at most two page entries via `get_active_flights_page(offset, limit)`. Page TTLs
+  are re-extended by every write and every paged read (the keeper's rotating scans sweep
+  all pages every few hours); index entries are extended to the flight date (+ buffer) at
+  write, like the `FlightData` rows they shadow. An archived page degrades availability,
+  never integrity: enumeration skips it and emits `sentinel.page_miss(page)` so operators
+  restore it. The delayed-prune scheme still bounds the set to (active flights) +
+  (settled-but-not-yet-evicted flights), the latter capped by the 7-day retention window.
 - **`FlightData(Symbol, u64)`** is in **Persistent** storage (per-flight, unbounded
   entries — can't move to Instance). TTL is managed via `ExtendFootprintTTLOp` cron —
   the same cron that extends FlightPoolManager's `FlightConfig` entries iterates active
@@ -914,7 +938,14 @@ fn prune_settled(env: Env);                                // evicts entries wit
 
 // Read functions
 fn get_flight_data(env: Env, flight_id: Symbol, date: u64) -> FlightData;
-fn get_active_flights(env: Env) -> Vec<(Symbol, u64)>;
+fn get_active_flights(env: Env) -> Vec<(Symbol, u64)>;       // whole set — off-chain use;
+                                                             // footprint grows with pages
+fn get_active_flights_page(env: Env, offset: u32, limit: u32)
+    -> Vec<(Symbol, u64)>;                                   // bounded window — what the
+                                                             // keeper loops iterate with
+fn get_active_flight_count(env: Env) -> u32;                 // O(1) from stored count
+fn is_flight_listed(env: Env, flight_id: Symbol, date: u64) -> bool; // exact membership
+                                                             // (page-scan fallback)
 fn get_flights_by_status(env: Env, status: FlightStatus) -> Vec<(Symbol, u64)>;
 fn is_sale_open(env: Env, flight_id: Symbol, date: u64) -> bool;   // purchase gate;
                                                                    // fails closed
@@ -1006,7 +1037,8 @@ only off-chain process that talks to external APIs.
 ```
 FlightDataFetcher
     |
-    +-> reads OracleAggregator.get_active_flights() via Stellar RPC
+    +-> reads OracleAggregator.get_active_flight_count() +
+    |   get_active_flights_page(offset, limit) via Stellar RPC (paged)
     |
     +-> Step A: For flights in NotInitiated status:
     |       calls AeroAPI for estimated arrival time
@@ -1162,7 +1194,8 @@ Every backend must implement three logical functions:
 
 ```
 FlightDataFetcher:
-  1. Read OracleAggregator.get_active_flights() via Stellar RPC
+  1. Read OracleAggregator.get_active_flight_count() +
+     get_active_flights_page(offset, limit) via Stellar RPC (paged)
   2. For NotInitiated flights:
        - Call AeroAPI for estimated arrival time
        - Sign and submit: OracleAggregator.set_estimated_arrival(...)
@@ -1317,7 +1350,8 @@ and the USDC transfer within it.
 ```
 FlightDataFetcher (off-chain)
     |
-    +-> reads OracleAggregator.get_active_flights() via Stellar RPC
+    +-> reads OracleAggregator.get_active_flight_count() +
+    |   get_active_flights_page(offset, limit) via Stellar RPC (paged)
     |
     +-> for each flight in NotInitiated status:
     |       calls AeroAPI -> gets estimated arrival time
@@ -1635,8 +1669,10 @@ the contracts — only the authorized address changes.
 All contracts must manage TTL (time-to-live) to prevent data archival:
 
 - **Instance storage** (contract config, global state): TTL extended via existing cron
-  `extend_ttl()` calls. Routes, ActiveFlightList, WithdrawalQueue, and other global state
-  are in Instance storage — they share TTL with the contract instance.
+  `extend_ttl()` calls. Routes, WithdrawalQueue, the active-set count, and other global
+  state are in Instance storage — they share TTL with the contract instance. (The
+  active-flight set's pages and reverse index are Persistent — self-extending on every
+  write and paged read, restorable if they archive anyway.)
 - **Persistent storage** (per-flight data, per-user data): TTL extended via
   `ExtendFootprintTTLOp` cron for active flight entries (FlightConfig, FlightData). Per-user
   entries (Buyer, Claimed, ClaimableBalance) get TTL set on write proportional to claim window.

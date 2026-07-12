@@ -10,8 +10,7 @@ pub enum OracleKey {
     // Instance — global single-row state (auto-extended with contract instance TTL)
     AuthorizedOracle,
     AuthorizedController,
-    ActiveFlightList,
-    PruneCursor, // u32 — rotating index into ActiveFlightList
+    PruneCursor, // u32 — rotating slot cursor into the paginated active set
     // Count of flights whose outcome is publicly recorded (Landed/Cancelled or
     // any ToBeSettled*) but not yet financially settled. The vault reads this to
     // block entry/exit while pending PnL is unrecognized, so no LP can transact

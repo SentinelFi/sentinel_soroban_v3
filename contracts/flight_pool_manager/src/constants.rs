@@ -25,14 +25,11 @@ pub(crate) const BUYER_TTL_LEDGERS: u32 = 3_110_400;
 /// earliest buyers' proofs archive, turning their valid claims into NoPolicy.
 pub(crate) const MAX_CLAIM_DEADLINE_AFTER_DATE_SECS: u64 = 90 * 86_400;
 
-/// Hard cap on `ActiveFlightList` length. The list is a single `Vec` in the
-/// contract-instance entry, which Soroban bounds to 65,536 bytes (~1,600
-/// entries in the current layout). An unbounded list could grow until that
-/// entry becomes unwritable, freezing new flight registration (and settlement,
-/// which rewrites the list on eviction). Capping length well below the limit
-/// turns that ungraceful failure into a clean, early rejection with headroom
-/// for symbol-length variance and other instance state. Settled flights are
-/// removed on settlement, freeing capacity. Matches the OracleAggregator cap for
-/// a uniform interim bound; full resolution (individually-keyed active entries)
-/// is a larger storage migration tracked separately.
-pub(crate) const MAX_ACTIVE_FLIGHTS: u32 = 1_000;
+/// Sanity cap on the paginated active-flight set. The set lives in
+/// per-page persistent entries (see `sentinel_types::active_set`), so
+/// capacity no longer competes with the 65,536-byte contract-instance entry
+/// that bounded the old single-vector list to 1,000 flights — the cap is now
+/// purely an operational guard against unbounded growth, set far above any
+/// plausible concurrent flight volume. Settled flights are removed on
+/// settlement, freeing capacity. Matches the OracleAggregator cap.
+pub(crate) const MAX_ACTIVE_FLIGHTS: u32 = 100_000;
