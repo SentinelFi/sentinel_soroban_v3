@@ -22,3 +22,12 @@ pub(crate) const FLIGHT_ID_RETIREMENT_SECS: u64 = 160 * 86_400;
 /// ~180-day network maximum), otherwise an archived marker would silently
 /// reopen the flight_id early.
 pub(crate) const RETIREMENT_TTL_LEDGERS: u32 = 168 * 24 * 60 * 12;
+
+/// Default cap on `payoff / premium` until the owner tunes it via
+/// `set_term_limits`. Unit-free (unlike the absolute payoff cap, which is
+/// asset-denominated and therefore ships disabled), so it is safe to enforce
+/// from genesis: no route write may promise more than this multiple of its
+/// premium. Generous against real flight-insurance pricing (typically
+/// 10–20x) while still forcing a vault-sized payoff to carry a vault-scale
+/// premium instead of dust.
+pub(crate) const DEFAULT_MAX_PAYOFF_RATIO: i128 = 100;

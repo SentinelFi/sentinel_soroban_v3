@@ -118,6 +118,14 @@ hazard at scale).
   `whitelist_route`, `update_route_terms` — asserts `premium > 0`, `payoff > 0`,
   `payoff > premium`, `delay_hours > 0` against the resolved (defaults-folded) values.
   An admin cannot whitelist or update a route to non-paying or guaranteed-payout terms.
+- **Term limits**: the owner bounds the magnitudes admin route writes may carry via
+  `set_term_limits(max_payoff, max_payoff_ratio)`. The ratio cap (`payoff ≤ ratio ×
+  premium`) is unit-free and active by default (100); the absolute per-policy payoff
+  cap is asset-denominated and configured at wiring time (0 = disabled). This caps the
+  blast radius of one compromised admin key — without it, a single signature could
+  whitelist a dust-premium route whose one policy locks the vault's entire free
+  capital. Both limits are enforced on every route write and on `set_defaults`, and
+  `route_status` stops advertising a route that exceeds the current limits.
 - **Pausable** (audit H-03). Owner-only `pause(caller)` / `unpause(caller)` halts all
   governance write entry points; `route_status()` / `get_defaults()` reads remain available.
 
@@ -131,6 +139,10 @@ pub enum DataKey {
     DefaultPayoff,                                  // i128 — Instance (stroops of USDC)
     DefaultDelayHours,                              // u32 — Instance (hours)
     Route(Symbol, Symbol, Symbol),                  // RouteTerms — Persistent
+    FlightRoute(Symbol),                            // (origin, dest) uniqueness index — Persistent
+    RetiredFlight(Symbol),                          // (origin, dest, retired_until) — Persistent
+    MaxPayoff,                                      // i128 — Instance (0 = no absolute cap)
+    MaxPayoffRatio,                                 // i128 — Instance (payoff ≤ premium × ratio)
 }
 
 #[contracttype]
@@ -167,6 +179,7 @@ pub struct ResolvedTerms {
 fn route_status(env: Env, flight_id: Symbol, origin: Symbol,
                 dest: Symbol) -> RouteStatus;
 fn get_defaults(env: Env) -> (i128, i128, u32);
+fn get_term_limits(env: Env) -> (i128, i128);
 fn is_admin(env: Env, addr: Address) -> bool;
 ```
 
@@ -180,6 +193,9 @@ pattern).
 ```rust
 // Defaults (owner-only)
 fn set_defaults(env: Env, premium: i128, payoff: i128, delay_hours: u32);
+
+// Term limits (owner-only)
+fn set_term_limits(env: Env, max_payoff: i128, max_payoff_ratio: i128);
 
 // Admin management (owner-only)
 fn add_admin(env: Env, admin: Address);
@@ -283,7 +299,7 @@ vault is composable with any vault-aware tooling.
   - **Immediate (`redeem`)** — OZ Vault standard. Burns shares and transfers USDC when
     `free_capital >= redemption`.
   - **Queued (`request_withdrawal`)** — non-standard extension for locked capital.
-    Enqueues `(request_id, caller, shares, timestamp)` in a FIFO queue stored in **Instance**
+    Enqueues `(request_id, caller, shares)` in a FIFO queue stored in **Instance**
     storage. Returns the freshly-issued `request_id: u64` (monotonic counter, audit M-04 fix).
     After each settlement cycle the keeper calls `run_queue_maintenance()`, which drives
     `process_withdrawal_queue()` and credits fulfilled requests to `claimable_balance`.
@@ -330,8 +346,10 @@ pub enum VaultKey {
     LockedCapital,             // i128 — Instance
     WithdrawalQueue,           // Vec<WithdrawalRequest> — Instance
     NextRequestId,             // u64 — Instance (monotonic counter)
-    ClaimableBalance(Address), // i128 — Persistent (TTL extended to 60 days on write)
     LastSnapshotTime,          // u64 — Instance
+    Oracle,                    // Address — Instance (settlement-barrier target, set at construction)
+    MinWithdrawalRequest,      // i128 — Instance (queue-request value floor; 0 = disabled)
+    ClaimableBalance(Address), // i128 — Persistent (TTL extended to 60 days on write)
     SnapshotPrice(u64),        // i128 — Temporary (30-day TTL, keyed by day)
 }
 
@@ -340,7 +358,9 @@ pub struct WithdrawalRequest {
     pub request_id: u64,    // stable id — audit M-04
     pub owner: Address,
     pub shares: i128,
-    pub timestamp: u64,
+    // No timestamp: request time is never read on-chain (the queue is
+    // strict-FIFO by position) and the wd_req event already timestamps
+    // each request via its ledger.
 }
 ```
 
@@ -1033,6 +1053,16 @@ only off-chain process that talks to external APIs.
 > ETA. The classifier computes delay as `actual − estimated`, so writing a
 > delay-adjusted ETA would systematically classify delayed flights as on-time. Every
 > executor backend (cron, Acurast, Phala) must preserve this.
+>
+> **Day-key contract:** the `date` in every `(flight_id, date)` key is the flight's
+> **UTC departure day** (midnight UTC, unix seconds). Deriving it from the *local*
+> departure date breaks the oracle's timestamp floor: `set_estimated_arrival` /
+> `set_landed` reject arrivals earlier than `date`, and a short flight departing
+> early-morning local time east of UTC (e.g. 01:00 JST = 16:00 UTC the previous day)
+> can arrive before midnight UTC of its local departure date. A mis-keyed instance
+> strands in `Active` and is voided as on-time by the active timeout — travelers on
+> genuinely delayed or cancelled flights lose both payout and premium. Every executor
+> backend AND every frontend deriving day keys must preserve this.
 
 ```
 FlightDataFetcher
@@ -1482,7 +1512,7 @@ Underwriter -> RiskVault.request_withdrawal(caller, shares) -> request_id
     +-> caller.require_auth()
     +-> panic if shares == 0 or shares > balance
     +-> underwriter specifies how much they want to withdraw
-    +-> request queued as (request_id, caller, shares, timestamp) in FIFO list (Instance storage)
+    +-> request queued as (request_id, caller, shares) in FIFO list (Instance storage)
     +-> shares reserved
     +-> returns request_id (monotonic counter) — use to cancel later, audit M-04
 
@@ -1658,6 +1688,11 @@ defense against inflation attacks:
    the scheduled arrival (`scheduled_in`), never a delay-adjusted live ETA — see the
    FlightDataFetcher semantics contract above. The contracts cannot enforce this
    distinction; it is part of the trusted-oracle contract.
+8. **Day keys are UTC.** The `date` in every `(flight_id, date)` key is the flight's
+   UTC departure day (midnight UTC) — see the FlightDataFetcher day-key contract
+   above. The contracts enforce this only indirectly (the arrival-timestamp floor
+   rejects the writes a local-date key would produce), so keying by UTC is part of
+   the executor/frontend contract and must survive backend migrations.
 
 **Trust assumption depends on executor backend.** With a centralized cron, trust the
 server operator. With a TEE backend (Acurast, Phala), trust the hardware attestation chain.
@@ -1799,6 +1834,7 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Action | Who | Function |
 |---|---|---|
 | Set global defaults | Owner | `governance.set_defaults(premium, payoff, delay_hours)` |
+| Set term limits | Owner | `governance.set_term_limits(max_payoff, max_payoff_ratio)` (bounds every route write; caps a compromised admin key's blast radius) |
 | Whitelist route | Owner / Admin | `governance.whitelist_route(caller, flight_id, origin, dest, premium?, payoff?, delay_hours?)` |
 | Disable route (soft) | Owner / Admin | `governance.disable_route(caller, flight_id, origin, dest)` |
 | Enable route | Owner / Admin | `governance.enable_route(caller, flight_id, origin, dest)` |

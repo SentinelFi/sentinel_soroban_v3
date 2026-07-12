@@ -130,6 +130,22 @@ pub enum FlightStatus {
     Settled,
 }
 
+/// Per-flight oracle record, stored under a `(flight_id, date)` key.
+///
+/// The `date` key component is the flight's **UTC departure day** — midnight
+/// UTC of the departure date, in unix seconds (a multiple of 86,400; the
+/// purchase path enforces the alignment). Executors and frontends MUST
+/// derive it from the departure timestamp **in UTC**, never in the airport's
+/// local timezone: `set_estimated_arrival` / `set_landed` reject any arrival
+/// timestamp below `date`, and a short flight departing early-morning local
+/// time east of UTC (e.g. 01:00 JST = 16:00 UTC the previous day) can arrive
+/// before midnight UTC of its *local* departure date. A component keying
+/// instances by local date would therefore have legitimate outcome writes
+/// rejected (`InvalidTimestamp`); the flight would strand in `Active` and be
+/// voided as on-time by the active timeout, irreversibly denying genuinely
+/// delayed or cancelled travelers. This invariant carries the same weight as
+/// the `scheduled_in` rule below and must survive every executor backend
+/// migration.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct FlightData {

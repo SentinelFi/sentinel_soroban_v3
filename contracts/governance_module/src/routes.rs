@@ -81,11 +81,13 @@ impl GovernanceModule {
         // resets every override to default-tracking) and would re-approve a
         // disabled route without `enable_route`'s revalidation. Reject
         // everything except the exact idempotent re-listing (identical term
-        // overrides, still approved) — that case falls through and re-runs
-        // the normal write path (a no-op rewrite that refreshes TTLs and
-        // re-emits the listing event). Term changes go through
-        // `update_route_terms`; re-activation goes through `enable_route`;
-        // a REMOVED route has no entry, so re-adding it stays possible.
+        // overrides, still approved) — that case keeps the TTL refreshes
+        // (route entry, uniqueness index) but returns before the event:
+        // re-emitting `route_listed` for an unchanged route would make
+        // indexers see duplicate creations for one logical route. Term
+        // changes go through `update_route_terms`; re-activation goes
+        // through `enable_route`; a REMOVED route has no entry, so re-adding
+        // it stays possible.
         if let Some(existing) = e.storage().persistent().get::<_, RouteTerms>(&key) {
             if !(existing.approved
                 && existing.premium == premium
@@ -94,6 +96,14 @@ impl GovernanceModule {
             {
                 panic_with_error!(e, Error::RouteAlreadyListed);
             }
+            // Same revalidation the write path runs: a defaults or
+            // term-limits change since the original listing must not be
+            // laundered through a no-op re-list.
+            assert_route_terms_valid(e, &existing);
+            extend_route_ttl(e, &key);
+            e.storage().persistent().set(&fr_key, &(origin, dest));
+            extend_route_ttl(e, &fr_key);
+            return;
         }
 
         let terms = RouteTerms {

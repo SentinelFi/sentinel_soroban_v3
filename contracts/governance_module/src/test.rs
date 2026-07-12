@@ -301,6 +301,150 @@ fn test_enable_route_rejects_invalid_resolved_terms() {
 }
 
 // =========================================================================
+// Term limits (magnitude bounds on route economics)
+// =========================================================================
+
+#[test]
+fn test_term_limits_defaults_and_setter() {
+    let (env, client, _owner, addr) = setup();
+    // Ships with the unit-free ratio bound on and the absolute cap off.
+    assert_eq!(client.get_term_limits(), (0, 100));
+
+    client.set_term_limits(&1000_0000000i128, &20i128);
+    // Event check FIRST — the next contract call clears the event log.
+    assert!(count_events_with_verb(&env, &addr, Symbol::new(&env, "gov_term_limits")) >= 1);
+    assert_eq!(client.get_term_limits(), (1000_0000000, 20));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #514)")]
+fn test_whitelist_route_rejects_payoff_ratio_above_default_limit() {
+    // A dust premium with an outsized payoff must be rejected even before
+    // the owner configures explicit limits: the default ratio bound caps
+    // payoff at 100x premium from genesis.
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &Some(1i128),
+        &Some(500_0000000i128),
+        &None::<u32>,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #513)")]
+fn test_whitelist_route_rejects_payoff_above_absolute_cap() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+    client.set_term_limits(&300_0000000i128, &100i128);
+    // Payoff resolves to the 500 default, above the 300 cap.
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #514)")]
+fn test_update_route_terms_rejects_ratio_violation() {
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    // Premium dropped to 1 stroop: the resolved payoff (500 default) now
+    // exceeds 100x premium.
+    client.update_route_terms(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &PremiumUpdate::Set(1i128),
+        &PayoffUpdate::Keep,
+        &DelayHoursUpdate::Keep,
+    );
+}
+
+#[test]
+fn test_route_status_disabled_when_limits_lowered_below_route() {
+    // Lowering the limits retroactively de-lists oversized routes: the route
+    // entry survives, but route_status stops advertising it as Active, so
+    // the controller rejects purchases cleanly.
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    assert!(matches!(
+        client.route_status(&flight_id, &origin, &dest),
+        RouteStatus::Active(_)
+    ));
+
+    // Cap (100) now sits below the route's resolved payoff (500).
+    client.set_term_limits(&100_0000000i128, &100i128);
+    assert_eq!(
+        client.route_status(&flight_id, &origin, &dest),
+        RouteStatus::Disabled
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #515)")]
+fn test_set_term_limits_rejects_negative_cap() {
+    let (_env, client, _owner, _addr) = setup();
+    client.set_term_limits(&-1i128, &100i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #515)")]
+fn test_set_term_limits_rejects_ratio_below_two() {
+    // A ratio below 2 would reject every valid route, since payoff must
+    // strictly exceed premium.
+    let (_env, client, _owner, _addr) = setup();
+    client.set_term_limits(&0i128, &1i128);
+}
+
+#[test]
+#[should_panic]
+fn test_set_term_limits_unauthorized() {
+    let env = Env::default();
+    // No mock_all_auths — owner auth will fail.
+    let owner = Address::generate(&env);
+    let contract_id = env.register(
+        GovernanceModule,
+        (
+            &owner,
+            &DEFAULT_PREMIUM,
+            &DEFAULT_PAYOFF,
+            &DEFAULT_DELAY_HOURS,
+        ),
+    );
+    let client = GovernanceModuleClient::new(&env, &contract_id);
+    client.set_term_limits(&1000_0000000i128, &50i128);
+}
+
+// =========================================================================
 // Admin management
 // =========================================================================
 
