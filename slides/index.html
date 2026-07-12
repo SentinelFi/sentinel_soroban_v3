@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sentinel — Pitch Deck 2026</title>
+<meta name="description" content="Sentinel: decentralized parametric flight-delay insurance on Stellar. Pitch deck, 2026." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #000003;
+    --fg: #ffffff;
+    --accent: #ffca00;
+    --muted: rgba(255, 255, 255, 0.62);
+    --faint: rgba(255, 255, 255, 0.35);
+    --line: rgba(255, 255, 255, 0.16);
+    --line-strong: rgba(255, 255, 255, 0.3);
+    --panel: rgba(255, 255, 255, 0.03);
+    --accent-dim: rgba(255, 202, 0, 0.1);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; border-radius: 0 !important; }
+
+  html, body { height: 100%; overflow: hidden; }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Lora", Georgia, serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- deck chrome ---------- */
+  #progress {
+    position: fixed; top: 0; left: 0; height: 3px; width: 0;
+    background: var(--accent); z-index: 100;
+    transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  #counter {
+    position: fixed; top: 20px; right: 28px; z-index: 100;
+    font-size: 13px; letter-spacing: 0.18em; color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+  #counter b { color: var(--accent); font-weight: 600; }
+
+  #brandmark {
+    position: fixed; top: 18px; left: 28px; z-index: 100;
+    display: flex; align-items: center; gap: 10px;
+    font-size: 13px; letter-spacing: 0.28em; color: var(--muted);
+  }
+  #brandmark .sq { width: 10px; height: 10px; background: var(--accent); }
+
+  #nav {
+    position: fixed; bottom: 22px; right: 28px; z-index: 100; display: flex; gap: 1px;
+  }
+  #nav button {
+    font-family: inherit; font-size: 18px; line-height: 1;
+    width: 46px; height: 42px; cursor: pointer;
+    background: transparent; color: var(--fg);
+    border: 1px solid var(--line-strong);
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  #nav button:hover { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+
+  #dots {
+    position: fixed; bottom: 30px; left: 28px; z-index: 100; display: flex; gap: 10px;
+  }
+  #dots span {
+    width: 22px; height: 3px; background: var(--line); cursor: pointer;
+    transition: background 0.25s;
+  }
+  #dots span.on { background: var(--accent); }
+
+  #hint {
+    position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; letter-spacing: 0.14em; color: var(--faint); z-index: 100;
+    transition: opacity 0.6s;
+  }
+
+  /* ---------- slides ---------- */
+  .slide {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 90px 9vw 110px;
+    opacity: 0; visibility: hidden; transform: translateY(26px);
+    transition: opacity 0.55s ease, transform 0.55s ease, visibility 0.55s;
+  }
+  .slide.active { opacity: 1; visibility: visible; transform: translateY(0); }
+
+  .kicker {
+    font-size: 13px; letter-spacing: 0.3em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 22px; font-weight: 600;
+  }
+  .kicker::before { content: "— "; color: var(--faint); }
+
+  h1 { font-size: clamp(44px, 7.2vw, 96px); font-weight: 700; line-height: 1.04; letter-spacing: 0.01em; }
+  h2 { font-size: clamp(30px, 4.2vw, 54px); font-weight: 600; line-height: 1.12; max-width: 21em; }
+  .lead { font-size: clamp(16px, 1.6vw, 21px); color: var(--muted); max-width: 44em; line-height: 1.6; margin-top: 22px; }
+  .accent { color: var(--accent); }
+
+  /* staggered reveal inside the active slide */
+  .rv { opacity: 0; transform: translateY(18px); transition: opacity 0.6s ease, transform 0.6s ease; transition-delay: var(--d, 0s); }
+  .slide.active .rv { opacity: 1; transform: translateY(0); }
+
+  /* ---------- shared blocks ---------- */
+  .cols { display: grid; gap: 26px; margin-top: 46px; }
+  .cols.c2 { grid-template-columns: 1fr 1fr; }
+  .cols.c3 { grid-template-columns: repeat(3, 1fr); }
+  .cols.c4 { grid-template-columns: repeat(4, 1fr); }
+
+  .card {
+    border: 1px solid var(--line); background: var(--panel);
+    padding: 26px 26px 24px; position: relative;
+  }
+  .card::before {
+    content: ""; position: absolute; top: -1px; left: -1px; width: 34px; height: 3px; background: var(--accent);
+  }
+  .card h3 { font-size: 18px; font-weight: 600; margin-bottom: 10px; }
+  .card p { font-size: 14.5px; color: var(--muted); line-height: 1.6; }
+  .card .big { font-size: clamp(34px, 3.6vw, 52px); font-weight: 700; color: var(--accent); line-height: 1.1; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+  .card .unit { font-size: 14px; color: var(--faint); letter-spacing: 0.06em; }
+
+  ul.list { list-style: none; margin-top: 34px; max-width: 46em; }
+  ul.list li {
+    padding: 16px 0 16px 34px; border-bottom: 1px solid var(--line);
+    font-size: clamp(15px, 1.5vw, 19px); color: var(--fg); position: relative; line-height: 1.5;
+  }
+  ul.list li::before { content: "▸"; color: var(--accent); position: absolute; left: 4px; }
+  ul.list li b { color: var(--accent); font-weight: 600; }
+  ul.list li small { color: var(--muted); }
+
+  .footlink { margin-top: 40px; font-size: 14px; color: var(--muted); letter-spacing: 0.04em; }
+  .footlink a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent); }
+
+  /* ---------- title slide ---------- */
+  #s-title { align-items: flex-start; }
+  .title-net {
+    display: inline-flex; align-items: center; gap: 10px;
+    border: 1px solid var(--line-strong); padding: 8px 16px;
+    font-size: 13px; letter-spacing: 0.2em; color: var(--muted); margin-top: 40px;
+  }
+  .pulse { width: 8px; height: 8px; background: var(--accent); animation: pulse 1.8s ease-out infinite; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(255, 202, 0, 0.55); }
+    70% { box-shadow: 0 0 0 12px rgba(255, 202, 0, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(255, 202, 0, 0); }
+  }
+
+  /* radar sweep */
+  .radar {
+    position: absolute; right: 7vw; top: 50%; transform: translateY(-50%);
+    width: min(34vw, 460px); aspect-ratio: 1; pointer-events: none; opacity: 0.9;
+  }
+  .radar .ring { position: absolute; inset: 0; border: 1px solid var(--line); }
+  .radar .ring.r2 { inset: 16%; }
+  .radar .ring.r3 { inset: 32%; }
+  .radar .cross-h, .radar .cross-v { position: absolute; background: var(--line); }
+  .radar .cross-h { left: 0; right: 0; top: 50%; height: 1px; }
+  .radar .cross-v { top: 0; bottom: 0; left: 50%; width: 1px; }
+  .radar .sweep {
+    position: absolute; inset: 0;
+    background: conic-gradient(from 0deg, rgba(255, 202, 0, 0.28), transparent 68deg);
+    animation: sweep 5.5s linear infinite;
+  }
+  @keyframes sweep { to { transform: rotate(360deg); } }
+  .radar .blip {
+    position: absolute; width: 7px; height: 7px; background: var(--accent);
+    animation: blip 5.5s linear infinite; opacity: 0;
+  }
+  .radar .blip.b1 { top: 26%; left: 62%; animation-delay: 0.9s; }
+  .radar .blip.b2 { top: 64%; left: 30%; animation-delay: 3.1s; }
+  @keyframes blip {
+    0%, 6% { opacity: 0; }
+    8% { opacity: 1; }
+    45% { opacity: 0.15; }
+    100% { opacity: 0; }
+  }
+
+  /* flight path across the title */
+  .flightpath { position: absolute; left: 0; right: 0; top: 16%; height: 120px; pointer-events: none; }
+  .flightpath svg { width: 100%; height: 100%; }
+  .flightpath .dash {
+    stroke: var(--line-strong); stroke-width: 1.5; fill: none;
+    stroke-dasharray: 3 9; animation: dashmove 1.4s linear infinite;
+  }
+  @keyframes dashmove { to { stroke-dashoffset: -12; } }
+  .plane {
+    position: absolute; top: 0; left: 0; color: var(--accent);
+    offset-path: path("M -40 90 C 400 20, 900 110, 2100 40");
+    animation: fly 14s linear infinite;
+  }
+  /* The glyph's nose points up by default; offset-rotate aligns the element's
+     x-axis with the path, so turn the artwork to face right (direction of travel). */
+  .plane svg { display: block; transform: rotate(90deg); }
+  @keyframes fly { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+
+  /* ---------- flow slide ---------- */
+  .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-top: 52px; counter-reset: step; }
+  .fstep {
+    border: 1px solid var(--line); border-left: none; background: var(--panel);
+    padding: 26px 24px 24px; position: relative;
+  }
+  .fstep:first-child { border-left: 1px solid var(--line); }
+  .fstep::after {
+    counter-increment: step; content: counter(step, decimal-leading-zero);
+    position: absolute; top: 14px; right: 16px;
+    font-size: 12px; letter-spacing: 0.12em; color: var(--faint);
+  }
+  .fstep h3 { font-size: 17px; margin: 14px 0 8px; }
+  .fstep p { font-size: 13.5px; color: var(--muted); line-height: 1.55; }
+  .fstep .glyph { color: var(--accent); }
+  .slide.active .fstep { animation: stepin 0.5s both; }
+  .slide.active .fstep:nth-child(1) { animation-delay: 0.15s; }
+  .slide.active .fstep:nth-child(2) { animation-delay: 0.45s; }
+  .slide.active .fstep:nth-child(3) { animation-delay: 0.75s; }
+  .slide.active .fstep:nth-child(4) { animation-delay: 1.05s; }
+  @keyframes stepin {
+    from { opacity: 0; transform: translateY(16px); border-top-color: var(--line); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .outcome { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; margin-top: 26px; }
+  .outcome .card.win::before { background: var(--accent); }
+
+  /* ---------- architecture slide ---------- */
+  .arch { display: grid; grid-template-columns: 1.1fr 1fr 1.1fr; gap: 18px; align-items: stretch; margin-top: 48px; }
+  .abox {
+    border: 1px solid var(--line-strong); padding: 16px 18px; background: var(--panel);
+    font-size: 14px; text-align: center; letter-spacing: 0.04em;
+  }
+  .abox small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; letter-spacing: 0; }
+  .abox.hub { border-color: var(--accent); background: var(--accent-dim); }
+  .astack { display: flex; flex-direction: column; gap: 14px; justify-content: center; }
+
+  /* ---------- closing ---------- */
+  #s-close { align-items: flex-start; }
+  .links { margin-top: 46px; display: flex; flex-direction: column; gap: 0; border-top: 1px solid var(--line); max-width: 40em; width: 100%; }
+  .links a {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 20px;
+    padding: 16px 4px; border-bottom: 1px solid var(--line);
+    color: var(--fg); text-decoration: none; font-size: 16px;
+    transition: background 0.15s, padding-left 0.15s;
+  }
+  .links a:hover { background: var(--accent-dim); padding-left: 12px; }
+  .links a span { color: var(--muted); font-size: 13px; letter-spacing: 0.06em; }
+  .links a b { color: var(--accent); font-weight: 600; }
+
+  @media (max-width: 900px) {
+    .slide { padding: 80px 6vw 120px; }
+    .cols.c2, .cols.c3, .cols.c4, .flow, .outcome, .arch { grid-template-columns: 1fr; }
+    .fstep { border-left: 1px solid var(--line); border-top: none; }
+    .fstep:first-child { border-top: 1px solid var(--line); }
+    .radar { display: none; }
+    #hint { display: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+    .rv { opacity: 1; transform: none; }
+    .slide.active .fstep { opacity: 1; }
+  }
+</style>
+</head>
+<body>
+
+<div id="progress"></div>
+<div id="brandmark"><span class="sq"></span>SENTINEL · 2026</div>
+<div id="counter"><b id="cur">01</b> / <span id="tot">10</span></div>
+<div id="dots"></div>
+<div id="hint">USE ← → ARROW KEYS</div>
+<div id="nav">
+  <button id="prev" aria-label="Previous slide">←</button>
+  <button id="next" aria-label="Next slide">→</button>
+</div>
+
+<!-- 1 · TITLE -->
+<section class="slide" id="s-title">
+  <div class="flightpath">
+    <svg viewBox="0 0 2000 120" preserveAspectRatio="none" aria-hidden="true">
+      <path class="dash" d="M -40 90 C 400 20, 900 110, 2100 40" />
+    </svg>
+    <span class="plane" aria-hidden="true">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M21.5 15.5v-2l-8.5-5V3a1.5 1.5 0 0 0-3 0v5.5l-8.5 5v2l8.5-2.5v5l-2.5 2v1.5l4-1 4 1V20l-2.5-2v-5l8.5 2.5z"/></svg>
+    </span>
+  </div>
+  <div class="radar" aria-hidden="true">
+    <div class="ring"></div><div class="ring r2"></div><div class="ring r3"></div>
+    <div class="cross-h"></div><div class="cross-v"></div>
+    <div class="sweep"></div>
+    <div class="blip b1"></div><div class="blip b2"></div>
+  </div>
+  <div class="kicker rv">Pitch · 2026</div>
+  <h1 class="rv" style="--d:.1s">SENTINEL</h1>
+  <p class="lead rv" style="--d:.25s">Decentralized <span class="accent">parametric flight-delay insurance</span> on Stellar.<br/>Fixed payouts, automatic eligibility, fully collateralized on-chain.</p>
+  <div class="title-net rv" style="--d:.4s"><span class="pulse"></span>LIVE ON STELLAR TESTNET</div>
+</section>
+
+<!-- 2 · PROBLEM -->
+<section class="slide" id="s-problem">
+  <div class="kicker rv">The problem</div>
+  <h2 class="rv" style="--d:.1s">Flight disruption is routine.<br/>Compensation is not.</h2>
+  <div class="cols c3">
+    <div class="card rv" style="--d:.2s">
+      <div class="big" data-count="20">0</div>
+      <div class="unit">% OF FLIGHTS ARRIVE LATE</div>
+      <p>Roughly one in five flights is delayed — a constant, measurable, insurable risk.</p>
+    </div>
+    <div class="card rv" style="--d:.35s">
+      <h3>Claims are manual</h3>
+      <p>Traditional travel insurance means forms, receipts, adjusters and weeks of waiting for an outcome the airline's own data already proves.</p>
+    </div>
+    <div class="card rv" style="--d:.5s">
+      <h3>Most never claim</h3>
+      <p>Opaque terms and claim friction mean a large share of entitled passengers simply give up — value that never reaches the people who paid for it.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 3 · SOLUTION -->
+<section class="slide" id="s-solution">
+  <div class="kicker rv">The solution</div>
+  <h2 class="rv" style="--d:.1s">Insurance that <span class="accent">settles itself</span>.</h2>
+  <p class="lead rv" style="--d:.2s">Sentinel is parametric: the policy pays a fixed amount when a measurable condition is met — the flight lands late beyond a set threshold, or is cancelled. No forms, no adjusters, no discretion.</p>
+  <ul class="list">
+    <li class="rv" style="--d:.3s"><b>Fixed terms up front.</b> Premium, payout and delay threshold are on-chain before purchase.</li>
+    <li class="rv" style="--d:.45s"><b>Oracle-attested outcomes.</b> Real flight arrival data decides — not a claims department.</li>
+    <li class="rv" style="--d:.6s"><b>100% collateralized.</b> Every payout is locked in the vault at the moment of purchase. <small>Claims can never exceed reserves.</small></li>
+  </ul>
+</section>
+
+<!-- 4 · HOW IT WORKS -->
+<section class="slide" id="s-how">
+  <div class="kicker rv">How it works</div>
+  <h2 class="rv" style="--d:.1s">One premium in. One of two outcomes out.</h2>
+  <div class="flow">
+    <div class="fstep">
+      <span class="glyph">✈</span>
+      <h3>Buy cover</h3>
+      <p>A traveler pays a small USDC premium for a specific flight and date — e.g. 50 USDC for 500 USDC of cover.</p>
+    </div>
+    <div class="fstep">
+      <span class="glyph">▣</span>
+      <h3>Collateral locks</h3>
+      <p>The full payout is instantly reserved from the risk vault. The policy is solvent by construction.</p>
+    </div>
+    <div class="fstep">
+      <span class="glyph">◎</span>
+      <h3>Oracle attests</h3>
+      <p>Flight data executors record scheduled and actual arrival on-chain. The threshold does the judging.</p>
+    </div>
+    <div class="fstep">
+      <span class="glyph">◈</span>
+      <h3>Auto settlement</h3>
+      <p>A keeper classifies and settles every flight. No human in the payment loop.</p>
+    </div>
+  </div>
+  <div class="outcome">
+    <div class="card win rv" style="--d:1.3s">
+      <h3><span class="accent">Delayed or cancelled</span></h3>
+      <p>The traveler claims the fixed payout — immediately, in USDC.</p>
+    </div>
+    <div class="card rv" style="--d:1.45s">
+      <h3>On time</h3>
+      <p>The premium becomes yield for the underwriters who backed the risk.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 5 · TWO-SIDED MARKET -->
+<section class="slide" id="s-market2">
+  <div class="kicker rv">Two-sided market</div>
+  <h2 class="rv" style="--d:.1s">Travelers buy certainty.<br/>Underwriters earn the premium.</h2>
+  <div class="cols c2">
+    <div class="card rv" style="--d:.25s">
+      <h3>Travelers</h3>
+      <p>Transparent fixed-payout protection, purchased in one transaction and claimable in one transaction. Terms live on-chain — the product cannot quietly change after purchase.</p>
+    </div>
+    <div class="card rv" style="--d:.4s">
+      <h3>Underwriters</h3>
+      <p>Deposit USDC into an ERC-4626-style risk vault and hold yield-bearing shares. Premiums from on-time flights accrue to the share price; a FIFO withdrawal queue guarantees orderly, settlement-safe exits.</p>
+    </div>
+  </div>
+  <p class="lead rv" style="--d:.55s">The protocol itself takes no custody shortcuts: capital sits in the vault, payouts come from locked collateral, and the books must balance on every settlement.</p>
+</section>
+
+<!-- 6 · WHY STELLAR -->
+<section class="slide" id="s-stellar">
+  <div class="kicker rv">Why Stellar</div>
+  <h2 class="rv" style="--d:.1s">Built where payments already work.</h2>
+  <div class="cols c4">
+    <div class="card rv" style="--d:.2s"><div class="big">~5s</div><div class="unit">LEDGER FINALITY</div><p>Purchases, settlements and claims confirm in seconds.</p></div>
+    <div class="card rv" style="--d:.32s"><div class="big">&lt;1¢</div><div class="unit">TRANSACTION FEES</div><p>Micro-premiums stay economical — fees never eat the product.</p></div>
+    <div class="card rv" style="--d:.44s"><div class="big">USDC</div><div class="unit">NATIVE SETTLEMENT</div><p>Premiums, collateral and payouts in a stable unit people trust.</p></div>
+    <div class="card rv" style="--d:.56s"><div class="big">Rust</div><div class="unit">SOROBAN CONTRACTS</div><p>Deterministic, resource-metered smart contracts on a payments-first chain.</p></div>
+  </div>
+</section>
+
+<!-- 7 · TECHNOLOGY -->
+<section class="slide" id="s-tech">
+  <div class="kicker rv">Technology</div>
+  <h2 class="rv" style="--d:.1s">Five contracts. One invariant:<br/>every policy is backed.</h2>
+  <div class="arch">
+    <div class="astack">
+      <div class="abox rv" style="--d:.3s">GOVERNANCE<small>routes &amp; terms authority</small></div>
+      <div class="abox rv" style="--d:.4s">ORACLE AGGREGATOR<small>flight truth &amp; settlement state</small></div>
+    </div>
+    <div class="astack">
+      <div class="abox hub rv" style="--d:.2s">CONTROLLER<small>orchestrates everything, holds nothing</small></div>
+    </div>
+    <div class="astack">
+      <div class="abox rv" style="--d:.3s">RISK VAULT<small>OpenZeppelin FungibleVault, ERC-4626 style</small></div>
+      <div class="abox rv" style="--d:.4s">FLIGHT POOL MANAGER<small>per-flight policies &amp; claims</small></div>
+    </div>
+  </div>
+  <ul class="list">
+    <li class="rv" style="--d:.55s"><b>Independently audited</b> — reports and remediations published in the open repository.</li>
+    <li class="rv" style="--d:.7s"><b>Off-chain executors</b> for oracle data and keeper settlement — permissioned today, decentralizing next.</li>
+  </ul>
+</section>
+
+<!-- 8 · STATUS -->
+<section class="slide" id="s-status">
+  <div class="kicker rv">Where we are</div>
+  <h2 class="rv" style="--d:.1s">Mainnet-v1 codebase, live on testnet.</h2>
+  <ul class="list">
+    <li class="rv" style="--d:.2s"><b>Protocol complete.</b> Third-generation contracts (v1 → v2 → v3), hardened through audit rounds and full integration test coverage.</li>
+    <li class="rv" style="--d:.35s"><b>Live testnet deployment</b> with a public playground — buy cover, claim payouts, underwrite the vault, inspect every contract call.</li>
+    <li class="rv" style="--d:.5s"><b>Oracle pipeline running.</b> Automated flight-data executors and keeper settlement against real schedules.</li>
+    <li class="rv" style="--d:.65s"><b>Open source.</b> Apache-2.0 contracts, public documentation site, published architecture spec.</li>
+  </ul>
+  <div class="footlink rv" style="--d:.8s">Try it now — <a href="https://sentinel-soroban-v3.vercel.app/" target="_blank" rel="noopener noreferrer">sentinel-soroban-v3.vercel.app</a></div>
+</section>
+
+<!-- 9 · CLOSING -->
+<section class="slide" id="s-close">
+  <div class="kicker rv">Sentinel · 2026</div>
+  <h1 class="rv" style="--d:.1s">Insurance that<br/><span class="accent">settles itself.</span></h1>
+  <div class="links">
+    <a class="rv" style="--d:.3s" href="https://sentinel-soroban-v3.vercel.app/" target="_blank" rel="noopener noreferrer"><b>Playground</b><span>sentinel-soroban-v3.vercel.app · live on testnet</span></a>
+    <a class="rv" style="--d:.42s" href="https://sentinelfi.github.io/sentinel_soroban_v3/" target="_blank" rel="noopener noreferrer"><b>Documentation</b><span>sentinelfi.github.io/sentinel_soroban_v3</span></a>
+    <a class="rv" style="--d:.54s" href="https://github.com/SentinelFi" target="_blank" rel="noopener noreferrer"><b>GitHub</b><span>github.com/SentinelFi · Apache-2.0</span></a>
+  </div>
+</section>
+
+<script>
+  (function () {
+    var slides = Array.prototype.slice.call(document.querySelectorAll(".slide"));
+    var dots = document.getElementById("dots");
+    var cur = document.getElementById("cur");
+    var tot = document.getElementById("tot");
+    var progress = document.getElementById("progress");
+    var hint = document.getElementById("hint");
+    var idx = 0;
+    var moved = false;
+
+    tot.textContent = String(slides.length).padStart(2, "0");
+
+    slides.forEach(function (_, i) {
+      var d = document.createElement("span");
+      d.addEventListener("click", function () { go(i); });
+      dots.appendChild(d);
+    });
+
+    function pad(n) { return String(n).padStart(2, "0"); }
+
+    // Count-up animation for [data-count] numbers on the active slide.
+    function countUp(slide) {
+      slide.querySelectorAll("[data-count]").forEach(function (el) {
+        var target = parseInt(el.getAttribute("data-count"), 10);
+        var t0 = null;
+        function tick(t) {
+          if (t0 === null) t0 = t;
+          var p = Math.min((t - t0) / 1200, 1);
+          el.textContent = Math.round(target * (1 - Math.pow(1 - p, 3)));
+          if (p < 1) requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+      });
+    }
+
+    function go(i) {
+      idx = Math.max(0, Math.min(slides.length - 1, i));
+      slides.forEach(function (s, j) { s.classList.toggle("active", j === idx); });
+      Array.prototype.forEach.call(dots.children, function (d, j) {
+        d.classList.toggle("on", j === idx);
+      });
+      cur.textContent = pad(idx + 1);
+      progress.style.width = ((idx + 1) / slides.length) * 100 + "%";
+      countUp(slides[idx]);
+      if (!moved && idx > 0) { moved = true; hint.style.opacity = "0"; }
+    }
+
+    document.getElementById("next").addEventListener("click", function () { go(idx + 1); });
+    document.getElementById("prev").addEventListener("click", function () { go(idx - 1); });
+
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") { e.preventDefault(); go(idx + 1); }
+      else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); go(idx - 1); }
+      else if (e.key === "Home") { e.preventDefault(); go(0); }
+      else if (e.key === "End") { e.preventDefault(); go(slides.length - 1); }
+    });
+
+    // Touch swipe
+    var tx = null;
+    document.addEventListener("touchstart", function (e) { tx = e.touches[0].clientX; }, { passive: true });
+    document.addEventListener("touchend", function (e) {
+      if (tx === null) return;
+      var dx = e.changedTouches[0].clientX - tx;
+      if (dx < -50) go(idx + 1);
+      else if (dx > 50) go(idx - 1);
+      tx = null;
+    }, { passive: true });
+
+    // Wheel navigation (debounced)
+    var wheelLock = false;
+    document.addEventListener("wheel", function (e) {
+      if (wheelLock) return;
+      if (Math.abs(e.deltaY) < 24) return;
+      wheelLock = true;
+      go(idx + (e.deltaY > 0 ? 1 : -1));
+      setTimeout(function () { wheelLock = false; }, 650);
+    }, { passive: true });
+
+    go(0);
+  })();
+</script>
+</body>
+</html>
