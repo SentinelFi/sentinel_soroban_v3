@@ -7,7 +7,7 @@ title: Shared Types and Mock USDC
 
 ## sentinel_types
 
-`sentinel_types` is a shared Rust crate (not a deployed contract) holding every type that crosses a contract boundary: flight status and flight data, flight configuration and settlement status, route status and resolved terms, TTL constants, contract interfaces, and the shared upgrade helper.
+`sentinel_types` is a shared Rust crate (not a deployed contract) holding every type that crosses a contract boundary: flight status and flight data, flight configuration and settlement status, route status and resolved terms, TTL constants, lifecycle timeouts, the shared paginated active-flight set (used by the Oracle Aggregator and Flight Pool Manager), contract interfaces, and the shared upgrade helper.
 
 Keeping these in one crate guarantees that all contracts and their generated clients agree on a single XDR layout.
 

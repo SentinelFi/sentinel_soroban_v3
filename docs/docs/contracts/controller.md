@@ -17,7 +17,7 @@ The single purchase flow:
 2. Enforces the minimum lead time before departure.
 3. Requires the flight to be open for sale on the Oracle Aggregator: no outcome recorded yet, and a live, unexpired sale authorization (the oracle's attestation that the flight is scheduled and not cancelled). Without one the purchase fails closed — absence of on-chain data is never treated as proof a flight is insurable.
 4. On the first purchase for a flight instance, registers the flight with the Flight Pool Manager and Oracle Aggregator.
-5. Checks vault solvency: free capital must cover the payoff scaled by the solvency ratio.
+5. Checks vault solvency: total managed assets must cover the entire outstanding locked capital plus this payoff, scaled by the solvency ratio.
 6. Transfers the premium from the traveler to the Flight Pool Manager.
 7. Locks the payoff amount in the Risk Vault and records the buyer.
 8. Appends the flight to the traveler's on-chain policy index.
@@ -39,8 +39,8 @@ Bounded, owner-only tunables:
 | Function | Bounds |
 |---|---|
 | `set_solvency_ratio` | 100 to 10000 (percent, 100 = fully backed) |
-| `set_min_lead_time` | up to 90 days |
-| `set_claim_expiry_window` | 1 to 180 days |
+| `set_min_lead_time` | less than 90 days |
+| `set_claim_expiry_window` | 1 to 60 days |
 | `set_keeper` | rotate the keeper address |
 | `set_whitelist_enabled`, `add_whitelisted_buyer`, `remove_whitelisted_buyer` | optional buyer whitelist |
 
@@ -49,4 +49,4 @@ The addresses of the Governance Module, Risk Vault, Oracle Aggregator, Flight Po
 ## Reads
 
 - `get_flights_for_traveler(address)`: list of flights a traveler has insured.
-- Aggregate counters: `total_policies_sold`, `total_premiums_collected`, `total_payouts_distributed`.
+- `get_stats()`: returns `(total_policies_sold, total_premiums_collected, total_payouts_distributed)`.

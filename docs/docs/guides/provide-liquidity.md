@@ -23,8 +23,11 @@ stellar contract invoke \
   -- deposit \
   --assets 1000000000 \
   --receiver <YOUR_ADDRESS> \
-  --from <YOUR_ADDRESS>
+  --from <YOUR_ADDRESS> \
+  --operator <YOUR_ADDRESS>
 ```
+
+For a self-deposit, `receiver`, `from`, and `operator` are all your own address (`operator` is the account whose authorization is required).
 
 Amounts use 7 decimals, so `1000000000` is 100 USDC.
 

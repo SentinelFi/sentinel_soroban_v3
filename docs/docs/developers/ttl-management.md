@@ -24,7 +24,7 @@ TTL constants are centralized in the `sentinel_types` crate, so all contracts us
 ## How TTLs are extended
 
 1. **On write.** Contracts extend an entry's TTL whenever they touch it, so actively used data keeps itself alive.
-2. **Scheduled cron.** The executor's TTL extender job periodically submits `ExtendFootprintTTLOp` operations covering flight, claim, traveler index, and route entries (daily by default, the schedule is configurable). It can be signed by any funded key, no protocol role required.
+2. **Scheduled cron.** The executor's TTL extender job periodically calls each contract's permissionless `extend_ttl` entry point (instance-storage renewal, a safety net) and the oracle's `prune_settled` (daily by default, the schedule is configurable). It can be signed by any funded key, no protocol role required. Key-level `ExtendFootprintTTLOp` extension of individual flight, claim, traveler index, and route entries is a planned improvement, not part of this cron yet.
 3. **Permissionless.** TTL extension entry points are callable by anyone, so third parties can keep data alive independently of the executor.
 
 ## Keeping storage bounded

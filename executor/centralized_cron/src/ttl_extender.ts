@@ -11,7 +11,7 @@ import type { Config, RunLogEntry, TTLResult } from "./types.js";
  *    state mutation.
  *
  * 2. Call OracleAggregator.prune_settled() to evict flights that have been
- *    in `Settled` status for at least 30 days from the active set
+ *    in `Settled` status for at least 7 days from the active set
  *    (Phase 6 permissionless cleanup, no auth required).
  *
  * Contract list updated from phase-2: recovery_pool is gone (folded into

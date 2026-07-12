@@ -24,8 +24,8 @@
 //! - **Underwriter:** `deposit`, `redeem` (immediate, if free capital allows),
 //!   `request_withdrawal` / `cancel_withdrawal` (queue), `collect` (pull).
 //! - **Controller-only:** `increase_locked`, `decrease_locked`,
-//!   `record_premium_income`, `send_payout`, `process_withdrawal_queue`,
-//!   `snapshot`.
+//!   `record_premium_income`, `send_payout`, `process_withdrawal_queue`.
+//! - **Permissionless:** `snapshot` — records the daily share price.
 //! - **Owner-only:** `recover_uncollected` — fallback for archived claimable
 //!   balances.
 

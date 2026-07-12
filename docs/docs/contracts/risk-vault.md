@@ -20,7 +20,7 @@ The Risk Vault holds all underwriter capital. It is built on the OpenZeppelin `F
 
 ## Underwriter functions
 
-- `deposit(assets, receiver, from)` and `mint`: enter the vault.
+- `deposit(assets, receiver, from, operator)` and `mint`: enter the vault.
 - `redeem` and `withdraw`: exit immediately, capped to free capital.
 - `request_withdrawal(shares)`: join the FIFO withdrawal queue, shares are escrowed, returns a stable request id.
 - `cancel_withdrawal(caller, request_id)`: cancel a pending request.

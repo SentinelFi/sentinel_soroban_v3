@@ -27,7 +27,7 @@ flowchart LR
 
 1. **Route whitelisting.** Governance approves a route and sets its terms, or lets it inherit protocol defaults.
 2. **Capital deposit.** Underwriters deposit USDC into the Risk Vault and receive transferable vault shares (RVS).
-3. **Policy purchase.** A traveler buys coverage through the Controller. The purchase only succeeds if the vault has enough free capital to fully back the payoff. That capital is then locked.
+3. **Policy purchase.** A traveler buys coverage through the Controller. The purchase only succeeds if the flight has a live oracle sale attestation (proof it was verified scheduled and not cancelled) and the vault is solvent enough to back the payoff. That capital is then locked.
 4. **Flight tracking.** An off-chain oracle pushes the scheduled arrival time, then the actual landing time (or a cancellation) to the Oracle Aggregator contract.
 5. **Classification.** A keeper compares actual versus scheduled arrival against the delay threshold and marks the flight to be settled as on time, delayed, or cancelled.
 6. **Settlement.**
@@ -43,6 +43,7 @@ flowchart LR
 | Whitelist routes | Owner or admin | Manual |
 | Deposit and withdraw | Underwriters | Self-service |
 | Buy policies | Travelers | Self-service |
+| Attest sale windows | Oracle executor | Cron, every 2 hours |
 | Push flight data | Oracle executor | Cron, every 2 hours |
 | Classify flights | Keeper executor | Cron, hourly |
 | Execute settlements | Keeper executor | Cron, every 5 minutes |

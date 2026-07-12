@@ -34,9 +34,11 @@ stellar contract invoke \
   --traveler <YOUR_ADDRESS> \
   --flight_id FL123 \
   --origin JFK \
-  --destination LAX \
-  --date 2026-08-01
+  --dest LAX \
+  --date 1785542400
 ```
+
+The `date` is the departure date as a Unix timestamp aligned to midnight UTC (a multiple of 86400 — here 2026-08-01 00:00 UTC); other values are rejected with `DateNotDayAligned`.
 
 Contract addresses are listed in [Testnet Addresses](../developers/testnet-addresses).
 
@@ -51,8 +53,9 @@ stellar contract invoke \
   --source <YOUR_KEY> \
   --network testnet \
   -- claim \
+  --traveler <YOUR_ADDRESS> \
   --flight_id FL123 \
-  --date 2026-08-01
+  --date 1785542400
 ```
 
 The full payoff is transferred to your account. Each policy can be claimed once.
