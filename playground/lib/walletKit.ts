@@ -4,9 +4,32 @@
 // the browser, so every export here lazily dynamic-imports it. Import this
 // module freely from client components; never from server components.
 
+import type { SwkAppTheme } from "@creit.tech/stellar-wallets-kit/types";
 import { NETWORK } from "@/lib/config";
 
 type Kit = typeof import("@creit.tech/stellar-wallets-kit/sdk").StellarWalletsKit;
+
+// Kit modal theme matching the app's design language. The font-family
+// resolves through the --font-lora variable set by next/font on <html>.
+const SENTINEL_THEME: SwkAppTheme = {
+  background: "#000003",
+  "background-secondary": "#0b0b10",
+  "foreground-strong": "#ffffff",
+  foreground: "rgba(255, 255, 255, 0.92)",
+  "foreground-secondary": "rgba(255, 255, 255, 0.62)",
+  primary: "#ffca00",
+  "primary-foreground": "#000003",
+  transparent: "transparent",
+  lighter: "rgba(255, 255, 255, 0.06)",
+  light: "rgba(255, 255, 255, 0.12)",
+  "light-gray": "rgba(255, 255, 255, 0.32)",
+  gray: "rgba(255, 255, 255, 0.62)",
+  danger: "#ff5c5c",
+  border: "rgba(255, 255, 255, 0.16)",
+  shadow: "0 16px 48px rgba(0, 0, 0, 0.85)",
+  "border-radius": "0",
+  "font-family": "var(--font-lora), Georgia, serif",
+};
 
 let kitPromise: Promise<Kit> | null = null;
 
@@ -24,7 +47,7 @@ async function kit(): Promise<Kit> {
       StellarWalletsKit.init({
         modules: defaultModules(),
         network: types.Networks.TESTNET,
-        theme: types.SwkAppDarkTheme,
+        theme: SENTINEL_THEME,
       });
       return StellarWalletsKit;
     })();

@@ -45,9 +45,10 @@ to public testnet endpoints.
 - **Pinned dependencies.** All runtime dependencies are pinned to exact,
   registry-verified versions to reduce supply-chain drift.
 - **Strict security headers** (see `next.config.ts`): a Content-Security-Policy
-  restricting `connect-src` to the Stellar testnet RPC, Horizon and Friendbot;
-  `frame-ancestors 'none'`, `nosniff`, `no-referrer`, a restrictive
-  Permissions-Policy and HSTS.
+  restricting `connect-src` to the Stellar testnet RPC, Horizon and Friendbot
+  (`img-src` additionally allows `stellar.creit.tech`, where the Wallets Kit
+  modal loads its wallet logos from); `frame-ancestors 'none'`, `nosniff`,
+  `no-referrer`, a restrictive Permissions-Policy and HSTS.
 - **Simulate before sign.** Writes are dry-run via `simulateTransaction`; the
   wallet prompt only appears for a call that would succeed, and the UI shows
   exactly which function and arguments are being signed.
@@ -57,6 +58,9 @@ to public testnet endpoints.
 - **Testnet only.** The network passphrase is hardcoded to testnet; signatures
   are requested with that passphrase, so a mainnet wallet signature can never
   be replayed.
+- **Telemetry disabled.** [Next.js anonymous telemetry](https://nextjs.org/telemetry)
+  is opted out in `next.config.ts` (`NEXT_TELEMETRY_DISABLED=1`), so builds
+  and dev servers phone nothing home regardless of where they run.
 
 If you enable additional wallet modules that use remote transports
 (WalletConnect, Ledger, Trezor), extend the CSP `connect-src` in

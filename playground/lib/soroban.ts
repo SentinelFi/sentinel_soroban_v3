@@ -65,7 +65,7 @@ export async function simulateWrite(
   if (rpc.Api.isSimulationError(sim)) {
     throw new Error(cleanRpcError(sim.error));
   }
-  if (sim.restorePreamble) {
+  if (rpc.Api.isSimulationRestore(sim)) {
     throw new Error(
       "Some contract state this call touches is archived and must be restored first.",
     );
@@ -92,7 +92,7 @@ export async function invokeWrite(
   if (rpc.Api.isSimulationError(sim)) {
     throw new Error(cleanRpcError(sim.error));
   }
-  if (sim.restorePreamble) {
+  if (rpc.Api.isSimulationRestore(sim)) {
     throw new Error(
       "Some contract state this call touches is archived and must be restored first.",
     );

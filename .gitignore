@@ -60,3 +60,4 @@ test_snapshots/
 *.tgz
 *.pid
 *.seed
+.vercel

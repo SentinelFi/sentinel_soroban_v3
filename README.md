@@ -11,6 +11,7 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
 - Documentation: https://sentinelfi.github.io/sentinel_soroban_v3/
 - DeepWiki: https://deepwiki.com/SentinelFi/sentinel_soroban_v3
 - Architecture: [spec/architecture.md](spec/architecture.md)
+- Playground (testnet): https://sentinel-soroban-v3.vercel.app/
 
 ## Project Structure
 
@@ -24,6 +25,7 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
   - [sentinel_types/](contracts/sentinel_types/)
   - [integration_tests/](contracts/integration_tests/)
 - [executor/](executor/) — off-chain executor layer (oracle and keeper cron jobs)
+- [playground/](playground/) — web playground for the testnet deployment ([live](https://sentinel-soroban-v3.vercel.app/))
 - [deployments/](deployments/) — deployed contract addresses and parameters
 - [spec/](spec/) — architecture and design documents
 - [docs/](docs/) — documentation site (Docusaurus)
