@@ -12,6 +12,7 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
 - DeepWiki: https://deepwiki.com/SentinelFi/sentinel_soroban_v3
 - Architecture: [spec/architecture.md](spec/architecture.md)
 - Playground (testnet): https://sentinel-soroban-v3.vercel.app/
+- Slides: https://sentinel-soroban-v3-slides.vercel.app/
 
 ## Project Structure
 
