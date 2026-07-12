@@ -39,6 +39,13 @@ jobs:
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
 
+      - name: Install native build dependencies
+        # cargo-binstall falls back to building from source when no prebuilt
+        # binary is published for a crate/version. stellar-cli's source build
+        # needs the D-Bus and udev C headers (keyring/HID dependencies), which
+        # the GitHub runner image doesn't include.
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev libudev-dev
+
       - name: Install stellar-cli, cargo-audit, and cargo-llvm-cov
         run: cargo binstall -y stellar-cli cargo-audit cargo-llvm-cov
 
