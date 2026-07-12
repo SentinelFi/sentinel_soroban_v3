@@ -326,7 +326,7 @@ only required on chains with storage-rent / archival semantics (see
 ### Cron 1 — FlightDataFetcher (Oracle, every ~2 hours)
 
 - Reads the oracle's active flight list.
-- For each flight, queries an external aviation API (e.g., AviationStack).
+- For each flight, queries an external aviation API (e.g., FlightAware AeroAPI).
 - Pushes status updates: `set_estimated_arrival`, `set_landed`, or
   `set_cancelled`.
 - Authorized as the oracle role.
@@ -636,8 +636,9 @@ This architecture targets any chain with:
   exceeds currently-free capital, fund the part free capital covers (partial
   fill) and keep the remainder at the head — an oversized head request must
   degrade into slower progress, never into a frozen exit path.
-- **Per-traveler index can grow unbounded** for heavy users. Frontends should
-  paginate; the on-chain index is append-only by design.
+- **Per-traveler index is bounded**: it keeps the most recent 1,000 flights
+  per traveler, evicting the oldest on overflow (full history stays in
+  events). Frontends should paginate.
 - **Active flight lists** (in oracle and pool) are paginated sets — capacity
   scales without a protocol-wide registration ceiling, and enumeration is by
   bounded windows. Keeper throughput is still governed by classification

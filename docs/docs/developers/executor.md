@@ -18,7 +18,7 @@ The oracle backend is intentionally swappable: contracts only check authorizatio
 | Flight classifier | Hourly | `classify_flights` on the controller | Keeper key |
 | Settlement executor | Every 5 minutes | `execute_settlements` on the controller | Keeper key |
 | Queue maintainer | Every 5 minutes, offset | `run_queue_maintenance` on the controller | Keeper key |
-| TTL extender | Daily | Extends storage TTLs for flight, claim, and route entries | Any funded key |
+| TTL extender | Daily | `extend_ttl` on all five contracts (instance-storage renewal) and `prune_settled` on the oracle | Any funded key |
 
 Schedules are defaults defined in `src/index.ts`, not on-chain constraints. Adjust them to your own operational needs.
 

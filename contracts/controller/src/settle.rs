@@ -14,7 +14,7 @@ use crate::{Controller, ControllerArgs, ControllerClient, Error};
 #[contractimpl]
 impl Controller {
     /// Iterate the oracle's active-flight list (the canonical source of
-    /// in-flight registrations plus a 30-day retention window of recently-
+    /// in-flight registrations plus a 7-day retention window of recently-
     /// settled flights). For each Landed/Cancelled flight, compute the
     /// settlement outcome from FlightPoolManager's locked terms and write
     /// `ToBeSettled*` back to the oracle.

@@ -61,7 +61,7 @@ Called by the authorized oracle executor:
 
 ## Permissionless housekeeping
 
-- `prune_settled()`: evicts flight data 7 or more days past settlement.
+- `prune_settled()`: removes flights 7 or more days past settlement from the active-flight set (the flight data row itself expires naturally via TTL).
 
 ## Owner edge path
 

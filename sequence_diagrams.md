@@ -43,9 +43,10 @@ into the [Mermaid Live Editor](https://mermaid.live).
 ## 1. Contract Deployment & Wiring
 
 Deployment order is dictated by constructor dependencies: each contract that
-references another needs that address at construction time. The vault must exist
-before the pool (the pool constructor takes the vault address), and all four
-modules must exist before the controller. Finally, the three module contracts are
+references another needs that address at construction time. The oracle must
+exist before the vault (the vault constructor takes the oracle address for its
+settlement barrier), the vault must exist before the pool (the pool constructor
+takes the vault address), and all four modules must exist before the controller. Finally, the three module contracts are
 told the controller's address via one-time `set_controller` calls — this closes
 the trust loop so they only accept privileged calls from the controller.
 
@@ -60,13 +61,13 @@ sequenceDiagram
     participant Pool as Pool
     participant Ctrl as Controller
 
-    Note over Deployer,Ctrl: Step A — deploy leaf contracts (no inter-deps)
+    Note over Deployer,Ctrl: Step A — deploy leaf contracts (Gov and Oracle have no inter-deps)
     Deployer->>Asset: deploy / use existing SAC
     Deployer->>Gov: __constructor(owner, default_premium, default_payoff, default_delay_hours)
     Deployer->>Oracle: __constructor(owner, authorized_oracle)
-    Deployer->>Vault: __constructor(owner, asset_token)
 
-    Note over Deployer,Ctrl: Step B — Pool needs Vault address
+    Note over Deployer,Ctrl: Step B — Vault needs Oracle (settlement barrier), Pool needs Vault
+    Deployer->>Vault: __constructor(owner, asset_token, oracle)
     Deployer->>Pool: __constructor(owner, asset_token, risk_vault)
 
     Note over Deployer,Ctrl: Step C — Controller needs every module address
@@ -124,7 +125,7 @@ sequenceDiagram
     participant Asset as Asset
 
     Traveler->>Ctrl: buy_insurance(traveler, flight_id, origin, dest, date)
-    Note over Ctrl: traveler.require_auth()
+    Note over Ctrl: traveler.require_auth()<br/>date must be midnight-UTC aligned
     opt buyer whitelist enabled
         Ctrl->>Ctrl: read_buyer_whitelisted(traveler) — else revert
     end
@@ -140,13 +141,16 @@ sequenceDiagram
     Oracle-->>Ctrl: must be true — live oracle sale attestation
     Note over Ctrl: revert SaleNotOpen if missing, lapsed or closed
 
+    Ctrl->>Pool: get_flight_config(flight_id, date)
+    Note over Ctrl: existing config binds later buyers to the first buyer's terms<br/>if it exists, oracle must have flight data — else revert OracleDataUnavailable
+
     Ctrl->>Pool: register_flight(flight_id, date, premium, payoff, delay_hours)
     Ctrl->>Oracle: register_flight(flight_id, date)
     Note over Pool,Oracle: both idempotent (parallel buyers safe)
 
-    Ctrl->>Vault: get_free_capital()
-    Vault-->>Ctrl: free_capital
-    Note over Ctrl: revert if free_capital below payoff * solvency_ratio / 100
+    Ctrl->>Vault: get_total_managed_assets() + get_locked_capital()
+    Vault-->>Ctrl: total_managed_assets, locked_capital
+    Note over Ctrl: revert if total_managed_assets below<br/>ceil((locked_capital + payoff) * solvency_ratio / 100)
 
     Ctrl->>Asset: transfer(traveler → pool, premium)
     Ctrl->>Vault: increase_locked(payoff)
@@ -196,7 +200,7 @@ sequenceDiagram
     Note over Keeper,Vault: Keeper drains the queue (run_queue_maintenance)
     Keeper->>Ctrl: run_queue_maintenance(keeper)
     Ctrl->>Vault: process_withdrawal_queue()
-    Note over Vault: FIFO, batched. Burns escrowed shares,<br/>credits ClaimableBalance, stops at first<br/>request it can't fund (emits Credited)
+    Note over Vault: FIFO, batched — no-op while a settlement is pending.<br/>Burns escrowed shares, credits ClaimableBalance (Credited).<br/>Partially fills the head request when free capital runs short<br/>(RequestPartiallyFilled), then stops. Zero-value requests are<br/>dropped and their shares returned (RequestDropped)
     Ctrl->>Vault: snapshot() — refresh share-price snapshot
     end
 
@@ -266,7 +270,7 @@ sequenceDiagram
         alt ToBeSettledOnTime
             Ctrl->>Pool: settle_on_time()
             Pool->>Asset: transfer(pool → vault, premium * buyers)
-            Pool->>Vault: record_premium_income(amount)
+            Ctrl->>Vault: record_premium_income(premium_income)
             Ctrl->>Vault: decrease_locked(total_payoff)
         else ToBeSettledDelayed / Cancelled
             Ctrl->>Vault: send_payout(vault → pool, (payoff - premium) * buyers)

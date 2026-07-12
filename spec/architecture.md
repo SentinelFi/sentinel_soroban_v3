@@ -313,6 +313,9 @@ vault is composable with any vault-aware tooling.
     request can no longer pin the queue (and with it every direct exit, which defers to a
     non-empty queue) while free capital sits idle. Each partial pass emits `Credited` plus
     `RequestPartiallyFilled(request_id, shares_filled, shares_remaining)`.
+  - **Zero-value drop.** A request whose asset value has decayed to zero (share price fell
+    after it was queued) is not left blocking the head: its escrowed shares are returned to
+    the owner, `RequestDropped` is emitted (no `Credited` fires), and the scan continues.
 - `cancel_withdrawal(caller, request_id)` cancels a pending request by its stable id and
   releases reserved shares. Indices shift when earlier requests drain — request_id stays
   put.
@@ -349,8 +352,8 @@ pub enum VaultKey {
     WithdrawalQueue,           // Vec<WithdrawalRequest> — Instance
     NextRequestId,             // u64 — Instance (monotonic counter)
     LastSnapshotTime,          // u64 — Instance
-    Oracle,                    // Address — Instance (settlement-barrier target, set at construction)
-    MinWithdrawalRequest,      // i128 — Instance (queue-request value floor; 0 = disabled)
+    Oracle,                    // Address — Instance (settlement-barrier target, wired at construction, owner-rotatable)
+    MinWithdrawalRequest,      // i128 — Instance (anti-dust floor for queue entries, 0 disables)
     ClaimableBalance(Address), // i128 — Persistent (TTL extended to 60 days on write)
     SnapshotPrice(u64),        // i128 — Temporary (30-day TTL, keyed by day)
 }
@@ -395,7 +398,13 @@ pub struct WithdrawalRequest {
 ("sentinel", "collected",  <user>)  → Collected              (amount)
 ("sentinel", "recovered",  <user>)  → Recovered              (amount, mode: RecoveryMode)
 ("sentinel", "snapshot",   <day>)   → SharePriceSnapshot     (price)
+("sentinel", "wd_req",     <owner>) → WithdrawalRequested    (request_id, shares, queue_len)
+("sentinel", "wd_cancel",  <owner>) → WithdrawalCancelled    (request_id, shares, queue_len)
 ("sentinel", "wd_partial", <owner>) → RequestPartiallyFilled (request_id, shares_filled, shares_remaining)
+("sentinel", "wd_dropped", <owner>) → RequestDropped         (request_id, shares)
+("sentinel", "controller_set", <controller>) → ControllerSet
+("sentinel", "oracle_set", <oracle>)          → OracleSet
+("sentinel", "min_wd_req_set")                → MinWithdrawalRequestSet (min_assets)
 ```
 
 `Credited` / `Collected` / `Recovered` power the off-chain indexer (Improvement #9)
@@ -462,7 +471,7 @@ RecoveryPool contract.
 pub enum PoolKey {
     // Global — Instance storage (kept alive by existing cron)
     Controller,              // Address
-    UsdcToken,               // Address
+    AssetToken,              // Address
     RiskVault,               // Address
     RecoveredBalance,        // i128 (total swept funds)
 
@@ -550,7 +559,7 @@ a panic + restart.
 
 - All premiums are transferred to FlightPoolManager (one contract holds all flight premiums)
 - On delayed/cancelled settlement, RiskVault sends `(payoff - premium) * buyer_count` to FlightPoolManager
-- On on-time settlement, FlightPoolManager sends premiums to RiskVault via `record_premium_income()`
+- On on-time settlement, FlightPoolManager transfers the premiums to RiskVault and returns the total; the Controller then records it via the controller-only `record_premium_income()`
 - Travelers call `claim()` on FlightPoolManager with `(flight_id, date)` — no need to know a pool address
 - `sweep_expired()` credits `RecoveredBalance` internally (no cross-contract transfer)
 - Owner calls `withdraw_recovered(amount)` to pull swept funds
@@ -578,7 +587,7 @@ If on time:
 
 | Entry | Storage tier | TTL management |
 |-------|-------------|----------------|
-| Global config (Controller, UsdcToken, etc.) | Instance | Existing cron `extend_ttl()` — no change |
+| Global config (Controller, AssetToken, etc.) | Instance | Existing cron `extend_ttl()` — no change |
 | Active-flight set (`ActivePage`/`ActiveIdx`/`ActiveCount`) | Persistent pages + index, Instance count | Pages re-extended on every write and paged read; index extended to flight date (+ buffer) on write; archived pages restorable (`sentinel.page_miss` diagnostic) |
 | `RecoveredBalance` | Instance | Kept alive with all other instance data — no separate management |
 | `FlightConfig(id, date)` | Persistent | `extend_flight_ttl` (31d) on register; **on settle**, `extend_flight_ttl_to(claim_expiry + 30d)` so the claim window is self-sufficient on-chain (audit C-01). A key-level `ExtendFootprintTTLOp` executor job is the planned long-term layer. |
@@ -611,14 +620,15 @@ everything: it calls functions on other contracts that change state and move mon
 9. Maintains aggregate counters — `total_policies_sold`, `total_premiums_collected`,
    `total_payouts_distributed`.
 10. Maintains a **per-traveler index** — `TravelerFlights(Address)` in Persistent storage —
-    for efficient frontend queries. Appended on each `buy_insurance()` call.
+    for efficient frontend queries. Appended on each `buy_insurance()` call, capped at
+    1,000 entries per traveler (oldest evicted on overflow; full history stays in events).
 11. Exposes `get_flights_for_traveler(address)` for the frontend to show only a user's policies.
 12. **Emits `sentinel.ttl_miss(flight_id, date)`** from `classify_flights` when oracle returns
     `NotInitiated` for a flight in the active list — diagnostic signal consumed by the
     off-chain TTL-extender cron (Improvement #6) so it can detect archived `FlightData`
     entries and react before settlement fails.
 13. **Bounded owner setters** (audit H-07 + M-02): `set_solvency_ratio` ∈ [100, 10_000],
-    `set_min_lead_time` ≤ 90d, `set_claim_expiry_window` ∈ [1d, 180d]. Same bounds
+    `set_min_lead_time` < 90d, `set_claim_expiry_window` ∈ [1d, 60d]. Same bounds
     enforced in `__constructor`.
 14. **Pausable** (audit H-03). Owner-only pause halts `buy_insurance`, `classify_flights`,
     `execute_settlements`, `run_queue_maintenance`; admin setters and `extend_ttl` stay
@@ -710,6 +720,12 @@ pool_client.register_flight(&controller_addr, &flight_id, &date,
 ("sentinel", "buyer_whitelisted", <addr>)                          → BuyerWhitelistedEvent
 ("sentinel", "buyer_removed",     <addr>)                          → BuyerWhitelistRemovedEvent
 ("sentinel", "whitelist_toggled")                                  → WhitelistToggled            (enabled)
+("sentinel", "cfg_missing",       ...)                             → FlightConfigMissing
+("sentinel", "voided",            ...)                             → FlightVoided
+("sentinel", "timed_out",         ...)                             → FlightTimedOutActive
+("sentinel", "evict_settled",     ...)                             → EvictedFlightSettled
+("sentinel", "keeper_set" | "solvency_ratio_set" |
+ "min_lead_time_set" | "claim_expiry_window_set")                  → owner-setter audit events
 ```
 
 The first three are domain events covering the buy / classify / settle
@@ -728,24 +744,28 @@ tick (every 1 hour) for any registered flight whose oracle status is still
 ```rust
 #[contracttype]
 pub enum CtrlKey {
-    Owner,                     // Address — Instance
     Governance,                // Address — Instance
     RiskVault,                 // Address — Instance
     Oracle,                    // Address — Instance
     FlightPoolManager,         // Address — Instance (set once)
-    UsdcToken,                 // Address — Instance
+    AssetToken,                // Address — Instance
     AuthorizedKeeper,          // Address — Instance (executor backend — shared by classifier + settler)
     SolvencyRatio,             // u32 — Instance (default 100)
     MinLeadTime,               // u64 — Instance (seconds)
     ClaimExpiryWindow,         // u64 — Instance (seconds)
-    TravelerFlights(Address),  // Vec<(Symbol, u64)> — Persistent (per-user flight index)
     TotalPoliciesSold,         // u64 — Instance
     TotalPremiumsCollected,    // i128 — Instance
-    TotalPayoutsDistributed,   // i128 — Instance
+    TotalPayoutsDistributed,   // i128 — Instance (gross claimable value opened by delayed/cancelled settlements)
     WhitelistEnabled,          // bool — Instance (Phase 11; default false → open buys)
-    BuyerWhitelisted(Address), // bool — Persistent (Phase 11; per-buyer entry, 60d TTL on write)
+    ClassifyCursor,            // u32 — Instance (rotating index into the oracle active list)
+    SettleCursor,              // u32 — Instance (rotating index into the oracle active list)
+    TravelerFlights(Address),  // Vec<(Symbol, u64)> — Persistent (per-user flight index)
+    BuyerWhitelisted(Address), // bool — Persistent (Phase 11; per-buyer entry, 180d TTL on write, shared with TravelerFlights)
 }
 ```
+
+The owner address is not a `CtrlKey` variant — it lives in the OpenZeppelin
+`Ownable` storage slot, as in every other contract.
 
 ---
 
@@ -846,9 +866,11 @@ moment before the void is classified.
 #[contracttype]
 pub enum OracleKey {
     // Instance — global single-row state (auto-extended with contract instance TTL)
-    Owner,
     AuthorizedOracle,
     AuthorizedController,
+    PruneCursor,     // u32 — rotating slot cursor into the paginated active set
+    PendingOutcomes, // u64 — outcomes public but not yet settled; read by the
+                     // vault's settlement barrier to block entry/exit
 
     // Persistent — keyed multi-row state
     FlightData(Symbol, u64),         // FlightData
@@ -1260,46 +1282,32 @@ scheduling and runtime harness.
 
 ```
 executor/
-├── src/
-│   ├── core/                      # Shared logic — reused by ALL backends
+├── centralized_cron/              # Current backend: node-cron + Express
+│   ├── src/
+│   │   ├── index.ts               # node-cron scheduler entry point (all job schedules)
+│   │   ├── config.ts              # Loads .env, RPC URLs, keypairs
+│   │   ├── server.ts              # Express ops API: /api/health, /api/logs, /api/trigger/<job>
+│   │   ├── run_once.ts            # CLI single-run entry (npm run authorize/fetch/classify/settle/queue/ttl)
+│   │   ├── run_log.ts             # In-memory run history backing /api/logs
+│   │   ├── sale_authorizer.ts     # open_sale / close_sale / set_cancelled attestations
 │   │   ├── flight_data_fetcher.ts # AeroAPI fetch + oracle data writes
-│   │   ├── flight_classifier.ts   # Classification tx builder
-│   │   ├── settlement_executor.ts # Settlement tx builder
-│   │   ├── ttl_extender.ts        # ExtendFootprintTTLOp for per-flight Persistent entries
+│   │   ├── flight_classifier.ts   # classify_flights tx
+│   │   ├── settlement_executor.ts # execute_settlements tx
+│   │   ├── queue_maintainer.ts    # run_queue_maintenance tx
+│   │   ├── ttl_extender.ts        # extend_ttl on all contracts + prune_settled
 │   │   ├── soroban_client.ts      # Stellar SDK wrapper (build, sign, submit)
 │   │   ├── aeroapi_client.ts      # AeroAPI HTTP client
 │   │   └── types.ts               # FlightStatus, FlightData, etc.
-│   │
-│   ├── backends/
-│   │   ├── cron/                  # Centralized cron (current default)
-│   │   │   ├── index.ts           # node-cron scheduler entry point (4 schedules)
-│   │   │   ├── config.ts          # Loads .env, RPC URLs, keypairs
-│   │   │   └── health.ts          # /health endpoint for monitoring
-│   │   │
-│   │   ├── acurast/               # Acurast TEE (future)
-│   │   │   ├── fetcher/index.ts
-│   │   │   ├── classifier/index.ts
-│   │   │   └── settler/index.ts
-│   │   │
-│   │   └── phala/                 # Phala TEE (future)
-│   │       ├── fetcher.ts
-│   │       ├── classifier.ts
-│   │       └── settler.ts
-│   │
-│   └── scripts/
-│       ├── rotate_keys.ts         # Generate new keypair, call set_authorized_*
-│       └── check_health.ts        # Verify jobs are running, balances are funded
+│   ├── package.json
+│   └── tsconfig.json
 │
-├── .env.example
-├── package.json
-├── tsconfig.json
-└── Dockerfile
+└── mock-api/                      # Local AeroAPI stand-in (scenarios.json per flight)
 ```
 
-The key insight: `core/` contains all the business logic. Each `backends/` entry is a thin
-wrapper that provides scheduling and environment variable access for its specific runtime.
-Adding a new backend means writing a new entry point that imports from `core/` — typically
-under 20 lines of glue code.
+The job modules contain the business logic and are runtime-agnostic; `index.ts`
+(scheduling), `run_once.ts` (CLI), and `server.ts` (on-demand trigger) are thin harnesses
+around them. A future decentralized backend (e.g. Acurast/Phala TEE workers) would wrap
+the same modules in its own harness — typically under 20 lines of glue code.
 
 ### Backend migration
 
@@ -1887,132 +1895,62 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 
 ---
 
-## dApp Frontend — Scaffold Stellar
+## dApp Frontend — Sentinel Playground
 
-The frontend is built using **Scaffold Stellar**, providing:
+The frontend is the **Sentinel Playground**, a hand-scaffolded Next.js (App Router,
+TypeScript) dApp in [`playground/`](../playground/) using `@stellar/stellar-sdk` and
+`@creit.tech/stellar-wallets-kit` for multi-wallet connect + signing. Contract addresses
+come from [`deployments/testnet.json`](../deployments/testnet.json).
 
 ### Project Structure
 
 ```
-sentinel_soroban_phase_3/
-├── contracts/                      # Soroban smart contracts (Rust)
-│   ├── sentinel_types/             # Shared cross-contract types + TTL consts + test_support
-│   │   ├── Cargo.toml
-│   │   └── src/{lib,test_support}.rs
+sentinel_soroban_v3/
+├── contracts/                      # Soroban smart contracts (Rust workspace)
+│   ├── sentinel_types/             # Shared cross-contract types, TTL consts, active_set, test_support
 │   ├── governance_module/
-│   │   ├── Cargo.toml
-│   │   └── src/lib.rs
 │   ├── risk_vault/
-│   │   ├── Cargo.toml
-│   │   └── src/lib.rs
 │   ├── flight_pool_manager/
-│   │   ├── Cargo.toml
-│   │   └── src/lib.rs
 │   ├── controller/
-│   │   ├── Cargo.toml
-│   │   └── src/lib.rs
 │   ├── oracle_aggregator/
-│   │   ├── Cargo.toml
-│   │   └── src/lib.rs
+│   ├── mock_usdc/                  # Testnet-only settlement token
 │   └── integration_tests/          # Cross-contract test suite
-├── packages/                       # Auto-generated TypeScript clients
-│   ├── governance_module/
-│   ├── risk_vault/
-│   ├── flight_pool_manager/
-│   ├── controller/
-│   └── oracle_aggregator/
-├── frontend/                       # React + Vite dApp
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── TravelerDashboard.tsx
-│   │   │   ├── UnderwriterDashboard.tsx
-│   │   │   ├── AdminPanel.tsx
-│   │   │   ├── RouteManager.tsx
-│   │   │   ├── PoolStatus.tsx
-│   │   │   └── VaultMetrics.tsx
-│   │   ├── hooks/
-│   │   │   ├── useController.ts
-│   │   │   ├── useRiskVault.ts
-│   │   │   ├── useGovernance.ts
-│   │   │   └── useMyPolicies.ts
-│   │   └── App.tsx
-│   └── package.json
-├── executor/                       # Off-chain executor (modular backend)
-│   ├── src/
-│   │   ├── core/                   # Shared logic — ALL backends use this
-│   │   │   ├── flight_data_fetcher.ts
-│   │   │   ├── flight_classifier.ts
-│   │   │   ├── settlement_executor.ts
-│   │   │   ├── ttl_extender.ts
-│   │   │   ├── soroban_client.ts
-│   │   │   ├── aeroapi_client.ts
-│   │   │   └── types.ts
-│   │   ├── backends/
-│   │   │   ├── cron/               # Centralized cron (current default)
-│   │   │   ├── acurast/            # Acurast TEE (future)
-│   │   │   └── phala/              # Phala TEE (future)
-│   │   └── scripts/
-│   │       ├── rotate_keys.ts
-│   │       └── check_health.ts
-│   ├── .env.example
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── Dockerfile
-├── environments.toml               # Scaffold Stellar multi-env config
-├── Cargo.toml                      # Workspace root
-└── spec/
-    ├── architecture.md
-    ├── improvements.md
-    └── changes.md
+├── executor/
+│   ├── centralized_cron/           # Off-chain cron executor (see structure above)
+│   └── mock-api/                   # Local AeroAPI stand-in
+├── playground/                     # Next.js dApp
+│   ├── app/                        # Pages: / (global state), /account, /interact
+│   ├── components/                 # Header, WalletButton, FunctionForm, AddressLine
+│   └── lib/                        # soroban.ts, walletKit.ts, queries.ts, registry.ts, scval.ts, config.ts
+├── deployments/                    # testnet.json — addresses, wasm hashes, constructor params
+├── docs/                           # Docusaurus documentation site
+├── audits/                         # Audit reports + remediations
+└── spec/                           # architecture.md, sequence diagrams, phase plans
 ```
 
 ### Auto-Generated TypeScript Bindings
 
-Scaffold Stellar generates typed clients for each contract:
+Instead of generated per-contract clients, the playground drives every contract
+through a curated function registry (`lib/registry.ts` — every public entrypoint
+with arg specs and auth badges) plus generic RPC helpers (`lib/soroban.ts` —
+read-only calls via `simulateTransaction`, writes via simulate → assemble →
+wallet-sign → send → poll). Everything runs client-side; the app never touches a
+secret key:
 
 ```typescript
-import { ControllerClient } from '../packages/controller';
-import { RiskVaultClient } from '../packages/risk_vault';
-import { FlightPoolManagerClient } from '../packages/flight_pool_manager';
+// Read — free simulation, decoded to native JS values
+const myFlights = await simulateRead(
+  CONTRACTS.controller.address, 'get_flights_for_traveler', [addressToScVal(wallet)]);
 
-// Buy insurance — single wallet signature covers Controller call + USDC transfer
-const tx = await controllerClient.buy_insurance({
-  flight_id: 'AA123',
-  origin: 'DEN',
-  dest: 'SEA',
-  date: 1710000000n,
-});
-await tx.signAndSend();
-
-// View my policies
-const myFlights = await controllerClient.get_flights_for_traveler({
-  address: walletAddress,
-});
-
-// Claim payout
-const claimTx = await flightPoolManagerClient.claim({
-  traveler: walletAddress,
-  flight_id: 'AA123',
-  date: 1710000000n,
-});
-await claimTx.signAndSend();
+// Write — single wallet signature covers the Controller call + USDC transfer
+await invokeWrite(CONTRACTS.controller.address, 'buy_insurance', [
+  addressToScVal(wallet), symbolToScVal('AA123'),
+  symbolToScVal('DEN'), symbolToScVal('SEA'), u64ToScVal(1785542400n),
+]);
 ```
 
-### Multi-Environment Configuration
-
-`environments.toml` manages testnet / mainnet:
-
-```toml
-[development]
-network = "testnet"
-rpc_url = "https://soroban-testnet.stellar.org"
-network_passphrase = "Test SDF Network ; September 2015"
-
-[production]
-network = "mainnet"
-rpc_url = "https://soroban-rpc.mainnet.stellar.gateway.fm"
-network_passphrase = "Public Global Stellar Network ; September 2015"
-```
+Network configuration (testnet RPC URL, passphrase, contract addresses) lives in
+`lib/config.ts`, sourced from `deployments/testnet.json`.
 
 ---
 
