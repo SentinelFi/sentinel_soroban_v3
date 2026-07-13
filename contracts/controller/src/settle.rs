@@ -2,7 +2,7 @@ use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol};
 use stellar_macros::{only_owner, when_not_paused};
 
 use crate::auth::require_keeper;
-use crate::constants::{MAX_SETTLE_BATCH, SECONDS_PER_HOUR};
+use crate::constants::{MAX_CLASSIFY_BATCH, MAX_SETTLE_BATCH, SECONDS_PER_HOUR};
 use crate::events::{
     EvictedFlightSettled, FlightClassified, FlightConfigMissing, FlightSettledEvent,
     FlightTimedOutActive, FlightVoided, TtlMiss,
@@ -38,7 +38,7 @@ impl Controller {
             return;
         }
 
-        // Scan at most MAX_SETTLE_BATCH entries per call, starting at a
+        // Scan at most MAX_CLASSIFY_BATCH entries per call, starting at a
         // persisted rotating cursor, so per-call cost is bounded by the
         // batch size rather than the (unbounded) active-set length. The
         // paged fetch pulls only the window this call inspects — the oracle
@@ -52,7 +52,7 @@ impl Controller {
         if cursor >= len {
             cursor = 0;
         }
-        let batch = MAX_SETTLE_BATCH.min(len - cursor);
+        let batch = MAX_CLASSIFY_BATCH.min(len - cursor);
         let flights = oracle.get_active_flights_page(&cursor, &batch);
 
         for j in 0..flights.len() {
@@ -189,7 +189,9 @@ impl Controller {
 
     /// Iterate the oracle's active-flight list and process every flight that's
     /// in a `ToBeSettled*` status: move money between FlightPoolManager and
-    /// RiskVault, then mark the oracle entry as `Settled`.
+    /// RiskVault, then mark the oracle entry as `Settled`. Processes at most
+    /// `MAX_SETTLE_BATCH` flights per call; the rotating cursor covers the
+    /// full list across repeated calls.
     ///
     /// Queue drain and share-price snapshot are NOT done here — see
     /// `run_queue_maintenance`. Splitting them ensures
@@ -197,6 +199,26 @@ impl Controller {
     /// loop runs near the resource budget.
     #[when_not_paused]
     pub fn execute_settlements(e: &Env, keeper: Address) {
+        Self::settle_window(e, keeper, MAX_SETTLE_BATCH);
+    }
+
+    /// `execute_settlements` with a caller-chosen window size, clamped to
+    /// `[1, MAX_SETTLE_BATCH]`. Operational escape hatch: settlement failure
+    /// is atomic, so if a window ever exceeds the network's per-transaction
+    /// resource budgets (an unusually write-heavy mix, tightened network
+    /// limits, or accounting drift in the batch sizing), the keeper can
+    /// shrink the window — down to a single flight — and still make
+    /// progress, instead of every retry reverting identically at the fixed
+    /// default size.
+    #[when_not_paused]
+    pub fn execute_settlements_bounded(e: &Env, keeper: Address, limit: u32) {
+        Self::settle_window(e, keeper, limit.clamp(1, MAX_SETTLE_BATCH));
+    }
+
+    // Shared bounded settlement pass — `limit` caps how many active-list
+    // entries this call inspects. Not `pub`, so it is not a contract entry
+    // point; both keeper entry points above delegate here.
+    fn settle_window(e: &Env, keeper: Address, limit: u32) {
         require_keeper(e, &keeper);
 
         let oracle_addr: Address = e.storage().instance().get(&CtrlKey::Oracle).unwrap();
@@ -236,7 +258,7 @@ impl Controller {
         if cursor >= len {
             cursor = 0;
         }
-        let batch = MAX_SETTLE_BATCH.min(len - cursor);
+        let batch = limit.min(len - cursor);
         let flights = oracle.get_active_flights_page(&cursor, &batch);
 
         for j in 0..flights.len() {

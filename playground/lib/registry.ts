@@ -120,7 +120,7 @@ export const REGISTRY: ContractEntry[] = [
       fn("get_solvency_ratio", "public", true, "Solvency ratio in percent", [], "u32"),
       fn("get_flight_pool_manager", "public", true, "Wired Flight Pool Manager address", [], "Address"),
       fn("whitelist_enabled", "public", true, "Whether the buyer whitelist gate is active", [], "bool"),
-      fn("is_whitelisted", "public", true, "Whether an address is on the buyer whitelist", [
+      fn("is_whitelisted", "public", true, "Whether an address holds a currently valid (unexpired) whitelist approval", [
         a("addr", "address", undefined, true),
       ], "bool"),
       fn("classify_flights", "keeper", false, "Batch-classify landed/cancelled/timed-out flights for settlement", [
@@ -128,6 +128,10 @@ export const REGISTRY: ContractEntry[] = [
       ]),
       fn("execute_settlements", "keeper", false, "Batch-execute pending settlements (moves funds pool ↔ vault)", [
         a("keeper", "address"),
+      ]),
+      fn("execute_settlements_bounded", "keeper", false, "Execute settlements with a smaller window (escape hatch if a full batch exceeds tx limits)", [
+        a("keeper", "address"),
+        a("limit", "u32", "Flights to process, clamped to 1–10"),
       ]),
       fn("run_queue_maintenance", "keeper", false, "Drain the vault withdrawal queue and snapshot the share price", [
         a("keeper", "address"),

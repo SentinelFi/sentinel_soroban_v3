@@ -647,7 +647,13 @@ everything: it calls functions on other contracts that change state and move mon
 15. **Buyer whitelist (Phase 11)** — opt-in allowlist on `buy_insurance`. Owner-only
     `set_whitelist_enabled(bool)` flips the kill-switch (default `false`, so deploy is
     non-breaking). When enabled, `buy_insurance` panics with `"buyer not whitelisted"`
-    unless `BuyerWhitelisted(traveler) == true`. Admin-managed via
+    unless the traveler holds a currently valid approval. Approvals carry an explicit
+    on-chain deadline (`now + 180 days`, stored in `BuyerApprovalExpiry(addr)`) that
+    every gated purchase slides forward — an actively-buying address never lapses, a
+    dormant one expires by the ledger clock and must be re-attested. The deadline is
+    contract-checked state, NOT the storage entry's TTL: an archived Persistent entry
+    is restored with its original value on next access rather than reading as absent,
+    so a TTL alone could never expire an authorization. Admin-managed via
     `add_whitelisted_buyer(caller, addr)` / `remove_whitelisted_buyer(caller, addr)`
     where `caller` is the owner or any address flagged on `GovernanceModule.is_admin`
     — single source of truth for admin identity, no duplicated admin list. Admin paths
@@ -668,7 +674,10 @@ fn classify_flights(env: Env, keeper: Address) {
 }
 
 /// Called by SettlementExecutor cron (every 5 minutes).
-/// Processes all ToBeSettled* flights: moves money, marks Settled.
+/// Processes ToBeSettled* flights in a bounded rotating window
+/// (MAX_SETTLE_BATCH = 10 per call — settlement writes far more entries per
+/// flight than classification: FlightData + FlightConfig + active-set
+/// swap-removal writes + several events): moves money, marks Settled.
 /// Does NOT touch the withdrawal queue or share-price snapshot.
 fn execute_settlements(env: Env, keeper: Address) {
     keeper.require_auth();
@@ -676,6 +685,13 @@ fn execute_settlements(env: Env, keeper: Address) {
     assert!(keeper == authorized, "not authorized keeper");
     // ... settlement execution logic ...
 }
+
+/// Operator escape hatch: execute_settlements with a caller-chosen window
+/// size, clamped to [1, MAX_SETTLE_BATCH]. If a window ever exceeds the
+/// network's per-transaction resource budgets, the keeper can shrink it —
+/// down to one flight — and still make progress (settlement failure is
+/// atomic, so a too-large fixed window would otherwise retry-fail forever).
+fn execute_settlements_bounded(env: Env, keeper: Address, limit: u32);
 
 /// Called by QueueMaintainer cron (every 5 minutes, decoupled from settlement).
 /// Drains the underwriter withdrawal queue + records the daily share-price
@@ -771,7 +787,14 @@ pub enum CtrlKey {
     ClassifyCursor,            // u32 — Instance (rotating index into the oracle active list)
     SettleCursor,              // u32 — Instance (rotating index into the oracle active list)
     TravelerFlights(Address),  // Vec<(Symbol, u64)> — Persistent (per-user flight index)
-    BuyerWhitelisted(Address), // bool — Persistent (Phase 11; per-buyer entry, 180d TTL on write, shared with TravelerFlights)
+    BuyerWhitelisted(Address), // bool — Persistent, RETIRED (was the whitelist flag; a TTL
+                               // lapse cannot express expiry — archived entries restore
+                               // with their original value. Legacy entries are ignored.)
+    BuyerApprovalExpiry(Address), // u64 unix secs — Persistent; approval valid while
+                               // now < value, slid forward by each gated purchase
+                               // (180d window). The deadline (not the entry's TTL) is
+                               // the authorization lifetime — a restored archived
+                               // entry still expires on time.
 }
 ```
 
@@ -1813,11 +1836,16 @@ inaccessible until restored" rather than "permanently lost."
   Settlement lag is at most 5 minutes after classification.
 - **Settlement-barrier duration scales with keeper cadence.** The vault blocks LP
   entry/exit from the moment any outcome is public until it settles. Classification
-  processes at most `MAX_SETTLE_BATCH = 25` flights per call, so at high active-flight
-  volume an hourly classifier can leave outcomes unclassified for many hours — keeping
-  the barrier engaged most of the day and making the withdrawal queue the only LP path.
+  processes at most `MAX_CLASSIFY_BATCH = 25` flights per call and settlement at most
+  `MAX_SETTLE_BATCH = 10` (settlement writes far more ledger entries per flight), so at
+  high active-flight volume an hourly classifier can leave outcomes unclassified for many
+  hours — keeping the barrier engaged most of the day and making the withdrawal queue the
+  only LP path.
   **Operational invariant:** under load, run the classifier at the same 5-minute cadence
   as the settler (the contracts accept any cadence; batch caps bound the per-call cost).
+  If a settlement window ever exceeds the network's per-transaction resource budgets,
+  `execute_settlements_bounded(keeper, limit)` shrinks the window — down to one flight —
+  so the ready set always drains.
   A flight that can never settle (missing pool config, stalled restore) keeps the barrier
   on until operations resolves it — see `evict_missing_flight` for the terminal escape
   hatch and its `outcome_pending` flag.
