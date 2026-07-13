@@ -130,7 +130,11 @@ shares, locked collateral, claimable balances, and a withdrawal queue.
   send_payout, process_withdrawal_queue, set_solvency_ratio (mirror push),
   snapshot.
 - Owner-only: recover_uncollected (manual fallback for archived claimable
-  balances) — has two modes: re-credit storage or transfer directly.
+  balances) — has two modes: re-credit storage or transfer directly;
+  set_min_withdrawal_request (anti-dust queue floor); set_oracle (rotate the
+  settlement-barrier oracle — refuses while the current oracle still reports
+  pending outcomes) and force_set_oracle (skips that check, but only while
+  the vault is paused).
 
 **Why a withdrawal queue:** redemptions can exceed withdrawable capital when
 policies are heavily locked. The queue lets underwriters request now and
@@ -556,22 +560,23 @@ Underwriter
 
 | Function group | Caller |
 |---|---|
-| Governance: defaults, admin set | Owner |
+| Governance: defaults, admin set, term limits | Owner |
 | Governance: route lifecycle | Owner or Admin |
 | Vault: deposit / redeem / withdrawal queue | Underwriter (self) |
-| Vault: lock / unlock / payout / queue / snapshot | Controller only |
-| Vault: recover_uncollected | Owner |
+| Vault: lock / unlock / payout / queue / solvency-ratio mirror / snapshot | Controller only |
+| Vault: recover_uncollected, oracle rotation (checked or paused-forced) | Owner |
 | Pool: register / add_buyer / settle | Controller only |
 | Pool: claim | Traveler (self) |
 | Pool: sweep_expired | Anyone |
 | Pool: withdraw_recovered | Owner |
 | Oracle: set_estimated / set_landed / set_cancelled | Authorized oracle |
-| Oracle: open_sale / close_sale | Authorized oracle |
+| Oracle: open_sale / close_sale (close works while paused) | Authorized oracle |
 | Oracle: register_flight / set_to_be_settled / set_settled | Controller only |
 | Oracle: prune_settled | Anyone |
 | Controller: buy_insurance | Traveler (self) |
-| Controller: classify / execute | Authorized keeper |
-| Controller: rotate keeper, set tunables | Owner |
+| Controller: classify / execute (incl. operator-bounded window) | Authorized keeper |
+| Controller: rotate keeper, set tunables, buyer whitelist toggle | Owner |
+| Controller: whitelist add/remove (180-day sliding approvals) | Owner or Governance admin |
 
 The two off-chain roles (oracle, keeper) are addresses owned by the executor
 infrastructure. Owner can rotate them at any time without redeploying any

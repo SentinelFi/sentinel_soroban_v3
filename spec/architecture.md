@@ -636,8 +636,12 @@ everything: it calls functions on other contracts that change state and move mon
 6. **Classify flights** via `classify_flights()` — read OracleAggregator for flights with
    `Landed` or `Cancelled` status, read FlightPoolManager `delay_hours`, compute outcome, and
    set the appropriate `ToBeSettled*` status on OracleAggregator.
-7. **Execute settlements** via `execute_settlements()` — process all flights in `ToBeSettled*`
-   status: move money between FlightPoolManager and RiskVault, mark flights as `Settled`.
+7. **Execute settlements** via `execute_settlements()` — process flights in `ToBeSettled*`
+   status in a bounded rotating window (at most `MAX_SETTLE_BATCH = 10` per call): move
+   money between FlightPoolManager and RiskVault, mark flights as `Settled`. Larger
+   backlogs drain across successive keeper calls; `execute_settlements_bounded(keeper,
+   limit)` lets an operator shrink the window down to one flight if a full window ever
+   exceeds transaction resource budgets.
 8. **Drain the underwriter withdrawal queue + share-price snapshot** via the separate
    keeper entry point `run_queue_maintenance()` (audit M-03 split). Decoupled from
    `execute_settlements` so queue payouts can't be blocked by settlement gas pressure.
@@ -653,7 +657,10 @@ everything: it calls functions on other contracts that change state and move mon
     entries and react before settlement fails.
 13. **Bounded owner setters** (audit H-07 + M-02): `set_solvency_ratio` ∈ [100, 10_000],
     `set_min_lead_time` < 90d, `set_claim_expiry_window` ∈ [1d, 60d]. Same bounds
-    enforced in `__constructor`.
+    enforced in `__constructor`. `set_solvency_ratio` additionally mirrors the ratio
+    into the RiskVault atomically (the vault validates the same bounds), so LP exits
+    enforce the same reserve purchases are admitted against — it must therefore run
+    after the vault's `set_controller` wiring.
 14. **Pausable** (audit H-03). Owner-only pause halts `buy_insurance`, `classify_flights`,
     `execute_settlements`, `run_queue_maintenance`; admin setters and `extend_ttl` stay
     open so the owner can recover from a paused state.
@@ -1409,6 +1416,11 @@ Owner or Admin -> GovernanceModule.whitelist_route(flight_id, origin, dest,
 Traveler -> Controller.buy_insurance(flight_id, origin, dest, date)
                 |
                 +-> traveler.require_auth()
+                +-> date must be midnight-UTC aligned             revert if not day-aligned
+                +-> if WhitelistEnabled: traveler must hold a     revert "buyer not whitelisted"
+                |       currently valid approval (explicit
+                |       180-day inactivity deadline; this
+                |       purchase slides it forward on success)
                 +-> GovernanceModule.route_status(flight_id, origin, dest)
                 |       match { Active(terms) => use terms (premium, payoff, delay_hours)
                 |               Disabled      => revert "route is disabled"
@@ -1961,9 +1973,13 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Open / refresh sale window | Oracle | `oracle.open_sale(oracle, flight_id, date, expires_at)` (required by `buy_insurance`; validity capped at 24h) |
 | Close sale window early | Oracle | `oracle.close_sale(oracle, flight_id, date)` |
 | Check sale window | Anyone | `oracle.is_sale_open(flight_id, date)` / `oracle.get_sale_auth(flight_id, date)` |
-| Classify flights | Keeper | `controller.classify_flights(keeper)` |
-| Execute settlements | Keeper | `controller.execute_settlements(keeper)` |
+| Classify flights | Keeper | `controller.classify_flights(keeper)` (window of `MAX_CLASSIFY_BATCH = 25` per call) |
+| Execute settlements | Keeper | `controller.execute_settlements(keeper)` (window of `MAX_SETTLE_BATCH = 10` per call) |
+| Execute settlements, smaller window | Keeper | `controller.execute_settlements_bounded(keeper, limit)` (limit clamped to [1, 10]; escape hatch if a full window exceeds tx resource budgets) |
 | Drain withdrawal queue + snapshot | Keeper | `controller.run_queue_maintenance(keeper)` |
+| Toggle buyer whitelist | Owner | `controller.set_whitelist_enabled(bool)` (default off — open purchases) |
+| Approve / revoke a buyer | Owner or Governance admin | `controller.add_whitelisted_buyer(caller, addr)` / `remove_whitelisted_buyer(caller, addr)` (approval carries an explicit 180-day inactivity deadline; each purchase slides it forward) |
+| Check buyer approval | Anyone | `controller.is_whitelisted(addr)` (valid = added, not removed, deadline not passed) |
 | Prune aged-out settled flights | Anyone | `oracle.prune_settled()` |
 | Read active flight count | Anyone | `oracle.get_active_flight_count()` (alert as it nears the list cap) |
 | Check flight data physically exists | Anyone | `oracle.has_flight_data(flight_id, date)` (distinguishes archived from unregistered) |

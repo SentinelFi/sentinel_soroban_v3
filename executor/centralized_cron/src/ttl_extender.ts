@@ -18,9 +18,11 @@ import type { Config, RunLogEntry, TTLResult } from "./types.js";
  * FlightPoolManager); flight_pool_manager is the new singleton.
  *
  * Deeper key-level Persistent TTL extension (FlightConfig, FlightData,
- * Route, TravelerFlights, ClaimableBalance, BuyerWhitelisted via
+ * Route, TravelerFlights, ClaimableBalance, buyer proofs via
  * ExtendFootprintTTLOp) is a separate executor concern (Improvement #6) —
- * not in this cron.
+ * not in this cron. Whitelist approvals (BuyerApprovalExpiry) need no
+ * extension for correctness: their 180-day lifetime is an explicit on-chain
+ * deadline, and an archived entry restores with that deadline intact.
  */
 export async function runTTLExtender(config: Config): Promise<RunLogEntry> {
   const start = Date.now();

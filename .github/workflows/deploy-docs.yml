@@ -3,7 +3,9 @@ name: Deploy Docs
 on:
   push:
     branches: [main]
-    paths: ['docs/**', '.github/workflows/deploy-docs.yml']
+    # contracts/** is included so the published coverage report and badge
+    # refresh whenever contract code or tests change, not only on doc edits.
+    paths: ['docs/**', 'contracts/**', '.github/workflows/deploy-docs.yml']
   workflow_dispatch:
 
 permissions:
@@ -16,7 +18,63 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  coverage:
+    # Regenerates the coverage report + shields.io badge JSON from main.
+    # It lives in this workflow (not CI) because GitHub Pages serves exactly
+    # one artifact per site: the coverage output must ship inside the same
+    # artifact as the Docusaurus build, published at /coverage/.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        run: rustup show
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install cargo-llvm-cov
+        run: cargo binstall -y cargo-llvm-cov
+
+      - name: Run tests with coverage
+        # Browsable HTML report under target/llvm-cov/html.
+        run: cargo llvm-cov test --html
+
+      - name: Build shields.io badge JSON
+        # Reuses the run above; `report` reads the saved profiling data. The
+        # badge endpoint is served next to the report so shields.io can
+        # render live line coverage in the README.
+        run: |
+          pct=$(cargo llvm-cov report --summary-only --json | jq -r '.data[0].totals.lines.percent')
+          msg=$(printf '%.1f%%' "$pct")
+          color=$(awk -v p="$pct" 'BEGIN {
+            if (p >= 90) print "brightgreen";
+            else if (p >= 75) print "yellowgreen";
+            else if (p >= 60) print "yellow";
+            else print "red";
+          }')
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s","color":"%s"}\n' "$msg" "$color" \
+            > target/llvm-cov/html/badge.json
+          cat target/llvm-cov/html/badge.json
+
+      - name: Upload coverage output
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-site
+          path: contracts/target/llvm-cov/html
+          if-no-files-found: error
+
   build:
+    needs: coverage
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -30,6 +88,11 @@ jobs:
         run: npm install
       - name: Build site
         run: npm run build
+      - name: Attach coverage report at /coverage/
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-site
+          path: docs/build/coverage
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

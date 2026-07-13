@@ -14,7 +14,7 @@ SOURCE    := alice
 
 .PHONY: help test coverage coverage-html build optimize deploy-testnet clippy \
         format format-check audit clean scout-install scout-run bindings keys \
-        check ci all
+        check check-wasm-size ci all
 
 help: ## Show help
 	@echo "Available:"
@@ -32,12 +32,16 @@ coverage: ## Run tests and print a line-coverage summary (needs cargo-llvm-cov)
 coverage-html: ## Generate an HTML coverage report under target/llvm-cov/html and open it
 	cargo llvm-cov test --html --open
 
-build: ## Build all contracts to wasm
+build: ## Build all contracts to wasm and verify they fit the network size cap
 	cargo build
 	stellar contract build
+	bash scripts/check_wasm_size.sh
 
 optimize: ## Build and optimize the contract wasm artifacts
 	stellar contract build --optimize
+
+check-wasm-size: ## Verify built contract wasm sizes against the network cap (build first)
+	bash scripts/check_wasm_size.sh
 
 deploy-testnet: build ## Deploy all contracts to testnet (override SOURCE/NETWORK as needed)
 	stellar contract deploy --wasm $(WASM_DIR)/mock_usdc.wasm --source-account $(SOURCE) --network $(NETWORK) --alias mock_usdc -- --admin $(SOURCE)

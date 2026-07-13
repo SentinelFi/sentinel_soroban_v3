@@ -18,7 +18,7 @@ This guide describes the traveler flow.
 
 Call `buy_insurance` on the Controller with your address, the flight number, origin, destination, and departure date. The Controller will:
 
-1. Verify the route is whitelisted and resolve its terms (premium, payoff, delay threshold).
+1. Verify the route is whitelisted and resolve its terms (premium, payoff, delay threshold). If the flight instance already has buyers, you transact at the terms locked by its first buyer — re-validated against the current governance term limits, so every buyer of one physical flight gets identical, still-authorized pricing.
 2. Check the lead time, the flight's sale window (a live oracle attestation that it is scheduled and not cancelled), and vault solvency.
 3. Transfer the premium from your account to the Flight Pool Manager.
 4. Lock the payoff amount in the Risk Vault and register you as a buyer.
