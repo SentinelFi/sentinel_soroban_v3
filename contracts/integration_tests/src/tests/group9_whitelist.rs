@@ -151,6 +151,104 @@ fn toggle_off_then_on_then_off_buy_cycle() {
 }
 
 // =========================================================================
+// Approval lifetime — explicit deadline, not storage TTL
+// =========================================================================
+
+/// 180 days — mirrors the controller's buyer-approval window.
+const APPROVAL_WINDOW_SECS: u64 = 15_552_000;
+
+/// Next day-aligned date at least `days` days from the current ledger time.
+fn future_date(t: &TestEnv, days: u64) -> u64 {
+    let now = t.env.ledger().timestamp();
+    ((now / SECONDS_PER_DAY) + days) * SECONDS_PER_DAY
+}
+
+#[test]
+fn dormant_approval_expires_even_though_entry_persists() {
+    // The approval deadline is contract-checked state, so it must lapse by
+    // the ledger clock alone. The stored entry deliberately survives here
+    // (nothing archives in tests) — exactly the state a Protocol 23+
+    // restoration produces, where an archived entry comes back with its
+    // original value instead of reading as absent.
+    let t = TestEnv::new();
+    let admin = add_gov_admin(&t);
+    let traveler = Address::generate(&t.env);
+
+    t.ctrl.set_whitelist_enabled(&true);
+    t.ctrl.add_whitelisted_buyer(&admin, &traveler);
+    assert!(t.ctrl.is_whitelisted(&traveler));
+
+    // Dormant past the full window: the approval lapses without any write.
+    t.advance_time(APPROVAL_WINDOW_SECS + 1);
+    assert!(!t.ctrl.is_whitelisted(&traveler));
+
+    let date = future_date(&t, 3);
+    t.open_sale(&symbol_short!("AA100"), date);
+    t.asset_admin.mint(&traveler, &PREMIUM);
+    let res = t.ctrl.try_buy_insurance(
+        &traveler,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &date,
+    );
+    assert!(res.is_err(), "lapsed approval must fail closed");
+
+    // Recovery is one admin call — re-attestation restarts the window.
+    t.ctrl.add_whitelisted_buyer(&admin, &traveler);
+    assert!(t.ctrl.is_whitelisted(&traveler));
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &date,
+    );
+}
+
+#[test]
+fn active_buyer_approval_slides_forward_on_each_purchase() {
+    // An actively-buying approved address must never need re-approval: each
+    // gated purchase pushes the deadline a full window past the purchase
+    // time, so only genuine dormancy lapses.
+    let t = TestEnv::new();
+    let admin = add_gov_admin(&t);
+    let traveler = Address::generate(&t.env);
+
+    t.ctrl.set_whitelist_enabled(&true);
+    t.ctrl.add_whitelisted_buyer(&admin, &traveler);
+
+    // Buy shortly before the original deadline would hit.
+    t.advance_time(APPROVAL_WINDOW_SECS - SECONDS_PER_DAY);
+    let date1 = future_date(&t, 3);
+    t.open_sale(&symbol_short!("AA100"), date1);
+    t.asset_admin.mint(&traveler, &PREMIUM);
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &date1,
+    );
+
+    // Well past the ORIGINAL deadline, but inside the slid window: the
+    // purchase above renewed the approval, so the buyer is still valid.
+    t.advance_time(2 * SECONDS_PER_DAY);
+    assert!(t.ctrl.is_whitelisted(&traveler));
+
+    let date2 = future_date(&t, 3);
+    t.open_sale(&symbol_short!("AA100"), date2);
+    t.asset_admin.mint(&traveler, &PREMIUM);
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &date2,
+    );
+}
+
+// =========================================================================
 // Whitelist persists through end-to-end lifecycle
 // =========================================================================
 

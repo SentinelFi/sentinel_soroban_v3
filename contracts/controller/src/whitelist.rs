@@ -10,18 +10,22 @@ use crate::{Controller, ControllerArgs, ControllerClient};
 impl Controller {
     /// Add `addr` to the buyer whitelist. Callable by the owner or any address
     /// flagged as admin on `GovernanceModule`. Idempotent — re-adding an
-    /// existing entry refreshes its TTL without panic. Intentionally NOT
-    /// gated by Pausable so admins can keep the list current during a pause.
+    /// existing entry restarts its approval window without panic.
+    /// Intentionally NOT gated by Pausable so admins can keep the list
+    /// current during a pause.
     ///
-    /// Approval lifetime model (deliberate): an approval is a persistent
-    /// entry with a ~180-day TTL, refreshed on every purchase the buyer
-    /// makes. A buyer DORMANT for the full window lapses silently and must be
-    /// re-approved — the archived entry reads as not-whitelisted, and the
-    /// purchase gate rejects before any self-refresh could run. This is
-    /// treated as periodic re-attestation of inactive accounts rather than a
-    /// defect: it fails closed, and recovery is one admin call. Off-chain
-    /// tooling can watch `buyer_whitelisted` events to re-extend or alert
-    /// before dormant approvals age out.
+    /// Approval lifetime model (deliberate): an approval carries an explicit
+    /// on-chain deadline (`now + 180 days`), and every purchase the buyer
+    /// makes slides it forward. A buyer DORMANT for the full window lapses —
+    /// the purchase gate compares the ledger clock against the stored
+    /// deadline and rejects — and must be re-approved. This is periodic
+    /// re-attestation of inactive accounts: it fails closed, and recovery is
+    /// one admin call. The deadline is contract state, NOT the entry's
+    /// storage TTL: an archived Persistent entry is restored with its
+    /// original value on next access rather than read as absent, so a TTL
+    /// alone could never expire an authorization. Off-chain tooling can
+    /// watch `buyer_whitelisted` events to alert before dormant approvals
+    /// age out.
     pub fn add_whitelisted_buyer(e: &Env, caller: Address, addr: Address) {
         require_owner_or_gov_admin(e, &caller);
         write_buyer_whitelisted(e, &addr, true);
@@ -31,10 +35,11 @@ impl Controller {
     }
 
     /// Remove `addr` from the whitelist. Same auth as `add_whitelisted_buyer`.
-    /// Removing an address that was never whitelisted is a no-op (writes
-    /// `false`, emits the event). The entry is overwritten rather than
+    /// Removing an address that was never whitelisted is a no-op (writes a
+    /// zero deadline, emits the event). The entry is overwritten rather than
     /// deleted so a re-add later still refreshes a known key — keeps the
-    /// Persistent footprint stable for the off-chain TTL cron.
+    /// Persistent footprint stable for the off-chain TTL cron — and so a
+    /// later archival restore brings back the revocation, never an approval.
     pub fn remove_whitelisted_buyer(e: &Env, caller: Address, addr: Address) {
         require_owner_or_gov_admin(e, &caller);
         write_buyer_whitelisted(e, &addr, false);

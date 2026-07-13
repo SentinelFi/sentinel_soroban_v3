@@ -920,6 +920,87 @@ fn test_classify_and_settle_multiple_flights_in_one_batch() {
 }
 
 #[test]
+fn test_execute_settlements_bounded_clamps_and_advances() {
+    // The bounded variant is the operator's escape hatch when a full window
+    // would exceed transaction resource budgets: any limit — even 0, which
+    // clamps to 1 — must settle a sub-window and advance the cursor, so
+    // repeated calls always drain the ready set.
+    let t = setup();
+    t.gov.whitelist_route(
+        &t.owner,
+        &symbol_short!("UA200"),
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    t.gov.whitelist_route(
+        &t.owner,
+        &symbol_short!("DL300"),
+        &symbol_short!("ATL"),
+        &symbol_short!("BOS"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+
+    let flights = [
+        (
+            symbol_short!("AA100"),
+            symbol_short!("JFK"),
+            symbol_short!("LAX"),
+        ),
+        (
+            symbol_short!("UA200"),
+            symbol_short!("SFO"),
+            symbol_short!("ORD"),
+        ),
+        (
+            symbol_short!("DL300"),
+            symbol_short!("ATL"),
+            symbol_short!("BOS"),
+        ),
+    ];
+    for (fid, o, d) in flights.iter() {
+        let traveler = Address::generate(&t.env);
+        open_sale(&t, fid, FLIGHT_DATE);
+        t.asset_admin.mint(&traveler, &PREMIUM);
+        t.ctrl.buy_insurance(&traveler, fid, o, d, &FLIGHT_DATE);
+        t.oracle
+            .set_estimated_arrival(&t.oracle_account, fid, &FLIGHT_DATE, &EST_ARRIVAL);
+        t.oracle
+            .set_landed(&t.oracle_account, fid, &FLIGHT_DATE, &ACTUAL_ON_TIME);
+    }
+    t.ctrl.classify_flights(&t.keeper);
+
+    let settled_count = |t: &TestEnv| -> u32 {
+        let mut n = 0;
+        for (fid, _o, _d) in flights.iter() {
+            if t.oracle.get_flight_data(fid, &FLIGHT_DATE).status
+                == oracle_aggregator::FlightStatus::Settled
+            {
+                n += 1;
+            }
+        }
+        n
+    };
+
+    // limit 0 clamps up to 1: exactly one flight settles.
+    t.ctrl.execute_settlements_bounded(&t.keeper, &0);
+    assert_eq!(settled_count(&t), 1);
+
+    // limit 1: one more.
+    t.ctrl.execute_settlements_bounded(&t.keeper, &1);
+    assert_eq!(settled_count(&t), 2);
+
+    // An oversized limit clamps down to the contract maximum and finishes
+    // the remaining window.
+    t.ctrl.execute_settlements_bounded(&t.keeper, &10_000);
+    assert_eq!(settled_count(&t), 3);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #312)")]
 fn test_buy_insurance_panics_on_solvency_gate() {
     let env = Env::default();

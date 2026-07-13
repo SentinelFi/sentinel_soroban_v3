@@ -22,14 +22,15 @@ The single purchase flow:
 7. Locks the payoff amount in the Risk Vault and records the buyer.
 8. Appends the flight to the traveler's on-chain policy index.
 
-If a buyer whitelist is enabled (off by default), only whitelisted addresses can buy.
+If a buyer whitelist is enabled (off by default), only whitelisted addresses can buy. An approval carries an explicit 180-day inactivity deadline that every purchase slides forward: active buyers never lapse, dormant ones expire by the ledger clock and must be re-approved. The deadline is contract-checked state rather than a storage TTL, so it holds even if the entry archives and is later restored.
 
 ## Keeper entry points
 
 All gated by the authorized keeper address:
 
 - `classify_flights()`: compares actual versus scheduled arrival against each route's delay threshold and marks flights to be settled as on time, delayed, or cancelled. Runs hourly.
-- `execute_settlements()`: performs the money movement for classified flights. On time: premiums move from pool to vault and locked capital is released. Delayed or cancelled: the vault tops up the pool so each buyer can claim the full payoff. Runs every 5 minutes.
+- `execute_settlements()`: performs the money movement for classified flights, at most 10 per call (settlement writes many ledger entries per flight, and the window is sized to the network's per-transaction budgets; larger backlogs drain across successive runs). On time: premiums move from pool to vault and locked capital is released. Delayed or cancelled: the vault tops up the pool so each buyer can claim the full payoff. Runs every 5 minutes.
+- `execute_settlements_bounded(limit)`: the same pass with a caller-chosen window (clamped to 1–10) — an operator escape hatch to keep settlement advancing if a full window ever exceeds transaction resource limits.
 - `run_queue_maintenance()`: processes the vault withdrawal queue and records share price snapshots. Kept separate from settlement so a heavy settlement batch can never block underwriter withdrawals. Runs every 5 minutes.
 
 ## Owner functions
