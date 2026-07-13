@@ -32,9 +32,11 @@
 //! date (+ buffer), matching the per-flight data entries whose lifetime they
 //! shadow. An archived page degrades availability, not integrity: reads skip
 //! it (emitting [`ActivePageMissing`] so operators restore it), removals
-//! fall back to a full-page scan when the index is missing, appends that
-//! would land on an archived tail page are rejected rather than overwrite
-//! it, and ledger restoration brings everything back.
+//! fall back to a full-page scan when the index is missing, appends verify
+//! absence with the same scan while the set is small enough for that to be
+//! affordable (see [`ACTIVE_SET_ADD_SCAN_MAX`]), appends that would land on
+//! an archived tail page are rejected rather than overwrite it, and ledger
+//! restoration brings everything back.
 
 // Module-level because `#[contracttype]` re-emits the enum without item
 // attributes: the shared `Active` prefix is load-bearing — variant names ARE
@@ -50,6 +52,19 @@ use crate::ttl::{deadline_extension_ledgers, PERSISTENT_TTL_EXTEND, PERSISTENT_T
 /// ledger entry while a keeper batch (25–60 entries) touches at most two
 /// pages per call.
 pub const ACTIVE_SET_PAGE_SIZE: u32 = 100;
+
+/// Largest set size for which [`add`] verifies absence with a page scan when
+/// the reverse index is missing. The scan must be bounded: a legitimately new
+/// entry never has an index entry, so the fallback runs on EVERY append — an
+/// unbounded scan would grow with the set and eventually push the first
+/// purchase of each new flight past the transaction footprint limits,
+/// re-creating the protocol-wide registration freeze the paginated layout
+/// exists to prevent. Ten page reads is cheap next to the entries a purchase
+/// already touches, and it covers the realistic steady-state set size many
+/// times over; beyond it, the caller-side registration gates and the
+/// deadline-sized index TTLs (which outlive any still-registrable flight
+/// date) remain the protection, exactly as before.
+pub const ACTIVE_SET_ADD_SCAN_MAX: u32 = 1_000;
 
 /// Storage keys of the paginated set. Variant names are chosen to not
 /// collide with any existing key in either consuming contract — Soroban
@@ -176,6 +191,21 @@ pub fn add(e: &Env, flight_id: &Symbol, date: u64) {
     }
 
     let n = count(e);
+    // The index alone cannot prove absence: it can archive while the page
+    // holding the entry stays live (pages are re-extended by every keeper
+    // sweep; index lifetimes are sized to the flight date). While the set is
+    // small enough that exactness costs only a few page reads, fall back to
+    // the same page scan `contains` and `remove` use, so an entry stranded
+    // without its index cannot be appended a second time. Failing closed
+    // (rather than healing the index and returning) is deliberate: reaching
+    // here means the caller believed the flight was NEW while the set says
+    // it is present — inconsistent state that operators should restore, not
+    // state to silently sell policies against. See
+    // ACTIVE_SET_ADD_SCAN_MAX for why the scan must not be unconditional.
+    if n <= ACTIVE_SET_ADD_SCAN_MAX && scan_position(e, flight_id, date).is_some() {
+        panic!("entry already in active set");
+    }
+
     let page_no = n / ACTIVE_SET_PAGE_SIZE;
     // Fail closed like the readers: when the count says the tail page holds
     // live entries, a `None` read means the page archived past its TTL, and
