@@ -40,6 +40,18 @@ fn test_mint() {
 }
 
 #[test]
+fn test_faucet_mints_fixed_amount() {
+    let (_env, client, _admin, user) = setup();
+
+    client.faucet(&user);
+    assert_eq!(client.balance(&user), 10_000_0000000);
+
+    // Repeatable — the faucet is a convenience, not a one-shot.
+    client.faucet(&user);
+    assert_eq!(client.balance(&user), 20_000_0000000);
+}
+
+#[test]
 fn test_transfer() {
     let (_env, client, _admin, user) = setup();
     let recipient = Address::generate(&_env);

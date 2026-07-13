@@ -409,6 +409,107 @@ fn test_route_status_disabled_when_limits_lowered_below_route() {
     );
 }
 
+// =========================================================================
+// Pausable — writes gated, protective reads exempt
+// =========================================================================
+
+#[test]
+fn test_pause_gates_writes_but_not_protective_reads() {
+    let (env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+
+    client.pause(&owner);
+    assert!(client.paused());
+
+    // Every administrative write entry point rejects while paused.
+    assert!(client
+        .try_set_defaults(&DEFAULT_PREMIUM, &DEFAULT_PAYOFF, &DEFAULT_DELAY_HOURS)
+        .is_err());
+    assert!(client.try_set_term_limits(&0i128, &100i128).is_err());
+    assert!(client
+        .try_whitelist_route(
+            &owner,
+            &symbol_short!("UA200"),
+            &symbol_short!("SFO"),
+            &symbol_short!("ORD"),
+            &None::<i128>,
+            &None::<i128>,
+            &None::<u32>,
+        )
+        .is_err());
+    assert!(client
+        .try_disable_route(&owner, &flight_id, &origin, &dest)
+        .is_err());
+    assert!(client.try_add_admin(&Address::generate(&env)).is_err());
+
+    // The reads purchases flow through stay open — route_status is
+    // deliberately pause-exempt (its TTL renewals and index self-heal are
+    // protective writes that grant no privilege), and terms_valid backs the
+    // controller's snapshot re-validation.
+    assert!(matches!(
+        client.route_status(&flight_id, &origin, &dest),
+        RouteStatus::Active(_)
+    ));
+    assert!(client.terms_valid(&ResolvedTerms {
+        premium: DEFAULT_PREMIUM,
+        payoff: DEFAULT_PAYOFF,
+        delay_hours: DEFAULT_DELAY_HOURS,
+    }));
+
+    // Unpause restores the write paths.
+    client.unpause(&owner);
+    assert!(!client.paused());
+    client.set_term_limits(&0i128, &100i128);
+    client.disable_route(&owner, &flight_id, &origin, &dest);
+}
+
+#[test]
+#[should_panic]
+fn test_pause_unauthorized_without_owner_auth() {
+    // No mock_all_auths — the stored owner's require_auth must fail for an
+    // unsigned call, so a stranger cannot flip the incident switch.
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let contract_id = env.register(
+        GovernanceModule,
+        (
+            &owner,
+            &DEFAULT_PREMIUM,
+            &DEFAULT_PAYOFF,
+            &DEFAULT_DELAY_HOURS,
+        ),
+    );
+    let client = GovernanceModuleClient::new(&env, &contract_id);
+    client.pause(&owner);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #502)")]
+fn test_whitelist_route_rejects_non_positive_payoff_override() {
+    // An explicit payoff override of zero must be rejected before the
+    // payoff-above-premium comparison masks it with a different error.
+    let (_env, client, owner, _addr) = setup();
+    let (flight_id, origin, dest) = route_ids();
+    client.whitelist_route(
+        &owner,
+        &flight_id,
+        &origin,
+        &dest,
+        &Some(10_0000000i128),
+        &Some(0i128),
+        &None::<u32>,
+    );
+}
+
 #[test]
 fn test_terms_valid_tracks_current_limits() {
     // The controller re-validates a pool bucket's snapshotted terms through

@@ -1,8 +1,8 @@
 use super::*;
 use sentinel_types::test_support::collect_events;
 use soroban_sdk::{
-    symbol_short, testutils::Address as _, testutils::Ledger as _, token, Address, Env, Symbol,
-    TryFromVal, Vec,
+    contracttype, symbol_short, testutils::Address as _, testutils::Ledger as _, token, Address,
+    Env, Symbol, TryFromVal, Vec,
 };
 
 const PREMIUM: i128 = 10_0000000; // 10 asset (7 decimals)
@@ -998,6 +998,129 @@ fn test_execute_settlements_bounded_clamps_and_advances() {
     // the remaining window.
     t.ctrl.execute_settlements_bounded(&t.keeper, &10_000);
     assert_eq!(settled_count(&t), 3);
+}
+
+#[test]
+fn test_execute_settlements_bounded_requires_keeper() {
+    let t = setup();
+    let stranger = Address::generate(&t.env);
+    assert!(t
+        .ctrl
+        .try_execute_settlements_bounded(&stranger, &1)
+        .is_err());
+}
+
+#[test]
+fn test_keeper_passes_are_noops_on_empty_active_list() {
+    // Before any purchase the active list is empty — both keeper passes must
+    // return cleanly (deploys run the crons from day one, ahead of traffic).
+    let t = setup();
+    t.ctrl.classify_flights(&t.keeper);
+    t.ctrl.execute_settlements(&t.keeper);
+    let (sold, collected, distributed) = t.ctrl.get_stats();
+    assert_eq!((sold, collected, distributed), (0, 0, 0));
+}
+
+#[test]
+fn test_settle_cursor_wraps_when_list_shrinks_below_it() {
+    // The settle cursor persists between calls while the active list can
+    // shrink underneath it (oracle-side pruning). A stale cursor at or past
+    // the list length must wrap to slot 0 and keep settling — not scan an
+    // empty window forever.
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    oracle_on_time(&t);
+    t.ctrl.classify_flights(&t.keeper);
+
+    t.env.as_contract(&t.ctrl_addr, || {
+        t.env
+            .storage()
+            .instance()
+            .set(&crate::storage::CtrlKey::SettleCursor, &7u32);
+    });
+    t.ctrl.execute_settlements(&t.keeper);
+    assert_eq!(
+        t.oracle
+            .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE)
+            .status,
+        oracle_aggregator::FlightStatus::Settled,
+    );
+}
+
+// Same-shaped mirror of the pool's private FlightConfig storage key: Soroban
+// storage keys are the XDR of the value (variant name + payload), so this
+// local enum addresses the pool's entry without the pool exporting its key
+// type. Test-only, for simulating a lost entry.
+#[contracttype]
+enum MirrorPoolKey {
+    FlightConfig(Symbol, u64),
+}
+
+#[test]
+fn test_execute_settlements_skips_flight_with_missing_pool_config() {
+    // A pool config lost to a restoration gap must not panic the settlement
+    // loop: the flight is skipped with a diagnostic, its collateral stays
+    // locked for the restore-and-retry path, and the pass still completes.
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    oracle_cancelled(&t);
+    t.ctrl.classify_flights(&t.keeper);
+
+    t.env.as_contract(&t.pool_addr, || {
+        t.env
+            .storage()
+            .persistent()
+            .remove(&MirrorPoolKey::FlightConfig(
+                symbol_short!("AA100"),
+                FLIGHT_DATE,
+            ));
+    });
+
+    let locked_before = t.vault.get_locked_capital();
+    t.ctrl.execute_settlements(&t.keeper);
+    // Untouched: still classified, still collateralized — awaiting restore.
+    assert_eq!(
+        t.oracle
+            .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE)
+            .status,
+        oracle_aggregator::FlightStatus::ToBeSettledCancelled,
+    );
+    assert_eq!(t.vault.get_locked_capital(), locked_before);
+}
+
+#[test]
+fn test_pause_blocks_buy_and_unpause_restores() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    open_sale(&t, &symbol_short!("AA100"), FLIGHT_DATE);
+    t.asset_admin.mint(&traveler, &PREMIUM);
+
+    t.ctrl.pause(&t.owner);
+    assert!(t.ctrl.paused());
+    assert!(t
+        .ctrl
+        .try_buy_insurance(
+            &traveler,
+            &symbol_short!("AA100"),
+            &symbol_short!("JFK"),
+            &symbol_short!("LAX"),
+            &FLIGHT_DATE,
+        )
+        .is_err());
+
+    t.ctrl.unpause(&t.owner);
+    assert!(!t.ctrl.paused());
+    t.ctrl.buy_insurance(
+        &traveler,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &FLIGHT_DATE,
+    );
+    let (sold, _, _) = t.ctrl.get_stats();
+    assert_eq!(sold, 1);
 }
 
 #[test]

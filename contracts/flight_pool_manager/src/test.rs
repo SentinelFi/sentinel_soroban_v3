@@ -128,8 +128,42 @@ fn test_constructor_sets_owner_and_addresses() {
     assert_eq!(t.pool.get_owner(), Some(t.owner.clone()));
     assert_eq!(t.pool.get_asset_token(), t.asset_addr);
     assert_eq!(t.pool.get_risk_vault(), t.vault_addr);
+    assert_eq!(t.pool.get_controller(), Some(t.controller.clone()));
     assert_eq!(t.pool.get_recovered_balance(), 0);
     assert_eq!(t.pool.get_active_flights().len(), 0);
+}
+
+#[test]
+fn test_unpause_restores_registration() {
+    let t = setup();
+    t.pool.pause(&t.owner);
+    assert!(t.pool.paused());
+    assert!(t
+        .pool
+        .try_register_flight(
+            &t.controller,
+            &symbol_short!("AA100"),
+            &FLIGHT_DATE,
+            &PREMIUM,
+            &PAYOFF,
+            &DELAY_HOURS,
+        )
+        .is_err());
+
+    t.pool.unpause(&t.owner);
+    assert!(!t.pool.paused());
+    t.pool.register_flight(
+        &t.controller,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &PREMIUM,
+        &PAYOFF,
+        &DELAY_HOURS,
+    );
+    assert!(t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .is_some());
 }
 
 #[test]
