@@ -28,4 +28,6 @@ pub enum Error {
     AmountMustBeNonNegative = 722,
     RecreditExceedsRecoverableSurplus = 723,
     SolvencyRatioOutOfBounds = 724,
+    OraclePendingOutcomesUnreconciled = 725,
+    ForcedRotationRequiresPause = 726,
 }

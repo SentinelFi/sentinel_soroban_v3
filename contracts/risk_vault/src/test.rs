@@ -341,6 +341,47 @@ fn test_queue_processing_holds_back_solvency_reserve() {
 }
 
 #[test]
+fn test_set_oracle_refuses_while_outcomes_pending() {
+    // Rotating the barrier target while the current oracle still reports
+    // public-but-unsettled outcomes would open the barrier at the stale
+    // pre-settlement price (a fresh oracle starts with zero pending). The
+    // checked rotation must refuse until the old oracle reads clear.
+    let (env, client, _owner, _controller, _depositor) = setup();
+    let old_oracle = client.get_oracle().unwrap();
+    let mock = MockPendingOracleClient::new(&env, &old_oracle);
+    mock.set_pending_outcomes(&true);
+
+    let new_oracle = env.register(MockPendingOracle, ());
+    assert!(client.try_set_oracle(&new_oracle).is_err());
+    assert_eq!(client.get_oracle(), Some(old_oracle));
+
+    // Once the pending PnL is settled, the routine rotation proceeds.
+    mock.set_pending_outcomes(&false);
+    client.set_oracle(&new_oracle);
+    assert_eq!(client.get_oracle(), Some(new_oracle));
+}
+
+#[test]
+fn test_force_set_oracle_requires_pause() {
+    // The forced path exists for an unreachable old oracle, so it skips the
+    // pending-outcomes check — but only while the vault is paused, keeping
+    // every LP entry/exit blocked until the owner reconciles the old
+    // oracle's pending PnL and deliberately unpauses.
+    let (env, client, owner, _controller, _depositor) = setup();
+    let old_oracle = client.get_oracle().unwrap();
+    MockPendingOracleClient::new(&env, &old_oracle).set_pending_outcomes(&true);
+
+    let new_oracle = env.register(MockPendingOracle, ());
+    // Unpaused: forced rotation is rejected.
+    assert!(client.try_force_set_oracle(&new_oracle).is_err());
+
+    // Paused: the swap goes through even though the old oracle is pending.
+    client.pause(&owner);
+    client.force_set_oracle(&new_oracle);
+    assert_eq!(client.get_oracle(), Some(new_oracle));
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #702)")]
 fn test_set_solvency_ratio_rejects_non_controller() {
     let (env, client, _owner, _controller, _depositor) = setup();

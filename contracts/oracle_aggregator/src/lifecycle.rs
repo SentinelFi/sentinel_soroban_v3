@@ -82,7 +82,16 @@ impl OracleAggregator {
     /// the flight's identity and cannot wait for the authorization to lapse.
     /// Idempotent: closing an absent window is a silent no-op (no event).
     /// `set_cancelled` also closes the window as a side effect.
-    #[when_not_paused]
+    ///
+    /// Deliberately NOT pause-gated: this write only revokes authorization —
+    /// it grants nothing. Already-open windows live in temporary storage and
+    /// stay readable (and purchasable through the controller, which may not
+    /// be paused) for up to their 24 h validity regardless of this
+    /// contract's pause state, so pausing the oracle must not also disable
+    /// the one write that can kill insurability of a flight that goes
+    /// publicly cancelled mid-window — gating it would invert the protection
+    /// exactly when the pause switch is in use. Same convention as the
+    /// governance module's pause-exempt protective writes.
     pub fn close_sale(e: &Env, oracle: Address, flight_id: Symbol, date: u64) {
         require_oracle(e, &oracle);
 

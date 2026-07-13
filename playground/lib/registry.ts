@@ -276,7 +276,8 @@ export const REGISTRY: ContractEntry[] = [
         a("ratio", "u32", "Percent, 100–10000"),
       ]),
       fn("set_controller", "owner", false, "Wire the controller (one-time)", [a("controller", "address")]),
-      fn("set_oracle", "owner", false, "Rotate the settlement-barrier oracle", [a("oracle", "address")]),
+      fn("set_oracle", "owner", false, "Rotate the settlement-barrier oracle (refuses while outcomes are pending)", [a("oracle", "address")]),
+      fn("force_set_oracle", "owner", false, "Force-rotate the barrier oracle when the old one is unreachable (vault must be paused)", [a("oracle", "address")]),
       fn("set_min_withdrawal_request", "owner", false, "Minimum asset value per queued request (0 disables)", [
         a("min_assets", "amount7"),
       ]),

@@ -42,3 +42,5 @@ The vault is wired at construction with the Oracle Aggregator address. While any
 
 - `set_min_withdrawal_request(amount)`: anti-dust floor for queue entries (clamped at request time).
 - `recover_uncollected(user, amount, mode)`: recovery path for archived claimable balances, either re-crediting the user or transferring out.
+- `set_oracle(oracle)`: rotate the settlement-barrier oracle. Refuses while the current oracle still reports pending public outcomes — a fresh oracle starts with none, so swapping mid-incident would open the barrier at a stale share price.
+- `force_set_oracle(oracle)`: the escape hatch when the old oracle is unreachable. Requires the vault to be paused first, and the emitted event is flagged as forced, so exits stay blocked until the pending profit and loss is reconciled and the owner deliberately unpauses.

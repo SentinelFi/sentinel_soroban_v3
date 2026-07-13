@@ -92,18 +92,25 @@ pub(crate) const MAX_BOOK_AHEAD_SECS: u64 = 7_776_000; // 90 days
 /// needs re-approval; a dormant one lapses and must be re-attested.
 pub(crate) const BUYER_APPROVAL_WINDOW_SECS: u64 = 15_552_000;
 
-// Buyer policy key TTL expressed in seconds: BUYER_TTL_LEDGERS (3_110_400) at
-// ~5 s/ledger = 15_552_000 s = 180 days (also Stellar's max persistent TTL).
-// Mirrored here (the constant lives in flight_pool_manager) to assert the
-// lifecycle invariant below at compile time.
-const BUYER_KEY_TTL_SECS: u64 = 15_552_000;
-
-// Invariant: a policy bought at the furthest allowed horizon whose
-// flight then settles into the longest allowed claim window must still have a
-// live buyer key at the claim deadline. Guaranteed iff
-// MAX_BOOK_AHEAD + MAX_CLAIM_EXPIRY <= buyer key TTL. Enforced at compile time
-// so future tuning of any bound can't silently reintroduce the hazard.
+// Invariant: a buyer's policy proof must outlive the latest claim deadline
+// its flight can ever open. Proofs are written once at purchase with the
+// network-maximum TTL and never re-extended on-chain, and the binding worst
+// case is NOT `settle_time + claim window` (settlement can run up to the
+// pool's grace period after the flight date): it is a purchase at the
+// furthest booking horizon whose flight settles late enough for the pool's
+// date-anchored claim-deadline cap to bind. Both terms of that bound live in
+// `sentinel_types::timeouts` — shared with the pool, so tuning the cap in
+// either crate trips this assert instead of silently voiding the invariant.
+//
+// The bound is currently exactly tight (90d horizon + 90d cap = 180d proof)
+// and, like every wall-time constant, assumes the ~5 s/ledger cadence; there
+// is no slack to absorb faster ledgers, because the proof already sits at
+// the network-maximum TTL. A proof that does archive is an operational cost
+// (restoration before the claim executes), not a lost claim — an archived
+// Persistent entry is restored with its original value, never read as
+// absent.
 const _: () = assert!(
-    MAX_BOOK_AHEAD_SECS + MAX_CLAIM_EXPIRY_WINDOW_SECS <= BUYER_KEY_TTL_SECS,
-    "book-ahead + claim window must not exceed the buyer key TTL",
+    MAX_BOOK_AHEAD_SECS + sentinel_types::timeouts::MAX_CLAIM_DEADLINE_AFTER_DATE_SECS
+        <= sentinel_types::timeouts::BUYER_PROOF_TTL_SECS,
+    "book-ahead + claim-deadline cap must not exceed the buyer proof lifetime",
 );

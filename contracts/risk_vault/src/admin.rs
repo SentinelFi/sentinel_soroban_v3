@@ -1,10 +1,11 @@
 use soroban_sdk::{contractimpl, panic_with_error, Address, Env, String};
 use stellar_access::ownable::{self as ownable};
+use stellar_contract_utils::pausable::paused;
 use stellar_macros::only_owner;
 use stellar_tokens::fungible::{Base, FungibleToken};
 use stellar_tokens::vault::Vault;
 
-use crate::auth::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
+use crate::auth::{settlement_pending, INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
 use crate::events::{ControllerSet, MinWithdrawalRequestSet, OracleSet};
 use crate::storage::VaultKey;
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient};
@@ -67,11 +68,48 @@ impl RiskVault {
     /// function safely against a dead oracle, while a controller swap has
     /// no such recovery need. Emits `oracle_set` so monitoring catches any
     /// re-wire of the barrier target.
+    ///
+    /// Refuses while the CURRENT oracle reports pending public outcomes:
+    /// a fresh oracle starts with a zero pending count, so swapping the
+    /// barrier target mid-incident would open the barrier at the stale
+    /// pre-settlement share price — exactly the LP-vs-LP value transfer the
+    /// barrier exists to prevent. When the old oracle is unreachable and
+    /// this check cannot even execute, use `force_set_oracle`.
     #[only_owner]
     pub fn set_oracle(e: &Env, oracle: Address) {
+        if settlement_pending(e) {
+            panic_with_error!(e, Error::OraclePendingOutcomesUnreconciled);
+        }
         e.storage().instance().set(&VaultKey::Oracle, &oracle);
         Self::extend_ttl(e);
-        OracleSet { oracle }.publish(e);
+        OracleSet {
+            oracle,
+            forced: false,
+        }
+        .publish(e);
+    }
+
+    /// Rotate the oracle WITHOUT consulting the current one — the escape
+    /// hatch for the very contingency rotation exists for: the old oracle is
+    /// dead, archived, or itself the incident, so `set_oracle`'s
+    /// pending-outcomes check cannot even execute. Requires the vault to be
+    /// paused first: the new oracle knows nothing of outcomes still pending
+    /// against the old one, so every LP entry/exit must stay blocked until
+    /// the owner reconciles that PnL and deliberately unpauses. The emitted
+    /// event carries `forced = true` so monitoring treats the rotation as an
+    /// open incident rather than routine configuration.
+    #[only_owner]
+    pub fn force_set_oracle(e: &Env, oracle: Address) {
+        if !paused(e) {
+            panic_with_error!(e, Error::ForcedRotationRequiresPause);
+        }
+        e.storage().instance().set(&VaultKey::Oracle, &oracle);
+        Self::extend_ttl(e);
+        OracleSet {
+            oracle,
+            forced: true,
+        }
+        .publish(e);
     }
 
     /// Set the minimum asset value a queued withdrawal request must carry at
