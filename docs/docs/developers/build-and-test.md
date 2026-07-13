@@ -24,6 +24,14 @@ stellar contract build --optimize # optimized, or: make optimize
 
 The target is `wasm32v1-none`. Release builds use `opt-level = "z"`, LTO, `panic = "abort"`, and overflow checks enabled.
 
+### Contract size caps
+
+Soroban enforces a hard per-contract code-size cap at upload time (64 KiB). `make build` and CI both run `scripts/check_wasm_size.sh` after building, which fails when any contract exceeds the cap and warns when one is within 10% of it — so a size regression turns into a red pull request, not a failed deploy:
+
+```bash
+make check-wasm-size   # re-check already-built artifacts
+```
+
 ## Test
 
 ```bash
@@ -36,6 +44,8 @@ Unit tests live in each contract crate, and cross-contract scenarios in `integra
 make coverage       # summary
 make coverage-html  # HTML report
 ```
+
+The report generated from `main` is published with this site at [/coverage/](https://sentinelfi.github.io/sentinel_soroban_v3/coverage/), and the README coverage badge reads its `badge.json` endpoint.
 
 ## Lint and format
 

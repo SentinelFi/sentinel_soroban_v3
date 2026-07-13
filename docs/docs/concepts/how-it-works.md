@@ -34,7 +34,7 @@ flowchart LR
    - *On time*: premiums are forwarded to the vault as underwriter yield, and the locked capital is released.
    - *Delayed or cancelled*: the vault tops up the flight pool so that every buyer can claim the full payoff, and a claim window opens.
 7. **Claim.** Affected travelers claim their payoff directly from the Flight Pool Manager, any time before the claim window expires (60 days on testnet).
-8. **Withdrawal.** Underwriters redeem shares immediately when free capital allows, or join a FIFO withdrawal queue that is processed automatically.
+8. **Withdrawal.** Underwriters redeem shares immediately when the vault holds enough capital above its solvency reserve, or join a FIFO withdrawal queue that is processed automatically.
 
 ## Who does what
 

@@ -127,7 +127,7 @@ sequenceDiagram
     Traveler->>Ctrl: buy_insurance(traveler, flight_id, origin, dest, date)
     Note over Ctrl: traveler.require_auth()<br/>date must be midnight-UTC aligned
     opt buyer whitelist enabled
-        Ctrl->>Ctrl: read_buyer_whitelisted(traveler) — else revert
+        Ctrl->>Ctrl: approval valid (unexpired 180-day deadline) — else revert<br/>successful purchase slides the deadline forward
     end
 
     Ctrl->>Gov: route_status(flight_id, origin, dest)
@@ -172,7 +172,8 @@ sequenceDiagram
 
 Underwriters supply the capital that backs payouts and earn the premiums of
 on-time flights. Deposits are immediate (ERC-4626 `deposit` mints shares).
-Withdrawals are **FIFO-queued** so that a latecomer can't drain free capital
+Withdrawals are **FIFO-queued** so that a latecomer can't drain withdrawable
+capital (the assets above the vault's solvency reserve on locked collateral)
 ahead of LPs already waiting: the request escrows shares, the keeper drains the
 queue into pull-based claimable balances, and the underwriter collects.
 
@@ -185,7 +186,7 @@ sequenceDiagram
     actor Keeper
     participant Ctrl as Controller
 
-    rect rgb(235, 244, 255)
+    rect rgba(96, 148, 255, 0.14)
     Note over U,Asset: Deposit — provide capital, receive shares
     U->>Vault: deposit(assets, receiver, from, operator)
     Vault->>Asset: transfer(underwriter → vault, assets)
@@ -193,7 +194,7 @@ sequenceDiagram
     Vault-->>U: shares
     end
 
-    rect rgb(255, 244, 235)
+    rect rgba(255, 160, 64, 0.14)
     Note over U,Vault: Withdraw — request enters FIFO queue
     U->>Vault: request_withdrawal(shares)
     Vault->>Vault: escrow shares, push WithdrawalRequest
@@ -201,7 +202,7 @@ sequenceDiagram
     Note over U,Vault: U may cancel_withdrawal(request_id) while queued
     end
 
-    rect rgb(235, 255, 240)
+    rect rgba(64, 200, 112, 0.14)
     Note over Keeper,Vault: Keeper drains the queue (run_queue_maintenance)
     Keeper->>Ctrl: run_queue_maintenance(keeper)
     Ctrl->>Vault: process_withdrawal_queue()
@@ -209,7 +210,7 @@ sequenceDiagram
     Ctrl->>Vault: snapshot() — refresh share-price snapshot
     end
 
-    rect rgb(245, 235, 255)
+    rect rgba(168, 112, 255, 0.14)
     Note over U,Asset: Collect — pull funds out
     U->>Vault: collect()
     Vault->>Asset: transfer(vault → underwriter, claimable)
@@ -237,7 +238,7 @@ sequenceDiagram
     participant Vault as Vault
     participant Asset as Asset
 
-    rect rgb(245, 235, 255)
+    rect rgba(168, 112, 255, 0.14)
     Note over OB,Oracle: Phase 0 — attest sales (SaleAuthorizer cron)
     OB->>Oracle: open_sale(flight_id, date, expires_at)
     Note right of Oracle: verified scheduled + not cancelled — max 24h validity
@@ -245,7 +246,7 @@ sequenceDiagram
     Note right of Oracle: unverifiable → close, cancelled → tombstone
     end
 
-    rect rgb(235, 244, 255)
+    rect rgba(96, 148, 255, 0.14)
     Note over OB,Oracle: Phase 1 — push outcomes (FlightDataFetcher cron)
     OB->>Oracle: set_estimated_arrival(...)
     Note right of Oracle: NotInitiated → Active
@@ -253,7 +254,7 @@ sequenceDiagram
     Note right of Oracle: Active → Landed / Cancelled
     end
 
-    rect rgb(255, 244, 235)
+    rect rgba(255, 160, 64, 0.14)
     Note over Keeper,Pool: Phase 2 — classify (FlightClassifier cron)
     Keeper->>Ctrl: classify_flights(keeper)
     Ctrl->>Oracle: get_active_flights_page(cursor, batch)
@@ -266,7 +267,7 @@ sequenceDiagram
     end
     end
 
-    rect rgb(235, 255, 240)
+    rect rgba(64, 200, 112, 0.14)
     Note over Keeper,Asset: Phase 3 — execute (SettlementExecutor cron)
     Keeper->>Ctrl: execute_settlements(keeper)
     Ctrl->>Oracle: get_active_flights_page(cursor, batch)
@@ -308,7 +309,7 @@ sequenceDiagram
     participant Pool as Pool
     participant Asset as Asset
 
-    rect rgb(235, 255, 240)
+    rect rgba(64, 200, 112, 0.14)
     Note over Traveler,Asset: Claim within the window
     Traveler->>Pool: claim(flight_id, date)
     Note over Pool: traveler.require_auth()<br/>checks: SettledDelayed/Cancelled,<br/>window open, has policy, not already claimed
@@ -317,7 +318,7 @@ sequenceDiagram
     Pool-->>Traveler: emit PayoutClaimed
     end
 
-    rect rgb(255, 244, 235)
+    rect rgba(255, 160, 64, 0.14)
     Note over Anyone,Owner: After the window closes
     Anyone->>Pool: sweep_expired(flight_id, date)
     Note over Pool: credits unclaimed payoffs to RecoveredBalance<br/>(idempotent), emits ExpiredSwept

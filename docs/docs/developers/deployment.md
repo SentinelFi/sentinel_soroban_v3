@@ -44,6 +44,12 @@ stellar contract invoke --id <CONTROLLER_ID> ... -- set_keeper --keeper <KEEPER_
 stellar contract invoke --id <VAULT_ID> ... -- set_min_withdrawal_request --min_assets <AMOUNT>
 ```
 
+If you run a solvency ratio above the default 100%, set it now — after the vault wiring, because the Controller mirrors the value into the Risk Vault in the same transaction:
+
+```bash
+stellar contract invoke --id <CONTROLLER_ID> ... -- set_solvency_ratio --ratio <PERCENT>
+```
+
 Finally, whitelist at least one route through the Governance Module and the market is live.
 
 :::warning

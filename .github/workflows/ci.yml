@@ -63,6 +63,13 @@ jobs:
       - name: stellar contract build
         run: stellar contract build
 
+      - name: Check contract wasm sizes
+        # Soroban enforces a hard per-contract code-size cap at upload time;
+        # catching a breach (or creep toward it) here keeps size regressions a
+        # red PR instead of a failed deploy. Prints a table into the job
+        # summary; fails if any contract exceeds the cap.
+        run: bash scripts/check_wasm_size.sh
+
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
