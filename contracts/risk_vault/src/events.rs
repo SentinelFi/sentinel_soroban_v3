@@ -115,6 +115,15 @@ pub struct OracleSet {
     pub(crate) oracle: Address,
 }
 
+// Controller mirrored the owner-configured solvency ratio into the vault.
+// The ratio determines how much of the nominal free margin exit paths must
+// hold back, so monitoring subscribes to catch an unexpected loosening of
+// the reserve (or a missing propagation after an upgrade).
+#[contractevent(topics = ["sentinel", "ratio_set"], data_format = "single-value")]
+pub struct SolvencyRatioSet {
+    pub(crate) ratio: u32,
+}
+
 // Owner tuned the minimum asset value a queued withdrawal request must carry
 // (anti dust-squatting floor for the bounded queue; 0 disables it). Emitted
 // for the audit trail, matching the controller's owner-setter events.

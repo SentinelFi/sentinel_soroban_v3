@@ -410,6 +410,44 @@ fn test_route_status_disabled_when_limits_lowered_below_route() {
 }
 
 #[test]
+fn test_terms_valid_tracks_current_limits() {
+    // The controller re-validates a pool bucket's snapshotted terms through
+    // this view before admitting new buyers: terms valid under the old
+    // limits must flip to invalid the moment the owner lowers them, and the
+    // defaults-independent economics checks apply too.
+    let (_env, client, _owner, _addr) = setup();
+    let terms = ResolvedTerms {
+        premium: 10_0000000,
+        payoff: 50_0000000,
+        delay_hours: 3,
+    };
+    assert!(client.terms_valid(&terms));
+
+    // Cap lowered below the payoff → the same terms are no longer sellable.
+    client.set_term_limits(&20_0000000i128, &5i128);
+    assert!(!client.terms_valid(&terms));
+
+    // Compliant terms pass under the new limits.
+    assert!(client.terms_valid(&ResolvedTerms {
+        premium: 10_0000000,
+        payoff: 20_0000000,
+        delay_hours: 3,
+    }));
+
+    // Economically invalid shapes are rejected regardless of limits.
+    assert!(!client.terms_valid(&ResolvedTerms {
+        premium: 10_0000000,
+        payoff: 10_0000000,
+        delay_hours: 3,
+    }));
+    assert!(!client.terms_valid(&ResolvedTerms {
+        premium: 10_0000000,
+        payoff: 20_0000000,
+        delay_hours: 0,
+    }));
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #515)")]
 fn test_set_term_limits_rejects_negative_cap() {
     let (_env, client, _owner, _addr) = setup();

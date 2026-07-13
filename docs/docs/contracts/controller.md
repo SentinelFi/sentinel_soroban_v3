@@ -16,7 +16,7 @@ The single purchase flow:
 1. Resolves the route through the Governance Module and rejects unknown or disabled routes.
 2. Enforces the minimum lead time before departure.
 3. Requires the flight to be open for sale on the Oracle Aggregator: no outcome recorded yet, and a live, unexpired sale authorization (the oracle's attestation that the flight is scheduled and not cancelled). Without one the purchase fails closed — absence of on-chain data is never treated as proof a flight is insurable.
-4. On the first purchase for a flight instance, registers the flight with the Flight Pool Manager and Oracle Aggregator.
+4. On the first purchase for a flight instance, registers the flight with the Flight Pool Manager and Oracle Aggregator. Later purchases of the same flight instance use the terms snapshotted at registration — after re-validating them against the current governance term limits, so lowering the limits stops new exposure at old, larger terms.
 5. Checks vault solvency: total managed assets must cover the entire outstanding locked capital plus this payoff, scaled by the solvency ratio.
 6. Transfers the premium from the traveler to the Flight Pool Manager.
 7. Locks the payoff amount in the Risk Vault and records the buyer.
@@ -38,7 +38,7 @@ Bounded, owner-only tunables:
 
 | Function | Bounds |
 |---|---|
-| `set_solvency_ratio` | 100 to 10000 (percent, 100 = fully backed) |
+| `set_solvency_ratio` | 100 to 10000 (percent, 100 = fully backed); mirrored into the Risk Vault so withdrawals preserve the same reserve |
 | `set_min_lead_time` | less than 90 days |
 | `set_claim_expiry_window` | 1 to 60 days |
 | `set_keeper` | rotate the keeper address |

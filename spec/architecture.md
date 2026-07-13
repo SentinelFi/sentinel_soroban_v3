@@ -295,23 +295,32 @@ vault is composable with any vault-aware tooling.
   stored in `Instance` storage rather than raw token balance. This prevents share price
   manipulation via direct USDC transfers.
 - `locked_capital: i128` tracks USDC committed as collateral for active policies.
-  `max_withdraw` and `max_redeem` are overridden to cap redemptions at
-  `free_capital = total_managed_assets - locked_capital`.
+  `free_capital = total_managed_assets - locked_capital` is the nominal margin; every
+  exit path is capped at the **withdrawable capital**
+  `max(total_managed_assets - ceil(locked_capital * solvency_ratio / 100), 0)`, so LP
+  exits preserve the same reserve the controller admits policies against (with the
+  default 100% ratio the two figures coincide). The ratio is mirrored into the vault by
+  `controller.set_solvency_ratio` (controller-only vault setter, atomic with the owner
+  update); the vault cannot read it back on demand because the controller invokes
+  `process_withdrawal_queue` and a read-back during that call would be reentrant.
+  `max_withdraw` and `max_redeem` are overridden to cap redemptions at the withdrawable
+  amount.
 - **Two withdrawal paths, one contract:**
   - **Immediate (`redeem`)** — OZ Vault standard. Burns shares and transfers USDC when
-    `free_capital >= redemption`.
+    `withdrawable_capital >= redemption`.
   - **Queued (`request_withdrawal`)** — non-standard extension for locked capital.
     Enqueues `(request_id, caller, shares)` in a FIFO queue stored in **Instance**
     storage. Returns the freshly-issued `request_id: u64` (monotonic counter, audit M-04 fix).
     After each settlement cycle the keeper calls `run_queue_maintenance()`, which drives
     `process_withdrawal_queue()` and credits fulfilled requests to `claimable_balance`.
     Underwriters call `collect()` to pull USDC.
-  - **Head partial fill.** When the oldest request prices above current free capital,
-    `process_withdrawal_queue` funds the share slice free capital covers (burn + credit),
-    keeps the remainder at the head, and defers everything behind it. Strict FIFO fairness
-    holds — free capital always goes to the oldest request first — but one oversized
-    request can no longer pin the queue (and with it every direct exit, which defers to a
-    non-empty queue) while free capital sits idle. Each partial pass emits `Credited` plus
+  - **Head partial fill.** When the oldest request prices above the current withdrawable
+    capital, `process_withdrawal_queue` funds the share slice that amount covers
+    (burn + credit), keeps the remainder at the head, and defers everything behind it.
+    Strict FIFO fairness holds — withdrawable capital always goes to the oldest request
+    first — but one oversized request can no longer pin the queue (and with it every
+    direct exit, which defers to a non-empty queue) while payable capital sits idle. Each
+    partial pass emits `Credited` plus
     `RequestPartiallyFilled(request_id, shares_filled, shares_remaining)`.
   - **Zero-value drop.** A request whose asset value has decayed to zero (share price fell
     after it was queued) is not left blocking the head: its escrowed shares are returned to
@@ -354,6 +363,7 @@ pub enum VaultKey {
     LastSnapshotTime,          // u64 — Instance
     Oracle,                    // Address — Instance (settlement-barrier target, wired at construction, owner-rotatable)
     MinWithdrawalRequest,      // i128 — Instance (anti-dust floor for queue entries, 0 disables)
+    SolvencyRatio,             // u32 — Instance (controller-mirrored reserve ratio, absent = 100)
     ClaimableBalance(Address), // i128 — Persistent (TTL extended to 60 days on write)
     SnapshotPrice(u64),        // i128 — Temporary (30-day TTL, keyed by day)
 }
@@ -405,6 +415,7 @@ pub struct WithdrawalRequest {
 ("sentinel", "controller_set", <controller>) → ControllerSet
 ("sentinel", "oracle_set", <oracle>)          → OracleSet
 ("sentinel", "min_wd_req_set")                → MinWithdrawalRequestSet (min_assets)
+("sentinel", "ratio_set")                     → SolvencyRatioSet (ratio)
 ```
 
 `Credited` / `Collected` / `Recovered` power the off-chain indexer (Improvement #9)
@@ -1370,7 +1381,12 @@ Traveler -> Controller.buy_insurance(flight_id, origin, dest, date)
                 |       when missing, lapsed, closed, or archived)
                 |
                 +-> flight exists in FlightPoolManager for (flight_id, date)?
-                |       +- YES -> skip registration
+                |       +- YES -> use the bucket's snapshotted terms, then
+                |                 GovernanceModule.terms_valid(snapshot)
+                |                 must be true — the snapshot was taken under
+                |                 the limits in force at first purchase, and
+                |                 new exposure must satisfy the limits in
+                |                 force NOW      revert "snapshot terms exceed limits"
                 |       +- NO  -> FlightPoolManager.register_flight(
                 |                   flight_id, date, premium, payoff, delay_hours)
                 |                 OracleAggregator.register_flight(flight_id, date)
@@ -1516,11 +1532,12 @@ Owner -> FlightPoolManager.withdraw_recovered(amount)
 
 Underwriter -> RiskVault.redeem(shares, receiver, owner, operator)
     +-> operator.require_auth()
-    +-> max_redeem check: panic if shares > free_capital equivalent
+    +-> max_redeem check: panic if shares > withdrawable_capital equivalent
+        (withdrawable = TMA - ceil(locked * solvency_ratio / 100))
     +-> burn shares, decrease total_managed_assets
     +-> usdc_client.transfer(vault, receiver, assets)
 
--- Queued path (FIFO — used when free_capital < redemption) --
+-- Queued path (FIFO — used when withdrawable_capital < redemption) --
 
 Underwriter -> RiskVault.request_withdrawal(caller, shares) -> request_id
     +-> caller.require_auth()
@@ -1562,15 +1579,25 @@ queue for the next settlement cycle.
 **Never sell insurance unless we have money to cover it.** Before every insurance purchase:
 
 ```
-vault.free_capital() >= (total_max_liability + new_payoff) * minimum_solvency_ratio / 100
+total_managed_assets >= ceil((locked_capital + new_payoff) * solvency_ratio / 100)
 ```
 
-- `free_capital()` = `total_managed_assets` - `locked_capital`
+**And never let capital leave below the same reserve.** Every LP exit (direct
+withdraw/redeem, `max_*` views, queue processing) is bounded by:
+
+```
+withdrawable_capital = max(total_managed_assets - ceil(locked_capital * solvency_ratio / 100), 0)
+```
+
+- `free_capital()` = `total_managed_assets` - `locked_capital` (nominal margin, reporting only)
 - `locked_capital` increases by `payoff` on each purchase; decreases by `payoff * buyer_count`
   on settlement
-- `minimum_solvency_ratio` defaults to 100 — fully collateralised
-- Underwriter withdrawals that would breach `locked_capital` are queued, not rejected
-- Queue processor re-checks solvency at fulfillment time
+- `solvency_ratio` defaults to 100 — fully collateralised; the controller mirrors every
+  owner update into the vault so both sides of the invariant use the same value
+- Enforcing the ratio only on purchase would be one-sided: any LP could withdraw the
+  nominal margin and collapse the configured reserve to 100% backing between purchases
+- Underwriter withdrawals that would breach the reserve are queued, not rejected
+- Queue processor re-checks the reserve at fulfillment time
 
 ---
 
@@ -1812,10 +1839,11 @@ inaccessible until restored" rather than "permanently lost."
    returned `RouteStatus` enum:
    - `Active(ResolvedTerms)` — route is buyable; use `terms.payoff` for the solvency precheck.
    - `Disabled` or `Unknown` — show an error; do not let the user submit.
-2. Solvency precheck: read `RiskVault.get_free_capital()` and compare against the
-   `payoff` from step 1 (multiplied by `Controller.get_solvency_ratio() / 100`). The
-   on-chain solvency gate enforces the same check on submit, so this is a UX optimisation
-   to avoid wasted signatures.
+2. Solvency precheck: read `RiskVault.get_total_managed_assets()` and
+   `RiskVault.get_locked_capital()`, and check that TMA covers
+   `(locked + payoff) * Controller.get_solvency_ratio() / 100` with the `payoff` from
+   step 1. The on-chain solvency gate enforces the same check on submit, so this is a UX
+   optimisation to avoid wasted signatures.
 3. Sign transaction that calls `Controller.buy_insurance(flight_id, origin, dest, date)`.
    Soroban auth framework handles USDC transfer authorization within the same signature.
 
@@ -1834,7 +1862,8 @@ user's policies — not all flights across the protocol.
 Shares issued proportional to `total_managed_assets / total_supply`.
 
 **Withdraw (immediate):** `RiskVault.redeem(shares, receiver, owner, operator)` — executes
-when `free_capital >= redemption`.
+when `get_withdrawable_capital() >= redemption` (the margin above the configured solvency
+reserve on locked capital; equals free capital at the default 100% ratio).
 
 **Withdraw (queued FIFO):** `RiskVault.request_withdrawal(caller, shares)` — enqueues when
 capital is locked. Specify desired withdrawal amount. The request's asset value must meet
@@ -1867,7 +1896,10 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Cancel queued withdrawal | Underwriter | `risk_vault.cancel_withdrawal(caller, request_id)` |
 | Recover uncollected balance | Owner | `risk_vault.recover_uncollected(user, amount, mode: RecoveryMode)` (Recredit must not underpay; Transfer requires prior credit) |
 | Pause / unpause | Owner | `<contract>.pause(caller)` / `unpause(caller)` (every production contract) |
-| Read free capital | Anyone | `risk_vault.get_free_capital()` |
+| Read free capital (nominal margin) | Anyone | `risk_vault.get_free_capital()` |
+| Read withdrawable capital (exit bound) | Anyone | `risk_vault.get_withdrawable_capital()` |
+| Read vault solvency ratio (controller-mirrored) | Anyone | `risk_vault.get_solvency_ratio()` |
+| Check resolved terms vs current limits | Anyone | `governance.terms_valid(terms) -> bool` (used by `buy_insurance` to re-validate a bucket's snapshotted terms) |
 | Buy insurance | Traveler | `controller.buy_insurance(flight_id, origin, dest, date)` |
 | View my policies | Traveler | `controller.get_flights_for_traveler(address)` |
 | Claim payout | Traveler | `flight_pool_manager.claim(traveler, flight_id, date)` |
@@ -2002,7 +2034,9 @@ Network configuration (testnet RPC URL, passphrase, contract addresses) lives in
              --claim_expiry_window_secs 5184000
         -> returns CONTRACT_ID_CONTROLLER
         (solvency ratio is not a constructor argument — it initializes to 100
-         and is tuned afterwards via controller.set_solvency_ratio)
+         and is tuned afterwards via controller.set_solvency_ratio, which also
+         mirrors the value into the RiskVault; call it only AFTER the vault's
+         set_controller wiring below, or the mirror push will revert)
 
 3. Post-deployment wiring:
         OracleAggregator.set_controller(CONTRACT_ID_CONTROLLER)   <- one-time, immutable

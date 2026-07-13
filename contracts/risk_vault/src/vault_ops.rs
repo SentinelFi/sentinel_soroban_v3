@@ -129,7 +129,7 @@ impl FungibleVault for RiskVault {
         shares
     }
 
-    /// Withdraws `assets` to `receiver`, blocked while the withdrawal queue is active or if it exceeds free capital.
+    /// Withdraws `assets` to `receiver`, blocked while the withdrawal queue is active or if it exceeds the reserve-aware withdrawable capital.
     #[when_not_paused]
     fn withdraw(
         e: &Env,
@@ -153,7 +153,12 @@ impl FungibleVault for RiskVault {
         if assets <= 0 {
             panic_with_error!(e, Error::AmountMustBePositive);
         }
-        if assets > Self::get_free_capital(e) {
+        // Bound exits by the withdrawable amount — assets above the
+        // configured solvency reserve on locked capital — not the nominal
+        // TMA − locked margin. Gating on the nominal margin would let any LP
+        // strip the reserve down to 100% backing right after purchases were
+        // admitted against it.
+        if assets > Self::get_withdrawable_capital(e) {
             panic_with_error!(e, Error::ExceedsFreeCapital);
         }
         let shares = managed_convert_to_shares(e, assets, Rounding::Ceil);
@@ -189,7 +194,7 @@ impl FungibleVault for RiskVault {
         assets
     }
 
-    /// Redeems `shares` for assets to `receiver`, blocked while the withdrawal queue is active or if it exceeds free capital.
+    /// Redeems `shares` for assets to `receiver`, blocked while the withdrawal queue is active or if it exceeds the reserve-aware withdrawable capital.
     #[when_not_paused]
     fn redeem(e: &Env, shares: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
         Self::extend_ttl(e);
@@ -212,7 +217,9 @@ impl FungibleVault for RiskVault {
         if assets == 0 {
             panic_with_error!(e, Error::SharesRedeemToZeroAssets);
         }
-        if assets > Self::get_free_capital(e) {
+        // See `withdraw` — exits are bounded by the reserve-aware
+        // withdrawable amount, not the nominal free margin.
+        if assets > Self::get_withdrawable_capital(e) {
             panic_with_error!(e, Error::ExceedsFreeCapital);
         }
         Vault::withdraw_internal(e, &receiver, &owner, assets, shares, &operator);
@@ -290,26 +297,29 @@ impl FungibleVault for RiskVault {
     }
 
     /// Returns the maximum assets `owner` can withdraw (their share balance
-    /// priced on managed assets, capped by free capital), or zero while direct
-    /// exits are globally disabled (paused, settlement pending, or queue active).
+    /// priced on managed assets, capped by the reserve-aware withdrawable
+    /// capital), or zero while direct exits are globally disabled (paused,
+    /// settlement pending, or queue active).
     fn max_withdraw(e: &Env, owner: Address) -> i128 {
         if paused(e) || settlement_pending(e) || !Self::get_withdrawal_queue(e).is_empty() {
             return 0;
         }
         let owner_assets = managed_convert_to_assets(e, Base::balance(e, &owner), Rounding::Floor);
-        let free = Self::get_free_capital(e);
-        owner_assets.min(free)
+        let withdrawable = Self::get_withdrawable_capital(e);
+        owner_assets.min(withdrawable)
     }
 
     /// Returns the maximum shares `owner` can redeem (their balance capped by
-    /// the shares equivalent of free capital), or zero while direct exits are
-    /// globally disabled (paused, settlement pending, or queue active).
+    /// the shares equivalent of the reserve-aware withdrawable capital), or
+    /// zero while direct exits are globally disabled (paused, settlement
+    /// pending, or queue active).
     fn max_redeem(e: &Env, owner: Address) -> i128 {
         if paused(e) || settlement_pending(e) || !Self::get_withdrawal_queue(e).is_empty() {
             return 0;
         }
         let owner_shares = Base::balance(e, &owner);
-        let free_shares = managed_convert_to_shares(e, Self::get_free_capital(e), Rounding::Floor);
-        owner_shares.min(free_shares)
+        let withdrawable_shares =
+            managed_convert_to_shares(e, Self::get_withdrawable_capital(e), Rounding::Floor);
+        owner_shares.min(withdrawable_shares)
     }
 }

@@ -193,7 +193,9 @@ export const REGISTRY: ContractEntry[] = [
       ]),
       fn("get_total_managed_assets", "public", true, "Net backing assets (TMA)", [], "i128"),
       fn("get_locked_capital", "public", true, "Collateral locked against live policies", [], "i128"),
-      fn("get_free_capital", "public", true, "TMA minus locked collateral", [], "i128"),
+      fn("get_free_capital", "public", true, "TMA minus locked collateral (nominal margin)", [], "i128"),
+      fn("get_withdrawable_capital", "public", true, "Exit bound: TMA above the solvency reserve on locked collateral", [], "i128"),
+      fn("get_solvency_ratio", "public", true, "Controller-mirrored solvency ratio (percent)", [], "u32"),
       fn("get_withdrawal_queue", "public", true, "Full pending withdrawal queue", [], "Vec<WithdrawalRequest>"),
       fn("get_withdrawal_queue_len", "public", true, "Number of queued withdrawal requests", [], "u32"),
       fn("get_min_withdrawal_request", "public", true, "Minimum asset value per queued request", [], "i128"),
@@ -264,6 +266,10 @@ export const REGISTRY: ContractEntry[] = [
       ]),
       fn("process_withdrawal_queue", "controller", false, "Batch-drain the FIFO withdrawal queue", [
         a("controller", "address"),
+      ]),
+      fn("set_solvency_ratio", "controller", false, "Mirror the owner-configured solvency ratio (pushed by controller.set_solvency_ratio)", [
+        a("controller", "address"),
+        a("ratio", "u32", "Percent, 100–10000"),
       ]),
       fn("set_controller", "owner", false, "Wire the controller (one-time)", [a("controller", "address")]),
       fn("set_oracle", "owner", false, "Rotate the settlement-barrier oracle", [a("oracle", "address")]),

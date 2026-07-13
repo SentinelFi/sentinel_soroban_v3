@@ -8,8 +8,10 @@ use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
 
 use crate::auth::{require_controller, settlement_pending};
-use crate::constants::{CLAIMABLE_TTL_LEDGERS, MAX_QUEUE_BATCH};
-use crate::events::{Credited, RequestDropped, RequestPartiallyFilled};
+use crate::constants::{
+    CLAIMABLE_TTL_LEDGERS, MAX_QUEUE_BATCH, MAX_SOLVENCY_RATIO, MIN_SOLVENCY_RATIO,
+};
+use crate::events::{Credited, RequestDropped, RequestPartiallyFilled, SolvencyRatioSet};
 use crate::storage::VaultKey;
 use crate::vault_ops::{convert_to_assets_with_tma, convert_to_shares_with_tma};
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
@@ -51,6 +53,26 @@ impl RiskVault {
             &VaultKey::LockedCapital,
             &locked.checked_sub(amount).expect("subtraction underflow"),
         );
+    }
+
+    /// Controller-only: mirror the owner-configured solvency ratio into the
+    /// vault so exit paths can hold back the same reserve the controller
+    /// admits new policies against. The controller pushes on every owner
+    /// update; the vault cannot pull the value itself because the controller
+    /// invokes `process_withdrawal_queue` and a read-back during that call
+    /// would be reentrant. Deliberately NOT pause-gated: propagating a risk
+    /// parameter is exactly the kind of action an incident response performs
+    /// while the vault is paused.
+    pub fn set_solvency_ratio(e: &Env, controller: Address, ratio: u32) {
+        require_controller(e, &controller);
+        Self::extend_ttl(e);
+        // Same bounds the controller enforces on its owner setter, so a
+        // compromised or buggy caller cannot park an unpayable reserve here.
+        if !(MIN_SOLVENCY_RATIO..=MAX_SOLVENCY_RATIO).contains(&ratio) {
+            panic_with_error!(e, Error::SolvencyRatioOutOfBounds);
+        }
+        e.storage().instance().set(&VaultKey::SolvencyRatio, &ratio);
+        SolvencyRatioSet { ratio }.publish(e);
     }
 
     /// Controller-only: credit received premium income to managed assets.
@@ -129,7 +151,11 @@ impl RiskVault {
             return;
         }
 
-        let mut remaining_free = Self::get_free_capital(e);
+        // Fund queued exits only from capital above the configured solvency
+        // reserve — the same bound direct exits use. Paying out to the
+        // nominal margin instead would let the queue drain the reserve that
+        // the purchase path just verified.
+        let mut remaining_free = Self::get_withdrawable_capital(e);
         let mut processed: u32 = 0;
         let mut tma = Self::get_total_managed_assets(e);
         let vault_addr = e.current_contract_address();

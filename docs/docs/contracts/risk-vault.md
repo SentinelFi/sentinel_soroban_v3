@@ -16,22 +16,23 @@ The Risk Vault holds all underwriter capital. It is built on the OpenZeppelin `F
 ## Capital states
 
 - **Locked capital** backs outstanding policies. It is increased when a policy is sold and decreased at settlement.
-- **Free capital** equals total managed assets minus locked capital. Withdrawals and new policy sales draw only on free capital.
+- **Free capital** equals total managed assets minus locked capital — the nominal margin above policy liabilities.
+- **Withdrawable capital** is what exits may actually remove: total managed assets minus locked capital scaled by the solvency ratio (rounded up). With the default 100% ratio it equals free capital; at a higher ratio the difference is the protocol's safety reserve, which underwriter exits must leave in place just as new policy sales must. The ratio is configured once on the Controller and mirrored into the vault automatically.
 
 ## Underwriter functions
 
 - `deposit(assets, receiver, from, operator)` and `mint`: enter the vault.
-- `redeem` and `withdraw`: exit immediately, capped to free capital.
+- `redeem` and `withdraw`: exit immediately, capped to withdrawable capital.
 - `request_withdrawal(shares)`: join the FIFO withdrawal queue, shares are escrowed, returns a stable request id.
 - `cancel_withdrawal(caller, request_id)`: cancel a pending request.
 
-Queue processing is strict FIFO with **head partial fills**: if the oldest request is worth more than the currently free capital, the fundable slice is paid out immediately (shares burned, value credited) and the remainder stays at the head of the queue. Free capital always flows to the oldest request first, and a single oversized request can never freeze everyone else's exit while free capital sits idle. Partial fills emit a `wd_partial` event alongside the regular credit.
+Queue processing is strict FIFO with **head partial fills**: if the oldest request is worth more than the currently withdrawable capital, the fundable slice is paid out immediately (shares burned, value credited) and the remainder stays at the head of the queue. Withdrawable capital always flows to the oldest request first, and a single oversized request can never freeze everyone else's exit while payable capital sits idle. Partial fills emit a `wd_partial` event alongside the regular credit.
 - `collect()`: pull USDC credited by processed withdrawal requests.
 - `snapshot()`: permissionless, records the daily share price (kept 30 days).
 
 ## Controller-only functions
 
-`increase_locked`, `decrease_locked`, `send_payout`, `process_withdrawal_queue`, and `record_premium_income` can only be called by the Controller.
+`increase_locked`, `decrease_locked`, `send_payout`, `process_withdrawal_queue`, `record_premium_income`, and `set_solvency_ratio` (the mirror push from the Controller's owner setter) can only be called by the Controller.
 
 ## Settlement barrier
 

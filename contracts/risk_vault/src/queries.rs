@@ -21,11 +21,52 @@ impl RiskVault {
             .unwrap_or(0)
     }
 
-    /// Return free (unlocked) capital available for withdrawal/payout.
+    /// Return the nominal margin above locked payoff liabilities
+    /// (`TMA − LockedCapital`). This is an accounting view, NOT the exit
+    /// gate: withdrawals are bounded by `get_withdrawable_capital`, which
+    /// additionally holds back the configured solvency reserve.
     pub fn get_free_capital(e: &Env) -> i128 {
         let tma = Self::get_total_managed_assets(e);
         let locked = Self::get_locked_capital(e);
         tma.checked_sub(locked).expect("subtraction underflow")
+    }
+
+    /// Return the solvency ratio (percent) the vault holds in reserve against
+    /// locked capital. Pushed by the controller alongside its own copy; 100
+    /// (nominal backing only) until the controller first configures it.
+    pub fn get_solvency_ratio(e: &Env) -> u32 {
+        e.storage()
+            .instance()
+            .get(&VaultKey::SolvencyRatio)
+            .unwrap_or(100)
+    }
+
+    /// Return the capital LP exits may remove:
+    /// `max(TMA − ceil(LockedCapital × SolvencyRatio / 100), 0)`.
+    /// The same required-backing formula the controller admits new policies
+    /// against — using the nominal margin here instead would let exits drain
+    /// the configured reserve down to 100% backing the moment a purchase
+    /// passed. Gates direct withdraw/redeem, the `max_*` views, and
+    /// withdrawal-queue processing.
+    pub fn get_withdrawable_capital(e: &Env) -> i128 {
+        let tma = Self::get_total_managed_assets(e);
+        let locked = Self::get_locked_capital(e);
+        let ratio = Self::get_solvency_ratio(e) as i128;
+        // ceil(locked * ratio / 100): round the reserve up so integer
+        // truncation can never under-provision it.
+        let required = locked
+            .checked_mul(ratio)
+            .expect("multiplication overflow")
+            .checked_add(99)
+            .expect("addition overflow")
+            .checked_div(100)
+            .expect("division by zero");
+        // A ratio raised after capital was locked can push the required
+        // reserve above current assets; report zero withdrawable rather than
+        // a negative amount.
+        tma.checked_sub(required)
+            .expect("subtraction underflow")
+            .max(0)
     }
 
     /// Return the configured controller address.

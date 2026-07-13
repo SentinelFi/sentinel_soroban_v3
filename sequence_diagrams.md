@@ -143,6 +143,11 @@ sequenceDiagram
 
     Ctrl->>Pool: get_flight_config(flight_id, date)
     Note over Ctrl: existing config binds later buyers to the first buyer's terms<br/>if it exists, oracle must have flight data — else revert OracleDataUnavailable
+    opt existing config (snapshotted terms)
+        Ctrl->>Gov: terms_valid(snapshot terms)
+        Gov-->>Ctrl: must be true — snapshot re-checked against current term limits
+        Note over Ctrl: revert SnapshotTermsExceedLimits if governance lowered the caps
+    end
 
     Ctrl->>Pool: register_flight(flight_id, date, premium, payoff, delay_hours)
     Ctrl->>Oracle: register_flight(flight_id, date)
@@ -200,7 +205,7 @@ sequenceDiagram
     Note over Keeper,Vault: Keeper drains the queue (run_queue_maintenance)
     Keeper->>Ctrl: run_queue_maintenance(keeper)
     Ctrl->>Vault: process_withdrawal_queue()
-    Note over Vault: FIFO, batched — no-op while a settlement is pending.<br/>Burns escrowed shares, credits ClaimableBalance (Credited).<br/>Partially fills the head request when free capital runs short<br/>(RequestPartiallyFilled), then stops. Zero-value requests are<br/>dropped and their shares returned (RequestDropped)
+    Note over Vault: FIFO, batched — no-op while a settlement is pending.<br/>Burns escrowed shares, credits ClaimableBalance (Credited).<br/>Pays only capital above the solvency reserve on locked collateral.<br/>Partially fills the head request when that capital runs short<br/>(RequestPartiallyFilled), then stops. Zero-value requests are<br/>dropped and their shares returned (RequestDropped)
     Ctrl->>Vault: snapshot() — refresh share-price snapshot
     end
 
