@@ -38,7 +38,7 @@ make check-wasm-size   # re-check already-built artifacts
 cargo test        # or: make test
 ```
 
-Unit tests live in each contract crate, and cross-contract scenarios in `integration_tests`. Coverage reports use `cargo-llvm-cov`:
+Unit tests live in each contract crate, and cross-contract scenarios in `integration_tests`. The Risk Vault additionally carries a property-based suite (`risk_vault/src/prop_test.rs`, powered by `proptest`, part of the normal `cargo test` run): randomized share/asset conversion states probing rounding and the virtual-share offset, plus a stateful invariant machine that executes random operation sequences and asserts the full invariant block — solvency, asset conservation, share supply/escrow accounting, queue caps, and share-price monotonicity — after every single operation. A nightly-only `cargo-fuzz` harness in `risk_vault/fuzz/` and `oracle_aggregator/fuzz/` complements it for longer unbounded exploration. Coverage reports use `cargo-llvm-cov`:
 
 ```bash
 make coverage       # summary

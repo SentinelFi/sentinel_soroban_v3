@@ -62,4 +62,6 @@ pub use storage::{RecoveryMode, WithdrawalRequest};
 pub struct RiskVault;
 
 #[cfg(test)]
+mod prop_test;
+#[cfg(test)]
 mod test;
