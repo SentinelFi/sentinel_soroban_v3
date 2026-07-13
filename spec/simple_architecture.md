@@ -110,7 +110,11 @@ shares, locked collateral, claimable balances, and a withdrawal queue.
 - Total Managed Assets (TMA): the pool's accounting balance (deposits +
   premiums – payouts).
 - Locked Capital: amount reserved for outstanding insurance policies.
-- Free Capital = TMA − Locked.
+- Free Capital = TMA − Locked (nominal margin).
+- Withdrawable Capital = max(TMA − ceil(Locked × solvency_ratio / 100), 0):
+  the amount exits may actually remove, so LP withdrawals preserve the same
+  reserve the controller admits policies against. The ratio is mirrored from
+  the controller on every owner update (controller-only setter).
 - Share token (vault shares) issued to underwriters; ERC-4626-style mechanics
   with a small inflation-attack defense.
 - Withdrawal queue: ordered list of pending share-redemption requests.
@@ -119,17 +123,19 @@ shares, locked collateral, claimable balances, and a withdrawal queue.
 - Daily share-price snapshots (short-lived, for off-chain analytics).
 
 **Key operations:**
-- Underwriter: deposit, redeem (immediate, only if free capital allows),
-  request_withdrawal (queue), cancel_withdrawal, collect (pull credited
-  funds).
+- Underwriter: deposit, redeem (immediate, only if withdrawable capital
+  allows), request_withdrawal (queue), cancel_withdrawal, collect (pull
+  credited funds).
 - Controller-only: increase_locked, decrease_locked, record_premium_income,
-  send_payout, process_withdrawal_queue, snapshot.
+  send_payout, process_withdrawal_queue, set_solvency_ratio (mirror push),
+  snapshot.
 - Owner-only: recover_uncollected (manual fallback for archived claimable
   balances) — has two modes: re-credit storage or transfer directly.
 
-**Why a withdrawal queue:** redemptions can exceed free capital when policies
-are heavily locked. The queue lets underwriters request now and collect
-later when capital frees up via on-time premiums or expired claim sweeps.
+**Why a withdrawal queue:** redemptions can exceed withdrawable capital when
+policies are heavily locked. The queue lets underwriters request now and
+collect later when capital frees up via on-time premiums or expired claim
+sweeps.
 
 ### 3. FlightPoolManager
 
@@ -228,10 +234,10 @@ counters and a per-traveler purchase index.
 **State:**
 - Addresses of governance, vault, oracle, pool manager, stablecoin.
 - Authorized keeper address.
-- Tunables: solvency ratio (% of payoff that must be free in vault),
-  minimum lead time (how far ahead a flight must be to insure), claim
-  expiry window (how long after settlement a delayed/cancelled claim can be
-  collected).
+- Tunables: solvency ratio (% of locked payoff that TMA must keep covering;
+  mirrored into the vault so exits respect it too), minimum lead time (how
+  far ahead a flight must be to insure), claim expiry window (how long after
+  settlement a delayed/cancelled claim can be collected).
 - Aggregate counters: total policies sold, total premiums, total payouts.
 - Per-traveler index: list of `(flight_id, date)` ever purchased — feeds
   the "my policies" frontend without scanning all flights.
@@ -239,8 +245,9 @@ counters and a per-traveler purchase index.
 **Key operations:**
 - Traveler: buy_insurance — validates route, checks lead time, requires the
   oracle's live sale authorization (no attestation, no sale), registers
-  flight if new, checks solvency, transfers premium, locks collateral,
-  records buyer, updates index.
+  flight if new (later buyers use the bucket's snapshotted terms, re-checked
+  against the current governance term limits), checks solvency, transfers
+  premium, locks collateral, records buyer, updates index.
 - Keeper: classify_flights — iterates oracle's active list, classifies
   Landed/Cancelled flights into ToBeSettled* by comparing actual vs.
   estimated arrival times against the route's delay threshold.
@@ -508,7 +515,8 @@ Underwriter
 Later, during queue maintenance:
    - Controller.run_queue_maintenance()
       -> Vault.process_withdrawal_queue()
-         For each request from head, while free capital allows:
+         For each request from head, while withdrawable capital
+         (TMA above the solvency reserve on locked collateral) allows:
            - Burn escrowed shares.
            - ClaimableBalance(underwriter) += equivalent assets.
            - TMA -= equivalent assets.
@@ -526,6 +534,13 @@ Underwriter
 1. **Solvency:** `Locked Capital <= Total Managed Assets` at all times.
 2. **Solvency on new policy:** `Total Managed Assets >= (Locked Capital +
    payoff) * solvency_ratio` at buy time (aggregate, not per-policy).
+2b. **Solvency on exit:** every LP exit (direct or queued) is capped at
+   `TMA − ceil(Locked × solvency_ratio / 100)`, so withdrawals cannot strip
+   the reserve invariant 2 was admitted against.
+2c. **Term limits on every sale:** the terms a purchase actually uses — the
+   pool bucket's snapshot for already-registered flights — must satisfy the
+   CURRENT governance term limits, not just the limits in force when the
+   bucket was first registered.
 3. **No double claim:** a traveler can claim at most once per (flight, date).
 4. **No double sweep:** sweep is idempotent (claimed_count == buyer_count
    after sweep).
@@ -633,8 +648,9 @@ This architecture targets any chain with:
   rollback. Atomicity assumed.
 - **Withdrawal-queue ordering must be FIFO** for fairness — preserve insert
   order regardless of underlying storage primitive. When the oldest request
-  exceeds currently-free capital, fund the part free capital covers (partial
-  fill) and keep the remainder at the head — an oversized head request must
+  exceeds the currently withdrawable capital (TMA above the solvency reserve
+  on locked collateral), fund the part that capital covers (partial fill)
+  and keep the remainder at the head — an oversized head request must
   degrade into slower progress, never into a frozen exit path.
 - **Per-traveler index is bounded**: it keeps the most recent 1,000 flights
   per traveler, evicting the oldest on overflow (full history stays in

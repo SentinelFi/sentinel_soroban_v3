@@ -38,6 +38,13 @@ pub(crate) const MAX_ACTIVE_REQUESTS_PER_ADDRESS: u32 = 20;
 /// deposit.
 pub(crate) const MIN_REQUEST_FLOOR_DIVISOR: i128 = 2500;
 
+/// Bounds on the controller-pushed solvency ratio, mirroring the controller's
+/// own owner-setter bounds so the two contracts can never hold a value the
+/// other would reject: at least nominal backing (100%), at most a 100×
+/// sanity cap.
+pub(crate) const MIN_SOLVENCY_RATIO: u32 = 100;
+pub(crate) const MAX_SOLVENCY_RATIO: u32 = 10_000;
+
 /// 60 days at 5s/ledger = 60 * 24 * 60 * 12 = 1_036_800.
 /// Applied on every `ClaimableBalance(addr)` write to prevent silent archival
 /// of per-user pending asset. Layered defense:

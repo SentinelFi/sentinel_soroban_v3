@@ -4,7 +4,7 @@ use soroban_sdk::{contractimpl, Address, Env, Symbol};
 
 use crate::storage::{
     extend_route_index_ttl, extend_route_ttl, read_defaults, read_term_limits, resolve_terms,
-    resolved_terms_valid, DataKey, RouteTerms,
+    resolved_terms_valid, DataKey, ResolvedTerms, RouteTerms,
 };
 use crate::{GovernanceModule, GovernanceModuleArgs, GovernanceModuleClient, RouteStatus};
 
@@ -100,6 +100,20 @@ impl GovernanceModule {
                 }
             }
         }
+    }
+
+    /// Return whether already-resolved terms are admissible for NEW exposure
+    /// under the current defaults-independent validity rules and owner-set
+    /// term limits. `route_status` applies these checks to a route's CURRENT
+    /// terms, but the controller may replace those with a pool bucket's
+    /// snapshot taken when the bucket was first registered — terms this
+    /// module never sees again. Without re-checking the terms actually
+    /// charged and locked, lowering the limits could not stop further sales
+    /// on a pre-existing oversized bucket. Existing policies keep their
+    /// snapshotted terms for settlement; only admission of new buyers is
+    /// judged here.
+    pub fn terms_valid(e: &Env, terms: ResolvedTerms) -> bool {
+        resolved_terms_valid(e, &terms)
     }
 
     /// Return whether the given address has admin rights.

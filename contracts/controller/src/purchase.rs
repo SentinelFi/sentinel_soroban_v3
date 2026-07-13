@@ -148,11 +148,25 @@ impl Controller {
                 if !oracle.has_flight_data(&flight_id, &date) {
                     panic_with_error!(e, Error::OracleDataUnavailable);
                 }
-                ResolvedTerms {
+                let snapshot = ResolvedTerms {
                     premium: cfg.premium,
                     payoff: cfg.payoff,
                     delay_hours: cfg.delay_hours,
+                };
+                // The route check above validated the route's CURRENT terms,
+                // but the terms actually charged and locked from here on are
+                // this snapshot — taken when the bucket was first registered,
+                // possibly under limits governance has since lowered. New
+                // exposure must satisfy the limits in force NOW, so the
+                // snapshot is re-validated before any value moves; otherwise
+                // a pre-existing oversized bucket would keep admitting buyers
+                // at terms the owner can no longer whitelist. Buyers already
+                // in the bucket are untouched — their settlement still uses
+                // the snapshot.
+                if !gov.terms_valid(&snapshot) {
+                    panic_with_error!(e, Error::SnapshotTermsExceedLimits);
                 }
+                snapshot
             }
             None => terms,
         };

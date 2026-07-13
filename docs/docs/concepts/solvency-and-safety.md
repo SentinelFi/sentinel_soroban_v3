@@ -9,7 +9,11 @@ Sentinel is built around a small set of invariants that hold at all times.
 
 ## Always solvent
 
-A policy is only sold if the vault's **free capital** (total managed assets minus already locked capital) covers the full payoff, scaled by a configurable solvency ratio. At purchase time the payoff amount is locked, so every outstanding policy is fully collateralized. Locked capital can never exceed total managed assets.
+A policy is only sold if the vault's total managed assets cover all locked payoffs plus the new one, scaled by a configurable solvency ratio. At purchase time the payoff amount is locked, so every outstanding policy is fully collateralized. Locked capital can never exceed total managed assets.
+
+The same reserve is enforced when capital leaves: underwriter withdrawals (direct or queued) are capped to the assets above the ratio-scaled locked capital, so an exit can never strip the safety margin that purchases were admitted against.
+
+Term limits are also enforced on the terms a purchase actually uses. When a flight already has a registered pool with snapshotted terms, new buyers are only admitted if that snapshot still satisfies the current owner-set payoff caps — lowering the caps immediately stops new exposure at old, larger terms while existing policies keep their promised payout.
 
 ## Pull based payments
 

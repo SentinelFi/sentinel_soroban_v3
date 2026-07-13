@@ -14,7 +14,11 @@
 //! State:
 //! - **Total Managed Assets (TMA)** — the pool's accounting balance.
 //! - **Locked capital** — reserved against outstanding policies; free capital
-//!   is `TMA − locked`.
+//!   is `TMA − locked`, and exits are further bounded by the withdrawable
+//!   amount `TMA − ceil(locked × solvency_ratio / 100)` so LP exits preserve
+//!   the same reserve margin the controller admits policies against.
+//! - **Solvency ratio** — controller-mirrored copy of the owner-configured
+//!   collateralization percentage (100 until first pushed).
 //! - **Withdrawal queue** — FIFO share-redemption requests for when free
 //!   capital is insufficient for an immediate redeem.
 //! - **Claimable balances** — per-underwriter pull-based payouts.

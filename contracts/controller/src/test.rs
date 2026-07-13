@@ -262,6 +262,9 @@ fn test_set_solvency_ratio() {
     let t = setup();
     t.ctrl.set_solvency_ratio(&150);
     assert_eq!(t.ctrl.get_solvency_ratio(), 150);
+    // Mirrored into the vault in the same transaction, so LP exits are
+    // bounded by the same reserve purchases are admitted against.
+    assert_eq!(t.vault.get_solvency_ratio(), 150);
 }
 
 #[test]
@@ -759,6 +762,97 @@ fn test_buy_insurance_panics_after_sale_closed() {
         &symbol_short!("LAX"),
         &FLIGHT_DATE,
     );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #320)")]
+fn test_buy_insurance_rejects_snapshot_above_lowered_term_limits() {
+    // The route check validates the CURRENT route terms, but later buyers of
+    // a registered bucket transact at the bucket's snapshot. Lowering the
+    // term limits must stop NEW exposure at an oversized snapshot even when
+    // the route itself has been brought back under the cap.
+    let t = setup();
+    // First buyer snapshots the bucket at the original terms (payoff 50).
+    let first = Address::generate(&t.env);
+    buy(&t, &first);
+
+    // Owner lowers the payoff cap below the snapshot, then updates the route
+    // to compliant terms (payoff 20) so route_status reads Active again.
+    t.gov.set_term_limits(&20_0000000, &5);
+    t.gov.update_route_terms(
+        &t.owner,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &governance_module::PremiumUpdate::Keep,
+        &governance_module::PayoffUpdate::Set(20_0000000),
+        &governance_module::DelayHoursUpdate::Keep,
+    );
+
+    // The bucket's snapshotted payoff (50) exceeds the current cap — the
+    // second purchase must be rejected despite the compliant route.
+    let second = Address::generate(&t.env);
+    buy(&t, &second);
+}
+
+#[test]
+fn test_lowered_term_limits_leave_new_buckets_sellable() {
+    // Companion to the rejection test: closing an oversized bucket to new
+    // buyers must not block the route — fresh flight dates snapshot the
+    // compliant current terms and sell normally, and the closed bucket's
+    // stored terms and buyer count stay untouched for settlement.
+    let t = setup();
+    let first = Address::generate(&t.env);
+    buy(&t, &first); // bucket snapshotted at payoff 50
+
+    t.gov.set_term_limits(&20_0000000, &5);
+    t.gov.update_route_terms(
+        &t.owner,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &governance_module::PremiumUpdate::Keep,
+        &governance_module::PayoffUpdate::Set(20_0000000),
+        &governance_module::DelayHoursUpdate::Keep,
+    );
+
+    // Old bucket: closed to new buyers, unchanged in storage.
+    let second = Address::generate(&t.env);
+    open_sale(&t, &symbol_short!("AA100"), FLIGHT_DATE);
+    t.asset_admin.mint(&second, &PREMIUM);
+    assert!(t
+        .ctrl
+        .try_buy_insurance(
+            &second,
+            &symbol_short!("AA100"),
+            &symbol_short!("JFK"),
+            &symbol_short!("LAX"),
+            &FLIGHT_DATE,
+        )
+        .is_err());
+    let cfg = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .unwrap();
+    assert_eq!(cfg.payoff, PAYOFF);
+    assert_eq!(cfg.buyer_count, 1);
+
+    // A fresh flight date snapshots the compliant current terms and sells.
+    let next_date = FLIGHT_DATE + SECONDS_PER_DAY;
+    open_sale(&t, &symbol_short!("AA100"), next_date);
+    t.ctrl.buy_insurance(
+        &second,
+        &symbol_short!("AA100"),
+        &symbol_short!("JFK"),
+        &symbol_short!("LAX"),
+        &next_date,
+    );
+    let cfg2 = t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &next_date)
+        .unwrap();
+    assert_eq!(cfg2.payoff, 20_0000000);
+    assert_eq!(cfg2.buyer_count, 1);
 }
 
 #[test]

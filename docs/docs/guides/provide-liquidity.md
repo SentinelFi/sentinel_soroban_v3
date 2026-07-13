@@ -35,8 +35,8 @@ Amounts use 7 decimals, so `1000000000` is 100 USDC.
 
 There are two paths:
 
-1. **Immediate**: call `redeem` with your shares. This succeeds when the vault has enough free (unlocked) capital.
-2. **Queued**: call `request_withdrawal` with your shares. Your shares are escrowed and your request joins a FIFO queue. The queue is processed automatically every few minutes as capital frees up; a request larger than the currently free capital is filled progressively (partial fills), so the queue keeps moving whenever any capital is free. Once processed — fully or partially — call `collect` to receive the USDC credited so far. You can cancel a pending request (its remaining shares) with `cancel_withdrawal`.
+1. **Immediate**: call `redeem` with your shares. This succeeds when the vault has enough withdrawable capital — assets above the solvency reserve held against outstanding policies (`get_withdrawable_capital` shows the current figure).
+2. **Queued**: call `request_withdrawal` with your shares. Your shares are escrowed and your request joins a FIFO queue. The queue is processed automatically every few minutes as capital frees up; a request larger than the currently withdrawable capital is filled progressively (partial fills), so the queue keeps moving whenever any capital is payable. Once processed — fully or partially — call `collect` to receive the USDC credited so far. You can cancel a pending request (its remaining shares) with `cancel_withdrawal`.
 
 A minimum withdrawal request size applies (100 USDC on testnet) to prevent dust spam.
 

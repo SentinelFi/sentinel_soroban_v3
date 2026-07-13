@@ -3,6 +3,7 @@ use crate::constants::{
     MIN_CLAIM_EXPIRY_WINDOW_SECS, MIN_SOLVENCY_RATIO,
 };
 use crate::events::{ClaimExpiryWindowSet, KeeperSet, MinLeadTimeSet, SolvencyRatioSet};
+use crate::interfaces::VaultClient;
 use crate::storage::CtrlKey;
 use crate::{Controller, ControllerArgs, ControllerClient, Error};
 pub(crate) use sentinel_types::ttl::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
@@ -112,11 +113,19 @@ impl Controller {
         KeeperSet { keeper }.publish(e);
     }
 
-    /// Sets the vault solvency ratio (validated against allowed bounds).
+    /// Sets the vault solvency ratio (validated against allowed bounds) and
+    /// mirrors it into the RiskVault in the same transaction. The controller
+    /// enforces the ratio when policies increase locked liabilities; the
+    /// vault enforces the identical value when assets leave through LP exits.
+    /// Pushing (rather than the vault reading it back) is required because
+    /// the vault cannot call the controller while the controller is invoking
+    /// it, and atomicity guarantees the two copies never diverge.
     #[only_owner]
     pub fn set_solvency_ratio(e: &Env, ratio: u32) {
         assert_solvency_ratio(e, ratio);
         e.storage().instance().set(&CtrlKey::SolvencyRatio, &ratio);
+        let vault_addr: Address = e.storage().instance().get(&CtrlKey::RiskVault).unwrap();
+        VaultClient::new(e, &vault_addr).set_solvency_ratio(&e.current_contract_address(), &ratio);
         Self::extend_ttl(e);
         SolvencyRatioSet { ratio }.publish(e);
     }
