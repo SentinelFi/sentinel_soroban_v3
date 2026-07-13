@@ -8,22 +8,19 @@
 // post-settle TTL on FlightConfig — long enough that a cron lapse cannot
 // archive the entry while a buyer can still claim.
 
-// Buyer key TTL: 180 days at add_buyer time.
-// Architecture says "claim_expiry + 30d on write" but add_buyer runs before
-// settlement, so claim_expiry is unknown at write time. 180 days covers worst
-// case 90d flight book-ahead + 60d claim window + 30d safety. No re-extension
-// needed because the contract cannot iterate buyers after settlement.
-// 180 days at 5s/ledger = 180 * 24 * 60 * 12 = 3,110,400.
-pub(crate) const BUYER_TTL_LEDGERS: u32 = 3_110_400;
-
-/// Latest claim deadline a settlement may open, measured from the flight
-/// date. Buyer proofs are written at purchase with the fixed 180-day network
-/// maximum TTL and cannot be re-extended later (there is no iterable buyer
-/// list). The earliest possible purchase is 90 days before departure, so
-/// every proof is guaranteed alive until at least `date + 90 days` — and no
-/// longer. A claim window reaching past that point would stay open while the
-/// earliest buyers' proofs archive, turning their valid claims into NoPolicy.
-pub(crate) const MAX_CLAIM_DEADLINE_AFTER_DATE_SECS: u64 = 90 * 86_400;
+// Buyer key TTL: written once at add_buyer time (settlement-time deadlines
+// are unknown then, and the contract cannot iterate buyers afterwards to
+// re-extend on-chain; key-level extension by the off-chain TTL cron —
+// reconstructing buyer keys from `BuyerAdded` events — is a planned executor
+// improvement, not implemented today). The constant is shared with the
+// controller through `sentinel_types::timeouts`, together with the
+// claim-deadline cap below, because the two jointly carry a cross-crate
+// invariant: booking horizon + claim-deadline cap must fit inside the proof
+// lifetime. The controller compile-time-asserts that bound against these
+// same definitions, so a change to either side trips it.
+pub(crate) use sentinel_types::timeouts::{
+    BUYER_PROOF_TTL_LEDGERS as BUYER_TTL_LEDGERS, MAX_CLAIM_DEADLINE_AFTER_DATE_SECS,
+};
 
 /// Sanity cap on the paginated active-flight set. The set lives in
 /// per-page persistent entries (see `sentinel_types::active_set`), so

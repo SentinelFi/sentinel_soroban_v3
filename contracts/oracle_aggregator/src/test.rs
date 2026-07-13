@@ -520,6 +520,26 @@ fn test_close_sale_removes_authorization() {
 }
 
 #[test]
+fn test_close_sale_works_while_paused() {
+    // A live sale window stays readable — and purchasable through the
+    // controller — regardless of this contract's pause state, so the pause
+    // switch must not disable the one write that can revoke it. Pausing
+    // still blocks NEW attestations; only the strictly protective close
+    // stays open.
+    let (env, client, owner, oracle, _controller) = setup();
+    let fid = flight_id(&env);
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600);
+    assert!(client.is_sale_open(&fid, &FLIGHT_DATE));
+
+    client.pause(&owner);
+    assert!(client
+        .try_open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600)
+        .is_err());
+    client.close_sale(&oracle, &fid, &FLIGHT_DATE);
+    assert!(!client.is_sale_open(&fid, &FLIGHT_DATE));
+}
+
+#[test]
 fn test_set_cancelled_clears_sale_authorization() {
     let (env, client, _owner, oracle, controller) = setup();
 

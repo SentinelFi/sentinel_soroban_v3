@@ -108,11 +108,17 @@ pub struct ControllerSet {
 // The barrier is the vault's core LP-pricing protection, so a re-wire is a
 // security-relevant configuration change — off-chain monitoring subscribes to
 // this to detect an unexpected (or missing) barrier target. Mirrors the
-// oracle contract's own `oracle_set` audit event.
+// oracle contract's own `oracle_set` audit event. `forced` records which
+// path performed the rotation: the checked one (old oracle read clear of
+// pending outcomes) or the paused-only escape hatch that skipped the check
+// because the old oracle was unreachable — monitoring treats a forced
+// rotation as an open incident until the pending PnL is reconciled and the
+// vault deliberately unpaused.
 #[contractevent(topics = ["sentinel", "oracle_set"], data_format = "single-value")]
 pub struct OracleSet {
     #[topic]
     pub(crate) oracle: Address,
+    pub(crate) forced: bool,
 }
 
 // Controller mirrored the owner-configured solvency ratio into the vault.

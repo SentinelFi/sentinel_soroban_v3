@@ -52,7 +52,7 @@ Called by the authorized oracle executor:
 - `set_landed`: records the actual arrival time.
 - `set_cancelled`: marks a cancellation (and deletes any live sale authorization for the flight).
 - `open_sale(flight_id, date, expires_at)`: opens or refreshes the sale window — the oracle's short-lived attestation (at most 24 hours, never past the departure day) that the flight instance was verified scheduled and not cancelled. The Controller requires a live window for every purchase.
-- `close_sale(flight_id, date)`: revokes a sale window ahead of its expiry.
+- `close_sale(flight_id, date)`: revokes a sale window ahead of its expiry. Deliberately works even while the contract is paused — already-open windows keep authorizing purchases through the Controller for up to 24 hours regardless of the oracle's pause state, so the revoking write must stay available during incidents.
 
 ## Controller-only functions
 

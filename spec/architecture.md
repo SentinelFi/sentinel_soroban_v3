@@ -325,6 +325,19 @@ vault is composable with any vault-aware tooling.
   - **Zero-value drop.** A request whose asset value has decayed to zero (share price fell
     after it was queued) is not left blocking the head: its escrowed shares are returned to
     the owner, `RequestDropped` is emitted (no `Credited` fires), and the scan continues.
+  - **Queued exits hold no reservation against new underwriting (deliberate).** Purchases
+    and queue processing are unsynchronized consumers of the same withdrawable capital:
+    capital freed by a settlement can be re-locked by new policies before the keeper's next
+    queue-maintenance pass, and nothing entitles the queue head to capital that was
+    withdrawable at an earlier instant. Queued requests keep strict FIFO priority *among
+    themselves* (and block direct exits), but sustained purchase demand can defer exits —
+    a liquidity characteristic of the design, not a solvency issue (escrowed shares retain
+    full value). Operator levers: the solvency ratio above 100% structurally reserves a
+    margin purchases cannot lock, and the `wd_req` events carry queue occupancy for
+    monitoring queue back-pressure. If product requirements ever demand that queued exits
+    reserve future liquidity ahead of new underwriting, that rule must be specified and
+    implemented explicitly (e.g. tightening the purchase solvency check by the queue's
+    outstanding asset value).
 - `cancel_withdrawal(caller, request_id)` cancels a pending request by its stable id and
   releases reserved shares. Indices shift when earlier requests drain — request_id stays
   put.
@@ -413,7 +426,7 @@ pub struct WithdrawalRequest {
 ("sentinel", "wd_partial", <owner>) → RequestPartiallyFilled (request_id, shares_filled, shares_remaining)
 ("sentinel", "wd_dropped", <owner>) → RequestDropped         (request_id, shares)
 ("sentinel", "controller_set", <controller>) → ControllerSet
-("sentinel", "oracle_set", <oracle>)          → OracleSet
+("sentinel", "oracle_set", <oracle>)          → OracleSet (forced: bool — true when force_set_oracle skipped the pending-outcomes check)
 ("sentinel", "min_wd_req_set")                → MinWithdrawalRequestSet (min_assets)
 ("sentinel", "ratio_set")                     → SolvencyRatioSet (ratio)
 ```
@@ -997,7 +1010,13 @@ fn open_sale(env: Env, oracle: Address,
                                                            // is recorded
 fn close_sale(env: Env, oracle: Address,
               flight_id: Symbol, date: u64);               // revoke ahead of expiry;
-                                                           // idempotent
+                                                           // idempotent. Pause-EXEMPT:
+                                                           // open windows outlive a
+                                                           // pause (temporary storage,
+                                                           // read by the controller),
+                                                           // so the revoking write
+                                                           // must stay available
+                                                           // during incidents
 
 // Controller-only
 fn register_flight(env: Env, controller: Address,
@@ -1923,6 +1942,8 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Collect credited USDC | Underwriter | `risk_vault.collect(caller)` |
 | Cancel queued withdrawal | Underwriter | `risk_vault.cancel_withdrawal(caller, request_id)` |
 | Recover uncollected balance | Owner | `risk_vault.recover_uncollected(user, amount, mode: RecoveryMode)` (Recredit must not underpay; Transfer requires prior credit) |
+| Rotate settlement-barrier oracle | Owner | `risk_vault.set_oracle(oracle)` (refuses while the current oracle has pending outcomes) |
+| Force-rotate barrier oracle (old oracle unreachable) | Owner | `risk_vault.force_set_oracle(oracle)` (requires the vault paused; emits `oracle_set` with `forced = true`) |
 | Pause / unpause | Owner | `<contract>.pause(caller)` / `unpause(caller)` (every production contract) |
 | Read free capital (nominal margin) | Anyone | `risk_vault.get_free_capital()` |
 | Read withdrawable capital (exit bound) | Anyone | `risk_vault.get_withdrawable_capital()` |
@@ -2072,11 +2093,18 @@ Network configuration (testnet RPC URL, passphrase, contract addresses) lives in
         FlightPoolManager.set_controller(CONTRACT_ID_CONTROLLER)   <- one-time, immutable
         (RiskVault's settlement-barrier oracle is wired in the constructor,
          step 2c — no post-deploy call needed. RiskVault.set_oracle exists
-         only to rotate it if the oracle contract is ever redeployed; it and
-         set_min_withdrawal_request emit `oracle_set` / `min_wd_req_set`
-         audit events. Note set_oracle points at the oracle CONTRACT —
-         distinct from OracleAggregator.set_oracle, which sets the off-chain
-         oracle executor address.)
+         only to rotate it if the oracle contract is ever redeployed; it
+         refuses while the CURRENT oracle still reports pending public
+         outcomes, because a fresh oracle starts at zero pending and the
+         swap would open the barrier at a stale share price mid-incident.
+         If the old oracle is unreachable, pause the vault and use
+         RiskVault.force_set_oracle — the vault then stays paused until the
+         old oracle's pending PnL is reconciled and the owner deliberately
+         unpauses. Both paths and set_min_withdrawal_request emit
+         `oracle_set` (with a `forced` flag) / `min_wd_req_set` audit
+         events. Note set_oracle points at the oracle CONTRACT — distinct
+         from OracleAggregator.set_oracle, which sets the off-chain oracle
+         executor address.)
         RiskVault.set_min_withdrawal_request(MIN_ASSETS)           <- REQUIRED: minimum asset value
                                                                       per queued withdrawal request.
                                                                       Ships disabled (0); if left at 0,
