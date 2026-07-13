@@ -872,6 +872,122 @@ fn test_active_set_add_rejects_duplicate_when_index_archived() {
     });
 }
 
+#[test]
+fn test_unpause_restores_oracle_writes() {
+    let (env, client, owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+
+    client.pause(&owner);
+    assert!(client.paused());
+    assert!(client
+        .try_set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL)
+        .is_err());
+
+    client.unpause(&owner);
+    assert!(!client.paused());
+    client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);
+    assert_eq!(
+        client.get_flight_data(&fid, &FLIGHT_DATE).status,
+        FlightStatus::Active
+    );
+}
+
+#[test]
+fn test_prune_settled_cursor_wraps_after_list_shrinks() {
+    // The prune cursor persists between calls while the set shrinks as
+    // entries are pruned or evicted. A stale cursor at or past the current
+    // length must wrap to slot 0 and keep sweeping.
+    let (env, client, _owner, oracle, controller) = setup();
+    // Nonzero settle time — settled_at == 0 is prune's not-yet-settled
+    // sentinel, and the test env's clock starts at 0.
+    env.ledger().with_mut(|l| l.timestamp = FLIGHT_DATE);
+    for fid in [symbol_short!("AA100"), symbol_short!("UA200")] {
+        client.register_flight(&controller, &fid, &FLIGHT_DATE);
+        client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);
+        client.set_landed(&oracle, &fid, &FLIGHT_DATE, &ACT_ARRIVAL);
+        client.set_to_be_settled(
+            &controller,
+            &fid,
+            &FLIGHT_DATE,
+            &FlightStatus::ToBeSettledOnTime,
+        );
+        client.set_settled(&controller, &fid, &FLIGHT_DATE);
+    }
+    // Age both flights past the settled-retention window, then leave a
+    // cursor stranded beyond the 2-entry list.
+    env.ledger().with_mut(|l| l.timestamp += 8 * 86_400);
+    env.as_contract(&client.address, || {
+        env.storage().instance().set(&OracleKey::PruneCursor, &9u32);
+    });
+    client.prune_settled();
+    assert_eq!(client.get_active_flight_count(), 0);
+}
+
+#[test]
+fn test_active_set_remove_absent_and_stale_index_fallbacks() {
+    use sentinel_types::active_set::{self, ActiveSetKey};
+    let (env, client, _owner, _oracle, controller) = setup();
+
+    // Removing from an empty set is a clean refusal, not a panic.
+    env.as_contract(&client.address, || {
+        assert!(!active_set::remove(
+            &env,
+            &symbol_short!("AA100"),
+            FLIGHT_DATE
+        ));
+    });
+
+    // A stale reverse index pointing at ANOTHER entry's slot must not remove
+    // the wrong entry: removal re-validates the index against the page
+    // contents and falls back to the scan.
+    client.register_flight(&controller, &symbol_short!("AA100"), &FLIGHT_DATE);
+    client.register_flight(&controller, &symbol_short!("UA200"), &FLIGHT_DATE);
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(
+            &ActiveSetKey::ActiveIdx(symbol_short!("AA100"), FLIGHT_DATE),
+            &1u32,
+        );
+        assert!(active_set::remove(
+            &env,
+            &symbol_short!("AA100"),
+            FLIGHT_DATE
+        ));
+        assert!(active_set::contains(
+            &env,
+            &symbol_short!("UA200"),
+            FLIGHT_DATE
+        ));
+        assert!(!active_set::contains(
+            &env,
+            &symbol_short!("AA100"),
+            FLIGHT_DATE
+        ));
+        assert_eq!(active_set::count(&env), 1);
+    });
+}
+
+#[test]
+fn test_paged_read_skips_archived_page_without_losing_count() {
+    // An archived page degrades availability, never integrity: enumeration
+    // skips it (emitting the page-miss diagnostic) instead of panicking, and
+    // the count still reports the entries awaiting restoration.
+    use sentinel_types::active_set::ActiveSetKey;
+    let (env, client, _owner, _oracle, controller) = setup();
+    client.register_flight(&controller, &symbol_short!("AA100"), &FLIGHT_DATE);
+    client.register_flight(&controller, &symbol_short!("UA200"), &FLIGHT_DATE);
+
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&ActiveSetKey::ActivePage(0));
+    });
+
+    let page = client.get_active_flights_page(&0, &10);
+    assert_eq!(page.len(), 0);
+    assert_eq!(client.get_active_flight_count(), 2);
+}
+
 // --- Read function tests ---
 
 #[test]

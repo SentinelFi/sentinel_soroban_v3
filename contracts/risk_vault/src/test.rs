@@ -40,9 +40,10 @@ fn setup() -> (Env, RiskVaultClient<'static>, Address, Address, Address) {
 
 #[test]
 fn test_constructor() {
-    let (env, client, owner, _controller, _depositor) = setup();
+    let (env, client, owner, controller, _depositor) = setup();
 
     assert_eq!(client.get_owner(), Some(owner));
+    assert_eq!(client.get_controller(), controller);
     assert_eq!(client.name(), String::from_str(&env, "RiskVault Share"));
     assert_eq!(client.symbol(), String::from_str(&env, "RVS"));
     assert_eq!(client.decimals(), 10);
