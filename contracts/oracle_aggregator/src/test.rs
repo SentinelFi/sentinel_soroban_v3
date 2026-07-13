@@ -829,6 +829,29 @@ fn test_active_set_add_rejects_duplicate_entry() {
     });
 }
 
+#[test]
+#[should_panic(expected = "entry already in active set")]
+fn test_active_set_add_rejects_duplicate_when_index_archived() {
+    // The reverse index can archive while the page holding the entry stays
+    // live (pages are re-extended by every keeper sweep; index lifetimes are
+    // sized to the flight date). The append backstop must stay exact in that
+    // state — falling back to the page scan `contains` uses — or a second
+    // registration would append a duplicate slot, corrupting the count and
+    // the swap-remove bookkeeping.
+    use sentinel_types::active_set::ActiveSetKey;
+    let (env, client, _owner, _oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+
+    env.as_contract(&client.address, || {
+        // Simulate the index archiving past its TTL while the page survives.
+        env.storage()
+            .persistent()
+            .remove(&ActiveSetKey::ActiveIdx(fid.clone(), FLIGHT_DATE));
+        sentinel_types::active_set::add(&env, &fid, FLIGHT_DATE);
+    });
+}
+
 // --- Read function tests ---
 
 #[test]
