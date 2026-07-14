@@ -3,9 +3,10 @@ name: Deploy Docs
 on:
   push:
     branches: [main]
-    # contracts/** is included so the published coverage report and badge
-    # refresh whenever contract code or tests change, not only on doc edits.
-    paths: ['docs/**', 'contracts/**', '.github/workflows/deploy-docs.yml']
+    paths:
+      - "docs/**"
+      - "contracts/**"
+      - ".github/workflows/deploy-docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -19,46 +20,38 @@ concurrency:
 
 jobs:
   coverage:
-    # Regenerates the coverage report + shields.io badge JSON from main.
-    # It lives in this workflow (not CI) because GitHub Pages serves exactly
-    # one artifact per site: the coverage output must ship inside the same
-    # artifact as the Docusaurus build, published at /coverage/.
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: contracts
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install pinned Rust toolchain
-        run: rustup show
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: contracts
 
-      - name: Cache cargo bin
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin
-          key: cargo-bin-llvm-cov-${{ runner.os }}
-
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
-
       - name: Install cargo-llvm-cov
-        run: cargo binstall -y cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Verify installation
+        run: |
+          rustup show
+          cargo --version
+          cargo llvm-cov --version
+          cargo --list | grep llvm
 
       - name: Run tests with coverage
-        # Browsable HTML report under target/llvm-cov/html.
         run: cargo llvm-cov test --html
 
       - name: Build shields.io badge JSON
-        # Reuses the run above; `report` reads the saved profiling data. The
-        # badge endpoint is served next to the report so shields.io can
-        # render live line coverage in the README.
         run: |
           pct=$(cargo llvm-cov report --summary-only --json | jq -r '.data[0].totals.lines.percent')
           msg=$(printf '%.1f%%' "$pct")
@@ -68,8 +61,11 @@ jobs:
             else if (p >= 60) print "yellow";
             else print "red";
           }')
-          printf '{"schemaVersion":1,"label":"coverage","message":"%s","color":"%s"}\n' "$msg" "$color" \
+
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s","color":"%s"}\n' \
+            "$msg" "$color" \
             > target/llvm-cov/html/badge.json
+
           cat target/llvm-cov/html/badge.json
 
       - name: Upload coverage output
@@ -82,24 +78,33 @@ jobs:
   build:
     needs: coverage
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: docs
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 22
+
       - name: Install dependencies
         run: npm install
+
       - name: Build site
         run: npm run build
+
       - name: Attach coverage report at /coverage/
         uses: actions/download-artifact@v4
         with:
           name: coverage-site
           path: docs/build/coverage
-      - name: Upload artifact
+
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs/build
@@ -107,9 +112,11 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
