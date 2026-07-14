@@ -39,6 +39,12 @@ jobs:
         with:
           workspaces: contracts
 
+      - name: Cache cargo bin
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: cargo-bin-llvm-cov-${{ runner.os }}
+
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
 
