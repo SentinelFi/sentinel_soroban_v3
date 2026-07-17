@@ -35,6 +35,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: contracts
+          cache-bin: "false"
 
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main

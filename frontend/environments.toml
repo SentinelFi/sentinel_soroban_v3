@@ -1,0 +1,66 @@
+# Sentinel Protocol — Environment Configuration
+# Used by Scaffold Stellar for contract binding generation and deployment
+
+[development]
+accounts = [{ name = "default", default = true }]
+
+[development.network]
+rpc-url = "https://soroban-testnet.stellar.org"
+network-passphrase = "Test SDF Network ; September 2015"
+
+# Testnet contract IDs (from deployments/testnet.json, deployed 2026-07-11)
+# Using id = "..." pins to existing deployed contracts — no redeploy needed
+[development.contracts.mock_usdc]
+id = "CC6QGWZYDSQ6BQRAK3WKEIBPVRFNTKLCNKRMF6NNWLAWLMQU7LQKIXDH"
+client = true
+
+[development.contracts.governance_module]
+id = "CB4GWBXFQ2TVHJVDYA7OOB7KNNASWCNNPW7BZDPYOCJZOBAXWK3B57VL"
+client = true
+
+[development.contracts.oracle_aggregator]
+id = "CDOLYXPIV63FGRCIPOFZY5HNRS34QZHZJVEUUVJHSFEFW5H4CHQHJEYZ"
+client = true
+
+[development.contracts.risk_vault]
+id = "CDW5YUJXGJWPVOQBXYVDZN7P7QQSE3U6VGIHBN24HZKKCS5QQ75OLIJE"
+client = true
+
+[development.contracts.flight_pool_manager]
+id = "CCEOYQREEASJ3F2EMNDJDP35ZXTMRVO3LKH3TGEZ6O2UDBCFVQNGDLWJ"
+client = true
+
+[development.contracts.controller]
+id = "CD7KCPQJFYSEUPJ43VXC6RIYCF4WPTVUHH3ANWNPYXTYGE2NBRXGFTXB"
+client = true
+
+[production]
+accounts = [{ name = "default", default = true }]
+
+[production.network]
+rpc-url = "https://soroban-rpc.mainnet.stellar.gateway.fm"
+network-passphrase = "Public Global Stellar Network ; September 2015"
+
+[production.contracts.controller]
+id = "TODO"
+client = true
+
+[production.contracts.risk_vault]
+id = "TODO"
+client = true
+
+[production.contracts.governance_module]
+id = "TODO"
+client = true
+
+[production.contracts.oracle_aggregator]
+id = "TODO"
+client = true
+
+[production.contracts.flight_pool_manager]
+id = "TODO"
+client = true
+
+[production.contracts.mock_usdc]
+id = "TODO"
+client = true
