@@ -1,0 +1,536 @@
+@import "tailwindcss";
+
+/* ────────────────────────────────────────────────────────────────
+   FLIGHTS.FUN design tokens
+   Ported from waitlist/spec/design-system.json (pixel-arcade-dark).
+   Hard edges, chunky borders, step shadows — no blur, no rounding.
+   ──────────────────────────────────────────────────────────────── */
+
+@theme {
+	/* backgrounds */
+	--color-page: #0b1736;
+	--color-surface: #0f1e40;
+	--color-raised: #152a55;
+	--color-inset: #0a1430;
+
+	/* borders */
+	--color-line: #1e3261;
+	--color-line-mid: #2a4276;
+	--color-line-strong: #3a5aa0;
+
+	/* text — mute is lifted for small-size legibility on #0b1736 (~5.8:1) */
+	--color-ink: #ffffff;
+	--color-dim: #a9bbdd;
+	--color-mute: #8296bd;
+
+	/* arcade neons — each carries a meaning */
+	--color-gold: #f5c13a; /* rewards / odds / stat numbers */
+	--color-win: #34d17a; /* on-time / success / claim */
+	--color-loss: #e74a4a; /* delayed / error */
+	--color-blip: #3a6bff; /* secondary CTA / step badges */
+	--color-sky: #5bc3e8; /* section headings / labels */
+
+	--color-shadow-hard: #07102a;
+
+	/* type stacks — pixel for display, a true neutral for everything read */
+	--font-display: "Press Start 2P", monospace;
+	--font-body:
+		ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+		"Helvetica Neue", Arial, sans-serif;
+	--font-board: "VT323", ui-monospace, monospace;
+
+	/* hard-edged: kill the default radius scale */
+	--radius-sm: 2px;
+
+	--shadow-px-sm: 0 2px 0 0 #07102a;
+	--shadow-px-md: 0 4px 0 0 #07102a;
+}
+
+/* ── base ─────────────────────────────────────────────────────── */
+
+html {
+	background-color: var(--color-page);
+}
+
+body {
+	margin: 0;
+	min-height: 100vh;
+	color: var(--color-dim);
+	font-family: var(--font-body);
+	font-size: 15px;
+	line-height: 1.5;
+	/* starfield: two layers of pixel stars over midnight blue */
+	background-color: var(--color-page);
+	background-image:
+		radial-gradient(1px 1px at 20% 30%, rgba(255, 255, 255, 0.9) 50%, transparent 51%),
+		radial-gradient(1px 1px at 60% 12%, rgba(255, 255, 255, 0.5) 50%, transparent 51%),
+		radial-gradient(1px 1px at 84% 46%, rgba(255, 255, 255, 0.7) 50%, transparent 51%),
+		radial-gradient(1px 1px at 38% 74%, rgba(255, 255, 255, 0.45) 50%, transparent 51%),
+		radial-gradient(1px 1px at 70% 80%, rgba(255, 255, 255, 0.8) 50%, transparent 51%);
+	background-size:
+		240px 240px,
+		320px 320px,
+		280px 280px,
+		360px 360px,
+		300px 300px;
+}
+
+::selection {
+	background: var(--color-gold);
+	color: var(--color-page);
+}
+
+/* Element resets live in the `base` layer so component classes
+   (.btn-px etc.) win over them, while per-instance utilities still win.
+   Unlayered here would beat the layered components — that silently forced
+   every <button> back to the body font. */
+@layer base {
+	button {
+		cursor: pointer;
+		font-family: inherit;
+	}
+	button:disabled {
+		cursor: not-allowed;
+	}
+
+	input,
+	select {
+		font-family: var(--font-body);
+	}
+}
+
+/* Component classes live in the `components` layer so Tailwind
+   utilities (text-*, p-*, …) can override them per-instance. */
+@layer components {
+/* ── pixel utilities ──────────────────────────────────────────── */
+
+.pixelated {
+	image-rendering: pixelated;
+}
+
+/* 8-bit notched corners (cuts 4px squares off each corner) */
+.notch {
+	clip-path: polygon(
+		4px 0,
+		calc(100% - 4px) 0,
+		100% 4px,
+		100% calc(100% - 4px),
+		calc(100% - 4px) 100%,
+		4px 100%,
+		0 calc(100% - 4px),
+		0 4px
+	);
+}
+
+/* CRT scanlines for the departures board well */
+.scanlines {
+	background-image: repeating-linear-gradient(
+		0deg,
+		rgba(0, 0, 0, 0.22) 0px,
+		rgba(0, 0, 0, 0.22) 1px,
+		transparent 1px,
+		transparent 3px
+	);
+	pointer-events: none;
+}
+
+/* ── panels ───────────────────────────────────────────────────── */
+
+.panel {
+	background: var(--color-surface);
+	border: 2px solid var(--color-line);
+	box-shadow: var(--shadow-px-sm);
+}
+
+.panel-raised {
+	background: var(--color-raised);
+	border: 2px solid var(--color-line-mid);
+	box-shadow: var(--shadow-px-md);
+}
+
+.panel-inset {
+	background: var(--color-inset);
+	border: 2px solid var(--color-line);
+}
+
+/* ── pixel buttons: 2px border + hard step shadow, flattens on press ── */
+
+.btn-px {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	font-family: var(--font-display);
+	font-size: 11px;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	padding: 12px 16px;
+	border: 2px solid;
+	box-shadow: var(--shadow-px-md);
+	transition:
+		transform 120ms steps(2, end),
+		box-shadow 120ms steps(2, end),
+		filter 120ms steps(2, end);
+	user-select: none;
+	white-space: nowrap;
+}
+/* hover is a tonal shift, not a jump — the press (:active) is the motion */
+.btn-px:hover:not(:disabled) {
+	filter: brightness(1.12);
+}
+.btn-px:active:not(:disabled) {
+	transform: translateY(2px);
+	box-shadow: var(--shadow-px-sm);
+}
+.btn-px:focus-visible {
+	outline: 2px solid var(--color-sky);
+	outline-offset: 2px;
+}
+.btn-px:disabled {
+	opacity: 0.45;
+	transform: none;
+}
+
+.btn-gold {
+	background: var(--color-gold);
+	color: var(--color-page);
+	border-color: #c99a1c;
+}
+.btn-win {
+	background: var(--color-win);
+	color: var(--color-page);
+	border-color: #1e9e58;
+}
+.btn-loss {
+	background: var(--color-loss);
+	color: #ffffff;
+	border-color: #a32b2b;
+}
+.btn-blip {
+	background: var(--color-surface);
+	color: var(--color-blip);
+	border-color: var(--color-blip);
+}
+.btn-ghost {
+	background: transparent;
+	color: var(--color-ink);
+	border-color: var(--color-line-mid);
+	box-shadow: none;
+}
+
+.btn-sm {
+	font-size: 9px;
+	padding: 8px 10px;
+}
+
+/* ── pixel pagination controls (departures board) ─────────────── */
+
+.page-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-family: var(--font-display);
+	font-size: 9px;
+	letter-spacing: 0.04em;
+	padding: 8px 12px;
+	color: var(--color-sky);
+	background: var(--color-inset);
+	border: 2px solid var(--color-line-mid);
+	box-shadow: var(--shadow-px-sm);
+	transition: filter 120ms steps(2, end);
+	user-select: none;
+	white-space: nowrap;
+}
+.page-btn:hover:not(:disabled) {
+	color: var(--color-ink);
+	border-color: var(--color-line-strong);
+	filter: brightness(1.2);
+}
+.page-btn:active:not(:disabled) {
+	transform: translateY(2px);
+	box-shadow: none;
+}
+.page-btn:focus-visible {
+	outline: 2px solid var(--color-sky);
+	outline-offset: 2px;
+}
+.page-btn:disabled {
+	opacity: 0.35;
+	box-shadow: none;
+}
+
+/* ── pixel form fields ────────────────────────────────────────── */
+
+.field-px {
+	width: 100%;
+	background: var(--color-raised);
+	border: 2px solid var(--color-line);
+	color: var(--color-ink);
+	font-family: var(--font-body);
+	font-size: 15px;
+	line-height: 1.2;
+	padding: 10px 12px;
+}
+.field-px:focus {
+	outline: none;
+	border-color: var(--color-sky);
+}
+.field-px::placeholder {
+	color: var(--color-mute);
+}
+/* keep the native date-picker icon visible on dark */
+input.field-px[type="date"] {
+	color-scheme: dark;
+}
+
+/* ── pixel range sliders (underwriter calculator) ─────────────── */
+/* Chunky square controls: a hard-stop gold fill painted onto the track
+   via --fill (set inline per slider), and a tall knob with a step shadow.
+   No rounding anywhere — these are levers, not pills. */
+
+.slider-px {
+	-webkit-appearance: none;
+	appearance: none;
+	display: block;
+	width: 100%;
+	height: 34px; /* room for the tall thumb — nothing clips */
+	background: transparent;
+	cursor: ew-resize;
+}
+.slider-px:focus-visible {
+	outline: 2px solid var(--color-sky);
+	outline-offset: 3px;
+}
+
+.slider-px::-webkit-slider-runnable-track {
+	height: 18px;
+	border: 2px solid var(--color-line-mid);
+	background: linear-gradient(
+		to right,
+		var(--color-gold) var(--fill, 50%),
+		var(--color-inset) var(--fill, 50%)
+	);
+}
+.slider-px::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	width: 18px;
+	height: 30px;
+	margin-top: -8px; /* center 30px knob on the 18px track */
+	background: var(--color-ink);
+	border: 2px solid var(--color-shadow-hard);
+	box-shadow: 0 3px 0 0 var(--color-shadow-hard);
+}
+
+.slider-px::-moz-range-track {
+	height: 14px;
+	border: 2px solid var(--color-line-mid);
+	background: var(--color-inset);
+}
+.slider-px::-moz-range-progress {
+	height: 14px;
+	border: 2px solid var(--color-line-mid);
+	background: var(--color-gold);
+}
+.slider-px::-moz-range-thumb {
+	width: 18px;
+	height: 30px;
+	border-radius: 0;
+	background: var(--color-ink);
+	border: 2px solid var(--color-shadow-hard);
+	box-shadow: 0 3px 0 0 var(--color-shadow-hard);
+}
+
+/* ── type helpers ─────────────────────────────────────────────── */
+
+.h-display {
+	font-family: var(--font-display);
+	color: var(--color-ink);
+	line-height: 1.2;
+}
+.h-section {
+	font-family: var(--font-display);
+	font-size: 13px;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--color-sky);
+}
+/* small labels read effortlessly: neutral face, weight + tracking do the work */
+.label-px {
+	font-family: var(--font-body);
+	font-size: 11px;
+	font-weight: 650;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--color-mute);
+}
+/* tiny status words (BOARDING, DELAYED…) — readable, not 8px pixel type */
+.status-px {
+	font-family: var(--font-body);
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	white-space: nowrap;
+}
+.board-figure {
+	font-family: var(--font-board);
+	font-size: 22px;
+	line-height: 1;
+	color: var(--color-gold);
+}
+
+/* ── animation (transform / visibility only — content never hidden by default) ── */
+
+@keyframes px-blink {
+	0%,
+	49% {
+		opacity: 1;
+	}
+	50%,
+	100% {
+		opacity: 0;
+	}
+}
+.blink {
+	animation: px-blink 1200ms steps(2, end) infinite;
+}
+
+@keyframes px-marquee {
+	from {
+		transform: translateX(0);
+	}
+	to {
+		transform: translateX(-50%);
+	}
+}
+.marquee-track {
+	display: flex;
+	width: max-content;
+	animation: px-marquee 30s linear infinite;
+}
+.marquee-track:hover {
+	animation-play-state: paused;
+}
+
+@keyframes px-float {
+	from {
+		transform: translateY(0);
+	}
+	to {
+		transform: translateY(-6px);
+	}
+}
+.floaty {
+	animation: px-float 2400ms steps(6, end) infinite alternate;
+}
+
+/* ── the landing loop ─────────────────────────────────────────────
+   Track spans the hero (inset-0), so translate(%) = hero fractions.
+   The plane img sits statically at its PARKED spot on the runway
+   (left/top set inline) — with animations off (reduced motion) the
+   plane simply rests there, fully visible. The loop: glide in from
+   the upper right, flare, touch down, decelerate rolling left,
+   pause at the stand, then taxi off the left edge and go around. */
+@keyframes px-land {
+	0% {
+		/* off the right edge, high in the night sky */
+		transform: translate(100%, -52%);
+		animation-timing-function: linear;
+	}
+	54% {
+		/* long straight glide slope down toward the strip */
+		transform: translate(21%, -5%);
+		animation-timing-function: linear;
+	}
+	62% {
+		/* touchdown — then brake down the runway */
+		transform: translate(14%, 0%);
+		animation-timing-function: cubic-bezier(0.1, 0.55, 0.35, 1);
+	}
+	82%,
+	93% {
+		/* parked at the stand (matches the sprite's static position) */
+		transform: translate(0%, 0%);
+	}
+	93.01% {
+		animation-timing-function: cubic-bezier(0.55, 0, 0.85, 0.55);
+	}
+	100% {
+		/* taxi off the left edge, then go around again */
+		transform: translate(-18%, 0%);
+	}
+}
+.land-track {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	animation: px-land 18s infinite;
+}
+/* nose pitch: sprite faces LEFT, so +rotate = nose down the glide */
+@keyframes px-pitch {
+	0%,
+	52% {
+		transform: rotate(9deg);
+	}
+	62%,
+	100% {
+		transform: rotate(0deg);
+	}
+}
+.land-plane {
+	animation: px-pitch 18s linear infinite;
+}
+
+@keyframes px-flash {
+	0%,
+	100% {
+		box-shadow:
+			0 4px 0 0 #07102a,
+			0 0 0 2px rgba(245, 193, 58, 0.35);
+	}
+	50% {
+		box-shadow:
+			0 4px 0 0 #07102a,
+			0 0 0 4px rgba(245, 193, 58, 0.6);
+	}
+}
+.win-flash {
+	animation: px-flash 1200ms steps(2, end) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.blink,
+	.marquee-track,
+	.floaty,
+	.land-track,
+	.land-plane,
+	.win-flash {
+		animation: none;
+	}
+	/* with the loop off, the plane rests parked on the runway — visible */
+}
+
+/* ── toasts ───────────────────────────────────────────────────── */
+
+.toast-stack {
+	position: fixed;
+	top: 72px;
+	right: 16px;
+	z-index: 50;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-width: 340px;
+}
+.toast-px {
+	border: 2px solid;
+	box-shadow: var(--shadow-px-md);
+	background: var(--color-raised);
+	color: var(--color-ink);
+	font-family: var(--font-body);
+	font-size: 13px;
+	padding: 10px 12px;
+	word-break: break-word;
+}
+
+}
