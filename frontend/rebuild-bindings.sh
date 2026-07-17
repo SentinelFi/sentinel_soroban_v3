@@ -7,6 +7,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR/.."
 CONTRACTS_DIR="$PROJECT_ROOT/contracts"
 
+echo "=== DEBUG ==="
+echo "SCRIPT_DIR: $SCRIPT_DIR"
+echo "PROJECT_ROOT: $PROJECT_ROOT"
+echo "CONTRACTS_DIR: $CONTRACTS_DIR"
+echo "--- contents of PROJECT_ROOT ---"
+ls -la "$PROJECT_ROOT"
+echo "=== END DEBUG ==="
+
 echo "=== Building contracts ==="
 cd "$CONTRACTS_DIR"
 stellar contract build
