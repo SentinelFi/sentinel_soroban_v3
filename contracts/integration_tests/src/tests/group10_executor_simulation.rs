@@ -58,6 +58,7 @@ fn whitelist_extra_routes(t: &TestEnv) {
 }
 
 fn buy_on(t: &TestEnv, traveler: &Address, flight_id: &Symbol, origin: Symbol, dest: Symbol) {
+    t.open_sale(flight_id, FLIGHT_DATE);
     t.asset_admin.mint(traveler, &PREMIUM);
     t.ctrl
         .buy_insurance(traveler, flight_id, &origin, &dest, &FLIGHT_DATE);

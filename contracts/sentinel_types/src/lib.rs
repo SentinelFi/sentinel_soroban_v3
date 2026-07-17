@@ -13,6 +13,7 @@
 
 use soroban_sdk::contracttype;
 
+pub mod active_set;
 pub mod interfaces;
 pub mod upgrade;
 
@@ -75,6 +76,58 @@ pub mod timeouts {
     /// physical flight; without this timeout such a row would hold vault
     /// collateral and a policy-bucket slot forever.
     pub const STALE_FLIGHT_TIMEOUT_SECS: u64 = 14 * 86_400;
+
+    /// How long past its SCHEDULED arrival an `Active` flight may wait for a
+    /// terminal oracle outcome (`Landed` / `Cancelled`) before the protocol
+    /// may void it, settling it like an on-time flight (premiums to the
+    /// vault, collateral released, no payout). `Active` is the only
+    /// collateral-locking state that previously had no bounded exit: if the
+    /// oracle pipeline stopped after writing the estimated arrival, the row
+    /// stayed `Active` forever, pinning the full payoff in the vault and an
+    /// active-list slot in both the oracle and the pool. Two weeks past the
+    /// scheduled arrival every real outcome is long since public, so a row
+    /// still bare of one means the oracle cannot resolve this flight; voiding
+    /// (never paying) is the safe default — paying without an attested
+    /// outcome would let a data outage mint claims. The oracle can still
+    /// write a real outcome any time before the void is classified.
+    pub const ACTIVE_FLIGHT_TIMEOUT_SECS: u64 = 14 * 86_400;
+
+    /// Buyer policy proofs (the pool's `Buyer(flight_id, date, traveler)`
+    /// entries) are written once at purchase with the network-maximum
+    /// persistent TTL and are never re-extended on-chain — the pool cannot
+    /// iterate buyers after settlement. 3,110,400 ledgers is 180 days of
+    /// wall time only at the assumed ~5 s/ledger cadence.
+    pub const BUYER_PROOF_TTL_LEDGERS: u32 = 3_110_400;
+
+    /// The proof lifetime above expressed in seconds at the assumed
+    /// cadence — the wall-clock budget that the booking horizon plus the
+    /// claim-deadline cap must fit inside (compile-time asserted in the
+    /// controller, whose booking horizon supplies the other term).
+    pub const BUYER_PROOF_TTL_SECS: u64 = 15_552_000;
+
+    /// Latest claim deadline a settlement may open, measured from the
+    /// flight date. The earliest possible purchase writes its buyer proof
+    /// up to the full booking horizon before departure, so a claim window
+    /// reaching past `date + (proof lifetime − booking horizon)` would
+    /// outlive the earliest buyers' proofs. At the current values (90-day
+    /// horizon, 180-day proof) this cap sits exactly at that boundary —
+    /// zero slack — and, like every wall-time figure in this crate, it
+    /// assumes the ~5 s/ledger cadence. A proof that does archive is not a
+    /// lost claim (an archived Persistent entry is restored with its
+    /// original value when next accessed, at a restoration cost); the cap
+    /// and the controller's compile-time assert exist so this boundary is
+    /// only ever moved by a conscious edit, never by drift between crates.
+    pub const MAX_CLAIM_DEADLINE_AFTER_DATE_SECS: u64 = 90 * 86_400;
+
+    // The two proof-lifetime representations must agree at the assumed
+    // cadence, or every bound derived from one of them silently diverges
+    // from entries actually extended with the other.
+    const _: () = assert!(
+        BUYER_PROOF_TTL_SECS * crate::ttl::LEDGERS_PER_SECOND_NUM
+            / crate::ttl::LEDGERS_PER_SECOND_DEN
+            == BUYER_PROOF_TTL_LEDGERS as u64,
+        "buyer proof TTL seconds/ledgers mismatch at the assumed cadence",
+    );
 }
 
 // =========================================================================
@@ -114,6 +167,22 @@ pub enum FlightStatus {
     Settled,
 }
 
+/// Per-flight oracle record, stored under a `(flight_id, date)` key.
+///
+/// The `date` key component is the flight's **UTC departure day** — midnight
+/// UTC of the departure date, in unix seconds (a multiple of 86,400; the
+/// purchase path enforces the alignment). Executors and frontends MUST
+/// derive it from the departure timestamp **in UTC**, never in the airport's
+/// local timezone: `set_estimated_arrival` / `set_landed` reject any arrival
+/// timestamp below `date`, and a short flight departing early-morning local
+/// time east of UTC (e.g. 01:00 JST = 16:00 UTC the previous day) can arrive
+/// before midnight UTC of its *local* departure date. A component keying
+/// instances by local date would therefore have legitimate outcome writes
+/// rejected (`InvalidTimestamp`); the flight would strand in `Active` and be
+/// voided as on-time by the active timeout, irreversibly denying genuinely
+/// delayed or cancelled travelers. This invariant carries the same weight as
+/// the `scheduled_in` rule below and must survive every executor backend
+/// migration.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct FlightData {

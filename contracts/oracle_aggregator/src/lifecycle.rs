@@ -2,17 +2,18 @@
 //! registration/classification/settlement, and the permissionless pruning of
 //! aged-out settled flights from the active list.
 
-use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol, Vec};
+use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol};
 use stellar_macros::when_not_paused;
 
 use crate::auth::{extend_instance_ttl, require_controller, require_oracle};
 use crate::constants::{
-    MAX_ACTIVE_FLIGHTS, MAX_PRUNE_BATCH, SECONDS_PER_DAY, SETTLED_RETENTION_DAYS,
+    MAX_ACTIVE_FLIGHTS, MAX_PRUNE_BATCH, SALE_AUTH_MAX_VALIDITY_SECS, SECONDS_PER_DAY,
+    SETTLED_RETENTION_DAYS,
 };
-use crate::events::{emit_status_event, MissingFlightData};
+use crate::events::{emit_status_event, MissingFlightData, SaleClosed, SaleOpened};
 use crate::storage::{
-    decrement_pending_outcomes, extend_flight_ttl_to, increment_pending_outcomes,
-    is_valid_transition, settlement_deadline, OracleKey,
+    decrement_pending_outcomes, extend_flight_ttl_to, extend_sale_auth_ttl,
+    increment_pending_outcomes, is_valid_transition, settlement_deadline, OracleKey,
 };
 use crate::{
     Error, FlightData, FlightStatus, OracleAggregator, OracleAggregatorArgs, OracleAggregatorClient,
@@ -21,6 +22,87 @@ use crate::{
 #[contractimpl]
 impl OracleAggregator {
     // --- Oracle-only write functions ---
+
+    /// Open (or refresh) the sale window for a flight instance. The purchase
+    /// gate requires a live, unexpired authorization, so this write is the
+    /// oracle's AFFIRMATIVE attestation — made after verifying the flight
+    /// off-chain — that `(flight_id, date)` matches a scheduled,
+    /// not-cancelled physical flight. Absence of an on-chain outcome proves
+    /// nothing about the real flight (a publicly cancelled one looks
+    /// identical to a valid unreported one until the cancellation write
+    /// lands), so insurability must be attested, not inferred.
+    ///
+    /// The attestation is only as fresh as its remaining validity:
+    /// `expires_at` must lie within `SALE_AUTH_MAX_VALIDITY_SECS` of now
+    /// (and never past the departure-day boundary, beyond which the
+    /// controller's lead-time gate blocks purchases anyway). Sales stay open
+    /// only while the oracle keeps re-attesting; if it stops — outage,
+    /// provider gap, unverifiable flight — the window lapses and purchases
+    /// fail closed.
+    #[when_not_paused]
+    pub fn open_sale(e: &Env, oracle: Address, flight_id: Symbol, date: u64, expires_at: u64) {
+        require_oracle(e, &oracle);
+
+        let now = e.ledger().timestamp();
+        let latest_allowed = now
+            .checked_add(SALE_AUTH_MAX_VALIDITY_SECS)
+            .expect("addition overflow");
+        if expires_at <= now || expires_at > latest_allowed || expires_at > date {
+            panic_with_error!(e, Error::InvalidTimestamp);
+        }
+
+        // A flight with a recorded outcome is not insurable; opening a sale
+        // window for it would contradict the state machine the purchase gate
+        // also checks. NotInitiated (no row, or registered pre-outcome) and
+        // Active (in-flight, pre-outcome) are the only attestable states.
+        let key = OracleKey::FlightData(flight_id.clone(), date);
+        if let Some(data) = e.storage().persistent().get::<_, FlightData>(&key) {
+            if !matches!(
+                data.status,
+                FlightStatus::NotInitiated | FlightStatus::Active
+            ) {
+                panic_with_error!(e, Error::InvalidTransition);
+            }
+        }
+
+        let auth_key = OracleKey::SaleAuth(flight_id.clone(), date);
+        e.storage().temporary().set(&auth_key, &expires_at);
+        extend_sale_auth_ttl(e, &flight_id, date, expires_at);
+
+        SaleOpened {
+            flight_id,
+            date,
+            expires_at,
+        }
+        .publish(e);
+    }
+
+    /// Close the sale window for a flight instance ahead of its expiry —
+    /// used when the oracle observes a cancellation or loses confidence in
+    /// the flight's identity and cannot wait for the authorization to lapse.
+    /// Idempotent: closing an absent window is a silent no-op (no event).
+    /// `set_cancelled` also closes the window as a side effect.
+    ///
+    /// Deliberately NOT pause-gated: this write only revokes authorization —
+    /// it grants nothing. Already-open windows live in temporary storage and
+    /// stay readable (and purchasable through the controller, which may not
+    /// be paused) for up to their 24 h validity regardless of this
+    /// contract's pause state, so pausing the oracle must not also disable
+    /// the one write that can kill insurability of a flight that goes
+    /// publicly cancelled mid-window — gating it would invert the protection
+    /// exactly when the pause switch is in use. Same convention as the
+    /// governance module's pause-exempt protective writes.
+    pub fn close_sale(e: &Env, oracle: Address, flight_id: Symbol, date: u64) {
+        require_oracle(e, &oracle);
+
+        let auth_key = OracleKey::SaleAuth(flight_id.clone(), date);
+        if !e.storage().temporary().has(&auth_key) {
+            return;
+        }
+        e.storage().temporary().remove(&auth_key);
+
+        SaleClosed { flight_id, date }.publish(e);
+    }
 
     /// Set estimated arrival time. Transitions NotInitiated → Active.
     #[when_not_paused]
@@ -130,6 +212,13 @@ impl OracleAggregator {
     pub fn set_cancelled(e: &Env, oracle: Address, flight_id: Symbol, date: u64) {
         require_oracle(e, &oracle);
 
+        // A cancelled flight must not remain purchasable for a second: kill
+        // any live sale authorization in the same transaction that records
+        // the cancellation, rather than waiting for it to lapse.
+        e.storage()
+            .temporary()
+            .remove(&OracleKey::SaleAuth(flight_id.clone(), date));
+
         let key = OracleKey::FlightData(flight_id.clone(), date);
         match e.storage().persistent().get::<_, FlightData>(&key) {
             Some(mut data) => {
@@ -189,22 +278,14 @@ impl OracleAggregator {
         };
         e.storage().persistent().set(&key, &data);
 
-        // Append to active flight list (Instance — auto-extended with contract instance TTL)
-        let mut flights: Vec<(Symbol, u64)> = e
-            .storage()
-            .instance()
-            .get(&OracleKey::ActiveFlightList)
-            .unwrap_or(Vec::new(e));
-        // Bound the single-vector active list so it can't grow into the
-        // contract-instance entry-size limit and become unwritable. Settled
+        // Append to the paginated active set (per-page persistent entries +
+        // reverse index — see `sentinel_types::active_set`). The cap is an
+        // operational sanity bound, not a storage-entry limit: settled
         // flights are evicted by prune_settled, freeing capacity.
-        if flights.len() >= MAX_ACTIVE_FLIGHTS {
+        if sentinel_types::active_set::count(e) >= MAX_ACTIVE_FLIGHTS {
             panic_with_error!(e, Error::ActiveFlightListFull);
         }
-        flights.push_back((flight_id.clone(), date));
-        e.storage()
-            .instance()
-            .set(&OracleKey::ActiveFlightList, &flights);
+        sentinel_types::active_set::add(e, &flight_id, date);
 
         extend_flight_ttl_to(e, &flight_id, date, date);
         emit_status_event(e, &flight_id, date, &FlightStatus::NotInitiated);
@@ -260,6 +341,26 @@ impl OracleAggregator {
             increment_pending_outcomes(e);
         }
 
+        // Voiding an Active flight whose terminal outcome (Landed/Cancelled)
+        // never arrived is only legitimate once the active timeout past the
+        // recorded scheduled arrival has elapsed — enforced here, on the
+        // state machine itself, so no caller can void a flight the oracle is
+        // merely late in resolving. The transition table restricts the
+        // Active source to ToBeSettledOnTime, so this void never pays out.
+        // Like the NotInitiated void, it is a new outcome disclosure: it
+        // deterministically implies premium income the vault has not yet
+        // recognized, so it counts as a pending outcome from this moment.
+        if data.status == FlightStatus::Active {
+            let timeout_at = data
+                .estimated_arrival_time
+                .checked_add(sentinel_types::timeouts::ACTIVE_FLIGHT_TIMEOUT_SECS)
+                .expect("addition overflow");
+            if e.ledger().timestamp() < timeout_at {
+                panic_with_error!(e, Error::ActiveTimeoutNotReached);
+            }
+            increment_pending_outcomes(e);
+        }
+
         data.status = status.clone();
         e.storage().persistent().set(&key, &data);
 
@@ -271,7 +372,7 @@ impl OracleAggregator {
 
     /// Mark flight as settled. Transitions ToBeSettled* → Settled.
     /// Records `settled_at` so the delayed-prune window starts ticking.
-    /// Does NOT remove the flight from `ActiveFlightList` — eviction is
+    /// Does NOT remove the flight from the active set — eviction is
     /// delegated to the permissionless `prune_settled` entry, which only
     /// removes entries older than `SETTLED_RETENTION_DAYS`. Does NOT renew
     /// flight TTL — settled entries naturally expire.
@@ -301,29 +402,24 @@ impl OracleAggregator {
 
     // --- Permissionless housekeeping ---
 
-    /// Remove settled flights from `ActiveFlightList` once they have been
+    /// Remove settled flights from the active set once they have been
     /// settled for at least `SETTLED_RETENTION_DAYS`. Permissionless —
     /// anyone may call (matches `flight_pool_manager::sweep_expired`
     /// pattern). Idempotent: re-callable with no panic; no-op if nothing
     /// has aged out.
     pub fn prune_settled(e: &Env) {
         let now = e.ledger().timestamp();
-        let list: Vec<(Symbol, u64)> = e
-            .storage()
-            .instance()
-            .get(&OracleKey::ActiveFlightList)
-            .unwrap_or(Vec::new(e));
-
-        let len = list.len();
+        let len = sentinel_types::active_set::count(e);
         if len == 0 {
             extend_instance_ttl(e);
             return;
         }
 
-        // Only inspect a bounded window [cursor, cursor+batch) of
-        // the list per call. Entries outside the window are kept untouched (no
-        // persistent lookup), bounding the expensive storage reads. The cursor
-        // rotates across calls so the whole list is eventually swept.
+        // Only inspect a bounded window [cursor, cursor+batch) of the set per
+        // call — the paged fetch reads just the one or two pages the window
+        // spans (and re-extends their TTL), bounding the expensive storage
+        // reads. The cursor rotates across calls so the whole set is
+        // eventually swept.
         let mut cursor: u32 = e
             .storage()
             .instance()
@@ -333,16 +429,9 @@ impl OracleAggregator {
             cursor = 0;
         }
         let stop = cursor.saturating_add(MAX_PRUNE_BATCH).min(len);
+        let window = sentinel_types::active_set::get_range(e, cursor, stop - cursor);
 
-        let mut kept: Vec<(Symbol, u64)> = Vec::new(e);
-        let mut removed_any = false;
-        for i in 0..len {
-            let entry = list.get(i).unwrap();
-            if i < cursor || i >= stop {
-                // Outside the inspection window — carry over without a lookup.
-                kept.push_back(entry);
-                continue;
-            }
+        for entry in window.iter() {
             let flight_id = entry.0.clone();
             let date = entry.1;
             let aged_out = match e
@@ -375,18 +464,15 @@ impl OracleAggregator {
                 }
             };
             if aged_out {
-                removed_any = true;
-            } else {
-                kept.push_back(entry);
+                // Removal is by key against live storage — the window is a
+                // snapshot, so the swap-remove reshuffle cannot corrupt this
+                // loop. A reshuffled entry may escape this sweep; the
+                // rotating, re-callable scan picks it up on a later pass.
+                sentinel_types::active_set::remove(e, &flight_id, date);
             }
         }
 
-        if removed_any {
-            e.storage()
-                .instance()
-                .set(&OracleKey::ActiveFlightList, &kept);
-        }
-        // Advance (wrap at end). Indices shift after removals, but pruning is
+        // Advance (wrap at end). Slots shift after removals, but pruning is
         // idempotent and re-callable, so eventual full coverage still holds.
         let next_cursor = if stop >= len { 0 } else { stop };
         e.storage()

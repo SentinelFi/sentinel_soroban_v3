@@ -16,6 +16,7 @@ export interface TTLResult {
 // audit M-03 split queue maintenance out of settlement; queue_maintainer
 // is a Phase 3 addition not present in the phase-2 executor.
 export type JobName =
+  | "sale_authorizer"
   | "fetcher"
   | "classifier"
   | "settler"
@@ -91,4 +92,15 @@ export interface Config {
   // AeroAPI.
   aeroApiBaseUrl: string;
   aeroApiKey: string;
+  // Sale authorization (purchase-gate attestation).
+  // Flight numbers to attest — must track the governance route whitelist; a
+  // whitelisted route missing here is never sellable.
+  saleAuthFlightIds: string[];
+  // How many days ahead to attest. Effective horizon is bounded by the
+  // provider's schedule visibility; days it cannot see stay closed.
+  saleAuthHorizonDays: number;
+  // Requested authorization lifetime in seconds. The oracle contract caps
+  // validity at 24h; shorter values bound staleness tighter at the cost of
+  // more refresh writes.
+  saleAuthValiditySecs: number;
 }

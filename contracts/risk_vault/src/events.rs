@@ -68,6 +68,21 @@ pub struct WithdrawalCancelled {
     pub(crate) queue_len: u32,
 }
 
+// Emitted when queue processing funds part of the head request from the free
+// capital available in the pass. The request stays at the head with
+// `shares_remaining` still escrowed; `Credited` fires separately for the asset
+// amount. Without this, an indexer reconciling `WithdrawalRequested` shares
+// against `Credited` amounts could not tell a partial fill from a completed
+// request followed by an unrelated credit.
+#[contractevent(topics = ["sentinel", "wd_partial"], data_format = "map")]
+pub struct RequestPartiallyFilled {
+    #[topic]
+    pub(crate) owner: Address,
+    pub(crate) request_id: u64,
+    pub(crate) shares_filled: i128,
+    pub(crate) shares_remaining: i128,
+}
+
 // Emitted when queue processing drops a request whose asset value decayed to
 // zero (share price fell after it was queued) and returns the escrowed shares
 // to the owner. No `Credited` fires for such a request, so this is the only
@@ -93,11 +108,26 @@ pub struct ControllerSet {
 // The barrier is the vault's core LP-pricing protection, so a re-wire is a
 // security-relevant configuration change — off-chain monitoring subscribes to
 // this to detect an unexpected (or missing) barrier target. Mirrors the
-// oracle contract's own `oracle_set` audit event.
+// oracle contract's own `oracle_set` audit event. `forced` records which
+// path performed the rotation: the checked one (old oracle read clear of
+// pending outcomes) or the paused-only escape hatch that skipped the check
+// because the old oracle was unreachable — monitoring treats a forced
+// rotation as an open incident until the pending PnL is reconciled and the
+// vault deliberately unpaused.
 #[contractevent(topics = ["sentinel", "oracle_set"], data_format = "single-value")]
 pub struct OracleSet {
     #[topic]
     pub(crate) oracle: Address,
+    pub(crate) forced: bool,
+}
+
+// Controller mirrored the owner-configured solvency ratio into the vault.
+// The ratio determines how much of the nominal free margin exit paths must
+// hold back, so monitoring subscribes to catch an unexpected loosening of
+// the reserve (or a missing propagation after an upgrade).
+#[contractevent(topics = ["sentinel", "ratio_set"], data_format = "single-value")]
+pub struct SolvencyRatioSet {
+    pub(crate) ratio: u32,
 }
 
 // Owner tuned the minimum asset value a queued withdrawal request must carry

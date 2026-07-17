@@ -1,7 +1,7 @@
 use super::*;
 use sentinel_types::test_support::collect_events;
 use soroban_sdk::{
-    symbol_short, testutils::Address as _, testutils::Ledger, token, Address, Env, Symbol, Vec,
+    symbol_short, testutils::Address as _, testutils::Ledger, token, Address, Env, Symbol,
 };
 
 const PREMIUM: i128 = 10_0000000; // 10 asset (7 decimals)
@@ -128,8 +128,42 @@ fn test_constructor_sets_owner_and_addresses() {
     assert_eq!(t.pool.get_owner(), Some(t.owner.clone()));
     assert_eq!(t.pool.get_asset_token(), t.asset_addr);
     assert_eq!(t.pool.get_risk_vault(), t.vault_addr);
+    assert_eq!(t.pool.get_controller(), Some(t.controller.clone()));
     assert_eq!(t.pool.get_recovered_balance(), 0);
     assert_eq!(t.pool.get_active_flights().len(), 0);
+}
+
+#[test]
+fn test_unpause_restores_registration() {
+    let t = setup();
+    t.pool.pause(&t.owner);
+    assert!(t.pool.paused());
+    assert!(t
+        .pool
+        .try_register_flight(
+            &t.controller,
+            &symbol_short!("AA100"),
+            &FLIGHT_DATE,
+            &PREMIUM,
+            &PAYOFF,
+            &DELAY_HOURS,
+        )
+        .is_err());
+
+    t.pool.unpause(&t.owner);
+    assert!(!t.pool.paused());
+    t.pool.register_flight(
+        &t.controller,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &PREMIUM,
+        &PAYOFF,
+        &DELAY_HOURS,
+    );
+    assert!(t
+        .pool
+        .get_flight_config(&symbol_short!("AA100"), &FLIGHT_DATE)
+        .is_some());
 }
 
 #[test]
@@ -187,22 +221,18 @@ fn test_register_flight_success() {
 #[test]
 #[should_panic(expected = "Error(Contract, #417)")]
 fn test_register_flight_rejects_when_active_list_full() {
-    // The active list is bounded so it can't grow into the contract-instance
-    // entry-size limit. Pre-seed it to the cap directly in storage, then confirm
-    // one more distinct registration is rejected.
+    // The paginated active set carries an operational sanity cap. The cap
+    // gate reads the O(1) stored count, so seed that directly to the cap and
+    // confirm one more distinct registration is rejected.
     use crate::constants::MAX_ACTIVE_FLIGHTS;
-    use crate::storage::PoolKey;
+    use sentinel_types::active_set::ActiveSetKey;
     let t = setup();
 
     t.env.as_contract(&t.pool_addr, || {
-        let mut list: Vec<(Symbol, u64)> = Vec::new(&t.env);
-        for i in 0..MAX_ACTIVE_FLIGHTS {
-            list.push_back((symbol_short!("AA100"), i as u64));
-        }
         t.env
             .storage()
             .instance()
-            .set(&PoolKey::ActiveFlightList, &list);
+            .set(&ActiveSetKey::ActiveCount, &MAX_ACTIVE_FLIGHTS);
     });
 
     t.pool.register_flight(
@@ -213,6 +243,50 @@ fn test_register_flight_rejects_when_active_list_full() {
         &PAYOFF,
         &DELAY_HOURS,
     );
+}
+
+#[test]
+fn test_active_set_spans_pages_and_swap_removes_across_them() {
+    // More buckets than one page holds (page size 100): registration must
+    // spill onto a second page, enumeration must cover both, and settlement
+    // of an early entry must swap-move the globally last entry (page 1) into
+    // the freed slot (page 0) without losing anything.
+    let t = setup();
+    for i in 0..101u64 {
+        t.pool.register_flight(
+            &t.controller,
+            &flight_a(),
+            &(FLIGHT_DATE + i),
+            &PREMIUM,
+            &PAYOFF,
+            &DELAY_HOURS,
+        );
+    }
+    assert_eq!(t.pool.get_active_flight_count(), 101);
+    assert_eq!(t.pool.get_active_flights().len(), 101);
+    // A window crossing the page boundary reads both pages.
+    let win = t.pool.get_active_flights_page(&98u32, &3u32);
+    assert_eq!(win.len(), 3);
+
+    // Settle the bucket sitting in page 0, slot 3.
+    t.pool
+        .settle_on_time(&t.controller, &flight_a(), &(FLIGHT_DATE + 3));
+
+    let all = t.pool.get_active_flights();
+    assert_eq!(all.len(), 100);
+    let mut found_settled = false;
+    let mut found_old_tail = false;
+    for i in 0..all.len() {
+        let (_, date) = all.get(i).unwrap();
+        if date == FLIGHT_DATE + 3 {
+            found_settled = true;
+        }
+        if date == FLIGHT_DATE + 100 {
+            found_old_tail = true;
+        }
+    }
+    assert!(!found_settled, "settled bucket must leave the set");
+    assert!(found_old_tail, "swap-moved tail entry must stay enumerable");
 }
 
 #[test]

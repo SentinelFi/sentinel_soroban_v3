@@ -12,16 +12,14 @@
 /// rotating cursor still sweeps the full list across repeated calls).
 pub(crate) const MAX_PRUNE_BATCH: u32 = 60;
 
-/// Hard cap on `ActiveFlightList` length. The list is a single `Vec` in the
-/// contract-instance entry, which Soroban bounds to 65,536 bytes (~1,600
-/// entries in the current layout). An unbounded list could grow until that
-/// entry becomes unwritable, freezing registration and the instance-state
-/// writes that piggyback on it. Capping length well below the limit turns that
-/// ungraceful failure into a clean, early rejection with headroom for symbol-
-/// length variance and other instance state, and keeps `prune_settled`'s
-/// full-list scan bounded. Full resolution (individually-keyed active entries
-/// + a compact index) is a larger storage migration tracked separately.
-pub(crate) const MAX_ACTIVE_FLIGHTS: u32 = 1_000;
+/// Sanity cap on the paginated active-flight set. The set lives in
+/// per-page persistent entries (see `sentinel_types::active_set`), so
+/// capacity no longer competes with the 65,536-byte contract-instance entry
+/// that bounded the old single-vector list to 1,000 flights — the cap is now
+/// purely an operational guard against unbounded growth (runaway
+/// registration, stalled pruning), set far above any plausible concurrent
+/// flight volume. Matches the FlightPoolManager cap.
+pub(crate) const MAX_ACTIVE_FLIGHTS: u32 = 100_000;
 
 // Deadline-derived TTL inputs (flat floor, post-deadline buffer, ledger-time
 // conversion, and network-max clamp) live in `sentinel_types::ttl`, shared
@@ -42,7 +40,7 @@ pub(crate) const MAX_ACTIVE_FLIGHTS: u32 = 1_000;
 /// buffer) under the 180-day network maximum.
 pub(crate) const SETTLEMENT_GRACE_SECS: u64 = 90 * SECONDS_PER_DAY;
 
-// Settled flights stay in `ActiveFlightList` for SETTLED_RETENTION_DAYS after
+// Settled flights stay in the active set for SETTLED_RETENTION_DAYS after
 // `set_settled` records their `settled_at` timestamp. Pruning is delegated to
 // the permissionless `prune_settled` entry — keeps freshly-settled flights
 // visible to off-chain monitoring / indexers / observability tooling for the
@@ -55,3 +53,20 @@ pub(crate) const SETTLEMENT_GRACE_SECS: u64 = 90 * SECONDS_PER_DAY;
 // queries while quadrupling the settled-flight throughput the cap tolerates.
 pub(crate) const SETTLED_RETENTION_DAYS: u64 = 7;
 pub(crate) const SECONDS_PER_DAY: u64 = 86_400;
+
+/// Hard cap on how far ahead a sale authorization (`open_sale`) may expire.
+/// The authorization is the oracle's attestation that the flight was
+/// verified scheduled-and-not-cancelled AT WRITE TIME, so its remaining
+/// validity is exactly how stale that attestation may be when a purchase
+/// consumes it. 24 hours bounds the worst-case window in which a publicly
+/// cancelled flight is still purchasable (executor outage included) while
+/// keeping the oracle's refresh duty to one write per flight instance per
+/// day; the executor is expected to refresh far more often and to tombstone
+/// observed cancellations immediately, which closes the window regardless of
+/// any live authorization.
+pub(crate) const SALE_AUTH_MAX_VALIDITY_SECS: u64 = SECONDS_PER_DAY;
+
+/// TTL slack past a sale authorization's expiry timestamp (~1 hour of
+/// ledgers). The entry only needs to outlive its own expiry check; the
+/// buffer absorbs ledger-time drift from the nominal 5 s cadence.
+pub(crate) const SALE_AUTH_TTL_BUFFER_LEDGERS: u32 = 720;

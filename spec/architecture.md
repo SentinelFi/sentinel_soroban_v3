@@ -14,7 +14,7 @@
   - [Cron #1 — FlightDataFetcher (Oracle, every 2 hours)](#cron-1--flightdatafetcher-oracle-every-2-hours)
   - [Cron #2 — FlightClassifier (Keeper, every 1 hour)](#cron-2--flightclassifier-keeper-every-1-hour)
   - [Cron #3 — SettlementExecutor (Keeper, every 5 minutes)](#cron-3--settlementexecutor-keeper-every-5-minutes)
-  - [Cron #4 — TTL Extender (ExtendFootprintTTLOp, every 24 hours)](#cron-4--ttl-extender-extendfootprintttlop-every-24-hours)
+  - [Cron #4 — TTL Extender (instance `extend_ttl` + prune, every 24 hours)](#cron-4--ttl-extender-instance-extend_ttl--prune-every-24-hours)
   - [Why three separate crons?](#why-three-separate-crons)
   - [The Executor Interface](#the-executor-interface)
   - [Executor project structure](#executor-project-structure)
@@ -118,6 +118,14 @@ hazard at scale).
   `whitelist_route`, `update_route_terms` — asserts `premium > 0`, `payoff > 0`,
   `payoff > premium`, `delay_hours > 0` against the resolved (defaults-folded) values.
   An admin cannot whitelist or update a route to non-paying or guaranteed-payout terms.
+- **Term limits**: the owner bounds the magnitudes admin route writes may carry via
+  `set_term_limits(max_payoff, max_payoff_ratio)`. The ratio cap (`payoff ≤ ratio ×
+  premium`) is unit-free and active by default (100); the absolute per-policy payoff
+  cap is asset-denominated and configured at wiring time (0 = disabled). This caps the
+  blast radius of one compromised admin key — without it, a single signature could
+  whitelist a dust-premium route whose one policy locks the vault's entire free
+  capital. Both limits are enforced on every route write and on `set_defaults`, and
+  `route_status` stops advertising a route that exceeds the current limits.
 - **Pausable** (audit H-03). Owner-only `pause(caller)` / `unpause(caller)` halts all
   governance write entry points; `route_status()` / `get_defaults()` reads remain available.
 
@@ -131,6 +139,10 @@ pub enum DataKey {
     DefaultPayoff,                                  // i128 — Instance (stroops of USDC)
     DefaultDelayHours,                              // u32 — Instance (hours)
     Route(Symbol, Symbol, Symbol),                  // RouteTerms — Persistent
+    FlightRoute(Symbol),                            // (origin, dest) uniqueness index — Persistent
+    RetiredFlight(Symbol),                          // (origin, dest, retired_until) — Persistent
+    MaxPayoff,                                      // i128 — Instance (0 = no absolute cap)
+    MaxPayoffRatio,                                 // i128 — Instance (payoff ≤ premium × ratio)
 }
 
 #[contracttype]
@@ -167,6 +179,7 @@ pub struct ResolvedTerms {
 fn route_status(env: Env, flight_id: Symbol, origin: Symbol,
                 dest: Symbol) -> RouteStatus;
 fn get_defaults(env: Env) -> (i128, i128, u32);
+fn get_term_limits(env: Env) -> (i128, i128);
 fn is_admin(env: Env, addr: Address) -> bool;
 ```
 
@@ -180,6 +193,9 @@ pattern).
 ```rust
 // Defaults (owner-only)
 fn set_defaults(env: Env, premium: i128, payoff: i128, delay_hours: u32);
+
+// Term limits (owner-only)
+fn set_term_limits(env: Env, max_payoff: i128, max_payoff_ratio: i128);
 
 // Admin management (owner-only)
 fn add_admin(env: Env, admin: Address);
@@ -230,6 +246,7 @@ event envelope) discriminates between governance and the rest.
 ("sentinel", "gov_defaults")    → (premium, payoff, delay_hours)
 ("sentinel", "gov_admin_added") → (admin)
 ("sentinel", "gov_admin_removed") → (admin)
+("sentinel", "gov_term_limits") → (max_payoff, max_payoff_ratio)
 ```
 
 `flight_id` is also the third event topic for every `route_*` event (after the two-symbol
@@ -250,9 +267,10 @@ with an independent TTL. Instance is wrong at scale — every contract invocatio
 Instance entries into the transaction footprint, so thousands of routes (realistic at hub
 airports with multi-leg itineraries) would blow past per-tx limits. `RouteList` was removed
 for the same reason: a single `Vec` of all routes is a footprint hazard at any storage tier.
-TTL on every `Route(...)` write maintains a 60-day window for actively edited routes; idle
-routes are kept alive by the off-chain TTL cron (Cron #4) which folds `Route(...)` keys into
-its `ExtendFootprintTTLOp` footprint using the indexer's enumeration.
+TTL on every `Route(...)` write maintains a 120-day window for actively edited routes; a
+route idle past that window archives but stays restorable via `RestoreFootprintOp`. Folding
+idle `Route(...)` keys into a key-level `ExtendFootprintTTLOp` executor job (using the
+indexer's enumeration) is planned future work.
 
 ---
 
@@ -277,17 +295,49 @@ vault is composable with any vault-aware tooling.
   stored in `Instance` storage rather than raw token balance. This prevents share price
   manipulation via direct USDC transfers.
 - `locked_capital: i128` tracks USDC committed as collateral for active policies.
-  `max_withdraw` and `max_redeem` are overridden to cap redemptions at
-  `free_capital = total_managed_assets - locked_capital`.
+  `free_capital = total_managed_assets - locked_capital` is the nominal margin; every
+  exit path is capped at the **withdrawable capital**
+  `max(total_managed_assets - ceil(locked_capital * solvency_ratio / 100), 0)`, so LP
+  exits preserve the same reserve the controller admits policies against (with the
+  default 100% ratio the two figures coincide). The ratio is mirrored into the vault by
+  `controller.set_solvency_ratio` (controller-only vault setter, atomic with the owner
+  update); the vault cannot read it back on demand because the controller invokes
+  `process_withdrawal_queue` and a read-back during that call would be reentrant.
+  `max_withdraw` and `max_redeem` are overridden to cap redemptions at the withdrawable
+  amount.
 - **Two withdrawal paths, one contract:**
   - **Immediate (`redeem`)** — OZ Vault standard. Burns shares and transfers USDC when
-    `free_capital >= redemption`.
+    `withdrawable_capital >= redemption`.
   - **Queued (`request_withdrawal`)** — non-standard extension for locked capital.
-    Enqueues `(request_id, caller, shares, timestamp)` in a FIFO queue stored in **Instance**
+    Enqueues `(request_id, caller, shares)` in a FIFO queue stored in **Instance**
     storage. Returns the freshly-issued `request_id: u64` (monotonic counter, audit M-04 fix).
     After each settlement cycle the keeper calls `run_queue_maintenance()`, which drives
     `process_withdrawal_queue()` and credits fulfilled requests to `claimable_balance`.
     Underwriters call `collect()` to pull USDC.
+  - **Head partial fill.** When the oldest request prices above the current withdrawable
+    capital, `process_withdrawal_queue` funds the share slice that amount covers
+    (burn + credit), keeps the remainder at the head, and defers everything behind it.
+    Strict FIFO fairness holds — withdrawable capital always goes to the oldest request
+    first — but one oversized request can no longer pin the queue (and with it every
+    direct exit, which defers to a non-empty queue) while payable capital sits idle. Each
+    partial pass emits `Credited` plus
+    `RequestPartiallyFilled(request_id, shares_filled, shares_remaining)`.
+  - **Zero-value drop.** A request whose asset value has decayed to zero (share price fell
+    after it was queued) is not left blocking the head: its escrowed shares are returned to
+    the owner, `RequestDropped` is emitted (no `Credited` fires), and the scan continues.
+  - **Queued exits hold no reservation against new underwriting (deliberate).** Purchases
+    and queue processing are unsynchronized consumers of the same withdrawable capital:
+    capital freed by a settlement can be re-locked by new policies before the keeper's next
+    queue-maintenance pass, and nothing entitles the queue head to capital that was
+    withdrawable at an earlier instant. Queued requests keep strict FIFO priority *among
+    themselves* (and block direct exits), but sustained purchase demand can defer exits —
+    a liquidity characteristic of the design, not a solvency issue (escrowed shares retain
+    full value). Operator levers: the solvency ratio above 100% structurally reserves a
+    margin purchases cannot lock, and the `wd_req` events carry queue occupancy for
+    monitoring queue back-pressure. If product requirements ever demand that queued exits
+    reserve future liquidity ahead of new underwriting, that rule must be specified and
+    implemented explicitly (e.g. tightening the purchase solvency check by the queue's
+    outstanding asset value).
 - `cancel_withdrawal(caller, request_id)` cancels a pending request by its stable id and
   releases reserved shares. Indices shift when earlier requests drain — request_id stays
   put.
@@ -323,8 +373,11 @@ pub enum VaultKey {
     LockedCapital,             // i128 — Instance
     WithdrawalQueue,           // Vec<WithdrawalRequest> — Instance
     NextRequestId,             // u64 — Instance (monotonic counter)
-    ClaimableBalance(Address), // i128 — Persistent (TTL extended to 60 days on write)
     LastSnapshotTime,          // u64 — Instance
+    Oracle,                    // Address — Instance (settlement-barrier target, wired at construction, owner-rotatable)
+    MinWithdrawalRequest,      // i128 — Instance (anti-dust floor for queue entries, 0 disables)
+    SolvencyRatio,             // u32 — Instance (controller-mirrored reserve ratio, absent = 100)
+    ClaimableBalance(Address), // i128 — Persistent (TTL extended to 60 days on write)
     SnapshotPrice(u64),        // i128 — Temporary (30-day TTL, keyed by day)
 }
 
@@ -333,7 +386,9 @@ pub struct WithdrawalRequest {
     pub request_id: u64,    // stable id — audit M-04
     pub owner: Address,
     pub shares: i128,
-    pub timestamp: u64,
+    // No timestamp: request time is never read on-chain (the queue is
+    // strict-FIFO by position) and the wd_req event already timestamps
+    // each request via its ledger.
 }
 ```
 
@@ -362,10 +417,18 @@ pub struct WithdrawalRequest {
 **Events emitted (audit L-03, L-05 namespace pass):**
 
 ```
-("sentinel", "credited",  <user>)  → Credited            (amount, new_balance)
-("sentinel", "collected", <user>)  → Collected           (amount)
-("sentinel", "recovered", <user>)  → Recovered           (amount, mode: RecoveryMode)
-("sentinel", "snapshot",  <day>)   → SharePriceSnapshot  (price)
+("sentinel", "credited",   <user>)  → Credited               (amount, new_balance)
+("sentinel", "collected",  <user>)  → Collected              (amount)
+("sentinel", "recovered",  <user>)  → Recovered              (amount, mode: RecoveryMode)
+("sentinel", "snapshot",   <day>)   → SharePriceSnapshot     (price)
+("sentinel", "wd_req",     <owner>) → WithdrawalRequested    (request_id, shares, queue_len)
+("sentinel", "wd_cancel",  <owner>) → WithdrawalCancelled    (request_id, shares, queue_len)
+("sentinel", "wd_partial", <owner>) → RequestPartiallyFilled (request_id, shares_filled, shares_remaining)
+("sentinel", "wd_dropped", <owner>) → RequestDropped         (request_id, shares)
+("sentinel", "controller_set", <controller>) → ControllerSet
+("sentinel", "oracle_set", <oracle>)          → OracleSet (forced: bool — true when force_set_oracle skipped the pending-outcomes check)
+("sentinel", "min_wd_req_set")                → MinWithdrawalRequestSet (min_assets)
+("sentinel", "ratio_set")                     → SolvencyRatioSet (ratio)
 ```
 
 `Credited` / `Collected` / `Recovered` power the off-chain indexer (Improvement #9)
@@ -432,9 +495,8 @@ RecoveryPool contract.
 pub enum PoolKey {
     // Global — Instance storage (kept alive by existing cron)
     Controller,              // Address
-    UsdcToken,               // Address
+    AssetToken,              // Address
     RiskVault,               // Address
-    ActiveFlightList,        // Vec<(Symbol, u64)> — pruned on settlement
     RecoveredBalance,        // i128 (total swept funds)
 
     // Per-flight — Persistent storage, keyed by (flight_id, date)
@@ -504,7 +566,10 @@ fn withdraw_recovered(env: Env, amount: i128);
 fn get_flight_config(env: Env, flight_id: Symbol, date: u64) -> Option<FlightConfig>;
 fn has_policy(env: Env, flight_id: Symbol, date: u64, traveler: Address) -> bool;
 fn has_claimed(env: Env, flight_id: Symbol, date: u64, traveler: Address) -> bool;
-fn get_active_flights(env: Env) -> Vec<(Symbol, u64)>;
+fn get_active_flights(env: Env) -> Vec<(Symbol, u64)>;       // whole set — off-chain use
+fn get_active_flights_page(env: Env, offset: u32, limit: u32)
+    -> Vec<(Symbol, u64)>;                                   // bounded window
+fn get_active_flight_count(env: Env) -> u32;                 // O(1)
 fn get_recovered_balance(env: Env) -> i128;
 ```
 
@@ -518,7 +583,7 @@ a panic + restart.
 
 - All premiums are transferred to FlightPoolManager (one contract holds all flight premiums)
 - On delayed/cancelled settlement, RiskVault sends `(payoff - premium) * buyer_count` to FlightPoolManager
-- On on-time settlement, FlightPoolManager sends premiums to RiskVault via `record_premium_income()`
+- On on-time settlement, FlightPoolManager transfers the premiums to RiskVault and returns the total; the Controller then records it via the controller-only `record_premium_income()`
 - Travelers call `claim()` on FlightPoolManager with `(flight_id, date)` — no need to know a pool address
 - `sweep_expired()` credits `RecoveredBalance` internally (no cross-contract transfer)
 - Owner calls `withdraw_recovered(amount)` to pull swept funds
@@ -546,12 +611,12 @@ If on time:
 
 | Entry | Storage tier | TTL management |
 |-------|-------------|----------------|
-| Global config (Controller, UsdcToken, etc.) | Instance | Existing cron `extend_ttl()` — no change |
-| `ActiveFlightList` | Instance | Kept alive with all other instance data — no separate management |
+| Global config (Controller, AssetToken, etc.) | Instance | Existing cron `extend_ttl()` — no change |
+| Active-flight set (`ActivePage`/`ActiveIdx`/`ActiveCount`) | Persistent pages + index, Instance count | Pages re-extended on every write and paged read; index extended to flight date (+ buffer) on write; archived pages restorable (`sentinel.page_miss` diagnostic) |
 | `RecoveredBalance` | Instance | Kept alive with all other instance data — no separate management |
-| `FlightConfig(id, date)` | Persistent | `extend_flight_ttl` (31d) on register; **on settle**, `extend_flight_ttl_to(claim_expiry + 30d)` so the claim window is self-sufficient on-chain (audit C-01). `ExtendFootprintTTLOp` cron is the long-term layer. |
-| `Buyer(id, date, addr)` | Persistent | TTL set to `claim_expiry + 30 days` on write — no cron needed |
-| `Claimed(id, date, addr)` | Persistent | TTL set to `claim_expiry + 30 days` on write — no cron needed |
+| `FlightConfig(id, date)` | Persistent | `extend_flight_ttl` (31d) on register; **on settle**, `extend_flight_ttl_to(claim_expiry + 30d)` so the claim window is self-sufficient on-chain (audit C-01). A key-level `ExtendFootprintTTLOp` executor job is the planned long-term layer. |
+| `Buyer(id, date, addr)` | Persistent | Fixed 180-day (network-max) TTL at write, never re-extended — claim expiry is unknown at purchase time, and 180d comfortably covers the max 60d claim window |
+| `Claimed(id, date, addr)` | Persistent | Fixed 180-day (network-max) TTL at write, never re-extended |
 
 ---
 
@@ -571,30 +636,44 @@ everything: it calls functions on other contracts that change state and move mon
 6. **Classify flights** via `classify_flights()` — read OracleAggregator for flights with
    `Landed` or `Cancelled` status, read FlightPoolManager `delay_hours`, compute outcome, and
    set the appropriate `ToBeSettled*` status on OracleAggregator.
-7. **Execute settlements** via `execute_settlements()` — process all flights in `ToBeSettled*`
-   status: move money between FlightPoolManager and RiskVault, mark flights as `Settled`.
+7. **Execute settlements** via `execute_settlements()` — process flights in `ToBeSettled*`
+   status in a bounded rotating window (at most `MAX_SETTLE_BATCH = 10` per call): move
+   money between FlightPoolManager and RiskVault, mark flights as `Settled`. Larger
+   backlogs drain across successive keeper calls; `execute_settlements_bounded(keeper,
+   limit)` lets an operator shrink the window down to one flight if a full window ever
+   exceeds transaction resource budgets.
 8. **Drain the underwriter withdrawal queue + share-price snapshot** via the separate
    keeper entry point `run_queue_maintenance()` (audit M-03 split). Decoupled from
    `execute_settlements` so queue payouts can't be blocked by settlement gas pressure.
 9. Maintains aggregate counters — `total_policies_sold`, `total_premiums_collected`,
    `total_payouts_distributed`.
 10. Maintains a **per-traveler index** — `TravelerFlights(Address)` in Persistent storage —
-    for efficient frontend queries. Appended on each `buy_insurance()` call.
+    for efficient frontend queries. Appended on each `buy_insurance()` call, capped at
+    1,000 entries per traveler (oldest evicted on overflow; full history stays in events).
 11. Exposes `get_flights_for_traveler(address)` for the frontend to show only a user's policies.
 12. **Emits `sentinel.ttl_miss(flight_id, date)`** from `classify_flights` when oracle returns
     `NotInitiated` for a flight in the active list — diagnostic signal consumed by the
     off-chain TTL-extender cron (Improvement #6) so it can detect archived `FlightData`
     entries and react before settlement fails.
 13. **Bounded owner setters** (audit H-07 + M-02): `set_solvency_ratio` ∈ [100, 10_000],
-    `set_min_lead_time` ≤ 90d, `set_claim_expiry_window` ∈ [1d, 180d]. Same bounds
-    enforced in `__constructor`.
+    `set_min_lead_time` < 90d, `set_claim_expiry_window` ∈ [1d, 60d]. Same bounds
+    enforced in `__constructor`. `set_solvency_ratio` additionally mirrors the ratio
+    into the RiskVault atomically (the vault validates the same bounds), so LP exits
+    enforce the same reserve purchases are admitted against — it must therefore run
+    after the vault's `set_controller` wiring.
 14. **Pausable** (audit H-03). Owner-only pause halts `buy_insurance`, `classify_flights`,
     `execute_settlements`, `run_queue_maintenance`; admin setters and `extend_ttl` stay
     open so the owner can recover from a paused state.
 15. **Buyer whitelist (Phase 11)** — opt-in allowlist on `buy_insurance`. Owner-only
     `set_whitelist_enabled(bool)` flips the kill-switch (default `false`, so deploy is
     non-breaking). When enabled, `buy_insurance` panics with `"buyer not whitelisted"`
-    unless `BuyerWhitelisted(traveler) == true`. Admin-managed via
+    unless the traveler holds a currently valid approval. Approvals carry an explicit
+    on-chain deadline (`now + 180 days`, stored in `BuyerApprovalExpiry(addr)`) that
+    every gated purchase slides forward — an actively-buying address never lapses, a
+    dormant one expires by the ledger clock and must be re-attested. The deadline is
+    contract-checked state, NOT the storage entry's TTL: an archived Persistent entry
+    is restored with its original value on next access rather than reading as absent,
+    so a TTL alone could never expire an authorization. Admin-managed via
     `add_whitelisted_buyer(caller, addr)` / `remove_whitelisted_buyer(caller, addr)`
     where `caller` is the owner or any address flagged on `GovernanceModule.is_admin`
     — single source of truth for admin identity, no duplicated admin list. Admin paths
@@ -615,7 +694,10 @@ fn classify_flights(env: Env, keeper: Address) {
 }
 
 /// Called by SettlementExecutor cron (every 5 minutes).
-/// Processes all ToBeSettled* flights: moves money, marks Settled.
+/// Processes ToBeSettled* flights in a bounded rotating window
+/// (MAX_SETTLE_BATCH = 10 per call — settlement writes far more entries per
+/// flight than classification: FlightData + FlightConfig + active-set
+/// swap-removal writes + several events): moves money, marks Settled.
 /// Does NOT touch the withdrawal queue or share-price snapshot.
 fn execute_settlements(env: Env, keeper: Address) {
     keeper.require_auth();
@@ -623,6 +705,13 @@ fn execute_settlements(env: Env, keeper: Address) {
     assert!(keeper == authorized, "not authorized keeper");
     // ... settlement execution logic ...
 }
+
+/// Operator escape hatch: execute_settlements with a caller-chosen window
+/// size, clamped to [1, MAX_SETTLE_BATCH]. If a window ever exceeds the
+/// network's per-transaction resource budgets, the keeper can shrink it —
+/// down to one flight — and still make progress (settlement failure is
+/// atomic, so a too-large fixed window would otherwise retry-fail forever).
+fn execute_settlements_bounded(env: Env, keeper: Address, limit: u32);
 
 /// Called by QueueMaintainer cron (every 5 minutes, decoupled from settlement).
 /// Drains the underwriter withdrawal queue + records the daily share-price
@@ -678,6 +767,12 @@ pool_client.register_flight(&controller_addr, &flight_id, &date,
 ("sentinel", "buyer_whitelisted", <addr>)                          → BuyerWhitelistedEvent
 ("sentinel", "buyer_removed",     <addr>)                          → BuyerWhitelistRemovedEvent
 ("sentinel", "whitelist_toggled")                                  → WhitelistToggled            (enabled)
+("sentinel", "cfg_missing",       ...)                             → FlightConfigMissing
+("sentinel", "voided",            ...)                             → FlightVoided
+("sentinel", "timed_out",         ...)                             → FlightTimedOutActive
+("sentinel", "evict_settled",     ...)                             → EvictedFlightSettled
+("sentinel", "keeper_set" | "solvency_ratio_set" |
+ "min_lead_time_set" | "claim_expiry_window_set")                  → owner-setter audit events
 ```
 
 The first three are domain events covering the buy / classify / settle
@@ -696,24 +791,35 @@ tick (every 1 hour) for any registered flight whose oracle status is still
 ```rust
 #[contracttype]
 pub enum CtrlKey {
-    Owner,                     // Address — Instance
     Governance,                // Address — Instance
     RiskVault,                 // Address — Instance
     Oracle,                    // Address — Instance
     FlightPoolManager,         // Address — Instance (set once)
-    UsdcToken,                 // Address — Instance
+    AssetToken,                // Address — Instance
     AuthorizedKeeper,          // Address — Instance (executor backend — shared by classifier + settler)
     SolvencyRatio,             // u32 — Instance (default 100)
     MinLeadTime,               // u64 — Instance (seconds)
     ClaimExpiryWindow,         // u64 — Instance (seconds)
-    TravelerFlights(Address),  // Vec<(Symbol, u64)> — Persistent (per-user flight index)
     TotalPoliciesSold,         // u64 — Instance
     TotalPremiumsCollected,    // i128 — Instance
-    TotalPayoutsDistributed,   // i128 — Instance
+    TotalPayoutsDistributed,   // i128 — Instance (gross claimable value opened by delayed/cancelled settlements)
     WhitelistEnabled,          // bool — Instance (Phase 11; default false → open buys)
-    BuyerWhitelisted(Address), // bool — Persistent (Phase 11; per-buyer entry, 60d TTL on write)
+    ClassifyCursor,            // u32 — Instance (rotating index into the oracle active list)
+    SettleCursor,              // u32 — Instance (rotating index into the oracle active list)
+    TravelerFlights(Address),  // Vec<(Symbol, u64)> — Persistent (per-user flight index)
+    BuyerWhitelisted(Address), // bool — Persistent, RETIRED (was the whitelist flag; a TTL
+                               // lapse cannot express expiry — archived entries restore
+                               // with their original value. Legacy entries are ignored.)
+    BuyerApprovalExpiry(Address), // u64 unix secs — Persistent; approval valid while
+                               // now < value, slid forward by each gated purchase
+                               // (180d window). The deadline (not the entry's TTL) is
+                               // the authorization lifetime — a restored archived
+                               // entry still expires on time.
 }
 ```
+
+The owner address is not a `CtrlKey` variant — it lives in the OpenZeppelin
+`Ownable` storage slot, as in every other contract.
 
 ---
 
@@ -729,7 +835,14 @@ NotInitiated -> Active -> Landed --> ToBeSettledOnTime --> Settled
        |          |                  ToBeSettledDelayed --> Settled
        |          +---> Cancelled -> ToBeSettledCancelled -> Settled
        +-----------------^                                  (short-notice cancel,
-       |                                                    audit L-01)
+       |          |                                         audit L-01)
+       |          +-----------------> ToBeSettledOnTime    (void: terminal outcome
+       |                                                    never arrived; allowed
+       |                                                    only >= 14 days past the
+       |                                                    recorded scheduled
+       |                                                    arrival — premiums to
+       |                                                    vault, collateral
+       |                                                    released, no payout)
        +----------------------------> ToBeSettledOnTime    (void: no flight data
                                                             ever arrived; allowed
                                                             only >= 14 days past
@@ -737,6 +850,14 @@ NotInitiated -> Active -> Landed --> ToBeSettledOnTime --> Settled
                                                             to vault, collateral
                                                             released, no payout)
 ```
+
+Every state that locks vault collateral has a bounded terminal path: `Landed`
+and `Cancelled` settle through classification; a `NotInitiated` row that never
+receives data voids via the stale timeout; an `Active` row whose terminal
+outcome never arrives voids via the active timeout. Both voids settle as
+on-time (never a payout — paying without an attested outcome would let a data
+outage mint claims), and the oracle can still write the real outcome at any
+moment before the void is classified.
 
 | State | Meaning | Set by |
 |-------|---------|--------|
@@ -799,14 +920,26 @@ NotInitiated -> Active -> Landed --> ToBeSettledOnTime --> Settled
 #[contracttype]
 pub enum OracleKey {
     // Instance — global single-row state (auto-extended with contract instance TTL)
-    Owner,
     AuthorizedOracle,
     AuthorizedController,
-    ActiveFlightList,                // Vec<(Symbol, u64)>
+    PruneCursor,     // u32 — rotating slot cursor into the paginated active set
+    PendingOutcomes, // u64 — outcomes public but not yet settled; read by the
+                     // vault's settlement barrier to block entry/exit
 
     // Persistent — keyed multi-row state
     FlightData(Symbol, u64),         // FlightData
+
+    // Temporary — short-lived sale authorizations (value: expiry timestamp).
+    // Temporary storage is deliberate: a lapsed authorization must vanish,
+    // and archival-restoration semantics must never resurrect one.
+    SaleAuth(Symbol, u64),           // u64 (expires_at)
 }
+
+// The live active-flight set is the shared paginated structure in
+// sentinel_types::active_set (used by both the oracle and the pool):
+//   ActivePage(u32)        — Persistent: Vec<(Symbol, u64)> pages (≤ 100 entries)
+//   ActiveIdx(Symbol, u64) — Persistent: the entry's global slot (O(1) removal)
+//   ActiveCount            — Instance:  total entries (O(1) saturation gauge)
 
 #[contracttype]
 pub struct FlightData {
@@ -835,15 +968,26 @@ const SECONDS_PER_DAY: u64 = 86_400;
 
 **Storage tier rationale:**
 
-- **`ActiveFlightList`** is in **Instance** storage. It is global single-row state — per
-  Soroban best practice, it shares TTL with the contract instance. The delayed-prune
-  scheme bounds the list to (active flights) + (settled-but-not-yet-evicted flights), the
-  latter capped by the 7-day retention window. List growth is bounded under realistic
-  traffic.
+- **The active-flight set is paginated Persistent storage** (`sentinel_types::active_set`):
+  pages of at most 100 `(flight_id, date)` tuples, a per-entry reverse index for O(1)
+  swap-removal, and an Instance-tier count. The previous single Instance `Vec` shared the
+  65,536-byte contract-instance entry and had to be capped at 1,000 flights — at the cap,
+  `register_flight` rejected every first purchase of a new flight protocol-wide. Pages
+  scale independently of instance state (the remaining `MAX_ACTIVE_FLIGHTS = 100,000` cap
+  is a pure sanity bound), and readers pay only for the pages they touch: a keeper batch
+  reads at most two page entries via `get_active_flights_page(offset, limit)`. Page TTLs
+  are re-extended by every write and every paged read (the keeper's rotating scans sweep
+  all pages every few hours); index entries are extended to the flight date (+ buffer) at
+  write, like the `FlightData` rows they shadow. An archived page degrades availability,
+  never integrity: enumeration skips it and emits `sentinel.page_miss(page)` so operators
+  restore it. The delayed-prune scheme still bounds the set to (active flights) +
+  (settled-but-not-yet-evicted flights), the latter capped by the 7-day retention window.
 - **`FlightData(Symbol, u64)`** is in **Persistent** storage (per-flight, unbounded
-  entries — can't move to Instance). TTL is managed via `ExtendFootprintTTLOp` cron —
-  the same cron that extends FlightPoolManager's `FlightConfig` entries iterates active
-  flights and extends each `FlightData` entry.
+  entries — can't move to Instance). TTL is self-managed: every oracle write extends the
+  entry to the flight date (or, once an outcome is recorded, to a settlement deadline)
+  plus a buffer via `extend_flight_ttl_to`, so the record outlives its own settlement
+  window without external help. A key-level `ExtendFootprintTTLOp` executor job remains
+  a planned backstop for idle entries.
 
 **Key functions:**
 
@@ -857,6 +1001,29 @@ fn set_landed(env: Env, oracle: Address,
               actual_arrival_time: u64);                   // Active -> Landed
 fn set_cancelled(env: Env, oracle: Address,
                  flight_id: Symbol, date: u64);            // Active -> Cancelled
+                                                           // also deletes any live
+                                                           // sale authorization
+
+// Oracle-only — sale window (purchase-gate attestation). A live, unexpired
+// authorization is the oracle's affirmative statement that the flight
+// instance was verified scheduled-and-not-cancelled at write time; the
+// Controller's buy_insurance requires one and fails closed without it.
+fn open_sale(env: Env, oracle: Address,
+             flight_id: Symbol, date: u64,
+             expires_at: u64);                             // expires_at bounded by
+                                                           // now + 24h and the
+                                                           // departure-day boundary;
+                                                           // rejected once an outcome
+                                                           // is recorded
+fn close_sale(env: Env, oracle: Address,
+              flight_id: Symbol, date: u64);               // revoke ahead of expiry;
+                                                           // idempotent. Pause-EXEMPT:
+                                                           // open windows outlive a
+                                                           // pause (temporary storage,
+                                                           // read by the controller),
+                                                           // so the revoking write
+                                                           // must stay available
+                                                           // during incidents
 
 // Controller-only
 fn register_flight(env: Env, controller: Address,
@@ -877,8 +1044,19 @@ fn prune_settled(env: Env);                                // evicts entries wit
 
 // Read functions
 fn get_flight_data(env: Env, flight_id: Symbol, date: u64) -> FlightData;
-fn get_active_flights(env: Env) -> Vec<(Symbol, u64)>;
+fn get_active_flights(env: Env) -> Vec<(Symbol, u64)>;       // whole set — off-chain use;
+                                                             // footprint grows with pages
+fn get_active_flights_page(env: Env, offset: u32, limit: u32)
+    -> Vec<(Symbol, u64)>;                                   // bounded window — what the
+                                                             // keeper loops iterate with
+fn get_active_flight_count(env: Env) -> u32;                 // O(1) from stored count
+fn is_flight_listed(env: Env, flight_id: Symbol, date: u64) -> bool; // exact membership
+                                                             // (page-scan fallback)
 fn get_flights_by_status(env: Env, status: FlightStatus) -> Vec<(Symbol, u64)>;
+fn is_sale_open(env: Env, flight_id: Symbol, date: u64) -> bool;   // purchase gate;
+                                                                   // fails closed
+fn get_sale_auth(env: Env, flight_id: Symbol, date: u64) -> Option<u64>; // expiry, for
+                                                                   // frontend/executor
 ```
 
 **Shared types.** `FlightStatus` and `FlightData` live in the workspace-wide
@@ -898,10 +1076,11 @@ updatable addresses.
 
 **Implementation status (Phase 12, 2026-05-25):** the centralized cron backend
 lives at `executor/centralized_cron/`. Stack: TypeScript + Node + tsx +
-`@stellar/stellar-sdk` v14 + `node-cron` + `express` + `dotenv`. Five cron
-jobs (FlightDataFetcher, FlightClassifier, SettlementExecutor, QueueMaintainer,
-TTLExtender), one HTTP API for health / logs / manual triggers, and a
-single-shot CLI (`npm run {fetch,classify,settle,queue,ttl}`) for ops + tests.
+`@stellar/stellar-sdk` v14 + `node-cron` + `express` + `dotenv`. Six cron
+jobs (SaleAuthorizer, FlightDataFetcher, FlightClassifier, SettlementExecutor,
+QueueMaintainer, TTLExtender), one HTTP API for health / logs / manual
+triggers, and a single-shot CLI (`npm run
+{authorize,fetch,classify,settle,queue,ttl}`) for ops + tests.
 Acurast TEE backend planned as a sibling under `executor/acurast/` in a
 later phase — same core logic, different deployment manifest.
 
@@ -909,10 +1088,46 @@ later phase — same core logic, different deployment manifest.
 
 | Cron | Name | Frequency | On-chain target | Authorization |
 |------|------|-----------|-----------------|---------------|
+| #0 | **SaleAuthorizer** | Every 2 hours (offset :30) | `OracleAggregator.open_sale()` / `close_sale()` / `set_cancelled()` | `authorized_oracle` |
 | #1 | **FlightDataFetcher** | Every 2 hours | `OracleAggregator` | `authorized_oracle` |
 | #2 | **FlightClassifier** | Every 1 hour | `Controller.classify_flights()` | `authorized_keeper` |
 | #3 | **SettlementExecutor** | Every 5 minutes | `Controller.execute_settlements()` | `authorized_keeper` |
 | #3b | **QueueMaintainer** | Every 5 minutes | `Controller.run_queue_maintenance()` | `authorized_keeper` |
+
+### Cron #0 — SaleAuthorizer (Oracle, every 2 hours at :30)
+
+Keeps the purchase gate's sale windows attested. `buy_insurance` requires a
+live, unexpired `open_sale` authorization — absence of an on-chain outcome is
+not evidence the real flight is insurable (a publicly cancelled flight looks
+identical to a valid unreported one until the cancellation write lands), so
+the oracle attests insurability affirmatively and purchases fail closed
+without it.
+
+For every flight number in `SALE_AUTH_FLIGHT_IDS` and every day within
+`SALE_AUTH_HORIZON_DAYS` (default 90, matching the booking horizon), each run:
+
+1. queries AeroAPI for the (flight, day) schedule;
+2. pushes `set_cancelled` the moment a cancellation is visible — the
+   tombstone closes sales instantly (and deletes the live authorization)
+   without waiting for it to lapse;
+3. `close_sale`s a window whose instance became unverifiable (no data /
+   ambiguous candidates) — fail closed, never guess;
+4. otherwise opens/refreshes the window with expiry
+   `min(flight date, now + SALE_AUTH_VALIDITY_SECS)` (default 6h; the
+   contract caps validity at 24h).
+
+Ops invariants:
+
+- **The flight-id list must track the governance route whitelist.** A
+  whitelisted route missing from the list is never sellable.
+- **Cadence must stay well inside the validity window**, or every sale
+  window lapses between runs and sales halt protocol-wide. That halt is the
+  intended fail-safe when the authorizer is down — availability degrades,
+  never safety.
+- Days beyond the provider's schedule visibility return no data and stay
+  closed; the effective sale horizon is `min(horizon, provider visibility)`.
+- Runs on the oracle key, off-tempo from the fetcher (:30 vs :00) to avoid
+  sequence-number contention.
 
 ### Cron #1 — FlightDataFetcher (Oracle, every 2 hours)
 
@@ -924,11 +1139,22 @@ only off-chain process that talks to external APIs.
 > ETA. The classifier computes delay as `actual − estimated`, so writing a
 > delay-adjusted ETA would systematically classify delayed flights as on-time. Every
 > executor backend (cron, Acurast, Phala) must preserve this.
+>
+> **Day-key contract:** the `date` in every `(flight_id, date)` key is the flight's
+> **UTC departure day** (midnight UTC, unix seconds). Deriving it from the *local*
+> departure date breaks the oracle's timestamp floor: `set_estimated_arrival` /
+> `set_landed` reject arrivals earlier than `date`, and a short flight departing
+> early-morning local time east of UTC (e.g. 01:00 JST = 16:00 UTC the previous day)
+> can arrive before midnight UTC of its local departure date. A mis-keyed instance
+> strands in `Active` and is voided as on-time by the active timeout — travelers on
+> genuinely delayed or cancelled flights lose both payout and premium. Every executor
+> backend AND every frontend deriving day keys must preserve this.
 
 ```
 FlightDataFetcher
     |
-    +-> reads OracleAggregator.get_active_flights() via Stellar RPC
+    +-> reads OracleAggregator.get_active_flight_count() +
+    |   get_active_flights_page(offset, limit) via Stellar RPC (paged)
     |
     +-> Step A: For flights in NotInitiated status:
     |       calls AeroAPI for estimated arrival time
@@ -1042,27 +1268,29 @@ QueueMaintainer -> signs + submits Soroban tx:
 Same authorized_keeper as #3; separate keeper job (or the same one looping both)
 because the two should not share resource budget.
 
-### Cron #4 — TTL Extender (ExtendFootprintTTLOp, every 24 hours)
+### Cron #4 — TTL Extender (instance `extend_ttl` + prune, every 24 hours)
 
-A permissionless cron that extends TTL on per-flight Persistent entries across both
-FlightPoolManager and OracleAggregator. This is a raw Soroban `ExtendFootprintTTLOp`
-operation — not an in-contract function call.
+A permissionless cron that keeps the contract instances (and everything in their
+Instance storage) alive, and prunes settled flights from the oracle's active set.
 
 ```
 TTL Extender
     |
-    +-> reads FlightPoolManager.get_active_flights() via Stellar RPC
-    |       returns all (flight_id, date) tuples
+    +-> calls extend_ttl() on all five contracts
+    |       (instance + code TTL; covers Routes, WithdrawalQueue,
+    |        active-set count, and all other Instance state)
     |
-    +-> builds one ExtendFootprintTTLOp transaction covering:
-    |       - Each PoolKey::FlightConfig(id, date) in FlightPoolManager
-    |       - Each OracleKey::FlightData(id, date) in OracleAggregator
-    |
-    +-> submits the transaction
+    +-> calls OracleAggregator.prune_settled()
+            (removes Settled flights past the 7-day retention window
+             from the active set)
 ```
 
-Also extends TTL on:
-- `TravelerFlights(Address)` entries in Controller (for active travelers)
+Per-flight Persistent entries (`FlightConfig`, `FlightData`) are self-extending: their
+TTL is bumped on every contract read/write that touches them. Deeper key-level TTL
+extension via a raw Soroban `ExtendFootprintTTLOp` (covering idle `FlightConfig` /
+`FlightData` / `Route` / `TravelerFlights` / `ClaimableBalance` entries enumerated
+off-chain) is a planned, separate executor concern — not part of this cron. Archived
+Persistent entries remain restorable via `RestoreFootprintOp` in the meantime.
 
 ### Why three separate crons?
 
@@ -1084,7 +1312,8 @@ Every backend must implement three logical functions:
 
 ```
 FlightDataFetcher:
-  1. Read OracleAggregator.get_active_flights() via Stellar RPC
+  1. Read OracleAggregator.get_active_flight_count() +
+     get_active_flights_page(offset, limit) via Stellar RPC (paged)
   2. For NotInitiated flights:
        - Call AeroAPI for estimated arrival time
        - Sign and submit: OracleAggregator.set_estimated_arrival(...)
@@ -1113,46 +1342,32 @@ scheduling and runtime harness.
 
 ```
 executor/
-├── src/
-│   ├── core/                      # Shared logic — reused by ALL backends
+├── centralized_cron/              # Current backend: node-cron + Express
+│   ├── src/
+│   │   ├── index.ts               # node-cron scheduler entry point (all job schedules)
+│   │   ├── config.ts              # Loads .env, RPC URLs, keypairs
+│   │   ├── server.ts              # Express ops API: /api/health, /api/logs, /api/trigger/<job>
+│   │   ├── run_once.ts            # CLI single-run entry (npm run authorize/fetch/classify/settle/queue/ttl)
+│   │   ├── run_log.ts             # In-memory run history backing /api/logs
+│   │   ├── sale_authorizer.ts     # open_sale / close_sale / set_cancelled attestations
 │   │   ├── flight_data_fetcher.ts # AeroAPI fetch + oracle data writes
-│   │   ├── flight_classifier.ts   # Classification tx builder
-│   │   ├── settlement_executor.ts # Settlement tx builder
-│   │   ├── ttl_extender.ts        # ExtendFootprintTTLOp for per-flight Persistent entries
+│   │   ├── flight_classifier.ts   # classify_flights tx
+│   │   ├── settlement_executor.ts # execute_settlements tx
+│   │   ├── queue_maintainer.ts    # run_queue_maintenance tx
+│   │   ├── ttl_extender.ts        # extend_ttl on all contracts + prune_settled
 │   │   ├── soroban_client.ts      # Stellar SDK wrapper (build, sign, submit)
 │   │   ├── aeroapi_client.ts      # AeroAPI HTTP client
 │   │   └── types.ts               # FlightStatus, FlightData, etc.
-│   │
-│   ├── backends/
-│   │   ├── cron/                  # Centralized cron (current default)
-│   │   │   ├── index.ts           # node-cron scheduler entry point (4 schedules)
-│   │   │   ├── config.ts          # Loads .env, RPC URLs, keypairs
-│   │   │   └── health.ts          # /health endpoint for monitoring
-│   │   │
-│   │   ├── acurast/               # Acurast TEE (future)
-│   │   │   ├── fetcher/index.ts
-│   │   │   ├── classifier/index.ts
-│   │   │   └── settler/index.ts
-│   │   │
-│   │   └── phala/                 # Phala TEE (future)
-│   │       ├── fetcher.ts
-│   │       ├── classifier.ts
-│   │       └── settler.ts
-│   │
-│   └── scripts/
-│       ├── rotate_keys.ts         # Generate new keypair, call set_authorized_*
-│       └── check_health.ts        # Verify jobs are running, balances are funded
+│   ├── package.json
+│   └── tsconfig.json
 │
-├── .env.example
-├── package.json
-├── tsconfig.json
-└── Dockerfile
+└── mock-api/                      # Local AeroAPI stand-in (scenarios.json per flight)
 ```
 
-The key insight: `core/` contains all the business logic. Each `backends/` entry is a thin
-wrapper that provides scheduling and environment variable access for its specific runtime.
-Adding a new backend means writing a new entry point that imports from `core/` — typically
-under 20 lines of glue code.
+The job modules contain the business logic and are runtime-agnostic; `index.ts`
+(scheduling), `run_once.ts` (CLI), and `server.ts` (on-demand trigger) are thin harnesses
+around them. A future decentralized backend (e.g. Acurast/Phala TEE workers) would wrap
+the same modules in its own harness — typically under 20 lines of glue code.
 
 ### Backend migration
 
@@ -1190,7 +1405,7 @@ Owner or Admin -> GovernanceModule.whitelist_route(flight_id, origin, dest,
     +-> route stored in Persistent storage, keyed Route(flight_id, origin, dest)
         if custom terms provided -> stored per-route
         if not -> will fall back to global defaults when queried via route_status()
-        Route TTL extended (60-day window) on this write
+        Route TTL extended (120-day window) on this write
         emits route.listed event -> off-chain indexer materializes the row
         NO flight entry created yet — lazy creation on first purchase
 ```
@@ -1201,14 +1416,31 @@ Owner or Admin -> GovernanceModule.whitelist_route(flight_id, origin, dest,
 Traveler -> Controller.buy_insurance(flight_id, origin, dest, date)
                 |
                 +-> traveler.require_auth()
+                +-> date must be midnight-UTC aligned             revert if not day-aligned
+                +-> if WhitelistEnabled: traveler must hold a     revert "buyer not whitelisted"
+                |       currently valid approval (explicit
+                |       180-day inactivity deadline; this
+                |       purchase slides it forward on success)
                 +-> GovernanceModule.route_status(flight_id, origin, dest)
                 |       match { Active(terms) => use terms (premium, payoff, delay_hours)
                 |               Disabled      => revert "route is disabled"
                 |               Unknown       => revert "route not whitelisted" }
                 +-> enforce minimum_lead_time                     revert if departure too soon
+                +-> OracleAggregator.get_flight_data(flight_id, date).status
+                |       must be NotInitiated or Active            revert if outcome recorded
+                +-> OracleAggregator.is_sale_open(flight_id, date)
+                |       must be true — a live, unexpired oracle   revert "sale not open"
+                |       attestation that the flight instance is
+                |       scheduled and not cancelled (fails closed
+                |       when missing, lapsed, closed, or archived)
                 |
                 +-> flight exists in FlightPoolManager for (flight_id, date)?
-                |       +- YES -> skip registration
+                |       +- YES -> use the bucket's snapshotted terms, then
+                |                 GovernanceModule.terms_valid(snapshot)
+                |                 must be true — the snapshot was taken under
+                |                 the limits in force at first purchase, and
+                |                 new exposure must satisfy the limits in
+                |                 force NOW      revert "snapshot terms exceed limits"
                 |       +- NO  -> FlightPoolManager.register_flight(
                 |                   flight_id, date, premium, payoff, delay_hours)
                 |                 OracleAggregator.register_flight(flight_id, date)
@@ -1232,7 +1464,8 @@ and the USDC transfer within it.
 ```
 FlightDataFetcher (off-chain)
     |
-    +-> reads OracleAggregator.get_active_flights() via Stellar RPC
+    +-> reads OracleAggregator.get_active_flight_count() +
+    |   get_active_flights_page(offset, limit) via Stellar RPC (paged)
     |
     +-> for each flight in NotInitiated status:
     |       calls AeroAPI -> gets estimated arrival time
@@ -1320,7 +1553,7 @@ Traveler -> FlightPoolManager.claim(traveler, flight_id, date)
     +-> panic if flight not settled as delayed or cancelled
     +-> panic if caller has no policy for (flight_id, date)
     +-> panic if caller already claimed for (flight_id, date)
-    +-> panic if env.ledger().timestamp() > claim_expiry
+    +-> panic if env.ledger().timestamp() >= claim_expiry
     +-> set Claimed(flight_id, date, traveler) = true
     +-> usdc_client.transfer(contract_address, traveler, payoff)
 ```
@@ -1353,17 +1586,18 @@ Owner -> FlightPoolManager.withdraw_recovered(amount)
 
 Underwriter -> RiskVault.redeem(shares, receiver, owner, operator)
     +-> operator.require_auth()
-    +-> max_redeem check: panic if shares > free_capital equivalent
+    +-> max_redeem check: panic if shares > withdrawable_capital equivalent
+        (withdrawable = TMA - ceil(locked * solvency_ratio / 100))
     +-> burn shares, decrease total_managed_assets
     +-> usdc_client.transfer(vault, receiver, assets)
 
--- Queued path (FIFO — used when free_capital < redemption) --
+-- Queued path (FIFO — used when withdrawable_capital < redemption) --
 
 Underwriter -> RiskVault.request_withdrawal(caller, shares) -> request_id
     +-> caller.require_auth()
     +-> panic if shares == 0 or shares > balance
     +-> underwriter specifies how much they want to withdraw
-    +-> request queued as (request_id, caller, shares, timestamp) in FIFO list (Instance storage)
+    +-> request queued as (request_id, caller, shares) in FIFO list (Instance storage)
     +-> shares reserved
     +-> returns request_id (monotonic counter) — use to cancel later, audit M-04
 
@@ -1399,15 +1633,25 @@ queue for the next settlement cycle.
 **Never sell insurance unless we have money to cover it.** Before every insurance purchase:
 
 ```
-vault.free_capital() >= (total_max_liability + new_payoff) * minimum_solvency_ratio / 100
+total_managed_assets >= ceil((locked_capital + new_payoff) * solvency_ratio / 100)
 ```
 
-- `free_capital()` = `total_managed_assets` - `locked_capital`
+**And never let capital leave below the same reserve.** Every LP exit (direct
+withdraw/redeem, `max_*` views, queue processing) is bounded by:
+
+```
+withdrawable_capital = max(total_managed_assets - ceil(locked_capital * solvency_ratio / 100), 0)
+```
+
+- `free_capital()` = `total_managed_assets` - `locked_capital` (nominal margin, reporting only)
 - `locked_capital` increases by `payoff` on each purchase; decreases by `payoff * buyer_count`
   on settlement
-- `minimum_solvency_ratio` defaults to 100 — fully collateralised
-- Underwriter withdrawals that would breach `locked_capital` are queued, not rejected
-- Queue processor re-checks solvency at fulfillment time
+- `solvency_ratio` defaults to 100 — fully collateralised; the controller mirrors every
+  owner update into the vault so both sides of the invariant use the same value
+- Enforcing the ratio only on purchase would be one-sided: any LP could withdraw the
+  nominal margin and collapse the configured reserve to 100% backing between purchases
+- Underwriter withdrawals that would breach the reserve are queued, not rejected
+- Queue processor re-checks the reserve at fulfillment time
 
 ---
 
@@ -1539,6 +1783,11 @@ defense against inflation attacks:
    the scheduled arrival (`scheduled_in`), never a delay-adjusted live ETA — see the
    FlightDataFetcher semantics contract above. The contracts cannot enforce this
    distinction; it is part of the trusted-oracle contract.
+8. **Day keys are UTC.** The `date` in every `(flight_id, date)` key is the flight's
+   UTC departure day (midnight UTC) — see the FlightDataFetcher day-key contract
+   above. The contracts enforce this only indirectly (the arrival-timestamp floor
+   rejects the writes a local-date key would produce), so keying by UTC is part of
+   the executor/frontend contract and must survive backend migrations.
 
 **Trust assumption depends on executor backend.** With a centralized cron, trust the
 server operator. With a TEE backend (Acurast, Phala), trust the hardware attestation chain.
@@ -1550,17 +1799,22 @@ the contracts — only the authorized address changes.
 All contracts must manage TTL (time-to-live) to prevent data archival:
 
 - **Instance storage** (contract config, global state): TTL extended via existing cron
-  `extend_ttl()` calls. Routes, ActiveFlightList, WithdrawalQueue, and other global state
-  are in Instance storage — they share TTL with the contract instance.
-- **Persistent storage** (per-flight data, per-user data): TTL extended via
-  `ExtendFootprintTTLOp` cron for active flight entries (FlightConfig, FlightData). Per-user
-  entries (Buyer, Claimed, ClaimableBalance) get TTL set on write proportional to claim window.
-  TravelerFlights entries are extended by the TTL cron for active travelers.
+  `extend_ttl()` calls. WithdrawalQueue, the active-set count, and other global
+  state are in Instance storage — they share TTL with the contract instance. (The
+  active-flight set's pages and reverse index are Persistent — self-extending on every
+  write and paged read, restorable if they archive anyway. `Route(...)` entries are
+  Persistent too, with a 120-day TTL refreshed on every route write.)
+- **Persistent storage** (per-flight data, per-user data): self-extending — TTL is
+  bumped on every contract read/write that touches the entry (FlightConfig, FlightData,
+  Route). Per-user entries (Buyer, Claimed, ClaimableBalance) get TTL set on write
+  proportional to the claim window.
 - **Temporary storage** (SnapshotPrice): Used for disposable data with natural timeout.
   Permanent deletion after TTL — no archival rent.
 
-The `ExtendFootprintTTLOp` cron (Cron #4) iterates active flights and extends per-flight
-Persistent entries in both FlightPoolManager and OracleAggregator in a single transaction.
+A future `ExtendFootprintTTLOp` executor job (enumerating idle Persistent entries
+off-chain and extending them in bulk) is planned but not part of the current
+centralized-cron backend; Cron #4 today performs instance-level `extend_ttl()` plus
+`prune_settled()` only.
 
 **`RestoreFootprintOp` safety net:** Instance and Persistent entries are never permanently
 deleted — they are archived and can be restored via `RestoreFootprintOp`. Only Temporary
@@ -1583,15 +1837,29 @@ inaccessible until restored" rather than "permanently lost."
   than they can recapture — so this is accepted; running the classifier at the 5-minute
   cadence recommended under load minimizes the window.
 - **An extended oracle outage can void real flights.** The stale-void timeout assumes a
-  row still `NotInitiated` 14 days past departure never matched a physical flight. That
-  premise fails under a partial outage: if the oracle executor stops writing while the
-  keeper keeps classifying, real flights purchased during the outage cross the timeout and
-  are voided as on-time — travelers on genuinely delayed flights lose both payout and
-  premium, irreversibly (the state machine is forward-only). **Operational requirement:**
-  on any oracle-executor outage, pause the Controller (or stop the classifier) well before
-  day 14, and alert off the `sentinel.ttl_miss` event stream — it already fires on every
-  classifier pass for each overdue `NotInitiated` flight and is the natural early-warning
-  signal.
+  row still `NotInitiated` 14 days past departure never matched a physical flight, and
+  the active-void timeout assumes a row still `Active` 14 days past its recorded
+  scheduled arrival will never receive a terminal outcome. Both premises fail under a
+  partial outage: if the oracle executor stops writing while the keeper keeps
+  classifying, real flights cross their timeout and are voided as on-time — travelers on
+  genuinely delayed or cancelled flights lose both payout and premium, irreversibly (the
+  state machine is forward-only). **Operational requirement:** on any oracle-executor
+  outage, pause the Controller (or stop the classifier) well before day 14, and alert
+  off the `sentinel.ttl_miss` event stream (fires for overdue `NotInitiated` flights) —
+  overdue `Active` flights have no periodic diagnostic before the void, so monitor the
+  oracle executor's own health directly. The void events (`sentinel.voided` for
+  dataless rows, `sentinel.timed_out` for stuck-`Active` rows) are the after-the-fact
+  audit trail.
+- **Sale availability depends on the authorizer.** `buy_insurance` requires a live
+  oracle sale authorization (max validity 24h), so sales are only as available as the
+  SaleAuthorizer cron: if it stops, every window lapses within its validity and new
+  purchases halt protocol-wide (existing policies settle normally). This is the intended
+  failure direction — an oracle that cannot verify flights must not admit new risk. The
+  residual purchase-time exposure is bounded by the authorization's remaining validity
+  plus the authorizer's observation cadence: a cancellation that becomes public
+  immediately after a refresh stays purchasable until the next authorizer pass writes
+  the tombstone (or the window lapses), so keep the cadence tight relative to
+  `SALE_AUTH_VALIDITY_SECS`.
 - **Correlated event risk** — simultaneous delays across many flights are protected only
   by `minimum_solvency_ratio`. At 100% the vault covers all; underwriters bear correlated risk.
 - **No per-underwriter capital attribution** — `locked_capital` is pool-level.
@@ -1599,11 +1867,16 @@ inaccessible until restored" rather than "permanently lost."
   Settlement lag is at most 5 minutes after classification.
 - **Settlement-barrier duration scales with keeper cadence.** The vault blocks LP
   entry/exit from the moment any outcome is public until it settles. Classification
-  processes at most `MAX_SETTLE_BATCH = 25` flights per call, so at high active-flight
-  volume an hourly classifier can leave outcomes unclassified for many hours — keeping
-  the barrier engaged most of the day and making the withdrawal queue the only LP path.
+  processes at most `MAX_CLASSIFY_BATCH = 25` flights per call and settlement at most
+  `MAX_SETTLE_BATCH = 10` (settlement writes far more ledger entries per flight), so at
+  high active-flight volume an hourly classifier can leave outcomes unclassified for many
+  hours — keeping the barrier engaged most of the day and making the withdrawal queue the
+  only LP path.
   **Operational invariant:** under load, run the classifier at the same 5-minute cadence
   as the settler (the contracts accept any cadence; batch caps bound the per-call cost).
+  If a settlement window ever exceeds the network's per-transaction resource budgets,
+  `execute_settlements_bounded(keeper, limit)` shrinks the window — down to one flight —
+  so the ready set always drains.
   A flight that can never settle (missing pool config, stalled restore) keeps the barrier
   on until operations resolves it — see `evict_missing_flight` for the terminal escape
   hatch and its `outcome_pending` flag.
@@ -1625,10 +1898,11 @@ inaccessible until restored" rather than "permanently lost."
    returned `RouteStatus` enum:
    - `Active(ResolvedTerms)` — route is buyable; use `terms.payoff` for the solvency precheck.
    - `Disabled` or `Unknown` — show an error; do not let the user submit.
-2. Solvency precheck: read `RiskVault.get_free_capital()` and compare against the
-   `payoff` from step 1 (multiplied by `Controller.get_solvency_ratio() / 100`). The
-   on-chain solvency gate enforces the same check on submit, so this is a UX optimisation
-   to avoid wasted signatures.
+2. Solvency precheck: read `RiskVault.get_total_managed_assets()` and
+   `RiskVault.get_locked_capital()`, and check that TMA covers
+   `(locked + payoff) * Controller.get_solvency_ratio() / 100` with the `payoff` from
+   step 1. The on-chain solvency gate enforces the same check on submit, so this is a UX
+   optimisation to avoid wasted signatures.
 3. Sign transaction that calls `Controller.buy_insurance(flight_id, origin, dest, date)`.
    Soroban auth framework handles USDC transfer authorization within the same signature.
 
@@ -1647,7 +1921,8 @@ user's policies — not all flights across the protocol.
 Shares issued proportional to `total_managed_assets / total_supply`.
 
 **Withdraw (immediate):** `RiskVault.redeem(shares, receiver, owner, operator)` — executes
-when `free_capital >= redemption`.
+when `get_withdrawable_capital() >= redemption` (the margin above the configured solvency
+reserve on locked capital; equals free capital at the default 100% ratio).
 
 **Withdraw (queued FIFO):** `RiskVault.request_withdrawal(caller, shares)` — enqueues when
 capital is locked. Specify desired withdrawal amount. The request's asset value must meet
@@ -1664,6 +1939,7 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Action | Who | Function |
 |---|---|---|
 | Set global defaults | Owner | `governance.set_defaults(premium, payoff, delay_hours)` |
+| Set term limits | Owner | `governance.set_term_limits(max_payoff, max_payoff_ratio)` (bounds every route write; caps a compromised admin key's blast radius) |
 | Whitelist route | Owner / Admin | `governance.whitelist_route(caller, flight_id, origin, dest, premium?, payoff?, delay_hours?)` |
 | Disable route (soft) | Owner / Admin | `governance.disable_route(caller, flight_id, origin, dest)` |
 | Enable route | Owner / Admin | `governance.enable_route(caller, flight_id, origin, dest)` |
@@ -1678,8 +1954,13 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Collect credited USDC | Underwriter | `risk_vault.collect(caller)` |
 | Cancel queued withdrawal | Underwriter | `risk_vault.cancel_withdrawal(caller, request_id)` |
 | Recover uncollected balance | Owner | `risk_vault.recover_uncollected(user, amount, mode: RecoveryMode)` (Recredit must not underpay; Transfer requires prior credit) |
+| Rotate settlement-barrier oracle | Owner | `risk_vault.set_oracle(oracle)` (refuses while the current oracle has pending outcomes) |
+| Force-rotate barrier oracle (old oracle unreachable) | Owner | `risk_vault.force_set_oracle(oracle)` (requires the vault paused; emits `oracle_set` with `forced = true`) |
 | Pause / unpause | Owner | `<contract>.pause(caller)` / `unpause(caller)` (every production contract) |
-| Read free capital | Anyone | `risk_vault.get_free_capital()` |
+| Read free capital (nominal margin) | Anyone | `risk_vault.get_free_capital()` |
+| Read withdrawable capital (exit bound) | Anyone | `risk_vault.get_withdrawable_capital()` |
+| Read vault solvency ratio (controller-mirrored) | Anyone | `risk_vault.get_solvency_ratio()` |
+| Check resolved terms vs current limits | Anyone | `governance.terms_valid(terms) -> bool` (used by `buy_insurance` to re-validate a bucket's snapshotted terms) |
 | Buy insurance | Traveler | `controller.buy_insurance(flight_id, origin, dest, date)` |
 | View my policies | Traveler | `controller.get_flights_for_traveler(address)` |
 | Claim payout | Traveler | `flight_pool_manager.claim(traveler, flight_id, date)` |
@@ -1688,10 +1969,17 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Read active bucket count | Anyone | `flight_pool_manager.get_active_flight_count()` (alert as it nears the list cap) |
 | Push estimated arrival | Oracle | `oracle.set_estimated_arrival(oracle, flight_id, date, eta)` |
 | Push landed (with actual arrival) | Oracle | `oracle.set_landed(oracle, flight_id, date, actual)` |
-| Mark cancelled | Oracle | `oracle.set_cancelled(oracle, flight_id, date)` |
-| Classify flights | Keeper | `controller.classify_flights(keeper)` |
-| Execute settlements | Keeper | `controller.execute_settlements(keeper)` |
+| Mark cancelled | Oracle | `oracle.set_cancelled(oracle, flight_id, date)` (also deletes any live sale authorization) |
+| Open / refresh sale window | Oracle | `oracle.open_sale(oracle, flight_id, date, expires_at)` (required by `buy_insurance`; validity capped at 24h) |
+| Close sale window early | Oracle | `oracle.close_sale(oracle, flight_id, date)` |
+| Check sale window | Anyone | `oracle.is_sale_open(flight_id, date)` / `oracle.get_sale_auth(flight_id, date)` |
+| Classify flights | Keeper | `controller.classify_flights(keeper)` (window of `MAX_CLASSIFY_BATCH = 25` per call) |
+| Execute settlements | Keeper | `controller.execute_settlements(keeper)` (window of `MAX_SETTLE_BATCH = 10` per call) |
+| Execute settlements, smaller window | Keeper | `controller.execute_settlements_bounded(keeper, limit)` (limit clamped to [1, 10]; escape hatch if a full window exceeds tx resource budgets) |
 | Drain withdrawal queue + snapshot | Keeper | `controller.run_queue_maintenance(keeper)` |
+| Toggle buyer whitelist | Owner | `controller.set_whitelist_enabled(bool)` (default off — open purchases) |
+| Approve / revoke a buyer | Owner or Governance admin | `controller.add_whitelisted_buyer(caller, addr)` / `remove_whitelisted_buyer(caller, addr)` (approval carries an explicit 180-day inactivity deadline; each purchase slides it forward) |
+| Check buyer approval | Anyone | `controller.is_whitelisted(addr)` (valid = added, not removed, deadline not passed) |
 | Prune aged-out settled flights | Anyone | `oracle.prune_settled()` |
 | Read active flight count | Anyone | `oracle.get_active_flight_count()` (alert as it nears the list cap) |
 | Check flight data physically exists | Anyone | `oracle.has_flight_data(flight_id, date)` (distinguishes archived from unregistered) |
@@ -1704,132 +1992,62 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 
 ---
 
-## dApp Frontend — Scaffold Stellar
+## dApp Frontend — Sentinel Playground
 
-The frontend is built using **Scaffold Stellar**, providing:
+The frontend is the **Sentinel Playground**, a hand-scaffolded Next.js (App Router,
+TypeScript) dApp in [`playground/`](../playground/) using `@stellar/stellar-sdk` and
+`@creit.tech/stellar-wallets-kit` for multi-wallet connect + signing. Contract addresses
+come from [`deployments/testnet.json`](../deployments/testnet.json).
 
 ### Project Structure
 
 ```
-sentinel_soroban_phase_3/
-├── contracts/                      # Soroban smart contracts (Rust)
-│   ├── sentinel_types/             # Shared cross-contract types + TTL consts + test_support
-│   │   ├── Cargo.toml
-│   │   └── src/{lib,test_support}.rs
+sentinel_soroban_v3/
+├── contracts/                      # Soroban smart contracts (Rust workspace)
+│   ├── sentinel_types/             # Shared cross-contract types, TTL consts, active_set, test_support
 │   ├── governance_module/
-│   │   ├── Cargo.toml
-│   │   └── src/lib.rs
 │   ├── risk_vault/
-│   │   ├── Cargo.toml
-│   │   └── src/lib.rs
 │   ├── flight_pool_manager/
-│   │   ├── Cargo.toml
-│   │   └── src/lib.rs
 │   ├── controller/
-│   │   ├── Cargo.toml
-│   │   └── src/lib.rs
 │   ├── oracle_aggregator/
-│   │   ├── Cargo.toml
-│   │   └── src/lib.rs
+│   ├── mock_usdc/                  # Testnet-only settlement token
 │   └── integration_tests/          # Cross-contract test suite
-├── packages/                       # Auto-generated TypeScript clients
-│   ├── governance_module/
-│   ├── risk_vault/
-│   ├── flight_pool_manager/
-│   ├── controller/
-│   └── oracle_aggregator/
-├── frontend/                       # React + Vite dApp
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── TravelerDashboard.tsx
-│   │   │   ├── UnderwriterDashboard.tsx
-│   │   │   ├── AdminPanel.tsx
-│   │   │   ├── RouteManager.tsx
-│   │   │   ├── PoolStatus.tsx
-│   │   │   └── VaultMetrics.tsx
-│   │   ├── hooks/
-│   │   │   ├── useController.ts
-│   │   │   ├── useRiskVault.ts
-│   │   │   ├── useGovernance.ts
-│   │   │   └── useMyPolicies.ts
-│   │   └── App.tsx
-│   └── package.json
-├── executor/                       # Off-chain executor (modular backend)
-│   ├── src/
-│   │   ├── core/                   # Shared logic — ALL backends use this
-│   │   │   ├── flight_data_fetcher.ts
-│   │   │   ├── flight_classifier.ts
-│   │   │   ├── settlement_executor.ts
-│   │   │   ├── ttl_extender.ts
-│   │   │   ├── soroban_client.ts
-│   │   │   ├── aeroapi_client.ts
-│   │   │   └── types.ts
-│   │   ├── backends/
-│   │   │   ├── cron/               # Centralized cron (current default)
-│   │   │   ├── acurast/            # Acurast TEE (future)
-│   │   │   └── phala/              # Phala TEE (future)
-│   │   └── scripts/
-│   │       ├── rotate_keys.ts
-│   │       └── check_health.ts
-│   ├── .env.example
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── Dockerfile
-├── environments.toml               # Scaffold Stellar multi-env config
-├── Cargo.toml                      # Workspace root
-└── spec/
-    ├── architecture.md
-    ├── improvements.md
-    └── changes.md
+├── executor/
+│   ├── centralized_cron/           # Off-chain cron executor (see structure above)
+│   └── mock-api/                   # Local AeroAPI stand-in
+├── playground/                     # Next.js dApp
+│   ├── app/                        # Pages: / (global state), /account, /interact
+│   ├── components/                 # Header, WalletButton, FunctionForm, AddressLine
+│   └── lib/                        # soroban.ts, walletKit.ts, queries.ts, registry.ts, scval.ts, config.ts
+├── deployments/                    # testnet.json — addresses, wasm hashes, constructor params
+├── docs/                           # Docusaurus documentation site
+├── audits/                         # Audit reports + remediations
+└── spec/                           # architecture.md, sequence diagrams, phase plans
 ```
 
 ### Auto-Generated TypeScript Bindings
 
-Scaffold Stellar generates typed clients for each contract:
+Instead of generated per-contract clients, the playground drives every contract
+through a curated function registry (`lib/registry.ts` — every public entrypoint
+with arg specs and auth badges) plus generic RPC helpers (`lib/soroban.ts` —
+read-only calls via `simulateTransaction`, writes via simulate → assemble →
+wallet-sign → send → poll). Everything runs client-side; the app never touches a
+secret key:
 
 ```typescript
-import { ControllerClient } from '../packages/controller';
-import { RiskVaultClient } from '../packages/risk_vault';
-import { FlightPoolManagerClient } from '../packages/flight_pool_manager';
+// Read — free simulation, decoded to native JS values
+const myFlights = await simulateRead(
+  CONTRACTS.controller.address, 'get_flights_for_traveler', [addressToScVal(wallet)]);
 
-// Buy insurance — single wallet signature covers Controller call + USDC transfer
-const tx = await controllerClient.buy_insurance({
-  flight_id: 'AA123',
-  origin: 'DEN',
-  dest: 'SEA',
-  date: 1710000000n,
-});
-await tx.signAndSend();
-
-// View my policies
-const myFlights = await controllerClient.get_flights_for_traveler({
-  address: walletAddress,
-});
-
-// Claim payout
-const claimTx = await flightPoolManagerClient.claim({
-  traveler: walletAddress,
-  flight_id: 'AA123',
-  date: 1710000000n,
-});
-await claimTx.signAndSend();
+// Write — single wallet signature covers the Controller call + USDC transfer
+await invokeWrite(CONTRACTS.controller.address, 'buy_insurance', [
+  addressToScVal(wallet), symbolToScVal('AA123'),
+  symbolToScVal('DEN'), symbolToScVal('SEA'), u64ToScVal(1785542400n),
+]);
 ```
 
-### Multi-Environment Configuration
-
-`environments.toml` manages testnet / mainnet:
-
-```toml
-[development]
-network = "testnet"
-rpc_url = "https://soroban-testnet.stellar.org"
-network_passphrase = "Test SDF Network ; September 2015"
-
-[production]
-network = "mainnet"
-rpc_url = "https://soroban-rpc.mainnet.stellar.gateway.fm"
-network_passphrase = "Public Global Stellar Network ; September 2015"
-```
+Network configuration (testnet RPC URL, passphrase, contract addresses) lives in
+`lib/config.ts`, sourced from `deployments/testnet.json`.
 
 ---
 
@@ -1881,7 +2099,9 @@ network_passphrase = "Public Global Stellar Network ; September 2015"
              --claim_expiry_window_secs 5184000
         -> returns CONTRACT_ID_CONTROLLER
         (solvency ratio is not a constructor argument — it initializes to 100
-         and is tuned afterwards via controller.set_solvency_ratio)
+         and is tuned afterwards via controller.set_solvency_ratio, which also
+         mirrors the value into the RiskVault; call it only AFTER the vault's
+         set_controller wiring below, or the mirror push will revert)
 
 3. Post-deployment wiring:
         OracleAggregator.set_controller(CONTRACT_ID_CONTROLLER)   <- one-time, immutable
@@ -1889,11 +2109,18 @@ network_passphrase = "Public Global Stellar Network ; September 2015"
         FlightPoolManager.set_controller(CONTRACT_ID_CONTROLLER)   <- one-time, immutable
         (RiskVault's settlement-barrier oracle is wired in the constructor,
          step 2c — no post-deploy call needed. RiskVault.set_oracle exists
-         only to rotate it if the oracle contract is ever redeployed; it and
-         set_min_withdrawal_request emit `oracle_set` / `min_wd_req_set`
-         audit events. Note set_oracle points at the oracle CONTRACT —
-         distinct from OracleAggregator.set_oracle, which sets the off-chain
-         oracle executor address.)
+         only to rotate it if the oracle contract is ever redeployed; it
+         refuses while the CURRENT oracle still reports pending public
+         outcomes, because a fresh oracle starts at zero pending and the
+         swap would open the barrier at a stale share price mid-incident.
+         If the old oracle is unreachable, pause the vault and use
+         RiskVault.force_set_oracle — the vault then stays paused until the
+         old oracle's pending PnL is reconciled and the owner deliberately
+         unpauses. Both paths and set_min_withdrawal_request emit
+         `oracle_set` (with a `forced` flag) / `min_wd_req_set` audit
+         events. Note set_oracle points at the oracle CONTRACT — distinct
+         from OracleAggregator.set_oracle, which sets the off-chain oracle
+         executor address.)
         RiskVault.set_min_withdrawal_request(MIN_ASSETS)           <- REQUIRED: minimum asset value
                                                                       per queued withdrawal request.
                                                                       Ships disabled (0); if left at 0,
@@ -1929,9 +2156,9 @@ network_passphrase = "Public Global Stellar Network ; September 2015"
         stellar keys generate keeper-executor
 
    b. Configure and start executor (e.g. centralized cron):
-        cd executor && cp .env.example .env
+        cd executor/centralized_cron && cp .env.example .env
         # Set: AERO_API_KEY, STELLAR_RPC_URL, SECRET_KEYS, contract IDs
-        npm run start:cron
+        npm run start
 
 7. Register executor addresses on-chain:
         OracleAggregator.set_oracle(ORACLE_EXECUTOR_ADDRESS)

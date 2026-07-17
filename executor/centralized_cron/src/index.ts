@@ -1,5 +1,6 @@
 import cron from "node-cron";
 import { loadConfig } from "./config.js";
+import { runSaleAuthorizer } from "./sale_authorizer.js";
 import { runFlightDataFetcher } from "./flight_data_fetcher.js";
 import { runFlightClassifier } from "./flight_classifier.js";
 import { runSettlementExecutor } from "./settlement_executor.js";
@@ -28,6 +29,16 @@ startServer(config);
 // Settler + QueueMaintainer share the keeper key — schedule them off-tempo
 // (settler at :00/:05/..., queue at :02/:07/...) to minimise sequence-number
 // contention when both fire close to each other.
+
+// Cron #0 — SaleAuthorizer — oracle key — every 2 hours at :30.
+// Shares the oracle key with the fetcher, so it runs off-tempo (:30 vs :00)
+// to avoid sequence-number contention. Its cadence must stay comfortably
+// inside SALE_AUTH_VALIDITY_SECS or every sale window lapses between runs.
+cron.schedule("30 */2 * * *", async () => {
+  console.log(`\n[${new Date().toISOString()}] Running SaleAuthorizer...`);
+  const entry = await runSaleAuthorizer(config);
+  logRun(entry);
+});
 
 // Cron #1 — FlightDataFetcher — oracle key — every 2 hours at :00
 cron.schedule("0 */2 * * *", async () => {
@@ -66,6 +77,7 @@ cron.schedule("0 0 * * *", async () => {
 });
 
 console.log("Cron jobs scheduled:");
+console.log("  SaleAuthorizer:       every 2h at :30          (oracle key)");
 console.log("  FlightDataFetcher:    every 2h at :00         (oracle key)");
 console.log("  FlightClassifier:     hourly at :00            (keeper key)");
 console.log("  SettlementExecutor:   every 5m at :00/:05/...  (keeper key)");

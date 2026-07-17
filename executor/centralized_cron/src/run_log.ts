@@ -3,6 +3,7 @@ import type { JobName, RunLogEntry, HealthStatus } from "./types.js";
 const MAX_ENTRIES = 10;
 
 const buffers: Record<JobName, RunLogEntry[]> = {
+  sale_authorizer: [],
   fetcher: [],
   classifier: [],
   settler: [],
@@ -28,6 +29,7 @@ export function getHealth(): HealthStatus {
     uptime_seconds: Math.floor(uptimeMs / 1000),
     started_at: startedAt.toISOString(),
     last_run: {
+      sale_authorizer: buffers.sale_authorizer.at(-1) ?? null,
       fetcher: buffers.fetcher.at(-1) ?? null,
       classifier: buffers.classifier.at(-1) ?? null,
       settler: buffers.settler.at(-1) ?? null,

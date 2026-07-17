@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, Env, Symbol};
 
 use sentinel_types::ttl::{
     deadline_extension_ledgers, PERSISTENT_TTL_EXTEND, PERSISTENT_TTL_THRESHOLD,
@@ -14,7 +14,6 @@ pub enum PoolKey {
     Controller,
     AssetToken,
     RiskVault,
-    ActiveFlightList,
     RecoveredBalance,
 
     // Persistent — keyed by (flight_id, date)
@@ -52,33 +51,10 @@ pub(crate) fn extend_flight_ttl_to(e: &Env, flight_id: &Symbol, date: u64, deadl
         .extend_ttl(&key, extend_to, extend_to);
 }
 
+// Remove a settled flight from the paginated active set. Tolerant of an
+// absent entry (idempotent settlement paths): `remove` swap-moves the
+// globally last entry into the freed slot — O(1), and consumers already
+// treat the set as unordered.
 pub(crate) fn prune_active_list(e: &Env, flight_id: &Symbol, date: u64) {
-    let mut list: Vec<(Symbol, u64)> = e
-        .storage()
-        .instance()
-        .get(&PoolKey::ActiveFlightList)
-        .unwrap_or(Vec::new(e));
-    let target = (flight_id.clone(), date);
-    let mut idx: Option<u32> = None;
-    for i in 0..list.len() {
-        if list.get(i) == Some(target.clone()) {
-            idx = Some(i);
-            break;
-        }
-    }
-    if let Some(i) = idx {
-        // Swap-remove instead of `Vec::remove`, which shifts every
-        // trailing element. The active list is an unordered set, so moving the
-        // last entry into the gap and popping the tail is O(1) and avoids
-        // compounding shift cost when many flights settle in one call.
-        let last = list.len() - 1;
-        if i != last {
-            let tail = list.get(last).unwrap();
-            list.set(i, tail);
-        }
-        list.pop_back();
-        e.storage()
-            .instance()
-            .set(&PoolKey::ActiveFlightList, &list);
-    }
+    sentinel_types::active_set::remove(e, flight_id, date);
 }

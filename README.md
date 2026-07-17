@@ -3,6 +3,8 @@
 [![CI](https://github.com/SentinelFi/sentinel_soroban_v3/actions/workflows/ci.yml/badge.svg)](https://github.com/SentinelFi/sentinel_soroban_v3/actions/workflows/ci.yml)
 [![Deploy Docs](https://github.com/SentinelFi/sentinel_soroban_v3/actions/workflows/deploy-docs.yml/badge.svg)](https://github.com/SentinelFi/sentinel_soroban_v3/actions/workflows/deploy-docs.yml)
 [![Stellar](https://img.shields.io/badge/Stellar-Soroban-brightgreen?logo=stellar)](https://stellar.org)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fsentinelfi.github.io%2Fsentinel_soroban_v3%2Fcoverage%2Fbadge.json)](https://sentinelfi.github.io/sentinel_soroban_v3/coverage/)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/SentinelFi/sentinel_soroban_v3)
 
 ## About
 
@@ -11,6 +13,8 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
 - Documentation: https://sentinelfi.github.io/sentinel_soroban_v3/
 - DeepWiki: https://deepwiki.com/SentinelFi/sentinel_soroban_v3
 - Architecture: [spec/architecture.md](spec/architecture.md)
+- Playground (testnet): https://sentinel-soroban-v3.vercel.app/
+- Slides: https://sentinel-soroban-v3-slides.vercel.app/
 
 ## Project Structure
 
@@ -24,6 +28,7 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
   - [sentinel_types/](contracts/sentinel_types/)
   - [integration_tests/](contracts/integration_tests/)
 - [executor/](executor/) — off-chain executor layer (oracle and keeper cron jobs)
+- [playground/](playground/) — web playground for the testnet deployment ([live](https://sentinel-soroban-v3.vercel.app/))
 - [deployments/](deployments/) — deployed contract addresses and parameters
 - [spec/](spec/) — architecture and design documents
 - [docs/](docs/) — documentation site (Docusaurus)
@@ -51,7 +56,9 @@ All commands run from the `contracts/` directory:
 cd contracts
 
 make test            # run the full test suite
-make build           # build all contracts to wasm
+make coverage        # line-coverage summary (published report: see badge above)
+make build           # build all contracts to wasm + verify network size caps
+make check-wasm-size # re-check built wasm sizes against the Soroban cap
 make check           # formatting, clippy, and tests
 make ci              # full local CI (check + dependency audit)
 

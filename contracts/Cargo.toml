@@ -25,6 +25,8 @@ stellar-tokens = "0.7.1"
 stellar-access = "0.7.1"
 stellar-macros = "0.7.1"
 stellar-contract-utils = "0.7.1"
+# Property-based testing (dev-dependency only — never part of contract wasm).
+proptest = "1"
 
 [workspace.lints.clippy]
 # 7-decimal asset literals look like `10_0000000` — the grouping is

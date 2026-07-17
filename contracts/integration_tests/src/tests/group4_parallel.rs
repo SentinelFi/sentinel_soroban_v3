@@ -53,6 +53,7 @@ fn multiple_flights_independent_settlements() {
 
     // Buy on both flights.
     t.buy(&traveler_a);
+    t.open_sale(&symbol_short!("UA200"), FLIGHT_DATE + SECONDS_PER_DAY);
     t.asset_admin.mint(&traveler_b, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler_b,
@@ -124,6 +125,7 @@ fn traveler_index_across_multiple_flights() {
     );
 
     t.buy(&traveler);
+    t.open_sale(&symbol_short!("UA200"), FLIGHT_DATE + SECONDS_PER_DAY);
     t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,
@@ -171,6 +173,7 @@ fn traveler_with_multiple_routes() {
     );
 
     t.buy(&traveler);
+    t.open_sale(&symbol_short!("UA200"), FLIGHT_DATE + SECONDS_PER_DAY);
     t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,
@@ -179,6 +182,7 @@ fn traveler_with_multiple_routes() {
         &symbol_short!("ORD"),
         &(FLIGHT_DATE + SECONDS_PER_DAY),
     );
+    t.open_sale(&symbol_short!("DL300"), FLIGHT_DATE + 2 * SECONDS_PER_DAY);
     t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,

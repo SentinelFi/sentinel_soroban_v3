@@ -113,7 +113,14 @@ fn solvency_gate_blocks_undercollateralized_purchase() {
         &None::<u32>,
     );
 
-    // Vault has 0 free capital — purchase must panic.
+    // Vault has 0 free capital — purchase must panic. The sale window is
+    // opened first so the solvency gate (not the sale gate) is what rejects.
+    oracle.open_sale(
+        &oracle_account,
+        &symbol_short!("AA100"),
+        &FLIGHT_DATE,
+        &FLIGHT_DATE,
+    );
     let traveler = Address::generate(&env);
     asset_admin.mint(&traveler, &PREMIUM);
     ctrl.buy_insurance(
@@ -137,6 +144,51 @@ fn solvency_gate_with_ratio_150() {
     // First buy: passes (free = 1000, required = 75).
     let traveler = Address::generate(&t.env);
     t.buy(&traveler);
+}
+
+#[test]
+fn lp_exit_cannot_drain_solvency_reserve() {
+    // The 200% ratio admitted these purchases against TMA >= 2x locked; an
+    // LP exit must not undo that. With 1000 TMA and 100 locked (2 buys) the
+    // required backing is 200, so only 800 may leave — not the nominal 900.
+    let t = TestEnv::new();
+    t.ctrl.set_solvency_ratio(&200);
+    // The owner setter mirrors the ratio into the vault atomically.
+    assert_eq!(t.vault.get_solvency_ratio(), 200);
+
+    for _ in 0..2 {
+        let buyer = Address::generate(&t.env);
+        t.buy(&buyer);
+    }
+    assert_eq!(t.vault.get_locked_capital(), 2 * PAYOFF);
+    assert_eq!(t.vault.get_free_capital(), DEPOSIT_AMOUNT - 2 * PAYOFF);
+    assert_eq!(
+        t.vault.get_withdrawable_capital(),
+        DEPOSIT_AMOUNT - 4 * PAYOFF
+    );
+
+    // Withdrawing the nominal free margin would collapse the configured
+    // reserve to 100% backing — rejected.
+    assert!(t
+        .vault
+        .try_withdraw(
+            &(DEPOSIT_AMOUNT - 2 * PAYOFF),
+            &t.underwriter,
+            &t.underwriter,
+            &t.underwriter,
+        )
+        .is_err());
+
+    // The reserve-aware bound leaves the book exactly at the configured ratio.
+    t.vault.withdraw(
+        &(DEPOSIT_AMOUNT - 4 * PAYOFF),
+        &t.underwriter,
+        &t.underwriter,
+        &t.underwriter,
+    );
+    assert_eq!(t.vault.get_total_managed_assets(), 4 * PAYOFF);
+    assert!(t.vault.get_total_managed_assets() >= 2 * t.vault.get_locked_capital());
+    assert_eq!(t.vault.get_withdrawable_capital(), 0);
 }
 
 #[test]

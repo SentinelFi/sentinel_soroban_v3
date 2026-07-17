@@ -3,7 +3,6 @@ use crate::storage::OracleKey;
 use sentinel_types::test_support::collect_events;
 use soroban_sdk::{
     symbol_short, testutils::Address as _, testutils::Ledger as _, Address, Env, IntoVal, Symbol,
-    Vec,
 };
 
 const FLIGHT_DATE: u64 = 1710400000; // arbitrary unix timestamp
@@ -362,6 +361,220 @@ fn test_stale_not_initiated_void_gated_by_timeout() {
 }
 
 #[test]
+fn test_active_timeout_void_gated_by_timeout() {
+    // An Active flight whose terminal outcome never arrives can be classified
+    // straight to ToBeSettledOnTime (the void path) — but only once the
+    // active timeout past its recorded scheduled arrival has elapsed, so a
+    // flight the oracle is merely late in resolving can never be voided. The
+    // void counts as a pending outcome until settled, keeping the vault's
+    // settlement barrier consistent.
+    let (env, client, _owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+    client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);
+
+    // Before the timeout: rejected.
+    env.ledger()
+        .with_mut(|li| li.timestamp = EST_ARRIVAL + 14 * 86_400 - 1);
+    assert!(client
+        .try_set_to_be_settled(
+            &controller,
+            &fid,
+            &FLIGHT_DATE,
+            &FlightStatus::ToBeSettledOnTime,
+        )
+        .is_err());
+
+    env.ledger()
+        .with_mut(|li| li.timestamp = EST_ARRIVAL + 14 * 86_400);
+
+    // Delayed / cancelled are never valid targets from Active — a flight
+    // without an attested outcome must not become payable.
+    assert!(client
+        .try_set_to_be_settled(
+            &controller,
+            &fid,
+            &FLIGHT_DATE,
+            &FlightStatus::ToBeSettledDelayed,
+        )
+        .is_err());
+    assert!(client
+        .try_set_to_be_settled(
+            &controller,
+            &fid,
+            &FLIGHT_DATE,
+            &FlightStatus::ToBeSettledCancelled,
+        )
+        .is_err());
+
+    // Past the timeout the void classification lands, counts as pending, and
+    // settles normally.
+    client.set_to_be_settled(
+        &controller,
+        &fid,
+        &FLIGHT_DATE,
+        &FlightStatus::ToBeSettledOnTime,
+    );
+    assert_eq!(client.get_pending_outcomes(), 1);
+    client.set_settled(&controller, &fid, &FLIGHT_DATE);
+    assert_eq!(client.get_pending_outcomes(), 0);
+}
+
+// --- Sale authorization (purchase-gate attestation) ---
+
+#[test]
+fn test_open_sale_round_trip_and_expiry() {
+    let (env, client, _owner, oracle, _controller) = setup();
+    let fid = flight_id(&env);
+
+    // No authorization → closed.
+    assert!(!client.is_sale_open(&fid, &FLIGHT_DATE));
+    assert_eq!(client.get_sale_auth(&fid, &FLIGHT_DATE), None);
+
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600);
+    assert!(client.is_sale_open(&fid, &FLIGHT_DATE));
+    assert_eq!(client.get_sale_auth(&fid, &FLIGHT_DATE), Some(3_600));
+
+    // At the expiry timestamp the window is closed — the stored expiry, not
+    // the storage lifetime, is what gates purchases.
+    env.ledger().with_mut(|li| li.timestamp = 3_600);
+    assert!(!client.is_sale_open(&fid, &FLIGHT_DATE));
+
+    // A refresh re-opens it.
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &(3_600 + 7_200));
+    assert!(client.is_sale_open(&fid, &FLIGHT_DATE));
+}
+
+#[test]
+fn test_open_sale_validates_expiry() {
+    let (env, client, _owner, oracle, _controller) = setup();
+    let fid = flight_id(&env);
+
+    // Expiry must be strictly in the future...
+    assert!(client
+        .try_open_sale(&oracle, &fid, &FLIGHT_DATE, &0)
+        .is_err());
+    // ...within the max validity cap (24h)...
+    assert!(client
+        .try_open_sale(&oracle, &fid, &FLIGHT_DATE, &(86_400 + 1))
+        .is_err());
+    assert!(client
+        .try_open_sale(&oracle, &fid, &FLIGHT_DATE, &86_400)
+        .is_ok());
+
+    // ...and never past the departure-day boundary.
+    env.ledger().with_mut(|li| li.timestamp = FLIGHT_DATE - 100);
+    assert!(client
+        .try_open_sale(&oracle, &fid, &FLIGHT_DATE, &(FLIGHT_DATE + 1))
+        .is_err());
+    assert!(client
+        .try_open_sale(&oracle, &fid, &FLIGHT_DATE, &FLIGHT_DATE)
+        .is_ok());
+}
+
+#[test]
+fn test_open_sale_allowed_pre_outcome_only() {
+    // NotInitiated (registered, no data) and Active rows are attestable;
+    // any recorded outcome makes the sale window unopenable.
+    let (env, client, _owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600);
+
+    client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600);
+
+    client.set_landed(&oracle, &fid, &FLIGHT_DATE, &ACT_ARRIVAL);
+    assert!(client
+        .try_open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600)
+        .is_err());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #602)")]
+fn test_open_sale_panics_on_cancelled_tombstone() {
+    // A pre-registration cancellation tombstone must not be overridden by a
+    // sale authorization — the flight is dead.
+    let (env, client, _owner, oracle, _controller) = setup();
+    let fid = flight_id(&env);
+
+    client.set_cancelled(&oracle, &fid, &FLIGHT_DATE);
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600);
+}
+
+#[test]
+fn test_close_sale_removes_authorization() {
+    let (env, client, _owner, oracle, _controller) = setup();
+    let fid = flight_id(&env);
+
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600);
+    assert!(client.is_sale_open(&fid, &FLIGHT_DATE));
+
+    client.close_sale(&oracle, &fid, &FLIGHT_DATE);
+    assert!(!client.is_sale_open(&fid, &FLIGHT_DATE));
+    assert_eq!(client.get_sale_auth(&fid, &FLIGHT_DATE), None);
+
+    // Idempotent — closing an absent window is a silent no-op.
+    client.close_sale(&oracle, &fid, &FLIGHT_DATE);
+}
+
+#[test]
+fn test_close_sale_works_while_paused() {
+    // A live sale window stays readable — and purchasable through the
+    // controller — regardless of this contract's pause state, so the pause
+    // switch must not disable the one write that can revoke it. Pausing
+    // still blocks NEW attestations; only the strictly protective close
+    // stays open.
+    let (env, client, owner, oracle, _controller) = setup();
+    let fid = flight_id(&env);
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600);
+    assert!(client.is_sale_open(&fid, &FLIGHT_DATE));
+
+    client.pause(&owner);
+    assert!(client
+        .try_open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600)
+        .is_err());
+    client.close_sale(&oracle, &fid, &FLIGHT_DATE);
+    assert!(!client.is_sale_open(&fid, &FLIGHT_DATE));
+}
+
+#[test]
+fn test_set_cancelled_clears_sale_authorization() {
+    let (env, client, _owner, oracle, controller) = setup();
+
+    // Registered flight: the cancellation write kills the live window in the
+    // same transaction.
+    let fid = flight_id(&env);
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+    client.open_sale(&oracle, &fid, &FLIGHT_DATE, &3_600);
+    client.set_cancelled(&oracle, &fid, &FLIGHT_DATE);
+    assert!(!client.is_sale_open(&fid, &FLIGHT_DATE));
+
+    // Unregistered flight: the tombstone write clears the window too.
+    let fid2 = symbol_short!("UA200");
+    client.open_sale(&oracle, &fid2, &FLIGHT_DATE, &3_600);
+    client.set_cancelled(&oracle, &fid2, &FLIGHT_DATE);
+    assert!(!client.is_sale_open(&fid2, &FLIGHT_DATE));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #604)")]
+fn test_open_sale_requires_oracle() {
+    let (env, client, _owner, _oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.open_sale(&controller, &fid, &FLIGHT_DATE, &3_600);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #604)")]
+fn test_close_sale_requires_oracle() {
+    let (env, client, _owner, _oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.close_sale(&controller, &fid, &FLIGHT_DATE);
+}
+
+#[test]
 fn test_full_lifecycle_cancelled() {
     let (env, client, _owner, oracle, controller) = setup();
     let fid = flight_id(&env);
@@ -510,23 +723,269 @@ fn test_register_flight_twice_is_idempotent() {
 #[test]
 #[should_panic(expected = "Error(Contract, #606)")]
 fn test_register_flight_rejects_when_active_list_full() {
-    // The active list is bounded so it can't grow into the contract-instance
-    // entry-size limit. Pre-seed it to the cap directly in storage, then confirm
-    // one more distinct registration is rejected.
+    // The paginated active set carries an operational sanity cap. The cap
+    // gate reads the O(1) stored count, so seed that directly to the cap and
+    // confirm one more distinct registration is rejected.
     use crate::constants::MAX_ACTIVE_FLIGHTS;
+    use sentinel_types::active_set::ActiveSetKey;
     let (env, client, _owner, _oracle, controller) = setup();
 
     env.as_contract(&client.address, || {
-        let mut list: Vec<(Symbol, u64)> = Vec::new(&env);
-        for i in 0..MAX_ACTIVE_FLIGHTS {
-            list.push_back((symbol_short!("AA100"), i as u64));
-        }
         env.storage()
             .instance()
-            .set(&OracleKey::ActiveFlightList, &list);
+            .set(&ActiveSetKey::ActiveCount, &MAX_ACTIVE_FLIGHTS);
     });
 
     client.register_flight(&controller, &symbol_short!("ZZ999"), &99_999_999u64);
+}
+
+#[test]
+fn test_get_active_flights_page_windows_and_bounds() {
+    // The paged view is the keeper's bounded enumeration: exact windows
+    // inside the set, truncated at the end, empty beyond it.
+    let (_env, client, _owner, _oracle, controller) = setup();
+    for i in 0..5u64 {
+        client.register_flight(&controller, &symbol_short!("AA100"), &(FLIGHT_DATE + i));
+    }
+
+    assert_eq!(client.get_active_flight_count(), 5);
+    let win = client.get_active_flights_page(&1u32, &3u32);
+    assert_eq!(win.len(), 3);
+    assert_eq!(win.get(0).unwrap().1, FLIGHT_DATE + 1);
+    assert_eq!(win.get(2).unwrap().1, FLIGHT_DATE + 3);
+    // Truncated at the end of the set.
+    assert_eq!(client.get_active_flights_page(&3u32, &10u32).len(), 2);
+    // Degenerate windows are empty, not panics.
+    assert_eq!(client.get_active_flights_page(&9u32, &1u32).len(), 0);
+    assert_eq!(client.get_active_flights_page(&0u32, &0u32).len(), 0);
+}
+
+#[test]
+fn test_is_flight_listed_tracks_membership() {
+    let (env, client, _owner, _oracle, controller) = setup();
+    let fid = flight_id(&env);
+    assert!(!client.is_flight_listed(&fid, &FLIGHT_DATE));
+
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+    assert!(client.is_flight_listed(&fid, &FLIGHT_DATE));
+    assert!(!client.is_flight_listed(&fid, &(FLIGHT_DATE + 1)));
+
+    // Simulate FlightData archival, then evict — membership must read false.
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&OracleKey::FlightData(fid.clone(), FLIGHT_DATE));
+    });
+    client.evict_missing_flight(&fid, &FLIGHT_DATE, &false);
+    assert!(!client.is_flight_listed(&fid, &FLIGHT_DATE));
+}
+
+#[test]
+fn test_active_set_spans_pages_and_swap_removes_across_them() {
+    // More flights than one page holds (page size 100): registration must
+    // spill onto a second page, enumeration must cover both, and evicting an
+    // early entry must swap-move the globally last entry (page 1) into the
+    // freed slot (page 0) without losing anything.
+    let (env, client, _owner, _oracle, controller) = setup();
+    for i in 0..105u64 {
+        client.register_flight(&controller, &symbol_short!("AA100"), &(FLIGHT_DATE + i));
+    }
+    assert_eq!(client.get_active_flight_count(), 105);
+    assert_eq!(client.get_active_flights().len(), 105);
+    // A window crossing the page boundary reads both pages.
+    let win = client.get_active_flights_page(&98u32, &4u32);
+    assert_eq!(win.len(), 4);
+
+    // Evict the entry in page 0, slot 3 (owner path requires its FlightData
+    // to be missing — simulate archival by deleting the row in-contract).
+    env.as_contract(&client.address, || {
+        env.storage().persistent().remove(&OracleKey::FlightData(
+            symbol_short!("AA100"),
+            FLIGHT_DATE + 3,
+        ));
+    });
+    client.evict_missing_flight(&symbol_short!("AA100"), &(FLIGHT_DATE + 3), &false);
+
+    assert_eq!(client.get_active_flight_count(), 104);
+    assert!(!client.is_flight_listed(&symbol_short!("AA100"), &(FLIGHT_DATE + 3)));
+    // The swap-moved old tail is still enumerable and individually listed.
+    assert!(client.is_flight_listed(&symbol_short!("AA100"), &(FLIGHT_DATE + 104)));
+    assert_eq!(client.get_active_flights().len(), 104);
+}
+
+#[test]
+#[should_panic(expected = "restore it before adding")]
+fn test_active_set_add_fails_closed_on_archived_tail_page() {
+    // An archived tail page must block new registrations, not be silently
+    // overwritten: writing a fresh one-entry vector over the archived key
+    // would leave that page's flights permanently unenumerable AND
+    // unrestorable (restoration needs the key to be dead).
+    use sentinel_types::active_set::ActiveSetKey;
+    let (env, client, _owner, _oracle, controller) = setup();
+    client.register_flight(&controller, &symbol_short!("AA100"), &FLIGHT_DATE);
+
+    // Simulate the tail page archiving past its TTL.
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&ActiveSetKey::ActivePage(0));
+    });
+
+    client.register_flight(&controller, &symbol_short!("UA200"), &FLIGHT_DATE);
+}
+
+#[test]
+#[should_panic(expected = "entry already in active set")]
+fn test_active_set_add_rejects_duplicate_entry() {
+    // Both consumers gate on their own flight entry before calling add; the
+    // set still refuses a duplicate outright so a future third consumer (or
+    // a refactor that drops the caller-side gate) cannot corrupt the
+    // count/index invariants.
+    let (env, client, _owner, _oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+    env.as_contract(&client.address, || {
+        sentinel_types::active_set::add(&env, &fid, FLIGHT_DATE);
+    });
+}
+
+#[test]
+#[should_panic(expected = "entry already in active set")]
+fn test_active_set_add_rejects_duplicate_when_index_archived() {
+    // The reverse index can archive while the page holding the entry stays
+    // live (pages are re-extended by every keeper sweep; index lifetimes are
+    // sized to the flight date). The append backstop must stay exact in that
+    // state — falling back to the page scan `contains` uses — or a second
+    // registration would append a duplicate slot, corrupting the count and
+    // the swap-remove bookkeeping.
+    use sentinel_types::active_set::ActiveSetKey;
+    let (env, client, _owner, _oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+
+    env.as_contract(&client.address, || {
+        // Simulate the index archiving past its TTL while the page survives.
+        env.storage()
+            .persistent()
+            .remove(&ActiveSetKey::ActiveIdx(fid.clone(), FLIGHT_DATE));
+        sentinel_types::active_set::add(&env, &fid, FLIGHT_DATE);
+    });
+}
+
+#[test]
+fn test_unpause_restores_oracle_writes() {
+    let (env, client, owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+
+    client.pause(&owner);
+    assert!(client.paused());
+    assert!(client
+        .try_set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL)
+        .is_err());
+
+    client.unpause(&owner);
+    assert!(!client.paused());
+    client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);
+    assert_eq!(
+        client.get_flight_data(&fid, &FLIGHT_DATE).status,
+        FlightStatus::Active
+    );
+}
+
+#[test]
+fn test_prune_settled_cursor_wraps_after_list_shrinks() {
+    // The prune cursor persists between calls while the set shrinks as
+    // entries are pruned or evicted. A stale cursor at or past the current
+    // length must wrap to slot 0 and keep sweeping.
+    let (env, client, _owner, oracle, controller) = setup();
+    // Nonzero settle time — settled_at == 0 is prune's not-yet-settled
+    // sentinel, and the test env's clock starts at 0.
+    env.ledger().with_mut(|l| l.timestamp = FLIGHT_DATE);
+    for fid in [symbol_short!("AA100"), symbol_short!("UA200")] {
+        client.register_flight(&controller, &fid, &FLIGHT_DATE);
+        client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &EST_ARRIVAL);
+        client.set_landed(&oracle, &fid, &FLIGHT_DATE, &ACT_ARRIVAL);
+        client.set_to_be_settled(
+            &controller,
+            &fid,
+            &FLIGHT_DATE,
+            &FlightStatus::ToBeSettledOnTime,
+        );
+        client.set_settled(&controller, &fid, &FLIGHT_DATE);
+    }
+    // Age both flights past the settled-retention window, then leave a
+    // cursor stranded beyond the 2-entry list.
+    env.ledger().with_mut(|l| l.timestamp += 8 * 86_400);
+    env.as_contract(&client.address, || {
+        env.storage().instance().set(&OracleKey::PruneCursor, &9u32);
+    });
+    client.prune_settled();
+    assert_eq!(client.get_active_flight_count(), 0);
+}
+
+#[test]
+fn test_active_set_remove_absent_and_stale_index_fallbacks() {
+    use sentinel_types::active_set::{self, ActiveSetKey};
+    let (env, client, _owner, _oracle, controller) = setup();
+
+    // Removing from an empty set is a clean refusal, not a panic.
+    env.as_contract(&client.address, || {
+        assert!(!active_set::remove(
+            &env,
+            &symbol_short!("AA100"),
+            FLIGHT_DATE
+        ));
+    });
+
+    // A stale reverse index pointing at ANOTHER entry's slot must not remove
+    // the wrong entry: removal re-validates the index against the page
+    // contents and falls back to the scan.
+    client.register_flight(&controller, &symbol_short!("AA100"), &FLIGHT_DATE);
+    client.register_flight(&controller, &symbol_short!("UA200"), &FLIGHT_DATE);
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(
+            &ActiveSetKey::ActiveIdx(symbol_short!("AA100"), FLIGHT_DATE),
+            &1u32,
+        );
+        assert!(active_set::remove(
+            &env,
+            &symbol_short!("AA100"),
+            FLIGHT_DATE
+        ));
+        assert!(active_set::contains(
+            &env,
+            &symbol_short!("UA200"),
+            FLIGHT_DATE
+        ));
+        assert!(!active_set::contains(
+            &env,
+            &symbol_short!("AA100"),
+            FLIGHT_DATE
+        ));
+        assert_eq!(active_set::count(&env), 1);
+    });
+}
+
+#[test]
+fn test_paged_read_skips_archived_page_without_losing_count() {
+    // An archived page degrades availability, never integrity: enumeration
+    // skips it (emitting the page-miss diagnostic) instead of panicking, and
+    // the count still reports the entries awaiting restoration.
+    use sentinel_types::active_set::ActiveSetKey;
+    let (env, client, _owner, _oracle, controller) = setup();
+    client.register_flight(&controller, &symbol_short!("AA100"), &FLIGHT_DATE);
+    client.register_flight(&controller, &symbol_short!("UA200"), &FLIGHT_DATE);
+
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&ActiveSetKey::ActivePage(0));
+    });
+
+    let page = client.get_active_flights_page(&0, &10);
+    assert_eq!(page.len(), 0);
+    assert_eq!(client.get_active_flight_count(), 2);
 }
 
 // --- Read function tests ---

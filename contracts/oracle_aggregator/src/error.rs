@@ -14,4 +14,5 @@ pub enum Error {
     FlightDataStillPresent = 608,
     FlightNotInList = 609,
     StaleTimeoutNotReached = 610,
+    ActiveTimeoutNotReached = 611,
 }

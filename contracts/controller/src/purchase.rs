@@ -109,7 +109,24 @@ impl Controller {
             panic_with_error!(e, Error::FlightNotOpenForPurchase);
         }
 
-        // 3d. Bind this purchase to the terms snapshotted by the FIRST buyer of
+        // 3d. Require a fresh, affirmative sale authorization from the
+        //     oracle. Gate 3c only proves no outcome is recorded ON-CHAIN;
+        //     it cannot distinguish a genuinely operating flight from one
+        //     whose public cancellation has not yet reached the oracle
+        //     contract — a missing row and a stale Active row both pass it,
+        //     and during that interval every accepted policy is a
+        //     deterministic payoff-minus-premium claim against the vault,
+        //     repeatable across buyer addresses. Insurability is therefore
+        //     attested, not inferred: the oracle opens a short-lived sale
+        //     window after verifying the flight off-chain, refreshes it
+        //     while the flight stays valid, and closes it (or lets it lapse)
+        //     otherwise. No live authorization — including one that merely
+        //     expired — means no sale.
+        if !oracle.is_sale_open(&flight_id, &date) {
+            panic_with_error!(e, Error::SaleNotOpen);
+        }
+
+        // 3e. Bind this purchase to the terms snapshotted by the FIRST buyer of
         //     this (flight_id, date), if it is already registered. The pool
         //     locks terms at registration and rejects a mismatched
         //     re-registration, so pricing later buyers off the CURRENT route
@@ -131,11 +148,25 @@ impl Controller {
                 if !oracle.has_flight_data(&flight_id, &date) {
                     panic_with_error!(e, Error::OracleDataUnavailable);
                 }
-                ResolvedTerms {
+                let snapshot = ResolvedTerms {
                     premium: cfg.premium,
                     payoff: cfg.payoff,
                     delay_hours: cfg.delay_hours,
+                };
+                // The route check above validated the route's CURRENT terms,
+                // but the terms actually charged and locked from here on are
+                // this snapshot — taken when the bucket was first registered,
+                // possibly under limits governance has since lowered. New
+                // exposure must satisfy the limits in force NOW, so the
+                // snapshot is re-validated before any value moves; otherwise
+                // a pre-existing oversized bucket would keep admitting buyers
+                // at terms the owner can no longer whitelist. Buyers already
+                // in the bucket are untouched — their settlement still uses
+                // the snapshot.
+                if !gov.terms_valid(&snapshot) {
+                    panic_with_error!(e, Error::SnapshotTermsExceedLimits);
                 }
+                snapshot
             }
             None => terms,
         };

@@ -52,6 +52,30 @@ pub(crate) fn managed_convert_to_assets(e: &Env, shares: i128, rounding: Roundin
     convert_to_assets_with_tma(e, shares, RiskVault::get_total_managed_assets(e), rounding)
 }
 
+// Convert assets → shares against an explicitly supplied managed-asset
+// figure — the inverse of `convert_to_assets_with_tma`, used by the queue
+// processor to size a partial fill of the head request from the free capital
+// still available in the pass. Floor rounding guarantees the floor-floor
+// round trip (assets → shares → assets) never exceeds the input amount.
+pub(crate) fn convert_to_shares_with_tma(
+    e: &Env,
+    assets: i128,
+    tma: i128,
+    rounding: Rounding,
+) -> i128 {
+    if assets <= 0 {
+        return 0;
+    }
+    let pow = 10_i128
+        .checked_pow(Vault::get_decimals_offset(e))
+        .expect("decimals offset overflow");
+    let supply_plus = Base::total_supply(e)
+        .checked_add(pow)
+        .expect("supply overflow");
+    let managed_plus = tma.checked_add(1).expect("managed assets overflow");
+    mul_div_with_rounding(e, assets, supply_plus, managed_plus, rounding)
+}
+
 // Same conversion against an explicitly supplied managed-asset figure. The
 // queue processor prices many requests in one pass while tracking the running
 // total locally (share supply is read live — burns update it in place), so it
@@ -105,7 +129,7 @@ impl FungibleVault for RiskVault {
         shares
     }
 
-    /// Withdraws `assets` to `receiver`, blocked while the withdrawal queue is active or if it exceeds free capital.
+    /// Withdraws `assets` to `receiver`, blocked while the withdrawal queue is active or if it exceeds the reserve-aware withdrawable capital.
     #[when_not_paused]
     fn withdraw(
         e: &Env,
@@ -129,7 +153,12 @@ impl FungibleVault for RiskVault {
         if assets <= 0 {
             panic_with_error!(e, Error::AmountMustBePositive);
         }
-        if assets > Self::get_free_capital(e) {
+        // Bound exits by the withdrawable amount — assets above the
+        // configured solvency reserve on locked capital — not the nominal
+        // TMA − locked margin. Gating on the nominal margin would let any LP
+        // strip the reserve down to 100% backing right after purchases were
+        // admitted against it.
+        if assets > Self::get_withdrawable_capital(e) {
             panic_with_error!(e, Error::ExceedsFreeCapital);
         }
         let shares = managed_convert_to_shares(e, assets, Rounding::Ceil);
@@ -165,7 +194,7 @@ impl FungibleVault for RiskVault {
         assets
     }
 
-    /// Redeems `shares` for assets to `receiver`, blocked while the withdrawal queue is active or if it exceeds free capital.
+    /// Redeems `shares` for assets to `receiver`, blocked while the withdrawal queue is active or if it exceeds the reserve-aware withdrawable capital.
     #[when_not_paused]
     fn redeem(e: &Env, shares: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
         Self::extend_ttl(e);
@@ -188,7 +217,9 @@ impl FungibleVault for RiskVault {
         if assets == 0 {
             panic_with_error!(e, Error::SharesRedeemToZeroAssets);
         }
-        if assets > Self::get_free_capital(e) {
+        // See `withdraw` — exits are bounded by the reserve-aware
+        // withdrawable amount, not the nominal free margin.
+        if assets > Self::get_withdrawable_capital(e) {
             panic_with_error!(e, Error::ExceedsFreeCapital);
         }
         Vault::withdraw_internal(e, &receiver, &owner, assets, shares, &operator);
@@ -266,26 +297,29 @@ impl FungibleVault for RiskVault {
     }
 
     /// Returns the maximum assets `owner` can withdraw (their share balance
-    /// priced on managed assets, capped by free capital), or zero while direct
-    /// exits are globally disabled (paused, settlement pending, or queue active).
+    /// priced on managed assets, capped by the reserve-aware withdrawable
+    /// capital), or zero while direct exits are globally disabled (paused,
+    /// settlement pending, or queue active).
     fn max_withdraw(e: &Env, owner: Address) -> i128 {
         if paused(e) || settlement_pending(e) || !Self::get_withdrawal_queue(e).is_empty() {
             return 0;
         }
         let owner_assets = managed_convert_to_assets(e, Base::balance(e, &owner), Rounding::Floor);
-        let free = Self::get_free_capital(e);
-        owner_assets.min(free)
+        let withdrawable = Self::get_withdrawable_capital(e);
+        owner_assets.min(withdrawable)
     }
 
     /// Returns the maximum shares `owner` can redeem (their balance capped by
-    /// the shares equivalent of free capital), or zero while direct exits are
-    /// globally disabled (paused, settlement pending, or queue active).
+    /// the shares equivalent of the reserve-aware withdrawable capital), or
+    /// zero while direct exits are globally disabled (paused, settlement
+    /// pending, or queue active).
     fn max_redeem(e: &Env, owner: Address) -> i128 {
         if paused(e) || settlement_pending(e) || !Self::get_withdrawal_queue(e).is_empty() {
             return 0;
         }
         let owner_shares = Base::balance(e, &owner);
-        let free_shares = managed_convert_to_shares(e, Self::get_free_capital(e), Rounding::Floor);
-        owner_shares.min(free_shares)
+        let withdrawable_shares =
+            managed_convert_to_shares(e, Self::get_withdrawable_capital(e), Rounding::Floor);
+        owner_shares.min(withdrawable_shares)
     }
 }

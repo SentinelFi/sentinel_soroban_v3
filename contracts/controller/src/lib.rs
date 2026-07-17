@@ -17,8 +17,10 @@
 //!   landed/cancelled flights into `ToBeSettled*` by comparing actual vs.
 //!   estimated arrival against the route delay threshold.
 //! - **Keeper:** `execute_settlements` — processes every `ToBeSettled*` flight
-//!   (moves money between pool and vault, marks the oracle `Settled`), then
-//!   drains the vault withdrawal queue and snapshots share price.
+//!   (moves money between pool and vault, marks the oracle `Settled`).
+//! - **Keeper:** `run_queue_maintenance` — drains the vault withdrawal queue
+//!   and snapshots share price, decoupled from settlement so a heavy
+//!   settlement batch can never block underwriter exits.
 //! - **Owner:** rotate the keeper address and tune solvency ratio, lead time,
 //!   and claim-expiry window.
 //!

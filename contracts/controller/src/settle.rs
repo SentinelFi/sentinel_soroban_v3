@@ -2,10 +2,10 @@ use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol};
 use stellar_macros::{only_owner, when_not_paused};
 
 use crate::auth::require_keeper;
-use crate::constants::{MAX_SETTLE_BATCH, SECONDS_PER_HOUR};
+use crate::constants::{MAX_CLASSIFY_BATCH, MAX_SETTLE_BATCH, SECONDS_PER_HOUR};
 use crate::events::{
-    EvictedFlightSettled, FlightClassified, FlightConfigMissing, FlightSettledEvent, FlightVoided,
-    TtlMiss,
+    EvictedFlightSettled, FlightClassified, FlightConfigMissing, FlightSettledEvent,
+    FlightTimedOutActive, FlightVoided, TtlMiss,
 };
 use crate::interfaces::{FlightPoolManagerClient, FlightStatus, OracleClient, VaultClient};
 use crate::storage::CtrlKey;
@@ -14,7 +14,7 @@ use crate::{Controller, ControllerArgs, ControllerClient, Error};
 #[contractimpl]
 impl Controller {
     /// Iterate the oracle's active-flight list (the canonical source of
-    /// in-flight registrations plus a 30-day retention window of recently-
+    /// in-flight registrations plus a 7-day retention window of recently-
     /// settled flights). For each Landed/Cancelled flight, compute the
     /// settlement outcome from FlightPoolManager's locked terms and write
     /// `ToBeSettled*` back to the oracle.
@@ -32,16 +32,18 @@ impl Controller {
         let pool = FlightPoolManagerClient::new(e, &pool_addr);
         let controller_addr = e.current_contract_address();
 
-        let flights = oracle.get_active_flights();
-        let len = flights.len();
+        let len = oracle.get_active_flight_count();
         if len == 0 {
             Controller::extend_ttl(e);
             return;
         }
 
-        // Scan at most MAX_SETTLE_BATCH entries per call, starting
-        // at a persisted rotating cursor, so per-call cost is bounded by the
-        // batch size rather than the (unbounded) active-list length.
+        // Scan at most MAX_CLASSIFY_BATCH entries per call, starting at a
+        // persisted rotating cursor, so per-call cost is bounded by the
+        // batch size rather than the (unbounded) active-set length. The
+        // paged fetch pulls only the window this call inspects — the oracle
+        // set lives in ~100-entry pages, so one batch touches at most two
+        // page ledger entries instead of the whole list.
         let mut cursor: u32 = e
             .storage()
             .instance()
@@ -50,11 +52,11 @@ impl Controller {
         if cursor >= len {
             cursor = 0;
         }
-        let batch = MAX_SETTLE_BATCH.min(len);
+        let batch = MAX_CLASSIFY_BATCH.min(len - cursor);
+        let flights = oracle.get_active_flights_page(&cursor, &batch);
 
-        let mut i = cursor;
-        for _ in 0..batch {
-            let (flight_id, date) = flights.get(i).unwrap();
+        for j in 0..flights.len() {
+            let (flight_id, date) = flights.get(j).unwrap();
             let data = oracle.get_flight_data(&flight_id, &date);
 
             let new_status = match data.status {
@@ -89,6 +91,36 @@ impl Controller {
                             .publish(e);
                             None
                         }
+                    }
+                }
+                FlightStatus::Active => {
+                    let timeout_at = data
+                        .estimated_arrival_time
+                        .checked_add(sentinel_types::timeouts::ACTIVE_FLIGHT_TIMEOUT_SECS)
+                        .expect("addition overflow");
+                    if e.ledger().timestamp() >= timeout_at {
+                        // The scheduled arrival was recorded but no terminal
+                        // outcome (Landed/Cancelled) ever followed, and the
+                        // flight is now long past that arrival: the oracle
+                        // pipeline cannot resolve it. Void it — settle as
+                        // on-time so the premiums become vault yield and the
+                        // locked collateral is released, instead of the row
+                        // pinning vault capital and two active-list slots
+                        // forever. Never a payout: paying without an attested
+                        // outcome would let a data outage mint claims. Until
+                        // the void is classified the oracle can still write
+                        // the real outcome, which then settles normally. The
+                        // distinct event lets operators tell an oracle-
+                        // liveness void from an ordinary on-time settlement.
+                        FlightTimedOutActive {
+                            flight_id: flight_id.clone(),
+                            date,
+                        }
+                        .publish(e);
+                        Some(FlightStatus::ToBeSettledOnTime)
+                    } else {
+                        // Normal in-flight state — terminal outcome pending.
+                        None
                     }
                 }
                 FlightStatus::NotInitiated => {
@@ -142,17 +174,24 @@ impl Controller {
                 }
                 .publish(e);
             }
-
-            i = (i + 1) % len;
         }
 
-        e.storage().instance().set(&CtrlKey::ClassifyCursor, &i);
+        // Advance to the end of the inspected window; wrap at the end of the
+        // set. Slots reshuffle as settled flights are pruned, but the scan is
+        // idempotent and re-callable, so eventual full coverage still holds.
+        let stop = cursor.saturating_add(batch);
+        let next_cursor = if stop >= len { 0 } else { stop };
+        e.storage()
+            .instance()
+            .set(&CtrlKey::ClassifyCursor, &next_cursor);
         Controller::extend_ttl(e);
     }
 
     /// Iterate the oracle's active-flight list and process every flight that's
     /// in a `ToBeSettled*` status: move money between FlightPoolManager and
-    /// RiskVault, then mark the oracle entry as `Settled`.
+    /// RiskVault, then mark the oracle entry as `Settled`. Processes at most
+    /// `MAX_SETTLE_BATCH` flights per call; the rotating cursor covers the
+    /// full list across repeated calls.
     ///
     /// Queue drain and share-price snapshot are NOT done here — see
     /// `run_queue_maintenance`. Splitting them ensures
@@ -160,6 +199,26 @@ impl Controller {
     /// loop runs near the resource budget.
     #[when_not_paused]
     pub fn execute_settlements(e: &Env, keeper: Address) {
+        Self::settle_window(e, keeper, MAX_SETTLE_BATCH);
+    }
+
+    /// `execute_settlements` with a caller-chosen window size, clamped to
+    /// `[1, MAX_SETTLE_BATCH]`. Operational escape hatch: settlement failure
+    /// is atomic, so if a window ever exceeds the network's per-transaction
+    /// resource budgets (an unusually write-heavy mix, tightened network
+    /// limits, or accounting drift in the batch sizing), the keeper can
+    /// shrink the window — down to a single flight — and still make
+    /// progress, instead of every retry reverting identically at the fixed
+    /// default size.
+    #[when_not_paused]
+    pub fn execute_settlements_bounded(e: &Env, keeper: Address, limit: u32) {
+        Self::settle_window(e, keeper, limit.clamp(1, MAX_SETTLE_BATCH));
+    }
+
+    // Shared bounded settlement pass — `limit` caps how many active-list
+    // entries this call inspects. Not `pub`, so it is not a contract entry
+    // point; both keeper entry points above delegate here.
+    fn settle_window(e: &Env, keeper: Address, limit: u32) {
         require_keeper(e, &keeper);
 
         let oracle_addr: Address = e.storage().instance().get(&CtrlKey::Oracle).unwrap();
@@ -184,14 +243,13 @@ impl Controller {
             .checked_add(claim_window)
             .expect("addition overflow");
 
-        let flights = oracle.get_active_flights();
-        let len = flights.len();
+        let len = oracle.get_active_flight_count();
         if len == 0 {
             Controller::extend_ttl(e);
             return;
         }
 
-        // Bounded rotating scan — see classify_flights.
+        // Bounded rotating scan over a paged window — see classify_flights.
         let mut cursor: u32 = e
             .storage()
             .instance()
@@ -200,12 +258,11 @@ impl Controller {
         if cursor >= len {
             cursor = 0;
         }
-        let batch = MAX_SETTLE_BATCH.min(len);
+        let batch = limit.min(len - cursor);
+        let flights = oracle.get_active_flights_page(&cursor, &batch);
 
-        let mut i = cursor;
-        for _ in 0..batch {
-            let (flight_id, date) = flights.get(i).unwrap();
-            i = (i + 1) % len;
+        for j in 0..flights.len() {
+            let (flight_id, date) = flights.get(j).unwrap();
             let data = oracle.get_flight_data(&flight_id, &date);
             let outcome = data.status.clone();
 
@@ -305,7 +362,13 @@ impl Controller {
             }
         }
 
-        e.storage().instance().set(&CtrlKey::SettleCursor, &i);
+        // Advance past the inspected window; wrap at the end of the set (see
+        // classify_flights on reshuffle tolerance).
+        let stop = cursor.saturating_add(batch);
+        let next_cursor = if stop >= len { 0 } else { stop };
+        e.storage()
+            .instance()
+            .set(&CtrlKey::SettleCursor, &next_cursor);
         Controller::extend_ttl(e);
     }
 
@@ -354,11 +417,11 @@ impl Controller {
         if oracle.has_flight_data(&flight_id, &date) {
             panic_with_error!(e, Error::FlightDataStillPresent);
         }
-        let listed = oracle.get_active_flights();
-        for i in 0..listed.len() {
-            if listed.get(i).unwrap() == (flight_id.clone(), date) {
-                panic_with_error!(e, Error::FlightStillListed);
-            }
+        // Exact membership check (the oracle falls back to a page scan if its
+        // reverse index archived) — a listed flight is still keeper-enumerable
+        // and must settle through the normal pipeline.
+        if oracle.is_flight_listed(&flight_id, &date) {
+            panic_with_error!(e, Error::FlightStillListed);
         }
         let cfg = match pool.get_flight_config(&flight_id, &date) {
             Some(cfg) => cfg,

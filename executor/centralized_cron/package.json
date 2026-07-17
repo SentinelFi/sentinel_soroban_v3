@@ -1,13 +1,14 @@
 {
   "name": "sentinel-centralized-cron",
   "version": "0.1.0",
-  "description": "Centralized cron executor for Sentinel Protocol — 5 cron jobs (oracle, classifier, settler, queue maintainer, ttl extender)",
+  "description": "Centralized cron executor for Sentinel Protocol — 6 cron jobs (sale authorizer, oracle, classifier, settler, queue maintainer, ttl extender)",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "build": "tsc --noEmit",
+    "authorize": "tsx src/run_once.ts authorize",
     "fetch": "tsx src/run_once.ts fetch",
     "classify": "tsx src/run_once.ts classify",
     "settle": "tsx src/run_once.ts settle",

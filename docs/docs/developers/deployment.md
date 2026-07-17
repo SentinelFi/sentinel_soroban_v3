@@ -39,9 +39,15 @@ stellar contract invoke --id <POOL_ID> ... -- set_controller --controller <CONTR
 Then configure the operational roles and required parameters:
 
 ```bash
-stellar contract invoke --id <ORACLE_ID> ... -- set_oracle --oracle <ORACLE_EXECUTOR_ADDRESS>
+stellar contract invoke --id <ORACLE_ID> ... -- set_oracle --new_oracle <ORACLE_EXECUTOR_ADDRESS>
 stellar contract invoke --id <CONTROLLER_ID> ... -- set_keeper --keeper <KEEPER_EXECUTOR_ADDRESS>
-stellar contract invoke --id <VAULT_ID> ... -- set_min_withdrawal_request --amount <AMOUNT>
+stellar contract invoke --id <VAULT_ID> ... -- set_min_withdrawal_request --min_assets <AMOUNT>
+```
+
+If you run a solvency ratio above the default 100%, set it now — after the vault wiring, because the Controller mirrors the value into the Risk Vault in the same transaction:
+
+```bash
+stellar contract invoke --id <CONTROLLER_ID> ... -- set_solvency_ratio --ratio <PERCENT>
 ```
 
 Finally, whitelist at least one route through the Governance Module and the market is live.

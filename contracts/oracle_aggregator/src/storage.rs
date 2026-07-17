@@ -10,8 +10,7 @@ pub enum OracleKey {
     // Instance — global single-row state (auto-extended with contract instance TTL)
     AuthorizedOracle,
     AuthorizedController,
-    ActiveFlightList,
-    PruneCursor, // u32 — rotating index into ActiveFlightList
+    PruneCursor, // u32 — rotating slot cursor into the paginated active set
     // Count of flights whose outcome is publicly recorded (Landed/Cancelled or
     // any ToBeSettled*) but not yet financially settled. The vault reads this to
     // block entry/exit while pending PnL is unrecognized, so no LP can transact
@@ -20,6 +19,14 @@ pub enum OracleKey {
 
     // Persistent — keyed multi-row state
     FlightData(Symbol, u64),
+
+    // Temporary — short-lived sale authorizations, value is the expiry
+    // timestamp (unix seconds). Written by the oracle after it verifies the
+    // flight instance is scheduled and not cancelled; consumed (read) by the
+    // controller's purchase gate. Temporary storage is deliberate: an
+    // authorization that lapses must vanish, and archival-restoration
+    // semantics must never resurrect one.
+    SaleAuth(Symbol, u64),
 }
 
 // Extend FlightData TTL to cover a deadline (the flight `date` pre-settlement) +
@@ -52,6 +59,29 @@ pub(crate) fn settlement_deadline(e: &Env, date: u64) -> u64 {
         .max(date)
         .checked_add(crate::constants::SETTLEMENT_GRACE_SECS)
         .expect("addition overflow")
+}
+
+// Keep a sale authorization's temporary entry alive through its expiry
+// timestamp plus a small drift buffer. Correctness never depends on this
+// TTL — `is_sale_open` compares the STORED expiry against the ledger clock —
+// so an entry archived early merely fails closed (sale reads as not open)
+// and one lingering past expiry is inert.
+pub(crate) fn extend_sale_auth_ttl(e: &Env, flight_id: &Symbol, date: u64, expires_at: u64) {
+    use sentinel_types::ttl::{LEDGERS_PER_SECOND_DEN, LEDGERS_PER_SECOND_NUM};
+
+    let secs_remaining = expires_at.saturating_sub(e.ledger().timestamp());
+    let ledgers_remaining =
+        secs_remaining.saturating_mul(LEDGERS_PER_SECOND_NUM) / LEDGERS_PER_SECOND_DEN;
+    let extend_to = u32::try_from(ledgers_remaining)
+        .unwrap_or(u32::MAX)
+        .saturating_add(crate::constants::SALE_AUTH_TTL_BUFFER_LEDGERS);
+
+    let key = OracleKey::SaleAuth(flight_id.clone(), date);
+    // Equal threshold/target forces the extension whenever the current TTL
+    // falls short of the required lifetime.
+    e.storage()
+        .temporary()
+        .extend_ttl(&key, extend_to, extend_to);
 }
 
 // Bump the pending-outcome counter when a flight's outcome first becomes public
@@ -94,6 +124,13 @@ pub(crate) fn is_valid_transition(from: &FlightStatus, to: &FlightStatus) -> boo
             | (FlightStatus::NotInitiated, FlightStatus::ToBeSettledOnTime)
             | (FlightStatus::Active, FlightStatus::Landed)
             | (FlightStatus::Active, FlightStatus::Cancelled)
+            // Void path for flights whose terminal outcome never arrives
+            // after the estimated arrival was recorded: settleable as
+            // on-time (no payout) once the active timeout past the scheduled
+            // arrival has elapsed — `set_to_be_settled` enforces the timing.
+            // Without this edge an oracle outage after the Active write
+            // locked the flight's vault collateral forever.
+            | (FlightStatus::Active, FlightStatus::ToBeSettledOnTime)
             | (FlightStatus::Landed, FlightStatus::ToBeSettledOnTime)
             | (FlightStatus::Landed, FlightStatus::ToBeSettledDelayed)
             | (FlightStatus::Cancelled, FlightStatus::ToBeSettledCancelled)

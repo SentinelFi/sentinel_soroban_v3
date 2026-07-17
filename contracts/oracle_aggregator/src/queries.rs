@@ -20,20 +20,39 @@ impl OracleAggregator {
         })
     }
 
-    /// Get all registered flights (active list).
+    /// Get all registered flights (the whole paginated active set).
+    ///
+    /// Footprint grows with the set's page count (one ledger entry per ~100
+    /// flights), so this is an off-chain / simulation convenience — bounded
+    /// on-chain callers (the controller keeper) use
+    /// `get_active_flights_page` instead.
     pub fn get_active_flights(e: &Env) -> Vec<(Symbol, u64)> {
-        e.storage()
-            .instance()
-            .get(&OracleKey::ActiveFlightList)
-            .unwrap_or(Vec::new(e))
+        sentinel_types::active_set::get_all(e)
     }
 
-    /// Number of entries in the active flight list. Cheap saturation gauge
-    /// for operators: the list is capped, so occupancy approaching the cap
-    /// means new-flight registration (and thus first purchases) is about to
-    /// be rejected — prune promptly or investigate before that happens.
+    /// Up to `limit` active-set entries starting at slot `offset`. The
+    /// bounded enumeration for on-chain callers: a window touches at most
+    /// two page entries. The set is unordered and removal reshuffles slots,
+    /// so callers iterate with idempotent, re-callable rotating cursors.
+    pub fn get_active_flights_page(e: &Env, offset: u32, limit: u32) -> Vec<(Symbol, u64)> {
+        sentinel_types::active_set::get_range(e, offset, limit)
+    }
+
+    /// Whether `(flight_id, date)` is currently in the active set. Exact
+    /// even if the set's reverse index archived (falls back to a page scan);
+    /// the controller's evicted-flight reconciliation gate relies on that
+    /// exactness.
+    pub fn is_flight_listed(e: &Env, flight_id: Symbol, date: u64) -> bool {
+        sentinel_types::active_set::contains(e, &flight_id, date)
+    }
+
+    /// Number of entries in the active set — O(1) from the stored count.
+    /// Cheap saturation gauge for operators: the set is capped (a sanity
+    /// bound, no longer a storage-entry limit), so occupancy approaching the
+    /// cap means new-flight registration (and thus first purchases) is about
+    /// to be rejected — prune promptly or investigate before that happens.
     pub fn get_active_flight_count(e: &Env) -> u32 {
-        Self::get_active_flights(e).len()
+        sentinel_types::active_set::count(e)
     }
 
     /// Whether a `FlightData` entry physically exists for this key. Lets
@@ -45,6 +64,33 @@ impl OracleAggregator {
         e.storage()
             .persistent()
             .has(&OracleKey::FlightData(flight_id, date))
+    }
+
+    /// Whether the sale window for `(flight_id, date)` is currently open:
+    /// a sale authorization exists and its expiry timestamp is still in the
+    /// future. The controller's purchase gate consumes this — no live
+    /// authorization means no sale. Fails closed on every degraded state:
+    /// never written, explicitly closed, lapsed past its expiry timestamp,
+    /// or archived out of temporary storage.
+    pub fn is_sale_open(e: &Env, flight_id: Symbol, date: u64) -> bool {
+        match e
+            .storage()
+            .temporary()
+            .get::<_, u64>(&OracleKey::SaleAuth(flight_id, date))
+        {
+            Some(expires_at) => e.ledger().timestamp() < expires_at,
+            None => false,
+        }
+    }
+
+    /// Expiry timestamp of the sale authorization for `(flight_id, date)`,
+    /// or None if none is live. Off-chain convenience (frontends show the
+    /// purchase deadline, the executor decides which authorizations need a
+    /// refresh); the on-chain gate is `is_sale_open`.
+    pub fn get_sale_auth(e: &Env, flight_id: Symbol, date: u64) -> Option<u64> {
+        e.storage()
+            .temporary()
+            .get(&OracleKey::SaleAuth(flight_id, date))
     }
 
     /// Get flights filtered by status. Iterates active list and filters.

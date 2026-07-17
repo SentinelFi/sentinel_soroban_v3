@@ -9,7 +9,11 @@ Sentinel is built around a small set of invariants that hold at all times.
 
 ## Always solvent
 
-A policy is only sold if the vault's **free capital** (total managed assets minus already locked capital) covers the full payoff, scaled by a configurable solvency ratio. At purchase time the payoff amount is locked, so every outstanding policy is fully collateralized. Locked capital can never exceed total managed assets.
+A policy is only sold if the vault's total managed assets cover all locked payoffs plus the new one, scaled by a configurable solvency ratio. At purchase time the payoff amount is locked, so every outstanding policy is fully collateralized. Locked capital can never exceed total managed assets.
+
+The same reserve is enforced when capital leaves: underwriter withdrawals (direct or queued) are capped to the assets above the ratio-scaled locked capital, so an exit can never strip the safety margin that purchases were admitted against.
+
+Term limits are also enforced on the terms a purchase actually uses. When a flight already has a registered pool with snapshotted terms, new buyers are only admitted if that snapshot still satisfies the current owner-set payoff caps — lowering the caps immediately stops new exposure at old, larger terms while existing policies keep their promised payout.
 
 ## Pull based payments
 
@@ -37,6 +41,12 @@ NotInitiated -> Active -> Landed -> ToBeSettled -> Settled
 ```
 
 A status can never regress, so a compromised oracle cannot rewrite history for an already landed or settled flight.
+
+Every state that locks vault collateral also has a bounded exit: a flight that never receives oracle data is voided 14 days past departure, and a flight that goes `Active` but never receives a terminal outcome is voided 14 days past its recorded scheduled arrival. Both voids settle with no payout — premiums become vault yield and the locked collateral is released — so a data outage can pause the protocol but can never pin underwriter capital forever.
+
+## Sale attestation
+
+Purchases require a live, short-lived sale authorization written by the oracle after verifying the flight is scheduled and not cancelled. Absence of an on-chain outcome is never treated as proof a flight is insurable — a publicly cancelled flight would look identical to a valid unreported one until the cancellation reaches the chain. If the oracle stops attesting, sale windows lapse (24 hours at most) and new purchases halt: availability degrades, never safety.
 
 ## Other safeguards
 

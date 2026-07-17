@@ -64,6 +64,12 @@ pub struct GovDefaults {
     pub(crate) delay_hours: u32,
 }
 
+#[contractevent(topics = ["sentinel", "gov_term_limits"], data_format = "map")]
+pub struct GovTermLimits {
+    pub(crate) max_payoff: i128,
+    pub(crate) max_payoff_ratio: i128,
+}
+
 #[contractevent(topics = ["sentinel", "gov_admin_added"], data_format = "single-value")]
 pub struct GovAdminAdded {
     #[topic]

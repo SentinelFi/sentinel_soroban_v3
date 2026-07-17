@@ -110,7 +110,11 @@ shares, locked collateral, claimable balances, and a withdrawal queue.
 - Total Managed Assets (TMA): the pool's accounting balance (deposits +
   premiums – payouts).
 - Locked Capital: amount reserved for outstanding insurance policies.
-- Free Capital = TMA − Locked.
+- Free Capital = TMA − Locked (nominal margin).
+- Withdrawable Capital = max(TMA − ceil(Locked × solvency_ratio / 100), 0):
+  the amount exits may actually remove, so LP withdrawals preserve the same
+  reserve the controller admits policies against. The ratio is mirrored from
+  the controller on every owner update (controller-only setter).
 - Share token (vault shares) issued to underwriters; ERC-4626-style mechanics
   with a small inflation-attack defense.
 - Withdrawal queue: ordered list of pending share-redemption requests.
@@ -119,17 +123,23 @@ shares, locked collateral, claimable balances, and a withdrawal queue.
 - Daily share-price snapshots (short-lived, for off-chain analytics).
 
 **Key operations:**
-- Underwriter: deposit, redeem (immediate, only if free capital allows),
-  request_withdrawal (queue), cancel_withdrawal, collect (pull credited
-  funds).
+- Underwriter: deposit, redeem (immediate, only if withdrawable capital
+  allows), request_withdrawal (queue), cancel_withdrawal, collect (pull
+  credited funds).
 - Controller-only: increase_locked, decrease_locked, record_premium_income,
-  send_payout, process_withdrawal_queue, snapshot.
+  send_payout, process_withdrawal_queue, set_solvency_ratio (mirror push),
+  snapshot.
 - Owner-only: recover_uncollected (manual fallback for archived claimable
-  balances) — has two modes: re-credit storage or transfer directly.
+  balances) — has two modes: re-credit storage or transfer directly;
+  set_min_withdrawal_request (anti-dust queue floor); set_oracle (rotate the
+  settlement-barrier oracle — refuses while the current oracle still reports
+  pending outcomes) and force_set_oracle (skips that check, but only while
+  the vault is paused).
 
-**Why a withdrawal queue:** redemptions can exceed free capital when policies
-are heavily locked. The queue lets underwriters request now and collect
-later when capital frees up via on-time premiums or expired claim sweeps.
+**Why a withdrawal queue:** redemptions can exceed withdrawable capital when
+policies are heavily locked. The queue lets underwriters request now and
+collect later when capital frees up via on-time premiums or expired claim
+sweeps.
 
 ### 3. FlightPoolManager
 
@@ -180,10 +190,16 @@ state machine.
 ```
 NotInitiated
     -> Active                   (oracle: estimated arrival pushed)
+    -> Cancelled                (oracle: short-notice / pre-purchase cancellation)
+    -> ToBeSettledOnTime        (controller: void — no data ever arrived,
+                                 only >= 14 days past departure)
 
 Active
     -> Landed                   (oracle: actual arrival pushed)
     -> Cancelled                (oracle: cancellation pushed)
+    -> ToBeSettledOnTime        (controller: void — terminal outcome never
+                                 arrived, only >= 14 days past the recorded
+                                 scheduled arrival)
 
 Landed
     -> ToBeSettledOnTime        (controller: classify)
@@ -196,8 +212,14 @@ ToBeSettled*
     -> Settled                  (controller: execute settlement)
 ```
 
+Both void edges settle as on-time (no payout) so a dead row can never pin
+vault collateral forever — and never pay against an unattested outcome.
+
 **Key operations:**
 - Oracle-only: set_estimated_arrival, set_landed, set_cancelled.
+- Oracle-only sale window: open_sale / close_sale — a short-lived (max 24h)
+  attestation that the flight instance is scheduled and not cancelled;
+  buy_insurance requires a live one and fails closed without it.
 - Controller-only: register_flight, set_to_be_settled (classification),
   set_settled (terminal).
 - Anyone: prune_settled (removes flights past a retention window from the
@@ -216,25 +238,29 @@ counters and a per-traveler purchase index.
 **State:**
 - Addresses of governance, vault, oracle, pool manager, stablecoin.
 - Authorized keeper address.
-- Tunables: solvency ratio (% of payoff that must be free in vault),
-  minimum lead time (how far ahead a flight must be to insure), claim
-  expiry window (how long after settlement a delayed/cancelled claim can be
-  collected).
+- Tunables: solvency ratio (% of locked payoff that TMA must keep covering;
+  mirrored into the vault so exits respect it too), minimum lead time (how
+  far ahead a flight must be to insure), claim expiry window (how long after
+  settlement a delayed/cancelled claim can be collected).
 - Aggregate counters: total policies sold, total premiums, total payouts.
 - Per-traveler index: list of `(flight_id, date)` ever purchased — feeds
   the "my policies" frontend without scanning all flights.
 
 **Key operations:**
-- Traveler: buy_insurance — validates route, checks lead time, registers
-  flight if new, checks solvency, transfers premium, locks collateral,
-  records buyer, updates index.
+- Traveler: buy_insurance — validates route, checks lead time, requires the
+  oracle's live sale authorization (no attestation, no sale), registers
+  flight if new (later buyers use the bucket's snapshotted terms, re-checked
+  against the current governance term limits), checks solvency, transfers
+  premium, locks collateral, records buyer, updates index.
 - Keeper: classify_flights — iterates oracle's active list, classifies
   Landed/Cancelled flights into ToBeSettled* by comparing actual vs.
   estimated arrival times against the route's delay threshold.
 - Keeper: execute_settlements — iterates oracle's active list, processes
   every ToBeSettled* flight (moves money between pool and vault, marks
-  oracle as Settled), then drains the underwriter withdrawal queue and
-  takes a share-price snapshot.
+  oracle as Settled).
+- Keeper: run_queue_maintenance — drains the underwriter withdrawal queue
+  and takes a share-price snapshot. Decoupled from settlement so a heavy
+  settlement batch can never block underwriter exits.
 - Owner: rotate keeper address, set tunables.
 - Anyone: read flights for a traveler, read aggregate stats.
 
@@ -311,7 +337,7 @@ only required on chains with storage-rent / archival semantics (see
 ### Cron 1 — FlightDataFetcher (Oracle, every ~2 hours)
 
 - Reads the oracle's active flight list.
-- For each flight, queries an external aviation API (e.g., AviationStack).
+- For each flight, queries an external aviation API (e.g., FlightAware AeroAPI).
 - Pushes status updates: `set_estimated_arrival`, `set_landed`, or
   `set_cancelled`.
 - Authorized as the oracle role.
@@ -329,10 +355,16 @@ only required on chains with storage-rent / archival semantics (see
 
 - Calls `Controller.execute_settlements()`.
 - The controller iterates the oracle's active list, processes every
-  `ToBeSettled*` flight (moves money, marks Settled), then drains the
+  `ToBeSettled*` flight (moves money, marks Settled).
+- Higher cadence than classifier so payouts are prompt.
+- Authorized as the keeper role.
+
+### Cron 3b — QueueMaintainer (Keeper, every ~5 minutes, offset)
+
+- Calls `Controller.run_queue_maintenance()`, which drains the underwriter
   withdrawal queue and snapshots share price.
-- Higher cadence than classifier so payouts and underwriter exits are
-  prompt.
+- Runs on its own cadence (offset from the settler) so settlement gas
+  pressure can never starve underwriter exits.
 - Authorized as the keeper role.
 
 ### Cron 4 — Storage Maintenance (chain-dependent)
@@ -372,10 +404,16 @@ Traveler
 Controller:
    1. Read Governance.route_status(flight_id, origin, dest) — must be Active.
    2. Check lead time (date > now + min_lead_time).
+   2b. Oracle status must be NotInitiated or Active (no recorded outcome),
+       AND Oracle.is_sale_open(flight_id, date) must be true — the oracle's
+       live attestation that the flight is scheduled and not cancelled.
+       Missing / lapsed / closed authorization -> revert (fail closed).
    3. If flight not yet registered:
         - Pool.register_flight(flight_id, date, premium, payoff, delay_hours)
         - Oracle.register_flight(flight_id, date)
-   4. Check Vault.get_free_capital() >= payoff * (solvency_ratio / 100).
+   4. Check Vault.get_total_managed_assets() >=
+      ceil((Vault.get_locked_capital() + payoff) * solvency_ratio / 100) —
+      the ratio is enforced on aggregate liabilities, not just the new payoff.
    5. Stablecoin.transfer(traveler -> Pool, premium).
    6. Vault.increase_locked(payoff).
    7. Pool.add_buyer(flight_id, date, traveler).
@@ -387,6 +425,8 @@ Controller:
 
 ```
 Oracle account
+   -> Oracle.open_sale(flight_id, date, expires_at)   (sale-window refresh,
+   -> Oracle.close_sale(flight_id, date)               cron #0)
    -> Oracle.set_estimated_arrival(flight_id, date, eta)
    -> Oracle.set_landed(flight_id, date, actual_arrival)
    -> Oracle.set_cancelled(flight_id, date)
@@ -402,7 +442,11 @@ Controller iterates oracle's active list:
    - Cancelled            -> Oracle.set_to_be_settled(.., ToBeSettledCancelled)
    - Landed (on time)     -> Oracle.set_to_be_settled(.., ToBeSettledOnTime)
    - Landed (delayed >=N) -> Oracle.set_to_be_settled(.., ToBeSettledDelayed)
-   - NotInitiated         -> emit warning event (oracle hasn't fetched)
+   - NotInitiated         -> emit warning event (oracle hasn't fetched);
+                             >= 14 days past departure with data present:
+                             void -> ToBeSettledOnTime
+   - Active               -> nothing until >= 14 days past the recorded
+                             scheduled arrival; then void -> ToBeSettledOnTime
 ```
 
 ### Execute Settlements (off-chain cron #3)
@@ -423,12 +467,18 @@ For each ToBeSettled* flight:
    ToBeSettledDelayed | ToBeSettledCancelled:
       Vault.send_payout(Pool, (payoff - premium) * buyer_count)
       Vault.decrease_locked(payoff * buyer_count)
-      Pool.settle_delayed_or_cancelled(flight_id, date, claim_expiry)
+      Pool.settle_delayed(flight_id, date, claim_expiry)
+         | Pool.settle_cancelled(flight_id, date, claim_expiry)
       Oracle.set_settled(flight_id, date)
+```
 
-After loop:
-   Vault.process_withdrawal_queue()
-   Vault.snapshot()
+### Queue Maintenance (off-chain cron #3b)
+
+```
+Keeper account
+   -> Controller.run_queue_maintenance()
+      -> Vault.process_withdrawal_queue()
+      -> Vault.snapshot()
 ```
 
 ### Traveler Claims Payout
@@ -466,10 +516,11 @@ Underwriter
       - Vault transfers shares from underwriter to itself (escrow).
       - Vault appends request to withdrawal queue.
 
-Later, during execute_settlements:
-   - Controller.execute_settlements()
+Later, during queue maintenance:
+   - Controller.run_queue_maintenance()
       -> Vault.process_withdrawal_queue()
-         For each request from head, while free capital allows:
+         For each request from head, while withdrawable capital
+         (TMA above the solvency reserve on locked collateral) allows:
            - Burn escrowed shares.
            - ClaimableBalance(underwriter) += equivalent assets.
            - TMA -= equivalent assets.
@@ -485,8 +536,15 @@ Underwriter
 ## Invariants
 
 1. **Solvency:** `Locked Capital <= Total Managed Assets` at all times.
-2. **Solvency on new policy:** `Free Capital >= payoff * solvency_ratio` at
-   buy time.
+2. **Solvency on new policy:** `Total Managed Assets >= (Locked Capital +
+   payoff) * solvency_ratio` at buy time (aggregate, not per-policy).
+2b. **Solvency on exit:** every LP exit (direct or queued) is capped at
+   `TMA − ceil(Locked × solvency_ratio / 100)`, so withdrawals cannot strip
+   the reserve invariant 2 was admitted against.
+2c. **Term limits on every sale:** the terms a purchase actually uses — the
+   pool bucket's snapshot for already-registered flights — must satisfy the
+   CURRENT governance term limits, not just the limits in force when the
+   bucket was first registered.
 3. **No double claim:** a traveler can claim at most once per (flight, date).
 4. **No double sweep:** sweep is idempotent (claimed_count == buyer_count
    after sweep).
@@ -502,21 +560,23 @@ Underwriter
 
 | Function group | Caller |
 |---|---|
-| Governance: defaults, admin set | Owner |
+| Governance: defaults, admin set, term limits | Owner |
 | Governance: route lifecycle | Owner or Admin |
 | Vault: deposit / redeem / withdrawal queue | Underwriter (self) |
-| Vault: lock / unlock / payout / queue / snapshot | Controller only |
-| Vault: recover_uncollected | Owner |
+| Vault: lock / unlock / payout / queue / solvency-ratio mirror / snapshot | Controller only |
+| Vault: recover_uncollected, oracle rotation (checked or paused-forced) | Owner |
 | Pool: register / add_buyer / settle | Controller only |
 | Pool: claim | Traveler (self) |
 | Pool: sweep_expired | Anyone |
 | Pool: withdraw_recovered | Owner |
 | Oracle: set_estimated / set_landed / set_cancelled | Authorized oracle |
+| Oracle: open_sale / close_sale (close works while paused) | Authorized oracle |
 | Oracle: register_flight / set_to_be_settled / set_settled | Controller only |
 | Oracle: prune_settled | Anyone |
 | Controller: buy_insurance | Traveler (self) |
-| Controller: classify / execute | Authorized keeper |
-| Controller: rotate keeper, set tunables | Owner |
+| Controller: classify / execute (incl. operator-bounded window) | Authorized keeper |
+| Controller: rotate keeper, set tunables, buyer whitelist toggle | Owner |
+| Controller: whitelist add/remove (180-day sliding approvals) | Owner or Governance admin |
 
 The two off-chain roles (oracle, keeper) are addresses owned by the executor
 infrastructure. Owner can rotate them at any time without redeploying any
@@ -592,11 +652,17 @@ This architecture targets any chain with:
   and oracle inside a single transaction. If either side panics, both
   rollback. Atomicity assumed.
 - **Withdrawal-queue ordering must be FIFO** for fairness — preserve insert
-  order regardless of underlying storage primitive.
-- **Per-traveler index can grow unbounded** for heavy users. Frontends should
-  paginate; the on-chain index is append-only by design.
-- **Active flight lists** (in oracle and pool) need bounded size in practice.
-  At the protocol layer this is governed by the keeper's classification
+  order regardless of underlying storage primitive. When the oldest request
+  exceeds the currently withdrawable capital (TMA above the solvency reserve
+  on locked collateral), fund the part that capital covers (partial fill)
+  and keep the remainder at the head — an oversized head request must
+  degrade into slower progress, never into a frozen exit path.
+- **Per-traveler index is bounded**: it keeps the most recent 1,000 flights
+  per traveler, evicting the oldest on overflow (full history stays in
+  events). Frontends should paginate.
+- **Active flight lists** (in oracle and pool) are paginated sets — capacity
+  scales without a protocol-wide registration ceiling, and enumeration is by
+  bounded windows. Keeper throughput is still governed by classification
   cadence — don't whitelist more flights than the cron budget can iterate.
 
 ---

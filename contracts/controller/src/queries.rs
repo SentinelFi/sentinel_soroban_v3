@@ -65,8 +65,10 @@ impl Controller {
         read_whitelist_enabled(e)
     }
 
-    /// Whether `addr` is on the whitelist. Returns `false` for any
-    /// address that has never been added (or has been removed / archived).
+    /// Whether `addr` holds a currently valid whitelist approval — added,
+    /// not removed, and not past its 180-day inactivity deadline (each
+    /// purchase slides the deadline forward). Returns `false` for any
+    /// address never added, removed, or dormant past the window.
     pub fn is_whitelisted(e: &Env, addr: Address) -> bool {
         read_buyer_whitelisted(e, &addr)
     }

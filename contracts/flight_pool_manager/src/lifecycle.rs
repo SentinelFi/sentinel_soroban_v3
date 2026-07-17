@@ -1,4 +1,4 @@
-use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol, Vec};
+use soroban_sdk::{contractimpl, panic_with_error, Address, Env, Symbol};
 use stellar_macros::when_not_paused;
 
 use crate::auth::{extend_instance_ttl, require_controller};
@@ -85,21 +85,14 @@ impl FlightPoolManager {
         // flight's config survives until settlement.
         extend_flight_ttl_to(e, &flight_id, date, date);
 
-        let mut list: Vec<(Symbol, u64)> = e
-            .storage()
-            .instance()
-            .get(&PoolKey::ActiveFlightList)
-            .unwrap_or(Vec::new(e));
-        // Bound the single-vector active list so it can't grow into the
-        // contract-instance entry-size limit and become unwritable. Settled
+        // Append to the paginated active set (per-page persistent entries +
+        // reverse index — see `sentinel_types::active_set`). The cap is an
+        // operational sanity bound, not a storage-entry limit: settled
         // flights are removed on settlement, freeing capacity.
-        if list.len() >= MAX_ACTIVE_FLIGHTS {
+        if sentinel_types::active_set::count(e) >= MAX_ACTIVE_FLIGHTS {
             panic_with_error!(e, Error::ActiveFlightListFull);
         }
-        list.push_back((flight_id.clone(), date));
-        e.storage()
-            .instance()
-            .set(&PoolKey::ActiveFlightList, &list);
+        sentinel_types::active_set::add(e, &flight_id, date);
 
         FlightRegistered {
             flight_id,

@@ -20,6 +20,15 @@ pub enum VaultKey {
     // the capital cost of occupying the bounded queue's slots with many small
     // requests spread across addresses.
     MinWithdrawalRequest, // i128
+    // Percentage of locked capital that managed assets must keep covering
+    // (100 = nominal backing only). Mirrored from the controller — the single
+    // owner-facing configuration point — via the controller-only
+    // `set_solvency_ratio`, because the vault cannot read it back on demand:
+    // the controller invokes `process_withdrawal_queue`, and a call from the
+    // vault into the controller during that invocation would be reentrant.
+    // Every exit path derives its withdrawable amount from this, so LP exits
+    // preserve the same reserve margin purchases are admitted against.
+    SolvencyRatio, // u32 — Instance; absent = 100
 
     // Persistent — TTL extended on every write to prevent silent archival
     ClaimableBalance(Address),

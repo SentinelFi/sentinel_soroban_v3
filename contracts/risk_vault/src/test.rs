@@ -40,9 +40,10 @@ fn setup() -> (Env, RiskVaultClient<'static>, Address, Address, Address) {
 
 #[test]
 fn test_constructor() {
-    let (env, client, owner, _controller, _depositor) = setup();
+    let (env, client, owner, controller, _depositor) = setup();
 
     assert_eq!(client.get_owner(), Some(owner));
+    assert_eq!(client.get_controller(), controller);
     assert_eq!(client.name(), String::from_str(&env, "RiskVault Share"));
     assert_eq!(client.symbol(), String::from_str(&env, "RVS"));
     assert_eq!(client.decimals(), 10);
@@ -198,6 +199,207 @@ fn test_withdrawal_queue_request_process_collect() {
     client.collect(&depositor);
     assert_eq!(asset.balance(&depositor), 9_000_0000000 + claimable);
     assert_eq!(client.get_claimable_balance(&depositor), 0);
+}
+
+#[test]
+fn test_oversized_head_request_partial_fills_instead_of_pinning_queue() {
+    // An unfundable head request must not freeze the exit path: free capital
+    // is paid to the head as a partial fill, the remainder stays at the head,
+    // and every later request keeps its FIFO place. Without this, one
+    // oversized request blocked all queued exits AND all direct exits (which
+    // defer to a non-empty queue) while free capital sat idle.
+    let (env, client, _owner, controller, depositor) = setup();
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+
+    // A holds 1000, B holds 100; policies lock 1000, leaving 100 free.
+    let other = Address::generate(&env);
+    asset_admin.mint(&other, &100_0000000);
+    let shares_a = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let shares_b = client.deposit(&100_0000000, &other, &other, &other);
+    client.increase_locked(&controller, &1_000_0000000);
+    let free = client.get_free_capital();
+    assert_eq!(free, 100_0000000);
+
+    // A queues its full position (priced ~1000, unfundable from 100 free);
+    // B queues a smaller request that free capital could cover.
+    client.request_withdrawal(&depositor, &shares_a);
+    client.request_withdrawal(&other, &(shares_b / 2));
+
+    client.process_withdrawal_queue(&controller);
+    // (Asserted first: collect_events only surfaces the most recent
+    // invocation's events.)
+    assert_eq!(
+        count_events_with_verb(&env, &client.address, Symbol::new(&env, "wd_partial")),
+        1
+    );
+
+    // The head was filled up to free capital instead of pinning the queue:
+    // A's credit consumes (all but rounding dust of) the free capital, the
+    // head keeps A's remainder escrowed, and B stays behind it in FIFO order
+    // with no credit — free capital never bypasses the oldest request.
+    let credited_a = client.get_claimable_balance(&depositor);
+    assert!(credited_a > 0 && credited_a <= free);
+    assert!(free - credited_a < 100);
+    let queue = client.get_withdrawal_queue();
+    assert_eq!(queue.len(), 2);
+    let head = queue.get(0).unwrap();
+    assert_eq!(head.owner, depositor);
+    assert!(head.shares < shares_a);
+    assert_eq!(client.get_claimable_balance(&other), 0);
+    assert_eq!(client.get_free_capital(), free - credited_a);
+
+    // Settlement releases the collateral; the queue then drains fully in
+    // FIFO order — the head remainder first, then B.
+    client.decrease_locked(&controller, &1_000_0000000);
+    client.process_withdrawal_queue(&controller);
+    assert_eq!(client.get_withdrawal_queue().len(), 0);
+    // Both LPs received their full position value (within rounding dust).
+    assert!(client.get_claimable_balance(&depositor) >= 1_000_0000000 - 100);
+    assert!(client.get_claimable_balance(&other) >= 50_0000000 - 100);
+}
+
+#[test]
+fn test_solvency_reserve_gates_direct_exit() {
+    // The controller admits policies while TMA covers locked * ratio; exits
+    // must preserve that same reserve. With 1000 deposited, 400 locked, and a
+    // 200% ratio, the required backing is 800 — only 200 may leave, not the
+    // nominal 600 margin.
+    let (_env, client, _owner, controller, depositor) = setup();
+    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    client.increase_locked(&controller, &400_0000000);
+
+    // Until the controller pushes a ratio, the vault reserves nominal
+    // backing only — withdrawable equals the free margin.
+    assert_eq!(client.get_solvency_ratio(), 100);
+    assert_eq!(client.get_withdrawable_capital(), 600_0000000);
+
+    client.set_solvency_ratio(&controller, &200);
+    assert_eq!(client.get_solvency_ratio(), 200);
+    // The nominal margin is unchanged; the exit bound is not.
+    assert_eq!(client.get_free_capital(), 600_0000000);
+    assert_eq!(client.get_withdrawable_capital(), 200_0000000);
+    assert_eq!(client.max_withdraw(&depositor), 200_0000000);
+    assert!(client.max_redeem(&depositor) < client.balance(&depositor));
+
+    // A withdrawal inside the nominal margin but eating into the reserve is
+    // rejected.
+    assert!(client
+        .try_withdraw(&200_0000001, &depositor, &depositor, &depositor)
+        .is_err());
+
+    // The full withdrawable amount leaves; the reserve then holds exactly.
+    client.withdraw(&200_0000000, &depositor, &depositor, &depositor);
+    assert_eq!(client.get_total_managed_assets(), 800_0000000);
+    assert_eq!(client.get_withdrawable_capital(), 0);
+    assert_eq!(client.max_withdraw(&depositor), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #715)")]
+fn test_redeem_into_solvency_reserve_panics() {
+    // With 1000 deposited, 500 locked, and a 200% ratio the entire TMA is
+    // required backing — any redemption would consume the reserve.
+    let (_env, client, _owner, controller, depositor) = setup();
+    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    client.increase_locked(&controller, &500_0000000);
+    client.set_solvency_ratio(&controller, &200);
+    assert_eq!(client.get_withdrawable_capital(), 0);
+    client.redeem(&(shares / 2), &depositor, &depositor, &depositor);
+}
+
+#[test]
+fn test_queue_processing_holds_back_solvency_reserve() {
+    // Queued exits are funded only from capital above the configured
+    // reserve: the head partial-fills to that bound and the remainder waits
+    // for collateral to unlock, exactly like the free-capital bound before.
+    let (_env, client, _owner, controller, depositor) = setup();
+    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    client.increase_locked(&controller, &400_0000000);
+    client.set_solvency_ratio(&controller, &200);
+    assert_eq!(client.get_withdrawable_capital(), 200_0000000);
+
+    client.request_withdrawal(&depositor, &shares);
+    client.process_withdrawal_queue(&controller);
+
+    // Only the withdrawable slice was credited (within rounding dust); the
+    // remainder stays queued and TMA still covers 200% of locked.
+    let credited = client.get_claimable_balance(&depositor);
+    assert!(credited > 0 && credited <= 200_0000000);
+    assert!(200_0000000 - credited < 100);
+    assert_eq!(client.get_withdrawal_queue().len(), 1);
+    assert!(client.get_total_managed_assets() >= 2 * client.get_locked_capital());
+
+    // Re-processing without new capital cannot eat into the reserve.
+    client.process_withdrawal_queue(&controller);
+    assert_eq!(client.get_withdrawal_queue().len(), 1);
+    assert!(client.get_total_managed_assets() >= 2 * client.get_locked_capital());
+
+    // Settlement releases the collateral; the queue then drains fully.
+    client.decrease_locked(&controller, &400_0000000);
+    client.process_withdrawal_queue(&controller);
+    assert_eq!(client.get_withdrawal_queue().len(), 0);
+    assert!(client.get_claimable_balance(&depositor) >= 1_000_0000000 - 100);
+}
+
+#[test]
+fn test_set_oracle_refuses_while_outcomes_pending() {
+    // Rotating the barrier target while the current oracle still reports
+    // public-but-unsettled outcomes would open the barrier at the stale
+    // pre-settlement price (a fresh oracle starts with zero pending). The
+    // checked rotation must refuse until the old oracle reads clear.
+    let (env, client, _owner, _controller, _depositor) = setup();
+    let old_oracle = client.get_oracle().unwrap();
+    let mock = MockPendingOracleClient::new(&env, &old_oracle);
+    mock.set_pending_outcomes(&true);
+
+    let new_oracle = env.register(MockPendingOracle, ());
+    assert!(client.try_set_oracle(&new_oracle).is_err());
+    assert_eq!(client.get_oracle(), Some(old_oracle));
+
+    // Once the pending PnL is settled, the routine rotation proceeds.
+    mock.set_pending_outcomes(&false);
+    client.set_oracle(&new_oracle);
+    assert_eq!(client.get_oracle(), Some(new_oracle));
+}
+
+#[test]
+fn test_force_set_oracle_requires_pause() {
+    // The forced path exists for an unreachable old oracle, so it skips the
+    // pending-outcomes check — but only while the vault is paused, keeping
+    // every LP entry/exit blocked until the owner reconciles the old
+    // oracle's pending PnL and deliberately unpauses.
+    let (env, client, owner, _controller, _depositor) = setup();
+    let old_oracle = client.get_oracle().unwrap();
+    MockPendingOracleClient::new(&env, &old_oracle).set_pending_outcomes(&true);
+
+    let new_oracle = env.register(MockPendingOracle, ());
+    // Unpaused: forced rotation is rejected.
+    assert!(client.try_force_set_oracle(&new_oracle).is_err());
+
+    // Paused: the swap goes through even though the old oracle is pending.
+    client.pause(&owner);
+    client.force_set_oracle(&new_oracle);
+    assert_eq!(client.get_oracle(), Some(new_oracle));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #702)")]
+fn test_set_solvency_ratio_rejects_non_controller() {
+    let (env, client, _owner, _controller, _depositor) = setup();
+    let intruder = Address::generate(&env);
+    client.set_solvency_ratio(&intruder, &200);
+}
+
+#[test]
+fn test_set_solvency_ratio_bounds() {
+    // Same bounds as the controller's owner setter — a value the controller
+    // could never hold is rejected here too.
+    let (_env, client, _owner, controller, _depositor) = setup();
+    assert!(client.try_set_solvency_ratio(&controller, &99).is_err());
+    assert!(client.try_set_solvency_ratio(&controller, &10_001).is_err());
+    client.set_solvency_ratio(&controller, &100);
+    client.set_solvency_ratio(&controller, &10_000);
+    assert_eq!(client.get_solvency_ratio(), 10_000);
 }
 
 #[test]

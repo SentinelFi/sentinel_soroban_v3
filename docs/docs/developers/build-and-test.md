@@ -24,18 +24,28 @@ stellar contract build --optimize # optimized, or: make optimize
 
 The target is `wasm32v1-none`. Release builds use `opt-level = "z"`, LTO, `panic = "abort"`, and overflow checks enabled.
 
+### Contract size caps
+
+Soroban enforces a hard per-contract code-size cap at upload time (64 KiB). `make build` and CI both run `scripts/check_wasm_size.sh` after building, which fails when any contract exceeds the cap and warns when one is within 10% of it — so a size regression turns into a red pull request, not a failed deploy:
+
+```bash
+make check-wasm-size   # re-check already-built artifacts
+```
+
 ## Test
 
 ```bash
 cargo test        # or: make test
 ```
 
-Unit tests live in each contract crate, and cross-contract scenarios in `integration_tests`. Coverage reports use `cargo-llvm-cov`:
+Unit tests live in each contract crate, and cross-contract scenarios in `integration_tests`. The Risk Vault additionally carries a property-based suite (`risk_vault/src/prop_test.rs`, powered by `proptest`, part of the normal `cargo test` run): randomized share/asset conversion states probing rounding and the virtual-share offset, plus a stateful invariant machine that executes random operation sequences and asserts the full invariant block — solvency, asset conservation, share supply/escrow accounting, queue caps, and share-price monotonicity — after every single operation. A nightly-only `cargo-fuzz` harness in `risk_vault/fuzz/` and `oracle_aggregator/fuzz/` complements it for longer unbounded exploration. Coverage reports use `cargo-llvm-cov`:
 
 ```bash
 make coverage       # summary
 make coverage-html  # HTML report
 ```
+
+The report generated from `main` is published with this site at [/coverage/](https://sentinelfi.github.io/sentinel_soroban_v3/coverage/), and the README coverage badge reads its `badge.json` endpoint.
 
 ## Lint and format
 

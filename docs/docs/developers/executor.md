@@ -13,13 +13,16 @@ The oracle backend is intentionally swappable: contracts only check authorizatio
 
 | Job | Schedule | Calls | Signs as |
 |---|---|---|---|
+| Sale authorizer | Every 2 hours, offset | `open_sale`, `close_sale`, `set_cancelled` on the oracle | Oracle key |
 | Flight data fetcher | Every 2 hours | `set_estimated_arrival`, `set_landed`, `set_cancelled` on the oracle | Oracle key |
 | Flight classifier | Hourly | `classify_flights` on the controller | Keeper key |
 | Settlement executor | Every 5 minutes | `execute_settlements` on the controller | Keeper key |
 | Queue maintainer | Every 5 minutes, offset | `run_queue_maintenance` on the controller | Keeper key |
-| TTL extender | Daily | Extends storage TTLs for flight, claim, and route entries | Any funded key |
+| TTL extender | Daily | `extend_ttl` on all five contracts (instance-storage renewal) and `prune_settled` on the oracle | Any funded key |
 
 Schedules are defaults defined in `src/index.ts`, not on-chain constraints. Adjust them to your own operational needs.
+
+The sale authorizer deserves special attention: `buy_insurance` requires a live oracle sale authorization (24-hour maximum validity), so if this job stops — or its flight list does not cover a whitelisted route — the affected sales fail closed. Keep its cadence comfortably inside `SALE_AUTH_VALIDITY_SECS`.
 
 ## Configuration
 
@@ -38,6 +41,10 @@ KEEPER_SECRET_KEY=
 TTL_EXTENDER_SECRET_KEY=
 AEROAPI_BASE_URL=   # optional, defaults to http://localhost:3001
 AEROAPI_KEY=        # optional
+SALE_AUTH_FLIGHT_IDS=      # comma-separated flight numbers to attest for sale;
+                           # empty means no sale windows open and purchases fail closed
+SALE_AUTH_HORIZON_DAYS=    # optional, defaults to 90 (the booking horizon)
+SALE_AUTH_VALIDITY_SECS=   # optional, defaults to 21600 (6h); capped at 86400 on-chain
 ```
 
 ## Running
@@ -48,7 +55,7 @@ npm install
 npm start
 ```
 
-Each job can also run once from the CLI: `npm run fetch`, `classify`, `settle`, `queue`, or `ttl`.
+Each job can also run once from the CLI: `npm run authorize`, `fetch`, `classify`, `settle`, `queue`, or `ttl`.
 
 A small HTTP API is exposed for operations: `GET /api/health`, `GET /api/logs`, and `POST /api/trigger/<job>` to run a job on demand.
 

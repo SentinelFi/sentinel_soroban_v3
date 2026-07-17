@@ -8,10 +8,12 @@ use stellar_tokens::fungible::Base;
 use stellar_tokens::vault::Vault;
 
 use crate::auth::{require_controller, settlement_pending};
-use crate::constants::{CLAIMABLE_TTL_LEDGERS, MAX_QUEUE_BATCH};
-use crate::events::{Credited, RequestDropped};
+use crate::constants::{
+    CLAIMABLE_TTL_LEDGERS, MAX_QUEUE_BATCH, MAX_SOLVENCY_RATIO, MIN_SOLVENCY_RATIO,
+};
+use crate::events::{Credited, RequestDropped, RequestPartiallyFilled, SolvencyRatioSet};
 use crate::storage::VaultKey;
-use crate::vault_ops::convert_to_assets_with_tma;
+use crate::vault_ops::{convert_to_assets_with_tma, convert_to_shares_with_tma};
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
 #[contractimpl]
@@ -51,6 +53,26 @@ impl RiskVault {
             &VaultKey::LockedCapital,
             &locked.checked_sub(amount).expect("subtraction underflow"),
         );
+    }
+
+    /// Controller-only: mirror the owner-configured solvency ratio into the
+    /// vault so exit paths can hold back the same reserve the controller
+    /// admits new policies against. The controller pushes on every owner
+    /// update; the vault cannot pull the value itself because the controller
+    /// invokes `process_withdrawal_queue` and a read-back during that call
+    /// would be reentrant. Deliberately NOT pause-gated: propagating a risk
+    /// parameter is exactly the kind of action an incident response performs
+    /// while the vault is paused.
+    pub fn set_solvency_ratio(e: &Env, controller: Address, ratio: u32) {
+        require_controller(e, &controller);
+        Self::extend_ttl(e);
+        // Same bounds the controller enforces on its owner setter, so a
+        // compromised or buggy caller cannot park an unpayable reserve here.
+        if !(MIN_SOLVENCY_RATIO..=MAX_SOLVENCY_RATIO).contains(&ratio) {
+            panic_with_error!(e, Error::SolvencyRatioOutOfBounds);
+        }
+        e.storage().instance().set(&VaultKey::SolvencyRatio, &ratio);
+        SolvencyRatioSet { ratio }.publish(e);
     }
 
     /// Controller-only: credit received premium income to managed assets.
@@ -129,7 +151,11 @@ impl RiskVault {
             return;
         }
 
-        let mut remaining_free = Self::get_free_capital(e);
+        // Fund queued exits only from capital above the configured solvency
+        // reserve — the same bound direct exits use. Paying out to the
+        // nominal margin instead would let the queue drain the reserve that
+        // the purchase path just verified.
+        let mut remaining_free = Self::get_withdrawable_capital(e);
         let mut processed: u32 = 0;
         let mut tma = Self::get_total_managed_assets(e);
         let vault_addr = e.current_contract_address();
@@ -137,20 +163,22 @@ impl RiskVault {
         // Examine at most MAX_QUEUE_BATCH entries per call.
         // Entries beyond the window are carried over untouched and drained on a
         // later call. `kept` accumulates everything that survives this pass
-        // (skipped, deferred, or out-of-window) so removals don't have to be a
-        // contiguous head prefix.
+        // (skipped or deferred) so removals don't have to be a contiguous head
+        // prefix; the out-of-window tail is appended in one bulk copy after
+        // the loop.
         let limit = queue.len().min(MAX_QUEUE_BATCH);
         let mut kept: Vec<WithdrawalRequest> = Vec::new(e);
         let mut hit_capacity = false;
         let mut returned_any = false;
+        let mut partially_filled = false;
 
-        for i in 0..queue.len() {
+        for i in 0..limit {
             let request = queue.get(i).unwrap();
 
-            // Out-of-batch-window, or we already hit a request we can't fund:
-            // preserve FIFO liquidity ordering by keeping this and all later
-            // requests for a future call.
-            if i >= limit || hit_capacity {
+            // We already hit a request we can't fund: preserve FIFO liquidity
+            // ordering by keeping this and all later requests for a future
+            // call.
+            if hit_capacity {
                 kept.push_back(request);
                 continue;
             }
@@ -164,10 +192,78 @@ impl RiskVault {
             let assets = convert_to_assets_with_tma(e, request.shares, tma, Rounding::Floor);
 
             if assets > remaining_free {
-                // Not enough free capital for the head-most request: stop
-                // servicing and defer the rest (strict FIFO).
+                // The head-most request exceeds free capital. Fund the part
+                // free capital covers NOW (burn that share slice, credit its
+                // asset value) and keep the remainder at the head. Without the
+                // partial fill, one oversized request would pin the queue —
+                // and, because direct exits are disabled while the queue is
+                // non-empty, freeze every underwriter exit — until enough
+                // collateral unlocked to cover it in full, even while free
+                // capital sat idle. With it, the queue makes progress whenever
+                // any free capital exists, and strict FIFO fairness holds:
+                // free capital always goes to the oldest request first, so no
+                // later request ever executes ahead of an earlier one.
+                let fillable_shares =
+                    convert_to_shares_with_tma(e, remaining_free, tma, Rounding::Floor);
+                // Floor-floor round trip: assets_part <= remaining_free, and
+                // fillable_shares < request.shares whenever the full request
+                // exceeds free capital, so the remainder is always >= 1 share.
+                let assets_part =
+                    convert_to_assets_with_tma(e, fillable_shares, tma, Rounding::Floor);
+                if fillable_shares > 0 && assets_part > 0 {
+                    Base::update(e, Some(&vault_addr), None, fillable_shares);
+
+                    let owner = request.owner.clone();
+                    let key = VaultKey::ClaimableBalance(owner.clone());
+                    let claimable: i128 = e.storage().persistent().get(&key).unwrap_or(0);
+                    let new_balance = claimable
+                        .checked_add(assets_part)
+                        .expect("addition overflow");
+                    e.storage().persistent().set(&key, &new_balance);
+                    e.storage().persistent().extend_ttl(
+                        &key,
+                        CLAIMABLE_TTL_LEDGERS,
+                        CLAIMABLE_TTL_LEDGERS,
+                    );
+
+                    let shares_remaining = request
+                        .shares
+                        .checked_sub(fillable_shares)
+                        .expect("subtraction underflow");
+                    Credited {
+                        user: owner.clone(),
+                        amount: assets_part,
+                        new_balance,
+                    }
+                    .publish(e);
+                    RequestPartiallyFilled {
+                        owner,
+                        request_id: request.request_id,
+                        shares_filled: fillable_shares,
+                        shares_remaining,
+                    }
+                    .publish(e);
+
+                    remaining_free = remaining_free
+                        .checked_sub(assets_part)
+                        .expect("subtraction underflow");
+                    tma = tma.checked_sub(assets_part).expect("subtraction underflow");
+                    partially_filled = true;
+
+                    kept.push_back(WithdrawalRequest {
+                        request_id: request.request_id,
+                        owner: request.owner,
+                        shares: shares_remaining,
+                    });
+                } else {
+                    // Free capital too small to fund even one share of the
+                    // head request — keep it untouched.
+                    kept.push_back(request);
+                }
+                // Whatever free capital remains cannot fund another share of
+                // the (older) head remainder, so servicing anything behind it
+                // would break FIFO. Defer the rest.
                 hit_capacity = true;
-                kept.push_back(request);
                 continue;
             }
 
@@ -220,15 +316,21 @@ impl RiskVault {
             processed = processed.checked_add(1).expect("addition overflow");
         }
 
+        // Requests beyond the batch window were never examined — carry them
+        // over in one bulk copy instead of per-entry host calls.
+        if limit < queue.len() {
+            kept.append(&queue.slice(limit..));
+        }
+
         // Single storage write for the running total — the loop priced every
         // request against the local `tma`, so persisting once at the end is
         // equivalent to the per-iteration write it replaces.
-        if processed > 0 {
+        if processed > 0 || partially_filled {
             e.storage()
                 .instance()
                 .set(&VaultKey::TotalManagedAssets, &tma);
         }
-        if processed > 0 || returned_any {
+        if processed > 0 || returned_any || partially_filled {
             e.storage()
                 .instance()
                 .set(&VaultKey::WithdrawalQueue, &kept);

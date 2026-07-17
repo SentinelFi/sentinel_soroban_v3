@@ -7,6 +7,58 @@ use soroban_sdk::{symbol_short, testutils::Address as _, testutils::Ledger as _,
 const SECONDS_PER_DAY: u64 = 86_400;
 
 // =========================================================================
+// Settlement window bounds — liveness under a saturated ready window
+// =========================================================================
+
+#[test]
+fn saturated_cancelled_window_settles_across_bounded_batches() {
+    // A correlated cancellation event can make more flights settlement-ready
+    // than one transaction's resource budget can process. The settlement
+    // window is bounded (10 per call) precisely so that no ready set — of
+    // any size — can produce an atomically-reverting, never-advancing keeper
+    // call: repeated calls must drain the backlog, and the vault's
+    // settlement barrier must lift only when the LAST outcome settles.
+    let t = TestEnv::new();
+    // Twelve full purchase flows plus settlement exceed the test env's
+    // default CPU metering budget (one shared budget for what would be many
+    // independent transactions on-network) — lift it; this test asserts
+    // batching behavior, not per-call cost.
+    t.env.cost_estimate().budget().reset_unlimited();
+
+    let n: u64 = 12; // more than one settlement window
+    for k in 0..n {
+        let date = FLIGHT_DATE + k * SECONDS_PER_DAY;
+        let buyer = Address::generate(&t.env);
+        t.buy_flight(&buyer, &symbol_short!("AA100"), date);
+        t.oracle.set_estimated_arrival(
+            &t.oracle_account,
+            &symbol_short!("AA100"),
+            &date,
+            &(date + 7_200),
+        );
+        t.oracle
+            .set_cancelled(&t.oracle_account, &symbol_short!("AA100"), &date);
+    }
+    assert_eq!(t.pool.get_active_flight_count(), 12);
+
+    // One classification pass covers all 12 (the classify window is wider —
+    // classification writes far less per flight than settlement).
+    t.ctrl.classify_flights(&t.keeper);
+
+    // First settlement call processes one full window (10 of 12) and leaves
+    // the barrier up: outcomes are still pending.
+    t.ctrl.execute_settlements(&t.keeper);
+    assert_eq!(t.pool.get_active_flight_count(), 2);
+    let newcomer = Address::generate(&t.env);
+    assert_eq!(t.vault.max_deposit(&newcomer), 0);
+
+    // Second call drains the remainder; the barrier lifts.
+    t.ctrl.execute_settlements(&t.keeper);
+    assert_eq!(t.pool.get_active_flight_count(), 0);
+    assert!(t.vault.max_deposit(&newcomer) > 0);
+}
+
+// =========================================================================
 // prune_settled
 // =========================================================================
 
@@ -277,12 +329,14 @@ fn settlement_barrier_holds_through_void_classification_window() {
 }
 
 #[test]
-fn active_flight_never_voided_by_stale_timeout() {
-    // The void applies ONLY to flights that never produced any data. Once an
-    // estimated arrival is recorded (the flight is real), the row is Active
-    // and must wait for a genuine outcome no matter how much time passes —
-    // a delayed data feed must not convert a possibly-delayed flight into an
-    // on-time settlement.
+fn active_flight_not_voided_before_terminal_timeout() {
+    // The NotInitiated stale-void never applies once an estimated arrival is
+    // recorded: the flight is real and must wait for a genuine outcome — a
+    // delayed data feed must not convert a possibly-delayed flight into an
+    // on-time settlement. The wait is bounded, not infinite: the row holds
+    // through the entire active timeout past its scheduled arrival, and only
+    // then does the terminal-liveness fallback void it (see
+    // lifecycle_active_timeout_void in group 1).
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);
     t.buy(&traveler);
@@ -293,7 +347,10 @@ fn active_flight_never_voided_by_stale_timeout() {
         &EST_ARRIVAL,
     );
 
-    t.advance_time(FLIGHT_DATE - INITIAL_TIMESTAMP + 30 * SECONDS_PER_DAY);
+    // One second short of the active timeout — long past the stale timeout
+    // that voids dataless rows.
+    let now = t.env.ledger().timestamp();
+    t.advance_time(EST_ARRIVAL + sentinel_types::timeouts::ACTIVE_FLIGHT_TIMEOUT_SECS - 1 - now);
     t.classify_and_settle();
 
     // Untouched: still Active, collateral still locked, awaiting an outcome.

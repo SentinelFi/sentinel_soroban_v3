@@ -39,8 +39,23 @@ export async function runFlightDataFetcher(config: Config): Promise<RunLogEntry>
 
     console.log("[fetcher] Starting flight data fetch...");
 
-    // 1. Read active flights
-    const rawFlights = await client.readContract(oracleId, "get_active_flights");
+    // 1. Read active flights. The set is paginated on-chain (one ledger
+    // entry per ~100 flights), so page through it instead of pulling the
+    // whole list in one read — a large set would otherwise exceed the
+    // simulation's ledger-entry footprint.
+    const PAGE_LIMIT = 100;
+    const totalCount = Number(
+      (await client.readContract(oracleId, "get_active_flight_count")) ?? 0
+    );
+    const rawFlights: [string, bigint][] = [];
+    for (let offset = 0; offset < totalCount; offset += PAGE_LIMIT) {
+      const page = await client.readContract(oracleId, "get_active_flights_page", [
+        client.u32ToScVal(offset),
+        client.u32ToScVal(PAGE_LIMIT),
+      ]);
+      if (!page || page.length === 0) break;
+      rawFlights.push(...page);
+    }
 
     if (!rawFlights || rawFlights.length === 0) {
       console.log("[fetcher] No active flights.");
@@ -258,6 +273,15 @@ function parseFlightStatus(raw: any): FlightStatus {
 /**
  * Convert a u64 date to a YYYY-MM-DD string.
  * Supports both unix timestamps and YYYYMMDD integer format.
+ *
+ * DAY-KEY CONTRACT: the string MUST be the UTC calendar day (hence
+ * toISOString, which is always UTC), matching the on-chain `date` key
+ * (midnight UTC of the departure day). Deriving it from a LOCAL date would
+ * make the oracle's outcome writes fail the contracts' arrival-timestamp
+ * floor for early-morning flights east of UTC, stranding them `Active`
+ * until the void timeout forfeits the travelers' premiums. Every backend
+ * migration (Acurast, Phala) must preserve this — see the FlightDataFetcher
+ * day-key contract in spec/architecture.md.
  */
 function dateToString(date: bigint): string {
   const num = Number(date);

@@ -3,7 +3,10 @@ name: Deploy Docs
 on:
   push:
     branches: [main]
-    paths: ['docs/**', '.github/workflows/deploy-docs.yml']
+    paths:
+      - "docs/**"
+      - "contracts/**"
+      - ".github/workflows/deploy-docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -16,21 +19,92 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  coverage:
     runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: contracts
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Verify installation
+        run: |
+          rustup show
+          cargo --version
+          cargo llvm-cov --version
+          cargo --list | grep llvm
+
+      - name: Run tests with coverage
+        run: cargo llvm-cov test --html
+
+      - name: Build shields.io badge JSON
+        run: |
+          pct=$(cargo llvm-cov report --summary-only --json | jq -r '.data[0].totals.lines.percent')
+          msg=$(printf '%.1f%%' "$pct")
+          color=$(awk -v p="$pct" 'BEGIN {
+            if (p >= 90) print "brightgreen";
+            else if (p >= 75) print "yellowgreen";
+            else if (p >= 60) print "yellow";
+            else print "red";
+          }')
+
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s","color":"%s"}\n' \
+            "$msg" "$color" \
+            > target/llvm-cov/html/badge.json
+
+          cat target/llvm-cov/html/badge.json
+
+      - name: Upload coverage output
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-site
+          path: contracts/target/llvm-cov/html
+          if-no-files-found: error
+
+  build:
+    needs: coverage
+    runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: docs
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 22
+
       - name: Install dependencies
         run: npm install
+
       - name: Build site
         run: npm run build
-      - name: Upload artifact
+
+      - name: Attach coverage report at /coverage/
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-site
+          path: docs/build/coverage
+
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs/build
@@ -38,9 +112,11 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Deploy to GitHub Pages
         id: deployment

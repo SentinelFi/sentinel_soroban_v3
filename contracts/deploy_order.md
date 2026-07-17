@@ -112,7 +112,10 @@ Notes:
 
 - The solvency ratio is **not** a constructor argument — it initializes to
   100 (%) and is tuned afterwards via `controller.set_solvency_ratio`
-  (bounded to [100, 10_000]).
+  (bounded to [100, 10_000]). The setter also mirrors the ratio into the
+  risk_vault in the same transaction (LP exits enforce the same reserve
+  purchases are admitted against), so it can only run AFTER
+  `risk_vault.set_controller` (Phase 3) — earlier, the mirror push reverts.
 - `min_lead_time_secs` must be strictly below the 90-day booking horizon;
   `claim_expiry_window_secs` must be in [1 day, 60 days]. Both are validated
   at construction.
@@ -140,8 +143,13 @@ without redeploying the affected contract.
 
 (The vault's settlement-barrier oracle is no longer wired here — it is a
 `risk_vault` constructor argument, step 4. `risk_vault.set_oracle` remains
-available to the owner for the oracle-redeploy contingency only; both it and
-step 10 emit audit events, `oracle_set` and `min_wd_req_set`.)
+available to the owner for the oracle-redeploy contingency only; it refuses
+while the current oracle still reports pending public outcomes, because a
+fresh oracle starts at zero pending and the swap would open the barrier at a
+stale share price. If the old oracle is unreachable, pause the vault and use
+`risk_vault.force_set_oracle`, then reconcile the pending PnL before
+unpausing. Both rotation paths and step 10 emit audit events — `oracle_set`
+(with a `forced` flag) and `min_wd_req_set`.)
 
 Step 10 ships disabled (0). Left at 0, one actor can occupy every slot of the
 bounded withdrawal queue with dust requests spread across addresses, locking
@@ -155,23 +163,48 @@ configured value can lock ordinary positions out.
 ```
 13. governance_module.set_defaults(premium, payoff, delay_hours)
       (only if the constructor defaults need changing)
-14. governance_module.add_admin(ADMIN)                    # per route manager
-15. governance_module.whitelist_route(caller, flight_id, origin, dest,
+14. governance_module.set_term_limits(max_payoff, max_payoff_ratio)  # REQUIRED — see below
+15. governance_module.add_admin(ADMIN)                    # per route manager
+16. governance_module.whitelist_route(caller, flight_id, origin, dest,
                                       premium?, payoff?, delay_hours?)
       # one per NEW route; omit optional terms to inherit the defaults.
       # Re-listing an existing route is rejected (RouteAlreadyListed) unless
       # identical — term changes go through update_route_terms, re-activation
       # through enable_route.
-16. controller.set_solvency_ratio(ratio)                  # optional, default 100
-17. (optional) controller.set_whitelist_enabled(true)
-      + controller.add_whitelisted_buyer(caller, addr)    # per buyer
+17. controller.set_solvency_ratio(ratio)                  # optional, default 100;
+                                                          # also mirrored into risk_vault
+                                                          # (requires step 8 wiring)
+18. (optional) controller.set_whitelist_enabled(true)
+      + controller.add_whitelisted_buyer(caller, addr)    # per buyer; approvals carry a
+                                                          # 180-day inactivity deadline that
+                                                          # every purchase slides forward —
+                                                          # dormant buyers must be re-approved
 ```
+
+Step 14 caps the blast radius of a single admin key: route writes are open to
+admins, and without a `max_payoff` one compromised admin signature could
+whitelist a route whose single policy locks the vault's entire free capital.
+The `max_payoff_ratio` (payoff ≤ ratio × premium) is unit-free and already
+active by default (100); the absolute `max_payoff` ships disabled (0) because
+it is asset-denominated — pick a per-asset ceiling well above legitimate route
+payoffs and well below vault scale (e.g. `1000_0000000` = 1,000 USDC at
+7 decimals). Both limits are enforced on every route write, lowering them
+retroactively de-lists oversized routes from `route_status`, and every
+purchase re-validates the terms it actually uses (including an existing
+flight bucket's snapshotted terms) against the limits in force at purchase
+time — so a lowered cap also stops new buyers on pre-existing oversized
+buckets.
 
 ## Phase 5 — Start the executor
 
 ```
 18. Fund ORACLE_EXECUTOR and KEEPER_EXECUTOR accounts with XLM (tx fees).
 19. Start the executor backend (executor/) with the contract IDs + keys:
+      - SaleAuthorizer      (oracle key,  ~2 h)  → oracle open_sale / close_sale /
+                             set_cancelled. Set SALE_AUTH_FLIGHT_IDS to the
+                             whitelisted routes' flight numbers — buy_insurance
+                             requires a live sale authorization (max 24 h), so
+                             nothing sells until this job has run
       - FlightDataFetcher   (oracle key,  ~2 h)  → oracle set_estimated_arrival /
                                                     set_landed / set_cancelled
       - FlightClassifier    (keeper key,  ~1 h;  → controller.classify_flights
@@ -196,7 +229,9 @@ risk_vault.get_min_withdrawal_request()       >  0
 oracle_aggregator.get_authorized_oracle()     == ORACLE_EXECUTOR
 controller.get_keeper()                       == KEEPER_EXECUTOR
 governance_module.get_defaults()              == expected terms
+governance_module.get_term_limits()           == (max_payoff > 0, expected ratio)
 controller.get_solvency_ratio()               == expected ratio
+risk_vault.get_solvency_ratio()               == same ratio (controller-mirrored)
 <each contract>.version()                     == 1
 ```
 

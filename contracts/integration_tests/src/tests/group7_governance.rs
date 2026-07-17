@@ -22,6 +22,7 @@ fn whitelist_route_then_buy_succeeds() {
         &None::<u32>,
     );
     let traveler = Address::generate(&t.env);
+    t.open_sale(&symbol_short!("UA200"), FLIGHT_DATE + SECONDS_PER_DAY);
     t.asset_admin.mint(&traveler, &PREMIUM);
     t.ctrl.buy_insurance(
         &traveler,
