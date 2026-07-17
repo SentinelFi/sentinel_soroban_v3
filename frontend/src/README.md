@@ -64,6 +64,7 @@ src/
 ```bash
 cd frontend
 npm install
+npm run install:contracts
 npm run dev     # Start Vite + scaffold watch (hot reload)
 npm start       # Same as dev
 ```
