@@ -171,11 +171,13 @@ sequenceDiagram
 ## 4. Risk-Taker (Underwriter) Flow
 
 Underwriters supply the capital that backs payouts and earn the premiums of
-on-time flights. Deposits are immediate (ERC-4626 `deposit` mints shares).
-Withdrawals are **FIFO-queued** so that a latecomer can't drain withdrawable
-capital (the assets above the vault's solvency reserve on locked collateral)
-ahead of LPs already waiting: the request escrows shares, the keeper drains the
-queue into pull-based claimable balances, and the underwriter collects.
+on-time flights. **All entry and exit is two-phase**: a request escrows value
+(USDC on entry, shares on exit) and the keeper's maintenance pass prices it
+only once it is older than the LP pricing delay (6 h) — so the price a
+request receives always reflects every flight outcome that was publicly
+knowable when it was committed. FIFO ordering additionally means a latecomer
+can't drain withdrawable capital (the assets above the vault's solvency
+reserve on locked collateral) ahead of LPs already waiting.
 
 ```mermaid
 sequenceDiagram
@@ -187,15 +189,16 @@ sequenceDiagram
     participant Ctrl as Controller
 
     rect rgba(96, 148, 255, 0.14)
-    Note over U,Asset: Deposit — provide capital, receive shares
-    U->>Vault: deposit(assets, receiver, from, operator)
+    Note over U,Asset: Enter — request a deposit (escrows USDC)
+    U->>Vault: request_deposit(assets)
     Vault->>Asset: transfer(underwriter → vault, assets)
-    Vault->>Vault: mint shares, TotalManagedAssets += assets
-    Vault-->>U: shares
+    Vault->>Vault: push DepositRequest (assets escrowed, NOT in TMA)
+    Vault-->>U: request_id
+    Note over U,Vault: U may cancel_deposit(request_id) while queued
     end
 
     rect rgba(255, 160, 64, 0.14)
-    Note over U,Vault: Withdraw — request enters FIFO queue
+    Note over U,Vault: Exit — request a withdrawal (escrows shares)
     U->>Vault: request_withdrawal(shares)
     Vault->>Vault: escrow shares, push WithdrawalRequest
     Vault-->>U: request_id
@@ -203,10 +206,12 @@ sequenceDiagram
     end
 
     rect rgba(64, 200, 112, 0.14)
-    Note over Keeper,Vault: Keeper drains the queue (run_queue_maintenance)
+    Note over Keeper,Vault: Keeper prices both queues (run_queue_maintenance)
     Keeper->>Ctrl: run_queue_maintenance(keeper)
+    Ctrl->>Vault: process_deposit_queue()
+    Note over Vault: FIFO, batched — no-op while a settlement is pending.<br/>Prices only requests older than the LP pricing delay.<br/>Mints shares at the CURRENT price, TMA += assets.<br/>Requests the price outgrew are returned (DepositDropped)
     Ctrl->>Vault: process_withdrawal_queue()
-    Note over Vault: FIFO, batched — no-op while a settlement is pending.<br/>Burns escrowed shares, credits ClaimableBalance (Credited).<br/>Pays only capital above the solvency reserve on locked collateral.<br/>Partially fills the head request when that capital runs short<br/>(RequestPartiallyFilled), then stops. Zero-value requests are<br/>dropped and their shares returned (RequestDropped)
+    Note over Vault: FIFO, batched — no-op while a settlement is pending.<br/>Prices only requests older than the LP pricing delay.<br/>Burns escrowed shares, credits ClaimableBalance (Credited).<br/>Pays only capital above the solvency reserve on locked collateral.<br/>Partially fills the head request when that capital runs short<br/>(RequestPartiallyFilled), then stops. Zero-value requests are<br/>dropped and their shares returned (RequestDropped)
     Ctrl->>Vault: snapshot() — refresh share-price snapshot
     end
 
@@ -288,6 +293,14 @@ sequenceDiagram
     end
 ```
 
+> **Targeted fast path:** the sweeps above are the repair backstop, not the
+> primary latency path. Right after Phase 1 writes an outcome, the executor
+> calls `classify_flight(keeper, flight_id, date)` and then
+> `settle_flight(keeper, flight_id, date)` for that exact tuple — the same
+> Phase 2/3 logic without the active-list scan — so a fresh outcome normally
+> settles (and the vault settlement barrier releases) within seconds,
+> independent of active-set size.
+>
 > **Housekeeping:** `prune_settled()` (permissionless) later evicts flights
 > that have been settled beyond the retention window from the active list.
 

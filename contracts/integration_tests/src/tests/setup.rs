@@ -18,6 +18,9 @@ pub const DEPOSIT_AMOUNT: i128 = 1_000_0000000; // 1000 asset
 pub const INITIAL_TIMESTAMP: u64 = 1_710_400_000;
 // Mirrors the oracle's on-chain cap on sale-authorization validity (24h).
 pub const SALE_AUTH_MAX_VALIDITY_SECS: u64 = 86_400;
+/// Mirrors the vault's LP_PRICING_DELAY_SECS — queued deposit/withdrawal
+/// requests may only be priced once they are at least this old.
+pub const LP_PRICING_DELAY_SECS: u64 = 6 * 3_600;
 pub const EST_ARRIVAL: u64 = 1_710_500_000;
 pub const ACTUAL_ON_TIME: u64 = 1_710_501_800; // 30min late (< 3h)
 pub const ACTUAL_DELAYED: u64 = 1_710_510_800; // ~3h late (>= 3h)
@@ -129,10 +132,15 @@ impl TestEnv {
             &None::<u32>,
         );
 
-        // Seed underwriter capital so solvency checks pass.
+        // Seed underwriter capital so solvency checks pass. LP entry is
+        // two-phase: request, mature past the pricing delay, then let the
+        // keeper's maintenance pass mint at the current price.
         let underwriter = Address::generate(&env);
         asset_admin.mint(&underwriter, &DEPOSIT_AMOUNT);
-        vault.deposit(&DEPOSIT_AMOUNT, &underwriter, &underwriter, &underwriter);
+        vault.request_deposit(&underwriter, &DEPOSIT_AMOUNT);
+        env.ledger()
+            .with_mut(|l| l.timestamp += LP_PRICING_DELAY_SECS);
+        ctrl.run_queue_maintenance(&keeper);
 
         TestEnv {
             env,
@@ -270,6 +278,24 @@ impl TestEnv {
     pub fn advance_time(&self, seconds: u64) {
         let now = self.env.ledger().timestamp();
         self.env.ledger().with_mut(|l| l.timestamp = now + seconds);
+    }
+
+    /// Advance ledger time past the LP pricing delay so every queued
+    /// deposit/withdrawal request becomes priceable.
+    #[allow(dead_code)]
+    pub fn mature_requests(&self) {
+        self.advance_time(LP_PRICING_DELAY_SECS);
+    }
+
+    /// Two-phase LP entry: request → mature → keeper maintenance pass.
+    /// Returns the shares minted to `from` by this entry.
+    #[allow(dead_code)]
+    pub fn lp_deposit(&self, from: &Address, amount: i128) -> i128 {
+        let before = self.vault.balance(from);
+        self.vault.request_deposit(from, &amount);
+        self.mature_requests();
+        self.ctrl.run_queue_maintenance(&self.keeper);
+        self.vault.balance(from) - before
     }
 }
 

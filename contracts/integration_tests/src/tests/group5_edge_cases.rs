@@ -49,13 +49,12 @@ fn saturated_cancelled_window_settles_across_bounded_batches() {
     // the barrier up: outcomes are still pending.
     t.ctrl.execute_settlements(&t.keeper);
     assert_eq!(t.pool.get_active_flight_count(), 2);
-    let newcomer = Address::generate(&t.env);
-    assert_eq!(t.vault.max_deposit(&newcomer), 0);
+    assert!(t.oracle.has_pending_outcomes());
 
     // Second call drains the remainder; the barrier lifts.
     t.ctrl.execute_settlements(&t.keeper);
     assert_eq!(t.pool.get_active_flight_count(), 0);
-    assert!(t.vault.max_deposit(&newcomer) > 0);
+    assert!(!t.oracle.has_pending_outcomes());
 }
 
 // =========================================================================
@@ -315,17 +314,26 @@ fn settlement_barrier_holds_through_void_classification_window() {
     t.buy(&traveler);
     t.advance_time(FLIGHT_DATE - INITIAL_TIMESTAMP + 14 * SECONDS_PER_DAY + 1);
 
-    // Classify only — the void is now pending but unsettled.
+    // Classify only — the void is now pending but unsettled. An LP entry
+    // can be committed, but even a matured request must not be priced while
+    // the barrier is up.
     t.ctrl.classify_flights(&t.keeper);
     assert!(t.oracle.has_pending_outcomes());
     let lp = Address::generate(&t.env);
     t.asset_admin.mint(&lp, &DEPOSIT_AMOUNT);
-    assert!(t.vault.try_deposit(&DEPOSIT_AMOUNT, &lp, &lp, &lp).is_err());
+    t.vault.request_deposit(&lp, &DEPOSIT_AMOUNT);
+    t.mature_requests();
+    t.ctrl.run_queue_maintenance(&t.keeper);
+    assert_eq!(t.vault.get_deposit_queue_len(), 1);
+    assert_eq!(t.vault.balance(&lp), 0);
 
-    // Settlement recognizes the PnL and the barrier lifts.
+    // Settlement recognizes the PnL and the barrier lifts; the queued entry
+    // then prices at the post-income share value.
     t.ctrl.execute_settlements(&t.keeper);
     assert!(!t.oracle.has_pending_outcomes());
-    t.vault.deposit(&DEPOSIT_AMOUNT, &lp, &lp, &lp);
+    t.ctrl.run_queue_maintenance(&t.keeper);
+    assert_eq!(t.vault.get_deposit_queue_len(), 0);
+    assert!(t.vault.balance(&lp) > 0);
 }
 
 #[test]

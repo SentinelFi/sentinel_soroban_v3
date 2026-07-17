@@ -1,11 +1,13 @@
 import cron from "node-cron";
 import { loadConfig } from "./config.js";
+import { tryRunExclusive } from "./job_lock.js";
 import { runSaleAuthorizer } from "./sale_authorizer.js";
 import { runFlightDataFetcher } from "./flight_data_fetcher.js";
 import { runFlightClassifier } from "./flight_classifier.js";
 import { runSettlementExecutor } from "./settlement_executor.js";
 import { runQueueMaintainer } from "./queue_maintainer.js";
 import { runTTLExtender } from "./ttl_extender.js";
+import type { JobName, RunLogEntry } from "./types.js";
 import { logRun } from "./run_log.js";
 import { startServer } from "./server.js";
 
@@ -26,60 +28,73 @@ startServer(config);
 
 // Cron scheduling. Cadences match spec/architecture.md.
 //
-// Settler + QueueMaintainer share the keeper key — schedule them off-tempo
-// (settler at :00/:05/..., queue at :02/:07/...) to minimise sequence-number
-// contention when both fire close to each other.
+// Two layers keep same-key jobs from racing one source account's sequence:
+// the SorobanClient serializes every build/submit lifecycle per signer and
+// retries sequence conflicts, and each job runs single-flight (a tick is
+// skipped while the previous run of the same job is still in progress).
+// The schedule offsets below remain as defense-in-depth so same-key jobs
+// rarely contend in the first place.
+
+function scheduleJob(
+  expr: string,
+  job: JobName,
+  label: string,
+  run: () => Promise<RunLogEntry>
+): void {
+  cron.schedule(expr, async () => {
+    const entry = await tryRunExclusive(job, async () => {
+      console.log(`\n[${new Date().toISOString()}] Running ${label}...`);
+      return run();
+    });
+    if (entry === null) {
+      console.warn(
+        `[${new Date().toISOString()}] Skipping ${label} — previous run still in progress.`
+      );
+      return;
+    }
+    logRun(entry);
+  });
+}
 
 // Cron #0 — SaleAuthorizer — oracle key — every 2 hours at :30.
-// Shares the oracle key with the fetcher, so it runs off-tempo (:30 vs :00)
-// to avoid sequence-number contention. Its cadence must stay comfortably
-// inside SALE_AUTH_VALIDITY_SECS or every sale window lapses between runs.
-cron.schedule("30 */2 * * *", async () => {
-  console.log(`\n[${new Date().toISOString()}] Running SaleAuthorizer...`);
-  const entry = await runSaleAuthorizer(config);
-  logRun(entry);
-});
+// Shares the oracle key with the fetcher, so it runs off-tempo (:30 vs :00).
+// Its cadence must stay comfortably inside SALE_AUTH_VALIDITY_SECS or every
+// sale window lapses between runs.
+scheduleJob("30 */2 * * *", "sale_authorizer", "SaleAuthorizer", () =>
+  runSaleAuthorizer(config)
+);
 
 // Cron #1 — FlightDataFetcher — oracle key — every 2 hours at :00
-cron.schedule("0 */2 * * *", async () => {
-  console.log(`\n[${new Date().toISOString()}] Running FlightDataFetcher...`);
-  const entry = await runFlightDataFetcher(config);
-  logRun(entry);
-});
+scheduleJob("0 */2 * * *", "fetcher", "FlightDataFetcher", () =>
+  runFlightDataFetcher(config)
+);
 
-// Cron #2 — FlightClassifier — keeper key — every hour at :00
-cron.schedule("0 * * * *", async () => {
-  console.log(`\n[${new Date().toISOString()}] Running FlightClassifier...`);
-  const entry = await runFlightClassifier(config);
-  logRun(entry);
-});
+// Cron #2 — FlightClassifier — keeper key — hourly at :01, off the shared
+// :00 tick where the settler (same key) also fires.
+scheduleJob("1 * * * *", "classifier", "FlightClassifier", () =>
+  runFlightClassifier(config)
+);
 
 // Cron #3 — SettlementExecutor — keeper key — every 5 min at :00/:05/...
-cron.schedule("*/5 * * * *", async () => {
-  console.log(`\n[${new Date().toISOString()}] Running SettlementExecutor...`);
-  const entry = await runSettlementExecutor(config);
-  logRun(entry);
-});
+scheduleJob("*/5 * * * *", "settler", "SettlementExecutor", () =>
+  runSettlementExecutor(config)
+);
 
 // Cron #3b — QueueMaintainer — keeper key — every 5 min, offset by 2 min
-// to avoid clashing with the settler's sequence number.
-cron.schedule("2-59/5 * * * *", async () => {
-  console.log(`\n[${new Date().toISOString()}] Running QueueMaintainer...`);
-  const entry = await runQueueMaintainer(config);
-  logRun(entry);
-});
+// from the settler's ticks.
+scheduleJob("2-59/5 * * * *", "queue_maintainer", "QueueMaintainer", () =>
+  runQueueMaintainer(config)
+);
 
 // Cron #4 — TTLExtender + prune — own key — daily at 00:00 UTC
-cron.schedule("0 0 * * *", async () => {
-  console.log(`\n[${new Date().toISOString()}] Running TTLExtender...`);
-  const entry = await runTTLExtender(config);
-  logRun(entry);
-});
+scheduleJob("0 0 * * *", "ttl_extender", "TTLExtender", () =>
+  runTTLExtender(config)
+);
 
 console.log("Cron jobs scheduled:");
 console.log("  SaleAuthorizer:       every 2h at :30          (oracle key)");
 console.log("  FlightDataFetcher:    every 2h at :00         (oracle key)");
-console.log("  FlightClassifier:     hourly at :00            (keeper key)");
+console.log("  FlightClassifier:     hourly at :01            (keeper key)");
 console.log("  SettlementExecutor:   every 5m at :00/:05/...  (keeper key)");
 console.log("  QueueMaintainer:      every 5m at :02/:07/...  (keeper key)");
 console.log("  TTLExtender + prune:  daily at 00:00 UTC       (own key)");

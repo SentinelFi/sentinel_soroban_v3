@@ -30,4 +30,7 @@ pub enum Error {
     SolvencyRatioOutOfBounds = 724,
     OraclePendingOutcomesUnreconciled = 725,
     ForcedRotationRequiresPause = 726,
+    DirectEntryDisabled = 727,
+    DirectExitDisabled = 728,
+    DepositQueueFull = 729,
 }

@@ -126,9 +126,19 @@ export const REGISTRY: ContractEntry[] = [
       fn("classify_flights", "keeper", false, "Batch-classify landed/cancelled/timed-out flights for settlement", [
         a("keeper", "address"),
       ]),
+      fn("classify_flight", "keeper", false, "Classify one exact active-listed flight (no cursor rotation)", [
+        a("keeper", "address"),
+        FLIGHT_ID,
+        DATE,
+      ], "bool"),
       fn("execute_settlements", "keeper", false, "Batch-execute pending settlements (moves funds pool ↔ vault)", [
         a("keeper", "address"),
       ]),
+      fn("settle_flight", "keeper", false, "Settle one exact classified active-listed flight (no cursor rotation)", [
+        a("keeper", "address"),
+        FLIGHT_ID,
+        DATE,
+      ], "bool"),
       fn("execute_settlements_bounded", "keeper", false, "Execute settlements with a smaller window (escape hatch if a full batch exceeds tx limits)", [
         a("keeper", "address"),
         a("limit", "u32", "Flights to process, clamped to 1–10"),
@@ -160,31 +170,15 @@ export const REGISTRY: ContractEntry[] = [
     key: "risk_vault",
     ...CONTRACTS.risk_vault,
     functions: [
-      fn("deposit", "wallet", false, "Deposit USDC, mint RVS shares to the receiver", [
+      fn("request_deposit", "wallet", false, "Queue an LP entry: escrows USDC, minted as shares after the pricing delay", [
+        a("caller", "address", undefined, true),
         a("assets", "amount7", "USDC amount"),
-        a("receiver", "address", undefined, true),
-        a("from", "address", "Account the USDC is pulled from", true),
-        a("operator", "address", "Signer — usually the same as from", true),
-      ], "i128 shares minted"),
-      fn("mint", "wallet", false, "Mint an exact number of shares, pulling the required USDC", [
-        a("shares", "amount10", "RVS shares"),
-        a("receiver", "address", undefined, true),
-        a("from", "address", undefined, true),
-        a("operator", "address", undefined, true),
-      ], "i128 assets pulled"),
-      fn("withdraw", "wallet", false, "Immediate withdrawal (only when the queue is empty and capital is free)", [
-        a("assets", "amount7", "USDC amount"),
-        a("receiver", "address", undefined, true),
-        a("owner", "address", "Share owner", true),
-        a("operator", "address", undefined, true),
-      ], "i128 shares burned"),
-      fn("redeem", "wallet", false, "Immediate redemption of shares (same gating as withdraw)", [
-        a("shares", "amount10"),
-        a("receiver", "address", undefined, true),
-        a("owner", "address", undefined, true),
-        a("operator", "address", undefined, true),
-      ], "i128 assets returned"),
-      fn("request_withdrawal", "wallet", false, "Queue a withdrawal: escrows shares FIFO, returns a request id", [
+      ], "u64 request_id"),
+      fn("cancel_deposit", "wallet", false, "Cancel a queued deposit request and get the USDC back", [
+        a("caller", "address", undefined, true),
+        a("request_id", "u64"),
+      ]),
+      fn("request_withdrawal", "wallet", false, "Queue an LP exit: escrows shares FIFO, paid out after the pricing delay", [
         a("caller", "address", undefined, true),
         a("shares", "amount10"),
       ], "u64 request_id"),
@@ -202,7 +196,9 @@ export const REGISTRY: ContractEntry[] = [
       fn("get_solvency_ratio", "public", true, "Controller-mirrored solvency ratio (percent)", [], "u32"),
       fn("get_withdrawal_queue", "public", true, "Full pending withdrawal queue", [], "Vec<WithdrawalRequest>"),
       fn("get_withdrawal_queue_len", "public", true, "Number of queued withdrawal requests", [], "u32"),
-      fn("get_min_withdrawal_request", "public", true, "Minimum asset value per queued request", [], "i128"),
+      fn("get_deposit_queue", "public", true, "Full pending deposit queue (escrowed LP entries)", [], "Vec<DepositRequest>"),
+      fn("get_deposit_queue_len", "public", true, "Number of queued deposit requests", [], "u32"),
+      fn("get_min_withdrawal_request", "public", true, "Minimum asset value per queued request (both queues)", [], "i128"),
       fn("get_claimable_balance", "public", true, "Processed withdrawal balance awaiting collect()", [
         a("address", "address", undefined, true),
       ], "i128"),
@@ -215,19 +211,10 @@ export const REGISTRY: ContractEntry[] = [
       fn("query_asset", "public", true, "Underlying asset token address", [], "Address"),
       fn("convert_to_shares", "public", true, "Assets → shares at the current price", [a("assets", "amount7")], "i128"),
       fn("convert_to_assets", "public", true, "Shares → assets at the current price", [a("shares", "amount10")], "i128"),
-      fn("preview_deposit", "public", true, "Shares you would get for a deposit", [a("assets", "amount7")], "i128"),
-      fn("preview_mint", "public", true, "Assets required to mint shares", [a("shares", "amount10")], "i128"),
-      fn("preview_withdraw", "public", true, "Shares burned for an immediate withdrawal", [a("assets", "amount7")], "i128"),
-      fn("preview_redeem", "public", true, "Assets returned for an immediate redemption", [a("shares", "amount10")], "i128"),
-      fn("max_deposit", "public", true, "Max deposit currently allowed (0 while paused/blocked)", [
-        a("address", "address", undefined, true),
-      ], "i128"),
-      fn("max_withdraw", "public", true, "Max immediate withdrawal for an owner", [
-        a("owner", "address", undefined, true),
-      ], "i128"),
-      fn("max_redeem", "public", true, "Max immediate redemption for an owner", [
-        a("owner", "address", undefined, true),
-      ], "i128"),
+      fn("preview_deposit", "public", true, "Estimate: shares a deposit request would mint at the CURRENT price", [a("assets", "amount7")], "i128"),
+      fn("preview_mint", "public", true, "Estimate: assets equivalent of shares at the CURRENT price", [a("shares", "amount10")], "i128"),
+      fn("preview_withdraw", "public", true, "Estimate: shares a withdrawal would burn at the CURRENT price", [a("assets", "amount7")], "i128"),
+      fn("preview_redeem", "public", true, "Estimate: assets a share redemption would return at the CURRENT price", [a("shares", "amount10")], "i128"),
       fn("balance", "public", true, "RVS share balance of an account", [
         a("account", "address", undefined, true),
       ], "i128"),

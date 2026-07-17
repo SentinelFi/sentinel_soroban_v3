@@ -4,6 +4,10 @@ use soroban_sdk::{
     testutils::Address as _, testutils::Ledger, Address, Env, String, Symbol, TryFromVal,
 };
 
+// Mirrors the on-chain LP_PRICING_DELAY_SECS: queued requests may only be
+// priced once they are at least this old.
+const PRICING_DELAY: u64 = 6 * 3600;
+
 #[test]
 fn version_initialized_to_one() {
     let (_env, vault, ..) = setup();
@@ -19,9 +23,9 @@ fn setup() -> (Env, RiskVaultClient<'static>, Address, Address, Address) {
     let asset_id = env.register_stellar_asset_contract_v2(asset_admin.clone());
     let asset_client = token::StellarAssetClient::new(&env, &asset_id.address());
 
-    // The settlement barrier consults the oracle on every entry/exit; the
-    // mock answers `has_pending_outcomes = false` so the barrier stays open
-    // in tests that don't exercise it.
+    // The settlement barrier consults the oracle on every queue-processing
+    // pass; the mock answers `has_pending_outcomes = false` so the barrier
+    // stays open in tests that don't exercise it.
     let oracle_id = env.register(MockPendingOracle, ());
 
     let contract_id = env.register(RiskVault, (&owner, asset_id.address(), &oracle_id));
@@ -36,6 +40,28 @@ fn setup() -> (Env, RiskVaultClient<'static>, Address, Address, Address) {
     asset_client.mint(&depositor, &10_000_0000000);
 
     (env, client, owner, controller, depositor)
+}
+
+/// Advance ledger time past the LP pricing delay so every queued request
+/// becomes priceable.
+fn mature_requests(env: &Env) {
+    env.ledger().with_mut(|li| li.timestamp += PRICING_DELAY);
+}
+
+/// Two-phase LP entry: request → mature → process. Returns the shares minted
+/// to `from` by this entry.
+fn lp_deposit(
+    env: &Env,
+    client: &RiskVaultClient<'static>,
+    controller: &Address,
+    from: &Address,
+    assets: i128,
+) -> i128 {
+    let before = client.balance(from);
+    client.request_deposit(from, &assets);
+    mature_requests(env);
+    client.process_deposit_queue(controller);
+    client.balance(from) - before
 }
 
 #[test]
@@ -53,65 +79,417 @@ fn test_constructor() {
     assert_eq!(client.total_assets(), 0);
 }
 
+// =========================================================================
+// Two-phase entry/exit lifecycle
+// =========================================================================
+
 #[test]
-fn test_deposit_and_redeem() {
-    let (env, client, _owner, _controller, depositor) = setup();
+fn test_two_phase_entry_and_exit_lifecycle() {
+    let (env, client, _owner, controller, depositor) = setup();
     let asset = token::Client::new(&env, &client.query_asset());
 
-    // Deposit 1000 asset
-    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    // Entry: request escrows assets without touching TMA or minting.
+    client.request_deposit(&depositor, &1_000_0000000);
+    assert_eq!(asset.balance(&client.address), 1_000_0000000);
+    assert_eq!(client.get_total_managed_assets(), 0);
+    assert_eq!(client.balance(&depositor), 0);
+    assert_eq!(client.get_deposit_queue_len(), 1);
+
+    // Only a matured request is priced.
+    mature_requests(&env);
+    client.process_deposit_queue(&controller);
+    let shares = client.balance(&depositor);
     assert!(shares > 0);
+    assert_eq!(client.get_deposit_queue_len(), 0);
     assert_eq!(client.get_total_managed_assets(), 1_000_0000000);
     assert_eq!(client.total_assets(), 1_000_0000000);
-    assert_eq!(asset.balance(&client.address), 1_000_0000000);
 
-    // Redeem all shares
-    let assets = client.redeem(&shares, &depositor, &depositor, &depositor);
-    assert_eq!(assets, 1_000_0000000);
-    assert_eq!(client.get_total_managed_assets(), 0);
+    // Exit: request escrows shares; processing after maturity credits the
+    // claimable balance; collect pulls the assets.
+    client.request_withdrawal(&depositor, &shares);
+    assert_eq!(client.balance(&depositor), 0);
+    mature_requests(&env);
+    client.process_withdrawal_queue(&controller);
+    assert_eq!(client.get_withdrawal_queue().len(), 0);
+    let claimable = client.get_claimable_balance(&depositor);
+    assert_eq!(claimable, 1_000_0000000);
+    client.collect(&depositor);
     assert_eq!(asset.balance(&depositor), 10_000_0000000); // back to original
+    assert_eq!(client.get_total_managed_assets(), 0);
 }
 
 #[test]
-fn test_locked_capital_gates_withdrawal() {
-    let (_env, client, _owner, controller, depositor) = setup();
+fn test_immature_requests_are_not_priced() {
+    // The pricing delay is the point of the two-phase design: a request may
+    // only be priced once every outcome knowable at commitment has reached
+    // the chain. Neither queue prices a request younger than the delay.
+    let (env, client, _owner, controller, depositor) = setup();
 
-    // Deposit 1000 asset
-    let _shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    client.request_deposit(&depositor, &1_000_0000000);
+    client.process_deposit_queue(&controller);
+    assert_eq!(client.get_deposit_queue_len(), 1);
+    assert_eq!(client.balance(&depositor), 0);
 
-    // Lock 800 → free = 200
+    // One second short of maturity — still not priced.
+    env.ledger()
+        .with_mut(|li| li.timestamp += PRICING_DELAY - 1);
+    client.process_deposit_queue(&controller);
+    assert_eq!(client.get_deposit_queue_len(), 1);
+
+    // At maturity the entry mints.
+    env.ledger().with_mut(|li| li.timestamp += 1);
+    client.process_deposit_queue(&controller);
+    assert_eq!(client.get_deposit_queue_len(), 0);
+    let shares = client.balance(&depositor);
+    assert!(shares > 0);
+
+    // Same for the exit side.
+    client.request_withdrawal(&depositor, &shares);
+    client.process_withdrawal_queue(&controller);
+    assert_eq!(client.get_withdrawal_queue().len(), 1);
+    assert_eq!(client.get_claimable_balance(&depositor), 0);
+
+    env.ledger()
+        .with_mut(|li| li.timestamp += PRICING_DELAY - 1);
+    client.process_withdrawal_queue(&controller);
+    assert_eq!(client.get_withdrawal_queue().len(), 1);
+
+    env.ledger().with_mut(|li| li.timestamp += 1);
+    client.process_withdrawal_queue(&controller);
+    assert_eq!(client.get_withdrawal_queue().len(), 0);
+    assert!(client.get_claimable_balance(&depositor) > 0);
+}
+
+#[test]
+fn test_informed_exit_cannot_dodge_a_pending_loss() {
+    // The stale-NAV scenario the delay exists for: an LP who learns of a
+    // payable outcome before the oracle writes it requests an exit
+    // immediately. By the time the request matures, the outcome is on-chain
+    // (the barrier holds processing until settled) and the exit prices at
+    // the post-loss share value — the informed LP bears their share of the
+    // loss exactly like the passive LP.
+    let (env, client, _owner, controller, _depositor) = setup();
+    let oracle = MockPendingOracleClient::new(&env, &client.get_oracle().unwrap());
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+    let sink = Address::generate(&env);
+
+    let informed = Address::generate(&env);
+    let passive = Address::generate(&env);
+    asset_admin.mint(&informed, &1_000_0000000);
+    asset_admin.mint(&passive, &1_000_0000000);
+    let informed_shares = lp_deposit(&env, &client, &controller, &informed, 1_000_0000000);
+    let passive_shares = lp_deposit(&env, &client, &controller, &passive, 1_000_0000000);
+
+    // T0: the outcome is publicly knowable off-chain; the informed LP
+    // commits an exit at once. Nothing on-chain has changed yet.
+    client.request_withdrawal(&informed, &informed_shares);
+
+    // Well before the request matures, the oracle write lands and the
+    // settlement pipeline recognizes a 40-asset loss.
+    env.ledger().with_mut(|li| li.timestamp += 3600);
+    oracle.set_pending_outcomes(&true);
+    // While the outcome is pending, processing refuses to price anything —
+    // even a matured request.
+    env.ledger().with_mut(|li| li.timestamp += PRICING_DELAY);
+    client.process_withdrawal_queue(&controller);
+    assert_eq!(client.get_withdrawal_queue().len(), 1);
+    // Settlement: the vault pays out 40 and the barrier lifts.
+    client.send_payout(&controller, &sink, &40_0000000);
+    oracle.set_pending_outcomes(&false);
+
+    client.process_withdrawal_queue(&controller);
+    assert_eq!(client.get_withdrawal_queue().len(), 0);
+
+    // The informed LP exits at the post-loss price: ~980, not 1000.
+    let informed_out = client.get_claimable_balance(&informed);
+    assert!(
+        informed_out < 985_0000000,
+        "informed LP escaped the loss: {}",
+        informed_out
+    );
+    // The passive LP holds shares of the same post-loss value — no transfer
+    // between them occurred.
+    let passive_value = client.convert_to_assets(&passive_shares);
+    let diff = (informed_out - passive_value).abs();
+    assert!(
+        diff < 100,
+        "LPs diverged: {} vs {}",
+        informed_out,
+        passive_value
+    );
+}
+
+#[test]
+fn test_informed_entry_cannot_capture_a_pending_gain() {
+    // Entry-side mirror: premium income is about to be recognized; a
+    // depositor who knows commits immediately, but the mint prices only
+    // after the gain is already in TMA — no dilution of the incumbent LP.
+    let (env, client, _owner, controller, depositor) = setup();
+    let oracle = MockPendingOracleClient::new(&env, &client.get_oracle().unwrap());
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+
+    let incumbent = Address::generate(&env);
+    asset_admin.mint(&incumbent, &1_000_0000000);
+    let incumbent_shares = lp_deposit(&env, &client, &controller, &incumbent, 1_000_0000000);
+
+    // The informed entrant commits while the 100-asset premium income is
+    // publicly certain but unrecognized.
+    client.request_deposit(&depositor, &1_000_0000000);
+    oracle.set_pending_outcomes(&true);
+
+    // Barrier holds even at maturity; then settlement recognizes the income.
+    mature_requests(&env);
+    client.process_deposit_queue(&controller);
+    assert_eq!(client.get_deposit_queue_len(), 1);
+    asset_admin.mint(&client.address, &100_0000000);
+    client.record_premium_income(&controller, &100_0000000);
+    oracle.set_pending_outcomes(&false);
+
+    client.process_deposit_queue(&controller);
+    assert_eq!(client.get_deposit_queue_len(), 0);
+
+    // The entrant was minted at the post-gain price: their stake is worth
+    // their contribution, and the incumbent kept the full premium.
+    let entrant_value = client.convert_to_assets(&client.balance(&depositor));
+    assert!(
+        entrant_value <= 1_000_0000000,
+        "entrant captured incumbent gain: {}",
+        entrant_value
+    );
+    let incumbent_value = client.convert_to_assets(&incumbent_shares);
+    assert!(
+        incumbent_value >= 1_099_0000000,
+        "incumbent diluted: {}",
+        incumbent_value
+    );
+}
+
+#[test]
+fn test_deposit_request_cancel_returns_escrow() {
+    let (env, client, _owner, _controller, depositor) = setup();
+    let asset = token::Client::new(&env, &client.query_asset());
+
+    let id = client.request_deposit(&depositor, &400_0000000);
+    assert_eq!(asset.balance(&depositor), 9_600_0000000);
+    assert_eq!(client.get_deposit_queue_len(), 1);
+
+    client.cancel_deposit(&depositor, &id);
+    // Event check FIRST — collect_events only surfaces the most recent
+    // invocation's events, and the balance reads below are invocations.
+    assert!(count_events_with_verb(&env, &client.address, Symbol::new(&env, "dep_cancel")) >= 1);
+    assert_eq!(asset.balance(&depositor), 10_000_0000000);
+    assert_eq!(client.get_deposit_queue_len(), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #721)")]
+fn test_cancel_deposit_with_unknown_request_id_panics() {
+    let (_env, client, _owner, _controller, depositor) = setup();
+    client.cancel_deposit(&depositor, &9999u64);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #710)")]
+fn test_cancel_deposit_of_other_owner_panics() {
+    let (env, client, _owner, _controller, depositor) = setup();
+    let id = client.request_deposit(&depositor, &400_0000000);
+    let stranger = Address::generate(&env);
+    client.cancel_deposit(&stranger, &id);
+}
+
+#[test]
+fn test_deposit_request_dropped_when_price_outgrows_it() {
+    // A request valid at submission can decay to zero shares if the share
+    // price rises sharply before processing. Processing must return the
+    // escrow and close the request out instead of minting nothing.
+    let (env, client, _owner, controller, depositor) = setup();
+    let asset = token::Client::new(&env, &client.query_asset());
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+
+    lp_deposit(&env, &client, &controller, &depositor, 1_0000000);
+
+    // 1 stroop previews to >0 shares now (the virtual decimals offset keeps
+    // share units fine-grained)...
+    client.request_deposit(&depositor, &1);
+    let balance_after_request = asset.balance(&depositor);
+
+    // ...but once the price per share-stroop exceeds one asset-stroop, the
+    // request prices to zero at processing.
+    asset_admin.mint(&client.address, &1_000_0000000);
+    client.record_premium_income(&controller, &1_000_0000000);
+    mature_requests(&env);
+    client.process_deposit_queue(&controller);
+
+    assert!(count_events_with_verb(&env, &client.address, Symbol::new(&env, "dep_dropped")) >= 1);
+    assert_eq!(client.get_deposit_queue_len(), 0);
+    assert_eq!(asset.balance(&depositor), balance_after_request + 1);
+}
+
+#[test]
+fn test_request_deposit_rejects_nonpositive_and_dust() {
+    let (env, client, _owner, controller, depositor) = setup();
+
+    assert!(client.try_request_deposit(&depositor, &0).is_err());
+    assert!(client.try_request_deposit(&depositor, &-5).is_err());
+
+    // Inflate the share price: 1 asset in, then 1000 assets of premium
+    // income. A 1-stroop request previews to zero shares — rejected early
+    // so it can't occupy a queue slot.
+    lp_deposit(&env, &client, &controller, &depositor, 1_0000000);
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+    asset_admin.mint(&client.address, &1000_0000000);
+    client.record_premium_income(&controller, &1000_0000000);
+
+    assert_eq!(client.preview_deposit(&1), 0);
+    assert!(client.try_request_deposit(&depositor, &1).is_err());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #717)")]
+fn test_deposit_queue_per_address_cap() {
+    let (_env, client, _owner, _controller, depositor) = setup();
+    for _ in 0..20 {
+        client.request_deposit(&depositor, &1_0000000);
+    }
+    client.request_deposit(&depositor, &1_0000000); // 21st → #717
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #729)")]
+fn test_deposit_queue_global_length_cap() {
+    let (env, client, _owner, _controller, _depositor) = setup();
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+
+    // Fill the queue to MAX_DEPOSIT_QUEUE_LEN (100) across enough addresses
+    // to respect the per-address cap (20 each → 5 addresses).
+    for _ in 0..5 {
+        let lp = Address::generate(&env);
+        asset_admin.mint(&lp, &100_0000000);
+        for _ in 0..20 {
+            client.request_deposit(&lp, &1_0000000);
+        }
+    }
+    assert_eq!(client.get_deposit_queue_len(), 100);
+
+    let extra = Address::generate(&env);
+    asset_admin.mint(&extra, &1_0000000);
+    client.request_deposit(&extra, &1_0000000); // 101st → #729
+}
+
+#[test]
+fn test_deposit_request_event_and_queue_len() {
+    use soroban_sdk::symbol_short;
+    let (env, client, _owner, _controller, depositor) = setup();
+
+    assert_eq!(client.get_deposit_queue_len(), 0);
+    client.request_deposit(&depositor, &100_0000000);
+    assert!(count_events_with_verb(&env, &client.address, symbol_short!("dep_req")) >= 1);
+    assert_eq!(client.get_deposit_queue_len(), 1);
+}
+
+#[test]
+fn test_deposit_escrow_excluded_from_share_backing() {
+    // Escrowed entries sit in the raw balance but back no shares: pricing
+    // and premium-income accounting must not see them as managed assets.
+    let (env, client, _owner, controller, depositor) = setup();
+    let asset = token::Client::new(&env, &client.query_asset());
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+
+    let incumbent = Address::generate(&env);
+    asset_admin.mint(&incumbent, &1_000_0000000);
+    let incumbent_shares = lp_deposit(&env, &client, &controller, &incumbent, 1_000_0000000);
+
+    client.request_deposit(&depositor, &1_000_0000000);
+    assert_eq!(asset.balance(&client.address), 2_000_0000000);
+    assert_eq!(client.get_total_managed_assets(), 1_000_0000000);
+
+    // The incumbent's share value is unchanged by the pending escrow.
+    assert_eq!(client.convert_to_assets(&incumbent_shares), 1_000_0000000);
+}
+
+// =========================================================================
+// Direct (immediate-pricing) operations are disabled
+// =========================================================================
+
+#[test]
+#[should_panic(expected = "Error(Contract, #727)")]
+fn test_direct_deposit_disabled() {
+    let (_env, client, _owner, _controller, depositor) = setup();
+    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #728)")]
+fn test_direct_redeem_disabled() {
+    let (_env, client, _owner, _controller, depositor) = setup();
+    client.redeem(&1_000, &depositor, &depositor, &depositor);
+}
+
+#[test]
+fn test_all_direct_ops_disabled_and_max_views_zero() {
+    // The immediate operations priced at call time — stale with respect to
+    // any publicly-knowable-but-unwritten outcome — so all four are
+    // permanently disabled and their max_* views report zero so
+    // integrations never build a doomed transaction.
+    let (env, client, _owner, controller, depositor) = setup();
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
+
+    assert!(client
+        .try_deposit(&1_0000000, &depositor, &depositor, &depositor)
+        .is_err());
+    assert!(client
+        .try_mint(&1_000, &depositor, &depositor, &depositor)
+        .is_err());
+    assert!(client
+        .try_withdraw(&1_0000000, &depositor, &depositor, &depositor)
+        .is_err());
+    assert!(client
+        .try_redeem(&1_000, &depositor, &depositor, &depositor)
+        .is_err());
+
+    assert_eq!(client.max_deposit(&depositor), 0);
+    assert_eq!(client.max_mint(&depositor), 0);
+    assert_eq!(client.max_withdraw(&depositor), 0);
+    assert_eq!(client.max_redeem(&depositor), 0);
+}
+
+// =========================================================================
+// Capital accounting
+// =========================================================================
+
+#[test]
+fn test_locked_capital_gates_queue_processing() {
+    let (env, client, _owner, controller, depositor) = setup();
+
+    let shares = lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
+
+    // Lock 800 → free = 200.
     client.increase_locked(&controller, &800_0000000);
     assert_eq!(client.get_locked_capital(), 800_0000000);
     assert_eq!(client.get_free_capital(), 200_0000000);
 
-    // Can redeem up to 200 worth of shares
-    let max_w = client.max_withdraw(&depositor);
-    assert_eq!(max_w, 200_0000000);
+    // A full-position exit can only be funded up to free capital: the head
+    // partial-fills to ~200 and the remainder stays queued.
+    client.request_withdrawal(&depositor, &shares);
+    mature_requests(&env);
+    client.process_withdrawal_queue(&controller);
+    let credited = client.get_claimable_balance(&depositor);
+    assert!(credited > 0 && credited <= 200_0000000);
+    assert!(200_0000000 - credited < 100);
+    assert_eq!(client.get_withdrawal_queue().len(), 1);
 
-    // Decrease locked by 300 → free = 500
-    client.decrease_locked(&controller, &300_0000000);
-    assert_eq!(client.get_free_capital(), 500_0000000);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #715)")]
-fn test_redeem_exceeds_free_capital() {
-    let (_env, client, _owner, controller, depositor) = setup();
-
-    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
-
-    // Lock all capital
-    client.increase_locked(&controller, &1_000_0000000);
-
-    // Try to redeem — should panic
-    client.redeem(&shares, &depositor, &depositor, &depositor);
+    // Releasing collateral lets the remainder drain.
+    client.decrease_locked(&controller, &800_0000000);
+    client.process_withdrawal_queue(&controller);
+    assert_eq!(client.get_withdrawal_queue().len(), 0);
+    assert!(client.get_claimable_balance(&depositor) >= 1_000_0000000 - 100);
 }
 
 #[test]
 fn test_record_premium_income() {
     let (env, client, _owner, controller, depositor) = setup();
 
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
     assert_eq!(client.get_total_managed_assets(), 1_000_0000000);
 
     // Real flow: pool transfers asset to vault FIRST, then controller calls.
@@ -127,8 +505,8 @@ fn test_record_premium_income() {
 #[should_panic(expected = "Error(Contract, #706)")]
 fn test_record_premium_income_rejects_when_asset_not_received() {
     // Regression: caller-stated amount must be backed by actual asset.
-    let (_env, client, _owner, controller, depositor) = setup();
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let (env, client, _owner, controller, depositor) = setup();
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
 
     // No asset was transferred to the vault — credit must fail.
     client.record_premium_income(&controller, &50_0000000);
@@ -140,7 +518,7 @@ fn test_send_payout() {
     let asset = token::Client::new(&env, &client.query_asset());
     let recipient = Address::generate(&env);
 
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
 
     client.send_payout(&controller, &recipient, &200_0000000);
     assert_eq!(client.get_total_managed_assets(), 800_0000000);
@@ -171,8 +549,7 @@ fn test_withdrawal_queue_request_process_collect() {
     let (env, client, _owner, controller, depositor) = setup();
     let asset = token::Client::new(&env, &client.query_asset());
 
-    // Deposit 1000 asset
-    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let shares = lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
 
     // Lock all capital
     client.increase_locked(&controller, &1_000_0000000);
@@ -181,6 +558,7 @@ fn test_withdrawal_queue_request_process_collect() {
     client.request_withdrawal(&depositor, &shares);
     assert_eq!(client.balance(&depositor), 0); // shares escrowed
     assert_eq!(client.get_withdrawal_queue().len(), 1);
+    mature_requests(&env);
 
     // Can't process yet — no free capital
     client.process_withdrawal_queue(&controller);
@@ -206,16 +584,15 @@ fn test_oversized_head_request_partial_fills_instead_of_pinning_queue() {
     // An unfundable head request must not freeze the exit path: free capital
     // is paid to the head as a partial fill, the remainder stays at the head,
     // and every later request keeps its FIFO place. Without this, one
-    // oversized request blocked all queued exits AND all direct exits (which
-    // defer to a non-empty queue) while free capital sat idle.
+    // oversized request blocked all queued exits while free capital sat idle.
     let (env, client, _owner, controller, depositor) = setup();
     let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
 
     // A holds 1000, B holds 100; policies lock 1000, leaving 100 free.
     let other = Address::generate(&env);
     asset_admin.mint(&other, &100_0000000);
-    let shares_a = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
-    let shares_b = client.deposit(&100_0000000, &other, &other, &other);
+    let shares_a = lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
+    let shares_b = lp_deposit(&env, &client, &controller, &other, 100_0000000);
     client.increase_locked(&controller, &1_000_0000000);
     let free = client.get_free_capital();
     assert_eq!(free, 100_0000000);
@@ -224,6 +601,7 @@ fn test_oversized_head_request_partial_fills_instead_of_pinning_queue() {
     // B queues a smaller request that free capital could cover.
     client.request_withdrawal(&depositor, &shares_a);
     client.request_withdrawal(&other, &(shares_b / 2));
+    mature_requests(&env);
 
     client.process_withdrawal_queue(&controller);
     // (Asserted first: collect_events only surfaces the most recent
@@ -249,7 +627,8 @@ fn test_oversized_head_request_partial_fills_instead_of_pinning_queue() {
     assert_eq!(client.get_free_capital(), free - credited_a);
 
     // Settlement releases the collateral; the queue then drains fully in
-    // FIFO order — the head remainder first, then B.
+    // FIFO order — the head remainder first, then B. The remainder kept its
+    // original request time, so no fresh maturity wait applies.
     client.decrease_locked(&controller, &1_000_0000000);
     client.process_withdrawal_queue(&controller);
     assert_eq!(client.get_withdrawal_queue().len(), 0);
@@ -259,13 +638,13 @@ fn test_oversized_head_request_partial_fills_instead_of_pinning_queue() {
 }
 
 #[test]
-fn test_solvency_reserve_gates_direct_exit() {
+fn test_solvency_reserve_bounds_withdrawable_capital() {
     // The controller admits policies while TMA covers locked * ratio; exits
     // must preserve that same reserve. With 1000 deposited, 400 locked, and a
     // 200% ratio, the required backing is 800 — only 200 may leave, not the
     // nominal 600 margin.
-    let (_env, client, _owner, controller, depositor) = setup();
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let (env, client, _owner, controller, depositor) = setup();
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
     client.increase_locked(&controller, &400_0000000);
 
     // Until the controller pushes a ratio, the vault reserves nominal
@@ -278,33 +657,6 @@ fn test_solvency_reserve_gates_direct_exit() {
     // The nominal margin is unchanged; the exit bound is not.
     assert_eq!(client.get_free_capital(), 600_0000000);
     assert_eq!(client.get_withdrawable_capital(), 200_0000000);
-    assert_eq!(client.max_withdraw(&depositor), 200_0000000);
-    assert!(client.max_redeem(&depositor) < client.balance(&depositor));
-
-    // A withdrawal inside the nominal margin but eating into the reserve is
-    // rejected.
-    assert!(client
-        .try_withdraw(&200_0000001, &depositor, &depositor, &depositor)
-        .is_err());
-
-    // The full withdrawable amount leaves; the reserve then holds exactly.
-    client.withdraw(&200_0000000, &depositor, &depositor, &depositor);
-    assert_eq!(client.get_total_managed_assets(), 800_0000000);
-    assert_eq!(client.get_withdrawable_capital(), 0);
-    assert_eq!(client.max_withdraw(&depositor), 0);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #715)")]
-fn test_redeem_into_solvency_reserve_panics() {
-    // With 1000 deposited, 500 locked, and a 200% ratio the entire TMA is
-    // required backing — any redemption would consume the reserve.
-    let (_env, client, _owner, controller, depositor) = setup();
-    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
-    client.increase_locked(&controller, &500_0000000);
-    client.set_solvency_ratio(&controller, &200);
-    assert_eq!(client.get_withdrawable_capital(), 0);
-    client.redeem(&(shares / 2), &depositor, &depositor, &depositor);
 }
 
 #[test]
@@ -312,13 +664,14 @@ fn test_queue_processing_holds_back_solvency_reserve() {
     // Queued exits are funded only from capital above the configured
     // reserve: the head partial-fills to that bound and the remainder waits
     // for collateral to unlock, exactly like the free-capital bound before.
-    let (_env, client, _owner, controller, depositor) = setup();
-    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let (env, client, _owner, controller, depositor) = setup();
+    let shares = lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
     client.increase_locked(&controller, &400_0000000);
     client.set_solvency_ratio(&controller, &200);
     assert_eq!(client.get_withdrawable_capital(), 200_0000000);
 
     client.request_withdrawal(&depositor, &shares);
+    mature_requests(&env);
     client.process_withdrawal_queue(&controller);
 
     // Only the withdrawable slice was credited (within rounding dust); the
@@ -404,8 +757,8 @@ fn test_set_solvency_ratio_bounds() {
 
 #[test]
 fn test_pause_and_unpause_gate_state_mutations() {
-    // Regression: paused contract rejects deposit / withdrawal /
-    // queue ops; unpausing restores normal flow. Owner-only gate.
+    // Regression: paused contract rejects entry/exit requests, queue
+    // processing, and capital ops; unpausing restores normal flow.
     let (env, client, owner, controller, depositor) = setup();
 
     assert!(!client.paused());
@@ -413,9 +766,10 @@ fn test_pause_and_unpause_gate_state_mutations() {
     assert!(client.paused());
 
     // Mutation paths reject while paused.
-    assert!(client
-        .try_deposit(&1_0000000, &depositor, &depositor, &depositor)
-        .is_err());
+    assert!(client.try_request_deposit(&depositor, &1_0000000).is_err());
+    assert!(client.try_request_withdrawal(&depositor, &1_000).is_err());
+    assert!(client.try_process_deposit_queue(&controller).is_err());
+    assert!(client.try_process_withdrawal_queue(&controller).is_err());
     assert!(client.try_increase_locked(&controller, &1).is_err());
     assert!(client.try_snapshot().is_err());
 
@@ -431,165 +785,22 @@ fn test_pause_and_unpause_gate_state_mutations() {
     assert!(!client.paused());
 
     // Mutation flow resumes.
-    client.deposit(&1_0000000, &depositor, &depositor, &depositor);
+    client.request_deposit(&depositor, &1_0000000);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #714)")]
-fn test_direct_redeem_blocked_while_queue_active() {
-    // Once a request is queued, direct redeem must defer to the
-    // queue so it can't consume free capital ahead of waiting LPs.
-    let (_env, client, _owner, _controller, depositor) = setup();
-    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
-
-    // Queue half the shares; the rest stay with the depositor.
-    client.request_withdrawal(&depositor, &(shares / 2));
-    assert_eq!(client.get_withdrawal_queue().len(), 1);
-
-    // Direct redeem of the remaining shares is now rejected.
-    client.redeem(&(shares / 2), &depositor, &depositor, &depositor);
-}
-
-#[test]
-fn test_direct_redeem_allowed_when_queue_empty() {
-    // The fast path stays open when no one is queued.
-    let (_env, client, _owner, _controller, depositor) = setup();
-    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
-    assert!(client.get_withdrawal_queue().is_empty());
-    let assets = client.redeem(&shares, &depositor, &depositor, &depositor);
-    assert_eq!(assets, 1_000_0000000);
-}
-
-#[test]
-fn test_max_views_return_zero_when_paused() {
-    // max_deposit/mint/withdraw/redeem must report zero while
-    // paused, matching the (paused-gated) executable paths.
-    let (_env, client, owner, _controller, depositor) = setup();
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
-
-    assert!(client.max_deposit(&depositor) > 0);
-    assert!(client.max_redeem(&depositor) > 0);
-    assert!(client.max_withdraw(&depositor) > 0);
-
-    client.pause(&owner);
-
-    assert_eq!(client.max_deposit(&depositor), 0);
-    assert_eq!(client.max_mint(&depositor), 0);
-    assert_eq!(client.max_withdraw(&depositor), 0);
-    assert_eq!(client.max_redeem(&depositor), 0);
-}
-
-#[test]
-fn test_max_views_return_zero_while_queue_active() {
-    // Direct withdraw/redeem revert while any withdrawal request is queued, so
-    // max_withdraw/max_redeem must report zero for every LP during that window —
-    // otherwise integrations build direct exits guaranteed to fail. Deposits stay
-    // open, so max_deposit/max_mint are unaffected by the queue.
-    let (env, client, _owner, controller, depositor) = setup();
-    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
-
-    let other = Address::generate(&env);
-    asset_admin.mint(&other, &1_000_0000000);
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
-    let other_shares = client.deposit(&1_000_0000000, &other, &other, &other);
-
-    assert!(client.max_withdraw(&depositor) > 0);
-    assert!(client.max_redeem(&depositor) > 0);
-
-    // `other` queues a request — the views must now report zero even for the
-    // non-queued depositor, matching the executable paths' rejection.
-    client.request_withdrawal(&other, &other_shares);
-    assert_eq!(client.max_withdraw(&depositor), 0);
-    assert_eq!(client.max_redeem(&depositor), 0);
-    assert!(client.max_deposit(&depositor) > 0);
-    assert!(client.max_mint(&depositor) > 0);
-
-    // Draining the queue reopens the direct exit path and the views follow.
-    client.process_withdrawal_queue(&controller);
-    assert!(client.get_withdrawal_queue().is_empty());
-    assert!(client.max_withdraw(&depositor) > 0);
-    assert!(client.max_redeem(&depositor) > 0);
-}
-
-#[test]
-fn test_deposit_rejects_nonpositive_and_zero_share_amounts() {
-    // A deposit must never silently donate value: zero/negative inputs are
-    // rejected, and so is a positive amount small enough to floor to zero
-    // shares at the current exchange rate.
-    let (env, client, _owner, controller, depositor) = setup();
-
-    assert!(client
-        .try_deposit(&0, &depositor, &depositor, &depositor)
-        .is_err());
-    assert!(client
-        .try_deposit(&-5, &depositor, &depositor, &depositor)
-        .is_err());
-
-    // Inflate the share price: 1 asset deposited, then 1000 assets of premium
-    // income. A 1-stroop deposit now converts to zero shares under floor
-    // rounding — without the guard it would transfer the stroop in and mint
-    // nothing.
-    client.deposit(&1_0000000, &depositor, &depositor, &depositor);
-    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
-    asset_admin.mint(&client.address, &1000_0000000);
-    client.record_premium_income(&controller, &1000_0000000);
-
-    assert_eq!(client.preview_deposit(&1), 0);
-    assert!(client
-        .try_deposit(&1, &depositor, &depositor, &depositor)
-        .is_err());
-}
-
-#[test]
-fn test_redeem_rejects_nonpositive_and_zero_asset_dust() {
-    // Redeem mirrors deposit: zero/negative share counts are rejected, and a
-    // dust redemption that floors to zero assets must not burn the caller's
-    // shares for nothing.
-    let (_env, client, _owner, _controller, depositor) = setup();
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
-
-    assert!(client
-        .try_redeem(&0, &depositor, &depositor, &depositor)
-        .is_err());
-    assert!(client
-        .try_redeem(&-5, &depositor, &depositor, &depositor)
-        .is_err());
-
-    // 1 share against the 1000-asset pool previews to 0 assets.
-    assert_eq!(client.preview_redeem(&1), 0);
-    assert!(client
-        .try_redeem(&1, &depositor, &depositor, &depositor)
-        .is_err());
-}
-
-#[test]
-fn test_withdraw_and_mint_reject_nonpositive_inputs() {
-    let (_env, client, _owner, _controller, depositor) = setup();
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
-
-    assert!(client
-        .try_withdraw(&0, &depositor, &depositor, &depositor)
-        .is_err());
-    assert!(client
-        .try_withdraw(&-1, &depositor, &depositor, &depositor)
-        .is_err());
-    assert!(client
-        .try_mint(&0, &depositor, &depositor, &depositor)
-        .is_err());
-    assert!(client
-        .try_mint(&-1, &depositor, &depositor, &depositor)
-        .is_err());
-}
-
-#[test]
-fn test_min_withdrawal_request_floor_enforced() {
-    // The owner-configured minimum makes each slot of the bounded queue cost
-    // real escrowed value, so the queue can't be cheaply occupied by many
+fn test_min_request_floor_enforced_on_both_queues() {
+    // The owner-configured minimum makes each slot of the bounded queues cost
+    // real escrowed value, so neither queue can be cheaply occupied by many
     // small requests. Enforcement is clamped to TMA/2500 at request time, so
-    // the floor can never lock ordinary positions out of the queue.
-    let (_env, client, _owner, _controller, depositor) = setup();
+    // the floor can never lock ordinary positions out.
+    let (env, client, _owner, controller, depositor) = setup();
     // 10,000-asset vault → the clamp caps the effective floor at 4 assets.
-    client.deposit(&10_000_0000000, &depositor, &depositor, &depositor);
+    lp_deposit(&env, &client, &controller, &depositor, 10_000_0000000);
+    // Fresh spending balance for the deposit-side floor checks below (the
+    // full initial balance is now inside the vault).
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+    asset_admin.mint(&depositor, &100_0000000);
 
     // Default: no floor — a small (non-dust) request is accepted.
     assert_eq!(client.get_min_withdrawal_request(), 0);
@@ -598,17 +809,20 @@ fn test_min_withdrawal_request_floor_enforced() {
     client.cancel_withdrawal(&depositor, &id);
 
     // Floor of 2 assets (below the clamp, so it binds): the same 1-asset
-    // request is now rejected...
+    // request is now rejected on both queues...
     client.set_min_withdrawal_request(&2_0000000);
     assert_eq!(client.get_min_withdrawal_request(), 2_0000000);
     assert!(client
         .try_request_withdrawal(&depositor, &small_shares)
         .is_err());
+    assert!(client.try_request_deposit(&depositor, &1_0000000).is_err());
 
-    // ...while a request clearly above the floor is accepted.
+    // ...while requests clearly above the floor are accepted.
     let large_shares = client.convert_to_shares(&500_0000000);
     let id = client.request_withdrawal(&depositor, &large_shares);
     client.cancel_withdrawal(&depositor, &id);
+    let id = client.request_deposit(&depositor, &5_0000000);
+    client.cancel_deposit(&depositor, &id);
 
     // An absurd configured floor is clamped to TMA/2500 (= 4 assets here):
     // it cannot block a normal-sized request, only sub-clamp dust.
@@ -654,8 +868,8 @@ fn test_queue_len_query_and_request_event() {
     // Operators watch queue occupancy via the len query and the per-request
     // event (which carries post-push occupancy), so saturation of the bounded
     // queue is observable before the cap starts rejecting requests.
-    let (env, client, _owner, _controller, depositor) = setup();
-    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let (env, client, _owner, controller, depositor) = setup();
+    let shares = lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
 
     assert_eq!(client.get_withdrawal_queue_len(), 0);
     client.request_withdrawal(&depositor, &shares);
@@ -667,23 +881,24 @@ fn test_queue_len_query_and_request_event() {
 fn test_request_withdrawal_rejects_zero_preview() {
     // A dust request that previews to zero assets is rejected at
     // submission so it can never sit at the queue head and block the drain.
-    let (_env, client, _owner, _controller, depositor) = setup();
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let (env, client, _owner, controller, depositor) = setup();
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
 
     // 1 share against a large pool rounds down to 0 assets on redeem preview.
     assert_eq!(client.preview_redeem(&1), 0);
     assert!(client.try_request_withdrawal(&depositor, &1).is_err());
+    assert!(client.try_request_withdrawal(&depositor, &0).is_err());
+    assert!(client.try_request_withdrawal(&depositor, &-5).is_err());
 }
 
 #[test]
-fn test_zero_preview_request_does_not_block_queue() {
-    // Even if a zero-preview request somehow reaches the queue, a
-    // later serviceable request must still drain. We exercise the drain loop's
-    // skip behavior by queueing a normal request and confirming it processes.
-    let (_env, client, _owner, controller, depositor) = setup();
-    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+fn test_matured_request_drains_after_capacity_returns() {
+    // A matured, serviceable request drains the moment processing runs.
+    let (env, client, _owner, controller, depositor) = setup();
+    let shares = lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
 
     client.request_withdrawal(&depositor, &shares);
+    mature_requests(&env);
     client.process_withdrawal_queue(&controller);
     assert_eq!(client.get_withdrawal_queue().len(), 0);
     assert!(client.get_claimable_balance(&depositor) > 0);
@@ -706,13 +921,14 @@ fn test_claimable_liabilities_do_not_inflate_shares() {
     asset_admin.mint(&b, &500_0000000);
     asset_admin.mint(&victim, &500_0000000);
 
-    let a_shares = client.deposit(&500_0000000, &a, &a, &a);
-    let _b_shares = client.deposit(&500_0000000, &b, &b, &b);
+    let a_shares = lp_deposit(&env, &client, &controller, &a, 500_0000000);
+    let b_shares = lp_deposit(&env, &client, &controller, &b, 500_0000000);
     assert_eq!(client.get_total_managed_assets(), 1_000_0000000);
 
     // A exits via the queue: shares burned, ~500 credited as claimable, TMA
     // drops to ~500, but the 1000 tokens still sit physically in the vault.
     client.request_withdrawal(&a, &a_shares);
+    mature_requests(&env);
     client.process_withdrawal_queue(&controller);
     let a_claimable = client.get_claimable_balance(&a);
     assert!(
@@ -722,12 +938,15 @@ fn test_claimable_liabilities_do_not_inflate_shares() {
     );
     assert_eq!(asset.balance(&client.address), 1_000_0000000); // tokens stayed
 
-    // Victim deposits 500 — priced on TMA (~500), NOT the raw balance (1000).
-    let victim_shares = client.deposit(&500_0000000, &victim, &victim, &victim);
+    // Victim enters 500 — priced on TMA (~500), NOT the raw balance (1000).
+    let victim_shares = lp_deposit(&env, &client, &controller, &victim, 500_0000000);
 
-    // B cashes out everything it can. It must NOT be able to seize ~1000 (the
-    // victim's money on top of its own); its fair value is ~500.
-    let b_got = client.redeem(&client.max_redeem(&b), &b, &b, &b);
+    // B cashes out everything via the queue. It must NOT be able to seize
+    // ~1000 (the victim's money on top of its own); its fair value is ~500.
+    client.request_withdrawal(&b, &b_shares);
+    mature_requests(&env);
+    client.process_withdrawal_queue(&controller);
+    let b_got = client.get_claimable_balance(&b);
     assert!(
         b_got <= 5_100_000_000,
         "B extracted more than fair share: {}",
@@ -760,8 +979,8 @@ fn test_zero_value_request_returned_not_pinned() {
     asset_admin.mint(&whale, &1_000_0000000);
     asset_admin.mint(&dust, &1_0000);
 
-    let whale_shares = client.deposit(&1_000_0000000, &whale, &whale, &whale);
-    let dust_shares = client.deposit(&1_0000, &dust, &dust, &dust);
+    let whale_shares = lp_deposit(&env, &client, &controller, &whale, 1_000_0000000);
+    let dust_shares = lp_deposit(&env, &client, &controller, &dust, 1_0000);
 
     // dust queues first (would be the pinning head), whale second.
     client.request_withdrawal(&dust, &dust_shares);
@@ -772,6 +991,7 @@ fn test_zero_value_request_returned_not_pinned() {
     client.send_payout(&controller, &sink, &1_000_0000000);
     assert_eq!(client.preview_redeem(&dust_shares), 0);
 
+    mature_requests(&env);
     client.process_withdrawal_queue(&controller);
 
     // The drop is announced (checked before any further contract call —
@@ -790,11 +1010,11 @@ fn test_zero_value_request_returned_not_pinned() {
 #[test]
 #[should_panic(expected = "Error(Contract, #717)")]
 fn test_per_address_active_request_cap() {
-    let (env, client, _owner, _controller, _depositor) = setup();
+    let (env, client, _owner, controller, _depositor) = setup();
     let lp = Address::generate(&env);
     let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
     asset_admin.mint(&lp, &1_000_0000000);
-    let shares = client.deposit(&1_000_0000000, &lp, &lp, &lp);
+    let shares = lp_deposit(&env, &client, &controller, &lp, 1_000_0000000);
 
     // Each slice is worth well above dust. 20 requests succeed; the 21st exceeds
     // the per-address cap and is rejected.
@@ -808,31 +1028,31 @@ fn test_per_address_active_request_cap() {
 #[test]
 #[should_panic(expected = "Error(Contract, #716)")]
 fn test_withdrawal_queue_global_length_cap() {
-    let (env, client, _owner, _controller, _depositor) = setup();
+    let (env, client, _owner, controller, _depositor) = setup();
     let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
 
-    // Fill the queue to MAX_WITHDRAWAL_QUEUE_LEN (250) using enough distinct
-    // addresses to respect the per-address cap (20 each → 13 addresses).
+    // Fill the queue to MAX_WITHDRAWAL_QUEUE_LEN (150) using enough distinct
+    // addresses to respect the per-address cap (20 each → 8 addresses).
     let mut filled = 0u32;
-    'fill: for _ in 0..14 {
+    'fill: for _ in 0..8 {
         let lp = Address::generate(&env);
         asset_admin.mint(&lp, &1_000_0000000);
-        let shares = client.deposit(&1_000_0000000, &lp, &lp, &lp);
+        let shares = lp_deposit(&env, &client, &controller, &lp, 1_000_0000000);
         let slice = shares / 100;
         for _ in 0..20 {
             client.request_withdrawal(&lp, &slice);
             filled += 1;
-            if filled == 250 {
+            if filled == 150 {
                 break 'fill;
             }
         }
     }
-    assert_eq!(client.get_withdrawal_queue().len(), 250);
+    assert_eq!(client.get_withdrawal_queue().len(), 150);
 
-    // A 251st request (fresh address, under its own cap) is rejected.
+    // A 151st request (fresh address, under its own cap) is rejected.
     let extra = Address::generate(&env);
     asset_admin.mint(&extra, &1_000_0000000);
-    let extra_shares = client.deposit(&1_000_0000000, &extra, &extra, &extra);
+    let extra_shares = lp_deposit(&env, &client, &controller, &extra, 1_000_0000000);
     client.request_withdrawal(&extra, &(extra_shares / 100)); // → #716
 }
 
@@ -858,9 +1078,9 @@ fn test_pause_by_non_owner_panics() {
 
 #[test]
 fn test_cancel_withdrawal() {
-    let (_env, client, _owner, controller, depositor) = setup();
+    let (env, client, _owner, controller, depositor) = setup();
 
-    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let shares = lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
     client.increase_locked(&controller, &1_000_0000000);
 
     let request_id = client.request_withdrawal(&depositor, &shares);
@@ -882,8 +1102,8 @@ fn test_cancel_withdrawal_by_request_id_is_index_independent() {
     let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
     asset_admin.mint(&other, &500_0000000);
 
-    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
-    let other_shares = client.deposit(&500_0000000, &other, &other, &other);
+    let shares = lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
+    let other_shares = lp_deposit(&env, &client, &controller, &other, 500_0000000);
     client.increase_locked(&controller, &500_0000000);
 
     let depositor_id = client.request_withdrawal(&depositor, &shares);
@@ -902,8 +1122,8 @@ fn test_cancel_withdrawal_by_request_id_is_index_independent() {
 #[test]
 fn test_cancel_withdrawal_emits_event() {
     use soroban_sdk::symbol_short;
-    let (env, client, _owner, _controller, depositor) = setup();
-    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let (env, client, _owner, controller, depositor) = setup();
+    let shares = lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
     let id = client.request_withdrawal(&depositor, &shares);
     client.cancel_withdrawal(&depositor, &id);
     assert!(count_events_with_verb(&env, &client.address, symbol_short!("wd_cancel")) >= 1);
@@ -918,9 +1138,9 @@ fn test_cancel_withdrawal_with_unknown_request_id_panics() {
 
 #[test]
 fn test_snapshot() {
-    let (env, client, _owner, _controller, depositor) = setup();
+    let (env, client, _owner, controller, depositor) = setup();
 
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
 
     // Set ledger timestamp
     env.ledger().with_mut(|li| {
@@ -949,12 +1169,13 @@ fn test_snapshot_uses_managed_assets_not_physical_balance() {
     asset_admin.mint(&a, &1_000_0000000);
     asset_admin.mint(&b, &1_000_0000000);
 
-    let a_shares = client.deposit(&1_000_0000000, &a, &a, &a);
-    client.deposit(&1_000_0000000, &b, &b, &b);
+    let a_shares = lp_deposit(&env, &client, &controller, &a, 1_000_0000000);
+    lp_deposit(&env, &client, &controller, &b, 1_000_0000000);
 
     // A exits via the queue → shares burned, claimable credited, TMA reduced,
     // but A's tokens physically remain in the vault (uncollected).
     client.request_withdrawal(&a, &a_shares);
+    mature_requests(&env);
     client.process_withdrawal_queue(&controller);
     assert!(client.get_claimable_balance(&a) > 0);
 
@@ -980,9 +1201,9 @@ fn test_snapshot_uses_managed_assets_not_physical_balance() {
 
 #[test]
 fn test_snapshot_noop_if_too_soon() {
-    let (env, client, _owner, _controller, depositor) = setup();
+    let (env, client, _owner, controller, depositor) = setup();
 
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
 
     env.ledger().with_mut(|li| {
         li.timestamp = 100_000;
@@ -1006,9 +1227,9 @@ fn test_snapshot_records_each_calendar_day() {
     // The once-per-day gate is aligned to calendar days (the same day number
     // used as the storage key), not a rolling 24-hour window — a snapshot
     // taken late in day N must not suppress day N+1's snapshot.
-    let (env, client, _owner, _controller, depositor) = setup();
+    let (env, client, _owner, controller, depositor) = setup();
 
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
 
     // Late in day 1 (23:00).
     env.ledger().with_mut(|li| {
@@ -1039,8 +1260,8 @@ fn test_tma_tracking_through_operations() {
     let (env, client, _owner, controller, depositor) = setup();
     let asset_client = token::StellarAssetClient::new(&env, &client.query_asset());
 
-    // Deposit 1000
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    // Enter 1000
+    let shares = lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
     assert_eq!(client.get_total_managed_assets(), 1_000_0000000);
 
     // Record premium income +50 (simulate asset arriving from FlightPool)
@@ -1052,24 +1273,27 @@ fn test_tma_tracking_through_operations() {
     client.send_payout(&controller, &Address::generate(&env), &200_0000000);
     assert_eq!(client.get_total_managed_assets(), 850_0000000);
 
-    // Withdraw 100
-    client.withdraw(&100_0000000, &depositor, &depositor, &depositor);
-    assert_eq!(client.get_total_managed_assets(), 750_0000000);
+    // Full queued exit drains the remaining 850 into the claimable balance.
+    client.request_withdrawal(&depositor, &shares);
+    mature_requests(&env);
+    client.process_withdrawal_queue(&controller);
+    assert_eq!(client.get_total_managed_assets(), 0);
+    assert_eq!(client.get_claimable_balance(&depositor), 850_0000000);
 }
 
 #[test]
 fn test_multiple_depositors() {
-    let (env, client, _owner, _controller, depositor) = setup();
+    let (env, client, _owner, controller, depositor) = setup();
     let asset_client = token::StellarAssetClient::new(&env, &client.query_asset());
 
     let depositor2 = Address::generate(&env);
     asset_client.mint(&depositor2, &5_000_0000000);
 
     // First depositor: 1000 asset
-    let shares1 = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let shares1 = lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
 
     // Second depositor: 500 asset
-    let shares2 = client.deposit(&500_0000000, &depositor2, &depositor2, &depositor2);
+    let shares2 = lp_deposit(&env, &client, &controller, &depositor2, 500_0000000);
 
     assert_eq!(client.get_total_managed_assets(), 1_500_0000000);
     assert!(shares1 > 0);
@@ -1084,7 +1308,7 @@ fn test_multiple_depositors() {
 
 const SECONDS_PER_DAY_TEST: u64 = 86_400;
 
-// Drive the standard "deposit, lock all, request withdrawal, unlock, process"
+// Drive the standard "enter, lock all, request withdrawal, unlock, process"
 // flow used across the tests below.
 fn run_credit_flow(
     env: &Env,
@@ -1092,12 +1316,12 @@ fn run_credit_flow(
     controller: &Address,
     depositor: &Address,
 ) {
-    let shares = client.deposit(&1_000_0000000, depositor, depositor, depositor);
+    let shares = lp_deposit(env, client, controller, depositor, 1_000_0000000);
     client.increase_locked(controller, &1_000_0000000);
     client.request_withdrawal(depositor, &shares);
+    mature_requests(env);
     client.decrease_locked(controller, &1_000_0000000);
     client.process_withdrawal_queue(controller);
-    let _ = env;
 }
 
 // Match against the post-`"sentinel"` topic verb (namespace, 2-item prefix).
@@ -1133,6 +1357,17 @@ fn test_claimable_balance_credited_event_fires() {
     // process_withdrawal_queue is the most recent invocation that emits
     // the event log. Assert the Credited event appeared.
     assert!(count_events_with_verb(&env, &client.address, symbol_short!("credited")) >= 1);
+}
+
+#[test]
+fn test_deposit_processed_event_fires() {
+    let (env, client, _owner, controller, depositor) = setup();
+
+    client.request_deposit(&depositor, &1_000_0000000);
+    mature_requests(&env);
+    client.process_deposit_queue(&controller);
+
+    assert!(count_events_with_verb(&env, &client.address, Symbol::new(&env, "dep_minted")) >= 1);
 }
 
 #[test]
@@ -1210,6 +1445,22 @@ fn test_recover_uncollected_recredit_exceeding_surplus_panics() {
     // No extra asset minted: the surplus covers exactly the existing credit,
     // so any increase must refuse.
     client.recover_uncollected(&depositor, &(prior + 1), &RecoveryMode::Recredit);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #723)")]
+fn test_recover_uncollected_recredit_cannot_consume_deposit_escrow() {
+    // Escrowed deposit-queue assets sit in the raw balance without backing
+    // shares, but they are owed back to their requesters — a recredit must
+    // not be satisfiable out of that escrow.
+    let (env, client, _owner, _controller, depositor) = setup();
+    let user = Address::generate(&env);
+
+    // The only surplus over TMA is the pending entrant's escrow.
+    client.request_deposit(&depositor, &500_0000000);
+    assert_eq!(client.get_total_managed_assets(), 0);
+
+    client.recover_uncollected(&user, &1_0000000, &RecoveryMode::Recredit);
 }
 
 #[test]
@@ -1300,8 +1551,8 @@ fn test_recover_uncollected_rejects_zero_amount() {
 
 #[test]
 fn test_snapshot_uses_temporary_tier() {
-    let (env, client, _owner, _controller, depositor) = setup();
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let (env, client, _owner, controller, depositor) = setup();
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
 
     env.ledger().with_mut(|li| li.timestamp = 100_000);
     client.snapshot();
@@ -1313,8 +1564,8 @@ fn test_snapshot_uses_temporary_tier() {
 
 #[test]
 fn test_snapshot_expires_after_30_days() {
-    let (env, client, _owner, _controller, depositor) = setup();
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let (env, client, _owner, controller, depositor) = setup();
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
 
     let snap_time: u64 = 1_000_000;
     env.ledger().with_mut(|li| li.timestamp = snap_time);
@@ -1342,8 +1593,8 @@ fn test_snapshot_emits_share_price_event() {
     use soroban_sdk::symbol_short;
     // snapshot() now emits SharePriceSnapshot so off-chain analytics
     // can subscribe instead of polling.
-    let (env, client, _owner, _controller, depositor) = setup();
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    let (env, client, _owner, controller, depositor) = setup();
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
 
     env.ledger().with_mut(|li| li.timestamp = 200_000);
     client.snapshot();
@@ -1355,18 +1606,14 @@ fn test_snapshot_emits_share_price_event() {
 }
 
 // =========================================================================
-// OZ Vault wrapper coverage (preview_*, convert_*, max_*, mint_shares)
+// Conversion views (informational quotes for request sizing)
 // =========================================================================
 
 #[test]
-fn test_vault_views_before_and_after_deposit() {
-    let (_env, client, _owner, _controller, depositor) = setup();
+fn test_conversion_views_before_and_after_entry() {
+    let (env, client, _owner, controller, depositor) = setup();
 
     // Empty vault — initial price is 1:1 modulo decimals_offset.
-    assert_eq!(client.max_deposit(&depositor), i128::MAX);
-    assert_eq!(client.max_mint(&depositor), i128::MAX);
-    assert_eq!(client.max_withdraw(&depositor), 0);
-    assert_eq!(client.max_redeem(&depositor), 0);
     assert_eq!(client.convert_to_shares(&1_000_0000000), 1_000_0000000_000);
     assert_eq!(client.convert_to_assets(&1_000_0000000_000), 1_000_0000000);
     assert_eq!(client.preview_deposit(&1_000_0000000), 1_000_0000000_000);
@@ -1374,39 +1621,9 @@ fn test_vault_views_before_and_after_deposit() {
     assert_eq!(client.preview_withdraw(&500_0000000), 500_0000000_000);
     assert_eq!(client.preview_redeem(&500_0000000_000), 500_0000000);
 
-    // After deposit, max_withdraw / max_redeem reflect the depositor's stake.
-    let shares = client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
-    assert!(client.max_withdraw(&depositor) > 0);
-    assert_eq!(client.max_redeem(&depositor), shares);
-}
-
-#[test]
-fn test_mint_shares_pulls_assets_from_caller() {
-    let (env, client, _owner, _controller, depositor) = setup();
-    let asset = token::Client::new(&env, &client.query_asset());
-
-    let initial_asset = asset.balance(&depositor);
-    let target_shares = 100_0000000_000i128;
-    let assets_in = client.mint(&target_shares, &depositor, &depositor, &depositor);
-
-    assert!(assets_in > 0, "mint_shares should pull non-zero assets");
-    assert_eq!(asset.balance(&depositor), initial_asset - assets_in);
-    assert_eq!(client.balance(&depositor), target_shares);
-    assert_eq!(client.get_total_managed_assets(), assets_in);
-}
-
-#[test]
-fn test_max_withdraw_clamped_by_locked_capital() {
-    let (_env, client, _owner, controller, depositor) = setup();
-
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
-    // Before locking, max_withdraw == full deposit.
-    assert_eq!(client.max_withdraw(&depositor), 1_000_0000000);
-
-    // Lock 600 asset; max_withdraw clamps to remaining free capital.
-    client.increase_locked(&controller, &600_0000000);
-    assert_eq!(client.max_withdraw(&depositor), 400_0000000);
-    assert_eq!(client.get_free_capital(), 400_0000000);
+    // After an entry, the quotes track the managed-asset price.
+    let shares = lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
+    assert_eq!(client.convert_to_assets(&shares), 1_000_0000000);
 }
 
 // =========================================================================
@@ -1427,30 +1644,27 @@ fn test_extend_ttl_is_callable() {
 fn test_constructor_wires_settlement_barrier() {
     // The oracle is a constructor argument, so the barrier is active from
     // genesis — no post-deploy set_oracle step exists to forget. Verify the
-    // wiring is observable and that the barrier actually closes entry/exit
-    // the moment the oracle reports a pending outcome.
-    let (env, client, _owner, _controller, depositor) = setup();
+    // wiring is observable and that the barrier holds queue processing while
+    // the oracle reports a pending outcome. Requests themselves stay open —
+    // they are commitments, not priced operations.
+    let (env, client, _owner, controller, depositor) = setup();
     let oracle_addr = client.get_oracle().expect("constructor must wire oracle");
     let oracle = MockPendingOracleClient::new(&env, &oracle_addr);
 
-    // Barrier open (mock defaults to no pending outcomes): deposit works.
-    client.deposit(&1_000_0000000, &depositor, &depositor, &depositor);
+    // Barrier open (mock defaults to no pending outcomes): entry processes.
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
 
-    // An outcome becomes public → every entry/exit path closes and the
-    // max_* views report zero.
+    // An outcome is written → processing refuses to price either queue.
     oracle.set_pending_outcomes(&true);
-    assert!(client
-        .try_deposit(&1_0000000, &depositor, &depositor, &depositor)
-        .is_err());
-    assert!(client
-        .try_withdraw(&1_0000000, &depositor, &depositor, &depositor)
-        .is_err());
-    assert_eq!(client.max_deposit(&depositor), 0);
-    assert_eq!(client.max_withdraw(&depositor), 0);
+    client.request_deposit(&depositor, &1_0000000);
+    mature_requests(&env);
+    client.process_deposit_queue(&controller);
+    assert_eq!(client.get_deposit_queue_len(), 1);
 
-    // Settlement completes → barrier reopens.
+    // Settlement completes → the queued entry prices on the next pass.
     oracle.set_pending_outcomes(&false);
-    client.deposit(&1_0000000, &depositor, &depositor, &depositor);
+    client.process_deposit_queue(&controller);
+    assert_eq!(client.get_deposit_queue_len(), 0);
 }
 
 #[test]

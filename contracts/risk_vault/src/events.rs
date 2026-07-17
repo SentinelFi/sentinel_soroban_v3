@@ -55,6 +55,56 @@ pub struct WithdrawalRequested {
     pub(crate) queue_len: u32,
 }
 
+// Emitted on every accepted deposit request — the entry-side mirror of
+// WithdrawalRequested (same occupancy-monitoring rationale; the deposit
+// queue is bounded too).
+#[contractevent(topics = ["sentinel", "dep_req"], data_format = "map")]
+pub struct DepositRequested {
+    #[topic]
+    pub(crate) owner: Address,
+    pub(crate) request_id: u64,
+    pub(crate) assets: i128,
+    pub(crate) queue_len: u32,
+}
+
+// Emitted when an underwriter cancels a queued deposit and the escrowed
+// assets return to them. Mirrors WithdrawalCancelled so indexers can
+// reconstruct queue state and escrowed-asset totals from events alone.
+#[contractevent(topics = ["sentinel", "dep_cancel"], data_format = "map")]
+pub struct DepositCancelled {
+    #[topic]
+    pub(crate) owner: Address,
+    pub(crate) request_id: u64,
+    pub(crate) assets: i128,
+    pub(crate) queue_len: u32,
+}
+
+// Emitted when deposit-queue processing prices a matured request and mints
+// its shares. The terminal event of the entry lifecycle (request → process);
+// carries both sides of the conversion so indexers can track realized entry
+// prices without re-deriving them.
+#[contractevent(topics = ["sentinel", "dep_minted"], data_format = "map")]
+pub struct DepositProcessed {
+    #[topic]
+    pub(crate) owner: Address,
+    pub(crate) request_id: u64,
+    pub(crate) assets: i128,
+    pub(crate) shares: i128,
+}
+
+// Emitted when deposit-queue processing drops a matured request whose assets
+// price to zero shares (share price rose sharply after it was queued) and
+// returns the escrowed assets. No DepositProcessed fires for such a request,
+// so this is the only signal that closes it out — and it tells the owner
+// their entry did NOT happen and must be re-requested with a larger amount.
+#[contractevent(topics = ["sentinel", "dep_dropped"], data_format = "map")]
+pub struct DepositDropped {
+    #[topic]
+    pub(crate) owner: Address,
+    pub(crate) request_id: u64,
+    pub(crate) assets: i128,
+}
+
 // Emitted when an underwriter cancels a queued request. Mirrors
 // `WithdrawalRequested` (including post-removal occupancy) so indexers can
 // reconstruct queue state and escrowed-share totals from events alone —

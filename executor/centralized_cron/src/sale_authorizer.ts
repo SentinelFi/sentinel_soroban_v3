@@ -1,5 +1,6 @@
 import { SorobanClient } from "./soroban_client.js";
 import { AeroApiClient } from "./aeroapi_client.js";
+import { classifyAndSettleFlight } from "./targeted_settlement.js";
 import {
   FlightStatus,
   type Config,
@@ -21,9 +22,11 @@ const SECONDS_PER_DAY = 86_400;
  * horizon it:
  *
  * 1. asks AeroAPI whether the (flight, day) instance is scheduled;
- * 2. pushes `set_cancelled` the moment a cancellation is visible — the
- *    tombstone blocks purchases instantly, without waiting for the current
- *    authorization to lapse (`set_cancelled` also deletes it on-chain);
+ * 2. the moment a cancellation is visible, revokes any live sale window
+ *    with the pause-exempt `close_sale` FIRST (so the flight stops being
+ *    purchasable even if the oracle contract is paused), then pushes the
+ *    `set_cancelled` tombstone (which blocks purchases permanently and
+ *    deletes any remaining authorization on-chain);
  * 3. closes the sale window when the instance becomes unverifiable
  *    (no data / ambiguous candidates) — fail closed, never guess;
  * 4. otherwise opens/refreshes the window with a bounded expiry
@@ -84,8 +87,33 @@ export async function runSaleAuthorizer(config: Config): Promise<RunLogEntry> {
           const apiData = await aeroApi.getFlightData(flightId, dateStr);
 
           if (apiData && apiData.cancelled) {
-            // Publicly cancelled. Tombstone it (also deletes any live sale
-            // authorization on-chain) unless an outcome is already recorded.
+            // Publicly cancelled: revoke first, record second. `close_sale`
+            // is deliberately pause-exempt on-chain — it only removes
+            // authorization — so the live sale window dies immediately even
+            // while the oracle contract is paused. The pause-gated
+            // `set_cancelled` tombstone that follows can fail during an
+            // incident; ordering the calls this way means that failure
+            // leaves no purchasable window behind (the old order did: a
+            // failed tombstone write kept the authorization alive until the
+            // next successful retry or its expiry).
+            const liveExpiry = await readSaleExpiry(client, oracleId, flightId, dateSecs);
+            if (liveExpiry !== null) {
+              console.log(`[authorizer] ${label}: cancelled — closing sale window first`);
+              await client.invokeContract(
+                oracleId,
+                "close_sale",
+                [
+                  client.addressToScVal(oraclePublicKey),
+                  client.symbolToScVal(flightId),
+                  client.u64ToScVal(dateSecs),
+                ],
+                config.oracleSecretKey
+              );
+              actions.push({ flight: label, transition: "sale closed (cancelled)" });
+            }
+
+            // Tombstone it (also deletes any remaining sale authorization
+            // on-chain) unless an outcome is already recorded.
             const data = await client.readContract(oracleId, "get_flight_data", [
               client.symbolToScVal(flightId),
               client.u64ToScVal(dateSecs),
@@ -107,6 +135,18 @@ export async function runSaleAuthorizer(config: Config): Promise<RunLogEntry> {
                 config.oracleSecretKey
               );
               actions.push({ flight: label, transition: "→ Cancelled (tombstone)" });
+              // A cancellation written for a REGISTERED flight (one with
+              // buyers) is a pending outcome that blocks every LP entry/exit
+              // until settled — drive it through classify + settle directly.
+              // Skips unregistered tombstones (nothing listed to settle).
+              await classifyAndSettleFlight(
+                client,
+                config,
+                flightId,
+                dateSecs,
+                label,
+                actions
+              );
             }
             continue;
           }

@@ -120,6 +120,7 @@ fn vault_credited_collected_chain_via_underwriter_lifecycle() {
 
     let shares = t.vault.balance(&t.underwriter);
     t.vault.request_withdrawal(&t.underwriter, &(shares / 2));
+    t.mature_requests();
 
     t.oracle_on_time();
     t.ctrl.classify_flights(&t.keeper);

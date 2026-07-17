@@ -1,5 +1,6 @@
 import { SorobanClient } from "./soroban_client.js";
 import { AeroApiClient } from "./aeroapi_client.js";
+import { classifyAndSettleFlight } from "./targeted_settlement.js";
 import {
   FlightStatus,
   type ActiveFlight,
@@ -120,6 +121,17 @@ export async function runFlightDataFetcher(config: Config): Promise<RunLogEntry>
             );
             console.log(`[fetcher] ${flight.flight_id}: NotInitiated → Cancelled ✓`);
             actions.push({ flight: flight.flight_id, transition: "NotInitiated → Cancelled" });
+            // The written outcome now blocks every LP entry/exit until it
+            // settles — drive this exact tuple through classify + settle
+            // immediately instead of waiting for the rotating sweeps.
+            await classifyAndSettleFlight(
+              client,
+              config,
+              flight.flight_id,
+              flight.date,
+              flight.flight_id,
+              actions
+            );
             continue;
           }
 
@@ -174,6 +186,16 @@ export async function runFlightDataFetcher(config: Config): Promise<RunLogEntry>
             );
             console.log(`[fetcher] ${flight.flight_id}: Active → Cancelled ✓`);
             actions.push({ flight: flight.flight_id, transition: "Active → Cancelled" });
+            // Settle the fresh outcome directly (see the NotInitiated →
+            // Cancelled branch).
+            await classifyAndSettleFlight(
+              client,
+              config,
+              flight.flight_id,
+              flight.date,
+              flight.flight_id,
+              actions
+            );
           } else if (estimatedArrival + ONE_HOUR_SECS > nowSecs) {
             // Not cancelled and not yet due — landed resolution waits.
             console.log(`[fetcher] ${flight.flight_id}: Active, not cancelled, ETA+1hr not passed yet.`);
@@ -196,6 +218,16 @@ export async function runFlightDataFetcher(config: Config): Promise<RunLogEntry>
             );
             console.log(`[fetcher] ${flight.flight_id}: Active → Landed ✓`);
             actions.push({ flight: flight.flight_id, transition: "Active → Landed" });
+            // Settle the fresh outcome directly (see the NotInitiated →
+            // Cancelled branch).
+            await classifyAndSettleFlight(
+              client,
+              config,
+              flight.flight_id,
+              flight.date,
+              flight.flight_id,
+              actions
+            );
           } else {
             // Still in flight — no actual arrival yet
             console.log(`[fetcher] ${flight.flight_id}: Status "${apiData.status}", no actual_in yet. Will retry.`);

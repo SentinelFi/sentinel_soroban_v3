@@ -1,29 +1,48 @@
-// ERC-4626 style deposit/withdraw/mint/redeem operations.
+// ERC-4626-shaped share/asset conversion surface, with ALL state-changing
+// entry and exit routed through the delayed two-phase queues instead.
+//
+// The `FungibleVault` trait remains implemented even though four of its
+// operations are disabled and the `max_*` views return zero. The trait must
+// be implemented in full or not at all, and its view half is load-bearing:
+// `total_assets`, `query_asset`, `convert_*`, and the `preview_*` quotes are
+// the views integrators use to size and value queue requests, while the
+// conversion helpers below are the pricing engine for both queue processors.
+// Retaining the disabled operations as typed reverts — rather than removing
+// them from the ABI — gives a stale caller a contract error identifying the
+// replacement path instead of an opaque missing-function failure, and a
+// vault-standard-aware integration that honors `max_* == 0` concludes the
+// immediate leg is unavailable without submitting a transaction guaranteed
+// to fail. This follows the established asynchronous-vault convention
+// (ERC-7540 on EVM): retain the standard surface, report zero from the
+// `max_*` views for disabled legs, and revert on the operations themselves.
+//
+// The four immediate operations (deposit/mint/withdraw/redeem) are disabled:
+// they priced shares at call time, and any call-time price is stale with
+// respect to a flight outcome that is publicly knowable but not yet written
+// on-chain — the settlement barrier can only engage once the oracle
+// transaction lands. LPs commit via `request_deposit` / `request_withdrawal`
+// and are priced by queue processing only after the request outlives
+// `LP_PRICING_DELAY_SECS` (see constants.rs), by which time every outcome
+// knowable at commitment is on-chain and reflected (or barrier-blocked).
 //
 // Share pricing is computed against the vault's internal `TotalManagedAssets`
 // (TMA) — the true backing figure — NOT the raw token balance. The two differ
 // whenever the withdrawal queue has credited a `ClaimableBalance` that the
-// owner has not yet `collect`ed: those assets physically sit in the vault but no
-// longer back outstanding shares (TMA was already reduced when they were
-// credited). Pricing on the raw balance would count that owed-but-uncollected
-// value as backing and let existing holders extract it from later depositors.
-// The identity is exact: raw_balance == TMA + uncollected_claimable, so TMA is
-// the net-asset basis.
+// owner has not yet `collect`ed (those assets no longer back shares) and
+// whenever the deposit queue holds escrowed assets that do not back shares
+// YET. The identity is exact:
+// raw_balance == TMA + uncollected_claimable + escrowed_deposits,
+// so TMA is the net-asset basis.
 //
-// We reuse the OpenZeppelin `Vault` share-mint/burn + transfer plumbing
-// (`deposit_internal` / `withdraw_internal`) and its event emitters, but supply
-// the share/asset amounts ourselves from the TMA basis instead of delegating to
+// We reuse the OpenZeppelin `Vault` plumbing only for its metadata surface;
+// conversions are supplied from the TMA basis instead of delegating to
 // `Vault::deposit`/`redeem`/etc. (which convert against the raw balance).
 
 use soroban_sdk::{contractimpl, panic_with_error, Address, Env};
 use stellar_contract_utils::math::{i128_fixed_point::mul_div_with_rounding, Rounding};
-use stellar_contract_utils::pausable::paused;
-use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
-use stellar_tokens::vault::{emit_deposit, emit_withdraw, FungibleVault, Vault};
+use stellar_tokens::vault::{FungibleVault, Vault};
 
-use crate::auth::{assert_no_settlement_pending, settlement_pending};
-use crate::storage::VaultKey;
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient};
 
 // Convert assets → shares against the TMA basis, mirroring the OZ formula
@@ -102,134 +121,55 @@ pub(crate) fn convert_to_assets_with_tma(
 
 #[contractimpl]
 impl FungibleVault for RiskVault {
-    /// Deposits `assets` for `receiver`, minting shares priced on managed assets.
-    #[when_not_paused]
-    fn deposit(e: &Env, assets: i128, receiver: Address, from: Address, operator: Address) -> i128 {
-        Self::extend_ttl(e);
-        operator.require_auth();
-        assert_no_settlement_pending(e);
-        if assets <= 0 {
-            panic_with_error!(e, Error::AmountMustBePositive);
-        }
-        let shares = managed_convert_to_shares(e, assets, Rounding::Floor);
-        // A deposit small enough to floor to zero shares would transfer the
-        // assets in and mint nothing — silently donating the caller's value to
-        // existing holders. Reject it; the caller can deposit a larger amount.
-        if shares == 0 {
-            panic_with_error!(e, Error::AssetsConvertToZeroShares);
-        }
-        // Transfer assets in + mint shares (OZ plumbing; assumes prior auth).
-        Vault::deposit_internal(e, &receiver, assets, shares, &from, &operator);
-        emit_deposit(e, &operator, &from, &receiver, assets, shares);
-        let tma = Self::get_total_managed_assets(e);
-        e.storage().instance().set(
-            &VaultKey::TotalManagedAssets,
-            &tma.checked_add(assets).expect("addition overflow"),
-        );
-        shares
+    /// Disabled. LP entry is two-phase: `request_deposit` escrows the assets
+    /// and queue processing mints shares at the delayed, post-outcome price.
+    /// An immediate deposit would price at call time — stale with respect to
+    /// any outcome that is public but not yet written on-chain.
+    fn deposit(
+        e: &Env,
+        _assets: i128,
+        _receiver: Address,
+        _from: Address,
+        _operator: Address,
+    ) -> i128 {
+        panic_with_error!(e, Error::DirectEntryDisabled);
     }
 
-    /// Withdraws `assets` to `receiver`, blocked while the withdrawal queue is active or if it exceeds the reserve-aware withdrawable capital.
-    #[when_not_paused]
+    /// Disabled. LP exit is two-phase: `request_withdrawal` escrows the
+    /// shares and queue processing pays out at the delayed, post-outcome
+    /// price. See `deposit`.
     fn withdraw(
         e: &Env,
-        assets: i128,
-        receiver: Address,
-        owner: Address,
-        operator: Address,
+        _assets: i128,
+        _receiver: Address,
+        _owner: Address,
+        _operator: Address,
     ) -> i128 {
-        Self::extend_ttl(e);
-        operator.require_auth();
-        // Block direct exit while a public flight outcome is unsettled — the LP
-        // must use the withdrawal queue, which prices only after settlement.
-        assert_no_settlement_pending(e);
-        // Once any underwriter is queued, the queue is the canonical
-        // exit path — block direct exits so a latecomer can't consume free capital
-        // ahead of LPs already waiting in FIFO order. When the queue is empty this
-        // fast path stays open.
-        if !Self::get_withdrawal_queue(e).is_empty() {
-            panic_with_error!(e, Error::WithdrawalQueueActive);
-        }
-        if assets <= 0 {
-            panic_with_error!(e, Error::AmountMustBePositive);
-        }
-        // Bound exits by the withdrawable amount — assets above the
-        // configured solvency reserve on locked capital — not the nominal
-        // TMA − locked margin. Gating on the nominal margin would let any LP
-        // strip the reserve down to 100% backing right after purchases were
-        // admitted against it.
-        if assets > Self::get_withdrawable_capital(e) {
-            panic_with_error!(e, Error::ExceedsFreeCapital);
-        }
-        let shares = managed_convert_to_shares(e, assets, Rounding::Ceil);
-        Vault::withdraw_internal(e, &receiver, &owner, assets, shares, &operator);
-        emit_withdraw(e, &operator, &receiver, &owner, assets, shares);
-        let tma = Self::get_total_managed_assets(e);
-        e.storage().instance().set(
-            &VaultKey::TotalManagedAssets,
-            &tma.checked_sub(assets).expect("subtraction underflow"),
-        );
-        shares
+        panic_with_error!(e, Error::DirectExitDisabled);
     }
 
-    /// Mints `shares` to `receiver`, pulling the required assets priced on managed assets.
-    #[when_not_paused]
-    fn mint(e: &Env, shares: i128, receiver: Address, from: Address, operator: Address) -> i128 {
-        Self::extend_ttl(e);
-        operator.require_auth();
-        assert_no_settlement_pending(e);
-        if shares <= 0 {
-            panic_with_error!(e, Error::SharesMustBePositive);
-        }
-        // Ceil rounding on a positive share count always yields >= 1 asset, so
-        // the mint path cannot pull zero assets for a positive mint.
-        let assets = managed_convert_to_assets(e, shares, Rounding::Ceil);
-        Vault::deposit_internal(e, &receiver, assets, shares, &from, &operator);
-        emit_deposit(e, &operator, &from, &receiver, assets, shares);
-        let tma = Self::get_total_managed_assets(e);
-        e.storage().instance().set(
-            &VaultKey::TotalManagedAssets,
-            &tma.checked_add(assets).expect("addition overflow"),
-        );
-        assets
+    /// Disabled — see `deposit`. There is no share-denominated request path;
+    /// use `request_deposit` with an asset amount.
+    fn mint(
+        e: &Env,
+        _shares: i128,
+        _receiver: Address,
+        _from: Address,
+        _operator: Address,
+    ) -> i128 {
+        panic_with_error!(e, Error::DirectEntryDisabled);
     }
 
-    /// Redeems `shares` for assets to `receiver`, blocked while the withdrawal queue is active or if it exceeds the reserve-aware withdrawable capital.
-    #[when_not_paused]
-    fn redeem(e: &Env, shares: i128, receiver: Address, owner: Address, operator: Address) -> i128 {
-        Self::extend_ttl(e);
-        operator.require_auth();
-        // Block direct exit while a public flight outcome is unsettled — the LP
-        // must use the withdrawal queue, which prices only after settlement.
-        assert_no_settlement_pending(e);
-        // See `withdraw` — direct redeem defers to the queue while
-        // any request is pending so it can't jump the FIFO line.
-        if !Self::get_withdrawal_queue(e).is_empty() {
-            panic_with_error!(e, Error::WithdrawalQueueActive);
-        }
-        if shares <= 0 {
-            panic_with_error!(e, Error::SharesMustBePositive);
-        }
-        let assets = managed_convert_to_assets(e, shares, Rounding::Floor);
-        // A dust redemption that floors to zero assets would burn the caller's
-        // shares and return nothing — donating their value to the remaining
-        // holders. Reject it instead.
-        if assets == 0 {
-            panic_with_error!(e, Error::SharesRedeemToZeroAssets);
-        }
-        // See `withdraw` — exits are bounded by the reserve-aware
-        // withdrawable amount, not the nominal free margin.
-        if assets > Self::get_withdrawable_capital(e) {
-            panic_with_error!(e, Error::ExceedsFreeCapital);
-        }
-        Vault::withdraw_internal(e, &receiver, &owner, assets, shares, &operator);
-        emit_withdraw(e, &operator, &receiver, &owner, assets, shares);
-        let tma = Self::get_total_managed_assets(e);
-        e.storage().instance().set(
-            &VaultKey::TotalManagedAssets,
-            &tma.checked_sub(assets).expect("subtraction underflow"),
-        );
-        assets
+    /// Disabled — see `withdraw`. Use `request_withdrawal` with a share
+    /// amount.
+    fn redeem(
+        e: &Env,
+        _shares: i128,
+        _receiver: Address,
+        _owner: Address,
+        _operator: Address,
+    ) -> i128 {
+        panic_with_error!(e, Error::DirectExitDisabled);
     }
 
     /// Returns the vault's net backing assets — the internally tracked managed
@@ -254,7 +194,14 @@ impl FungibleVault for RiskVault {
         managed_convert_to_assets(e, shares, Rounding::Floor)
     }
 
-    /// Previews the shares that would be minted for a given deposit of assets.
+    // The `preview_*` views remain as CURRENT-price quotes for sizing
+    // queue requests. They are estimates only: actual pricing happens at
+    // queue-processing time, after the request matures past the LP pricing
+    // delay, and may differ once pending outcomes settle.
+
+    /// Previews the shares a deposit of `assets` would mint at the CURRENT
+    /// share price. Informational — a queued deposit is priced at
+    /// processing time, not request time.
     fn preview_deposit(e: &Env, assets: i128) -> i128 {
         managed_convert_to_shares(e, assets, Rounding::Floor)
     }
@@ -274,52 +221,26 @@ impl FungibleVault for RiskVault {
         managed_convert_to_assets(e, shares, Rounding::Floor)
     }
 
-    // The `max_*` views must report zero whenever the corresponding executable
-    // path is globally disabled, or integrations read a positive limit and
-    // submit transactions guaranteed to revert. Each view therefore mirrors
-    // every global gate of its operation: the pause switch and the settlement
-    // barrier for all four, plus the active-queue guard for the direct exits
-    // (`withdraw`/`redeem` defer to the queue while any request is pending).
-    fn max_deposit(e: &Env, address: Address) -> i128 {
-        if paused(e) || settlement_pending(e) {
-            return 0;
-        }
-        Vault::max_deposit(e, address)
+    // The `max_*` views report zero unconditionally: the immediate
+    // operations they bound are permanently disabled in favor of the
+    // two-phase request queues, and integrations reading a positive limit
+    // would submit transactions guaranteed to revert.
+    fn max_deposit(_e: &Env, _address: Address) -> i128 {
+        0
     }
 
-    /// Returns the maximum shares mintable for `address`, or zero while
-    /// deposits are globally disabled (paused or settlement pending).
-    fn max_mint(e: &Env, address: Address) -> i128 {
-        if paused(e) || settlement_pending(e) {
-            return 0;
-        }
-        Vault::max_mint(e, address)
+    /// Returns zero — immediate mints are disabled (see `mint`).
+    fn max_mint(_e: &Env, _address: Address) -> i128 {
+        0
     }
 
-    /// Returns the maximum assets `owner` can withdraw (their share balance
-    /// priced on managed assets, capped by the reserve-aware withdrawable
-    /// capital), or zero while direct exits are globally disabled (paused,
-    /// settlement pending, or queue active).
-    fn max_withdraw(e: &Env, owner: Address) -> i128 {
-        if paused(e) || settlement_pending(e) || !Self::get_withdrawal_queue(e).is_empty() {
-            return 0;
-        }
-        let owner_assets = managed_convert_to_assets(e, Base::balance(e, &owner), Rounding::Floor);
-        let withdrawable = Self::get_withdrawable_capital(e);
-        owner_assets.min(withdrawable)
+    /// Returns zero — immediate withdrawals are disabled (see `withdraw`).
+    fn max_withdraw(_e: &Env, _owner: Address) -> i128 {
+        0
     }
 
-    /// Returns the maximum shares `owner` can redeem (their balance capped by
-    /// the shares equivalent of the reserve-aware withdrawable capital), or
-    /// zero while direct exits are globally disabled (paused, settlement
-    /// pending, or queue active).
-    fn max_redeem(e: &Env, owner: Address) -> i128 {
-        if paused(e) || settlement_pending(e) || !Self::get_withdrawal_queue(e).is_empty() {
-            return 0;
-        }
-        let owner_shares = Base::balance(e, &owner);
-        let withdrawable_shares =
-            managed_convert_to_shares(e, Self::get_withdrawable_capital(e), Rounding::Floor);
-        owner_shares.min(withdrawable_shares)
+    /// Returns zero — immediate redemptions are disabled (see `redeem`).
+    fn max_redeem(_e: &Env, _owner: Address) -> i128 {
+        0
     }
 }

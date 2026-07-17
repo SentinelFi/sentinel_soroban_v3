@@ -59,112 +59,9 @@ impl Controller {
             let (flight_id, date) = flights.get(j).unwrap();
             let data = oracle.get_flight_data(&flight_id, &date);
 
-            let new_status = match data.status {
-                FlightStatus::Cancelled => Some(FlightStatus::ToBeSettledCancelled),
-                FlightStatus::Landed => {
-                    // Read delay_hours from FlightPoolManager (locked at register time).
-                    // A present-in-oracle but missing-in-pool config
-                    // (archived past TTL) must not panic the whole loop. Skip the
-                    // flight and emit a diagnostic so one bad entry can't block
-                    // settlement of every other flight.
-                    match pool.get_flight_config(&flight_id, &date) {
-                        Some(cfg) => {
-                            let delay_hours = cfg.delay_hours;
-                            let delay_seconds = data
-                                .actual_arrival_time
-                                .saturating_sub(data.estimated_arrival_time);
-                            let delay_hours_actual = delay_seconds
-                                .checked_div(SECONDS_PER_HOUR)
-                                .expect("division by zero");
-
-                            if delay_hours_actual >= (delay_hours as u64) {
-                                Some(FlightStatus::ToBeSettledDelayed)
-                            } else {
-                                Some(FlightStatus::ToBeSettledOnTime)
-                            }
-                        }
-                        None => {
-                            FlightConfigMissing {
-                                flight_id: flight_id.clone(),
-                                date,
-                            }
-                            .publish(e);
-                            None
-                        }
-                    }
-                }
-                FlightStatus::Active => {
-                    let timeout_at = data
-                        .estimated_arrival_time
-                        .checked_add(sentinel_types::timeouts::ACTIVE_FLIGHT_TIMEOUT_SECS)
-                        .expect("addition overflow");
-                    if e.ledger().timestamp() >= timeout_at {
-                        // The scheduled arrival was recorded but no terminal
-                        // outcome (Landed/Cancelled) ever followed, and the
-                        // flight is now long past that arrival: the oracle
-                        // pipeline cannot resolve it. Void it — settle as
-                        // on-time so the premiums become vault yield and the
-                        // locked collateral is released, instead of the row
-                        // pinning vault capital and two active-list slots
-                        // forever. Never a payout: paying without an attested
-                        // outcome would let a data outage mint claims. Until
-                        // the void is classified the oracle can still write
-                        // the real outcome, which then settles normally. The
-                        // distinct event lets operators tell an oracle-
-                        // liveness void from an ordinary on-time settlement.
-                        FlightTimedOutActive {
-                            flight_id: flight_id.clone(),
-                            date,
-                        }
-                        .publish(e);
-                        Some(FlightStatus::ToBeSettledOnTime)
-                    } else {
-                        // Normal in-flight state — terminal outcome pending.
-                        None
-                    }
-                }
-                FlightStatus::NotInitiated => {
-                    let stale_at = date
-                        .checked_add(sentinel_types::timeouts::STALE_FLIGHT_TIMEOUT_SECS)
-                        .expect("addition overflow");
-                    if oracle.has_flight_data(&flight_id, &date)
-                        && e.ledger().timestamp() >= stale_at
-                    {
-                        // No flight data ever arrived and the flight is now
-                        // long past departure: the purchased date most likely
-                        // never matched a physical flight. Void it — settle
-                        // as on-time so the premiums become vault yield and
-                        // the locked collateral is released, instead of the
-                        // row pinning vault capital and a policy-bucket slot
-                        // forever. Never a payout: paying claims on a flight
-                        // that provably never flew would let anyone mint
-                        // guaranteed claims from bogus dates. The
-                        // has_flight_data guard keeps archived rows out of
-                        // this path — a missing entry is a TTL lapse needing
-                        // restoration, not proof the flight never existed.
-                        FlightVoided {
-                            flight_id: flight_id.clone(),
-                            date,
-                        }
-                        .publish(e);
-                        Some(FlightStatus::ToBeSettledOnTime)
-                    } else {
-                        // Not yet fetched by the executor (normal
-                        // pre-departure state) or archived past TTL. Emit the
-                        // diagnostic for the off-chain TTL/restoration
-                        // tooling; no state change.
-                        TtlMiss {
-                            flight_id: flight_id.clone(),
-                            date,
-                        }
-                        .publish(e);
-                        None
-                    }
-                }
-                _ => None,
-            };
-
-            if let Some(status) = new_status {
+            if let Some(status) =
+                Self::classification_target(e, &oracle, &pool, &flight_id, date, &data)
+            {
                 oracle.set_to_be_settled(&controller_addr, &flight_id, &date, &status);
 
                 FlightClassified {
@@ -185,6 +82,175 @@ impl Controller {
             .instance()
             .set(&CtrlKey::ClassifyCursor, &next_cursor);
         Controller::extend_ttl(e);
+    }
+
+    /// Classify one exact flight instance without scanning the active list.
+    /// The rotating `classify_flights` sweep guarantees eventual coverage,
+    /// but its worst-case latency grows with total active-set occupancy —
+    /// future bookings and recently-settled rows share the same enumeration
+    /// windows — and while a public outcome waits for the cursor, the
+    /// vault's settlement barrier stays engaged protocol-wide. The off-chain
+    /// keeper knows exactly which flight's outcome it just wrote, so it
+    /// classifies that tuple directly; the sweep remains the repair backstop
+    /// for anything the targeted path misses.
+    ///
+    /// Restricted to flights currently in the oracle's active set — the same
+    /// population the sweep enumerates — so this entry point can never touch
+    /// cancellation tombstones or evicted flights. Idempotent on state:
+    /// returns `true` when a `ToBeSettled*` transition was written, `false`
+    /// when the flight needs no classification (yet).
+    #[when_not_paused]
+    pub fn classify_flight(e: &Env, keeper: Address, flight_id: Symbol, date: u64) -> bool {
+        require_keeper(e, &keeper);
+
+        let oracle_addr: Address = e.storage().instance().get(&CtrlKey::Oracle).unwrap();
+        let pool_addr: Address = e
+            .storage()
+            .instance()
+            .get(&CtrlKey::FlightPoolManager)
+            .unwrap();
+        let oracle = OracleClient::new(e, &oracle_addr);
+        let pool = FlightPoolManagerClient::new(e, &pool_addr);
+        let controller_addr = e.current_contract_address();
+
+        if !oracle.is_flight_listed(&flight_id, &date) {
+            panic_with_error!(e, Error::FlightNotListed);
+        }
+        let data = oracle.get_flight_data(&flight_id, &date);
+
+        let classified =
+            match Self::classification_target(e, &oracle, &pool, &flight_id, date, &data) {
+                Some(status) => {
+                    oracle.set_to_be_settled(&controller_addr, &flight_id, &date, &status);
+                    FlightClassified {
+                        flight_id,
+                        date,
+                        status,
+                    }
+                    .publish(e);
+                    true
+                }
+                None => false,
+            };
+        Controller::extend_ttl(e);
+        classified
+    }
+
+    // Decide the ToBeSettled* target for one active-list flight, or None when
+    // no transition is due. Shared by the rotating sweep and the exact-tuple
+    // entry point so the two paths cannot drift; emits the same per-flight
+    // diagnostics on both (config-missing, timeout void, dataless void, TTL
+    // miss). Not `pub` — not a contract entry point.
+    fn classification_target(
+        e: &Env,
+        oracle: &OracleClient,
+        pool: &FlightPoolManagerClient,
+        flight_id: &Symbol,
+        date: u64,
+        data: &sentinel_types::FlightData,
+    ) -> Option<FlightStatus> {
+        match data.status {
+            FlightStatus::Cancelled => Some(FlightStatus::ToBeSettledCancelled),
+            FlightStatus::Landed => {
+                // Read delay_hours from FlightPoolManager (locked at register time).
+                // A present-in-oracle but missing-in-pool config
+                // (archived past TTL) must not panic the whole loop. Skip the
+                // flight and emit a diagnostic so one bad entry can't block
+                // settlement of every other flight.
+                match pool.get_flight_config(flight_id, &date) {
+                    Some(cfg) => {
+                        let delay_hours = cfg.delay_hours;
+                        let delay_seconds = data
+                            .actual_arrival_time
+                            .saturating_sub(data.estimated_arrival_time);
+                        let delay_hours_actual = delay_seconds
+                            .checked_div(SECONDS_PER_HOUR)
+                            .expect("division by zero");
+
+                        if delay_hours_actual >= (delay_hours as u64) {
+                            Some(FlightStatus::ToBeSettledDelayed)
+                        } else {
+                            Some(FlightStatus::ToBeSettledOnTime)
+                        }
+                    }
+                    None => {
+                        FlightConfigMissing {
+                            flight_id: flight_id.clone(),
+                            date,
+                        }
+                        .publish(e);
+                        None
+                    }
+                }
+            }
+            FlightStatus::Active => {
+                let timeout_at = data
+                    .estimated_arrival_time
+                    .checked_add(sentinel_types::timeouts::ACTIVE_FLIGHT_TIMEOUT_SECS)
+                    .expect("addition overflow");
+                if e.ledger().timestamp() >= timeout_at {
+                    // The scheduled arrival was recorded but no terminal
+                    // outcome (Landed/Cancelled) ever followed, and the
+                    // flight is now long past that arrival: the oracle
+                    // pipeline cannot resolve it. Void it — settle as
+                    // on-time so the premiums become vault yield and the
+                    // locked collateral is released, instead of the row
+                    // pinning vault capital and two active-list slots
+                    // forever. Never a payout: paying without an attested
+                    // outcome would let a data outage mint claims. Until
+                    // the void is classified the oracle can still write
+                    // the real outcome, which then settles normally. The
+                    // distinct event lets operators tell an oracle-
+                    // liveness void from an ordinary on-time settlement.
+                    FlightTimedOutActive {
+                        flight_id: flight_id.clone(),
+                        date,
+                    }
+                    .publish(e);
+                    Some(FlightStatus::ToBeSettledOnTime)
+                } else {
+                    // Normal in-flight state — terminal outcome pending.
+                    None
+                }
+            }
+            FlightStatus::NotInitiated => {
+                let stale_at = date
+                    .checked_add(sentinel_types::timeouts::STALE_FLIGHT_TIMEOUT_SECS)
+                    .expect("addition overflow");
+                if oracle.has_flight_data(flight_id, &date) && e.ledger().timestamp() >= stale_at {
+                    // No flight data ever arrived and the flight is now
+                    // long past departure: the purchased date most likely
+                    // never matched a physical flight. Void it — settle
+                    // as on-time so the premiums become vault yield and
+                    // the locked collateral is released, instead of the
+                    // row pinning vault capital and a policy-bucket slot
+                    // forever. Never a payout: paying claims on a flight
+                    // that provably never flew would let anyone mint
+                    // guaranteed claims from bogus dates. The
+                    // has_flight_data guard keeps archived rows out of
+                    // this path — a missing entry is a TTL lapse needing
+                    // restoration, not proof the flight never existed.
+                    FlightVoided {
+                        flight_id: flight_id.clone(),
+                        date,
+                    }
+                    .publish(e);
+                    Some(FlightStatus::ToBeSettledOnTime)
+                } else {
+                    // Not yet fetched by the executor (normal
+                    // pre-departure state) or archived past TTL. Emit the
+                    // diagnostic for the off-chain TTL/restoration
+                    // tooling; no state change.
+                    TtlMiss {
+                        flight_id: flight_id.clone(),
+                        date,
+                    }
+                    .publish(e);
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Iterate the oracle's active-flight list and process every flight that's
@@ -264,102 +330,18 @@ impl Controller {
         for j in 0..flights.len() {
             let (flight_id, date) = flights.get(j).unwrap();
             let data = oracle.get_flight_data(&flight_id, &date);
-            let outcome = data.status.clone();
-
-            match data.status {
-                FlightStatus::ToBeSettledOnTime => {
-                    // FlightPoolManager owns the locked terms + buyer count.
-                    // Skip + diagnose a missing config instead of
-                    // panicking the whole settlement loop.
-                    let cfg = match pool.get_flight_config(&flight_id, &date) {
-                        Some(cfg) => cfg,
-                        None => {
-                            FlightConfigMissing { flight_id, date }.publish(e);
-                            continue;
-                        }
-                    };
-                    let total_payoff = cfg
-                        .payoff
-                        .checked_mul(cfg.buyer_count as i128)
-                        .expect("multiplication overflow");
-
-                    // Pool moves the held premiums to the vault and returns the
-                    // transferred total. The Controller records it as vault
-                    // income directly — record_premium_income is controller-only
-                    // and the Controller (not the pool) must be the caller so its
-                    // own authorization is the one the vault sees.
-                    let premium_income = pool.settle_on_time(&controller_addr, &flight_id, &date);
-                    if premium_income > 0 {
-                        vault.record_premium_income(&controller_addr, &premium_income);
-                    }
-                    // Unlock collateral.
-                    if total_payoff > 0 {
-                        vault.decrease_locked(&controller_addr, &total_payoff);
-                    }
-                    oracle.set_settled(&controller_addr, &flight_id, &date);
-
-                    FlightSettledEvent {
-                        flight_id,
-                        date,
-                        outcome,
-                    }
-                    .publish(e);
-                }
-                FlightStatus::ToBeSettledDelayed | FlightStatus::ToBeSettledCancelled => {
-                    let cfg = match pool.get_flight_config(&flight_id, &date) {
-                        Some(cfg) => cfg,
-                        None => {
-                            FlightConfigMissing { flight_id, date }.publish(e);
-                            continue;
-                        }
-                    };
-                    let buyer_count_i128 = cfg.buyer_count as i128;
-                    let payout_from_vault = cfg
-                        .payoff
-                        .checked_sub(cfg.premium)
-                        .expect("subtraction underflow")
-                        .checked_mul(buyer_count_i128)
-                        .expect("multiplication overflow");
-                    let total_payoff = cfg
-                        .payoff
-                        .checked_mul(buyer_count_i128)
-                        .expect("multiplication overflow");
-
-                    // Vault sends payout funds to the pool (the pool holds all
-                    // per-flight asset so travelers can claim from one address).
-                    if payout_from_vault > 0 {
-                        vault.send_payout(&controller_addr, &pool_addr, &payout_from_vault);
-                    }
-                    if total_payoff > 0 {
-                        vault.decrease_locked(&controller_addr, &total_payoff);
-                    }
-
-                    if data.status == FlightStatus::ToBeSettledDelayed {
-                        pool.settle_delayed(&controller_addr, &flight_id, &date, &claim_expiry);
-                    } else {
-                        pool.settle_cancelled(&controller_addr, &flight_id, &date, &claim_expiry);
-                    }
-                    oracle.set_settled(&controller_addr, &flight_id, &date);
-
-                    let paid: i128 = e
-                        .storage()
-                        .instance()
-                        .get(&CtrlKey::TotalPayoutsDistributed)
-                        .unwrap_or(0);
-                    e.storage().instance().set(
-                        &CtrlKey::TotalPayoutsDistributed,
-                        &paid.checked_add(total_payoff).expect("addition overflow"),
-                    );
-
-                    FlightSettledEvent {
-                        flight_id,
-                        date,
-                        outcome,
-                    }
-                    .publish(e);
-                }
-                _ => {}
-            }
+            Self::settle_one(
+                e,
+                &oracle,
+                &vault,
+                &pool,
+                &pool_addr,
+                &controller_addr,
+                claim_expiry,
+                flight_id,
+                date,
+                &data,
+            );
         }
 
         // Advance past the inspected window; wrap at the end of the set (see
@@ -370,6 +352,182 @@ impl Controller {
             .instance()
             .set(&CtrlKey::SettleCursor, &next_cursor);
         Controller::extend_ttl(e);
+    }
+
+    /// Settle one exact classified flight without scanning the active list.
+    /// Companion to `classify_flight` (see there for the latency rationale):
+    /// the keeper settles the tuple it just classified instead of waiting
+    /// for the `execute_settlements` cursor to rotate to it, so the vault's
+    /// settlement barrier releases as soon as the outcome's PnL is
+    /// recognized rather than after a full-set rotation. The flight must be
+    /// in the oracle's active set. Idempotent on state: returns `true` when
+    /// the flight settled, `false` when it is not in a `ToBeSettled*` state
+    /// (or its pool config is missing, which is separately diagnosed).
+    #[when_not_paused]
+    pub fn settle_flight(e: &Env, keeper: Address, flight_id: Symbol, date: u64) -> bool {
+        require_keeper(e, &keeper);
+
+        let oracle_addr: Address = e.storage().instance().get(&CtrlKey::Oracle).unwrap();
+        let vault_addr: Address = e.storage().instance().get(&CtrlKey::RiskVault).unwrap();
+        let pool_addr: Address = e
+            .storage()
+            .instance()
+            .get(&CtrlKey::FlightPoolManager)
+            .unwrap();
+        let oracle = OracleClient::new(e, &oracle_addr);
+        let vault = VaultClient::new(e, &vault_addr);
+        let pool = FlightPoolManagerClient::new(e, &pool_addr);
+        let controller_addr = e.current_contract_address();
+        let claim_window: u64 = e
+            .storage()
+            .instance()
+            .get(&CtrlKey::ClaimExpiryWindow)
+            .unwrap();
+        let claim_expiry = e
+            .ledger()
+            .timestamp()
+            .checked_add(claim_window)
+            .expect("addition overflow");
+
+        if !oracle.is_flight_listed(&flight_id, &date) {
+            panic_with_error!(e, Error::FlightNotListed);
+        }
+        let data = oracle.get_flight_data(&flight_id, &date);
+
+        let settled = Self::settle_one(
+            e,
+            &oracle,
+            &vault,
+            &pool,
+            &pool_addr,
+            &controller_addr,
+            claim_expiry,
+            flight_id,
+            date,
+            &data,
+        );
+        Controller::extend_ttl(e);
+        settled
+    }
+
+    // Settle one classified flight: move money between pool and vault, then
+    // mark the oracle row Settled. Returns true when a settlement executed;
+    // false when the row is not in a ToBeSettled* state or its pool config is
+    // missing (diagnosed via FlightConfigMissing rather than panicking, so
+    // one bad entry can't block the rest of a sweep). Shared by the rotating
+    // sweep and the exact-tuple entry point so the two paths cannot drift.
+    // Not `pub` — not a contract entry point.
+    #[allow(clippy::too_many_arguments)]
+    fn settle_one(
+        e: &Env,
+        oracle: &OracleClient,
+        vault: &VaultClient,
+        pool: &FlightPoolManagerClient,
+        pool_addr: &Address,
+        controller_addr: &Address,
+        claim_expiry: u64,
+        flight_id: Symbol,
+        date: u64,
+        data: &sentinel_types::FlightData,
+    ) -> bool {
+        let outcome = data.status.clone();
+
+        match data.status {
+            FlightStatus::ToBeSettledOnTime => {
+                // FlightPoolManager owns the locked terms + buyer count.
+                // Skip + diagnose a missing config instead of
+                // panicking the whole settlement loop.
+                let cfg = match pool.get_flight_config(&flight_id, &date) {
+                    Some(cfg) => cfg,
+                    None => {
+                        FlightConfigMissing { flight_id, date }.publish(e);
+                        return false;
+                    }
+                };
+                let total_payoff = cfg
+                    .payoff
+                    .checked_mul(cfg.buyer_count as i128)
+                    .expect("multiplication overflow");
+
+                // Pool moves the held premiums to the vault and returns the
+                // transferred total. The Controller records it as vault
+                // income directly — record_premium_income is controller-only
+                // and the Controller (not the pool) must be the caller so its
+                // own authorization is the one the vault sees.
+                let premium_income = pool.settle_on_time(controller_addr, &flight_id, &date);
+                if premium_income > 0 {
+                    vault.record_premium_income(controller_addr, &premium_income);
+                }
+                // Unlock collateral.
+                if total_payoff > 0 {
+                    vault.decrease_locked(controller_addr, &total_payoff);
+                }
+                oracle.set_settled(controller_addr, &flight_id, &date);
+
+                FlightSettledEvent {
+                    flight_id,
+                    date,
+                    outcome,
+                }
+                .publish(e);
+                true
+            }
+            FlightStatus::ToBeSettledDelayed | FlightStatus::ToBeSettledCancelled => {
+                let cfg = match pool.get_flight_config(&flight_id, &date) {
+                    Some(cfg) => cfg,
+                    None => {
+                        FlightConfigMissing { flight_id, date }.publish(e);
+                        return false;
+                    }
+                };
+                let buyer_count_i128 = cfg.buyer_count as i128;
+                let payout_from_vault = cfg
+                    .payoff
+                    .checked_sub(cfg.premium)
+                    .expect("subtraction underflow")
+                    .checked_mul(buyer_count_i128)
+                    .expect("multiplication overflow");
+                let total_payoff = cfg
+                    .payoff
+                    .checked_mul(buyer_count_i128)
+                    .expect("multiplication overflow");
+
+                // Vault sends payout funds to the pool (the pool holds all
+                // per-flight asset so travelers can claim from one address).
+                if payout_from_vault > 0 {
+                    vault.send_payout(controller_addr, pool_addr, &payout_from_vault);
+                }
+                if total_payoff > 0 {
+                    vault.decrease_locked(controller_addr, &total_payoff);
+                }
+
+                if data.status == FlightStatus::ToBeSettledDelayed {
+                    pool.settle_delayed(controller_addr, &flight_id, &date, &claim_expiry);
+                } else {
+                    pool.settle_cancelled(controller_addr, &flight_id, &date, &claim_expiry);
+                }
+                oracle.set_settled(controller_addr, &flight_id, &date);
+
+                let paid: i128 = e
+                    .storage()
+                    .instance()
+                    .get(&CtrlKey::TotalPayoutsDistributed)
+                    .unwrap_or(0);
+                e.storage().instance().set(
+                    &CtrlKey::TotalPayoutsDistributed,
+                    &paid.checked_add(total_payoff).expect("addition overflow"),
+                );
+
+                FlightSettledEvent {
+                    flight_id,
+                    date,
+                    outcome,
+                }
+                .publish(e);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Terminal reconciliation for a flight the owner evicted from the
@@ -453,10 +611,12 @@ impl Controller {
         Controller::extend_ttl(e);
     }
 
-    /// Drain the underwriter withdrawal queue and refresh the share-price
-    /// snapshot. Keeper-only. Decoupled from `execute_settlements` so the
-    /// queue cannot be blocked by gas exhaustion in the settlement loop;
-    /// keeper can run this on its own cadence.
+    /// Drain both LP request queues and refresh the share-price snapshot.
+    /// Keeper-only. Decoupled from `execute_settlements` so the queues
+    /// cannot be blocked by gas exhaustion in the settlement loop; keeper
+    /// can run this on its own cadence. Deposits are processed first: freshly
+    /// minted entries add managed assets, which can fund matured exits in
+    /// the same pass.
     #[when_not_paused]
     pub fn run_queue_maintenance(e: &Env, keeper: Address) {
         require_keeper(e, &keeper);
@@ -465,6 +625,7 @@ impl Controller {
         let vault = VaultClient::new(e, &vault_addr);
         let controller_addr = e.current_contract_address();
 
+        vault.process_deposit_queue(&controller_addr);
         vault.process_withdrawal_queue(&controller_addr);
         vault.snapshot();
 
