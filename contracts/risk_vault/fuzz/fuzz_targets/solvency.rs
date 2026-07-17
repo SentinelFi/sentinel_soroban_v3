@@ -1,7 +1,8 @@
 // Fuzz harness for the risk_vault solvency invariant.
 //
-// Generates a random sequence of vault operations (deposit / withdraw /
-// mint_shares / redeem / queue lifecycle / controller-only capital ops /
+// Generates a random sequence of vault operations (two-phase entry/exit
+// requests and cancellations, both queue-processing passes, time
+// advancement across the pricing delay, controller-only capital ops,
 // recover_uncollected) and asserts after every step that the core invariant
 // holds:
 //
@@ -17,6 +18,7 @@ use sentinel_types::test_support::MockPendingOracle;
 use soroban_sdk::{
     testutils::arbitrary::{arbitrary, Arbitrary},
     testutils::Address as _,
+    testutils::Ledger,
     token, Address, Env,
 };
 
@@ -25,10 +27,10 @@ const INITIAL_ASSET: i128 = 1_000_000_0000000; // 1,000,000 asset
 
 #[derive(Debug, Arbitrary)]
 pub enum Op {
-    Deposit { user: u8, amount: i128 },
-    Withdraw { user: u8, amount: i128 },
-    MintShares { user: u8, shares: i128 },
-    Redeem { user: u8, shares: i128 },
+    RequestDeposit { user: u8, amount: i128 },
+    CancelDeposit { user: u8, request_id: u64 },
+    ProcessDepositQueue,
+    AdvanceTime { secs: u32 },
     RequestWithdrawal { user: u8, shares: i128 },
     CancelWithdrawal { user: u8, request_id: u64 },
     ProcessQueue,
@@ -80,21 +82,22 @@ fuzz_target!(|input: Input| {
 
     for op in input.ops {
         match op {
-            Op::Deposit { user, amount } => {
+            Op::RequestDeposit { user, amount } => {
                 let u = pick(user);
-                let _ = client.try_deposit(&amount, &u, &u, &u);
+                let _ = client.try_request_deposit(&u, &amount);
             }
-            Op::Withdraw { user, amount } => {
+            Op::CancelDeposit { user, request_id } => {
                 let u = pick(user);
-                let _ = client.try_withdraw(&amount, &u, &u, &u);
+                let _ = client.try_cancel_deposit(&u, &request_id);
             }
-            Op::MintShares { user, shares } => {
-                let u = pick(user);
-                let _ = client.try_mint(&shares, &u, &u, &u);
+            Op::ProcessDepositQueue => {
+                let _ = client.try_process_deposit_queue(&controller);
             }
-            Op::Redeem { user, shares } => {
-                let u = pick(user);
-                let _ = client.try_redeem(&shares, &u, &u, &u);
+            Op::AdvanceTime { secs } => {
+                // Bounded so a long sequence cannot overflow the ledger
+                // clock; the range straddles the 6h pricing delay.
+                let secs = (secs % (8 * 3600)) as u64;
+                env.ledger().with_mut(|li| li.timestamp += secs);
             }
             Op::RequestWithdrawal { user, shares } => {
                 let u = pick(user);

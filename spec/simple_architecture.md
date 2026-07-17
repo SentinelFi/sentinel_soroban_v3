@@ -117,18 +117,27 @@ shares, locked collateral, claimable balances, and a withdrawal queue.
   the controller on every owner update (controller-only setter).
 - Share token (vault shares) issued to underwriters; ERC-4626-style mechanics
   with a small inflation-attack defense.
-- Withdrawal queue: ordered list of pending share-redemption requests.
+- Deposit queue: ordered list of pending entries — the assets are escrowed
+  immediately and minted as shares only after the request outlives the LP
+  pricing delay (6 h), at the then-current share price.
+- Withdrawal queue: ordered list of pending share-redemption requests, priced
+  under the same delay.
 - Claimable balance: per-underwriter pending stablecoin awaiting collection
   (pull-based).
 - Daily share-price snapshots (short-lived, for off-chain analytics).
 
+All entry/exit is two-phase (commit now, priced after the delay): a share
+price at call time can be stale with respect to a flight outcome that is
+publicly known but not yet written on-chain, so immediate deposit/redeem are
+disabled and nobody can trade against the other LPs' pending PnL.
+
 **Key operations:**
-- Underwriter: deposit, redeem (immediate, only if withdrawable capital
-  allows), request_withdrawal (queue), cancel_withdrawal, collect (pull
+- Underwriter: request_deposit / cancel_deposit (entry queue),
+  request_withdrawal / cancel_withdrawal (exit queue), collect (pull
   credited funds).
 - Controller-only: increase_locked, decrease_locked, record_premium_income,
-  send_payout, process_withdrawal_queue, set_solvency_ratio (mirror push),
-  snapshot.
+  send_payout, process_deposit_queue, process_withdrawal_queue,
+  set_solvency_ratio (mirror push), snapshot.
 - Owner-only: recover_uncollected (manual fallback for archived claimable
   balances) — has two modes: re-credit storage or transfer directly;
   set_min_withdrawal_request (anti-dust queue floor); set_oracle (rotate the
@@ -390,9 +399,11 @@ Owner / Admin
 
 ```
 Underwriter
-   -> Vault.deposit(amount, receiver)
-   -> Vault mints shares to receiver
-   -> Vault TMA increases by amount
+   -> Vault.request_deposit(caller, amount)
+   -> amount escrows in the vault (not yet backing shares)
+   -> after the 6h pricing delay, the keeper's maintenance pass
+      mints shares to the caller at the then-current share price
+   -> Vault TMA increases by amount at that point
 ```
 
 ### Buy Insurance
@@ -562,7 +573,7 @@ Underwriter
 |---|---|
 | Governance: defaults, admin set, term limits | Owner |
 | Governance: route lifecycle | Owner or Admin |
-| Vault: deposit / redeem / withdrawal queue | Underwriter (self) |
+| Vault: deposit queue / withdrawal queue / collect | Underwriter (self) |
 | Vault: lock / unlock / payout / queue / solvency-ratio mirror / snapshot | Controller only |
 | Vault: recover_uncollected, oracle rotation (checked or paused-forced) | Owner |
 | Pool: register / add_buyer / settle | Controller only |

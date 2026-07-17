@@ -12,6 +12,44 @@ import type { Config } from "./types.js";
 
 const TX_TIMEOUT = 30; // seconds
 
+// Retries per invoke when the network rejects our sequence number. One
+// rebuild is normally enough (the refetched account reflects the consumed
+// sequence); a second absorbs a race with a submitter outside this process.
+const MAX_BAD_SEQ_RETRIES = 2;
+
+// Per-source-account submission locks, shared by EVERY SorobanClient
+// instance in the process (each job constructs its own client, so the
+// registry must be module-global). Jobs sharing one signer — the classifier
+// and settler both use the keeper key, and an HTTP-triggered run can overlap
+// a scheduled one — would otherwise fetch the same account sequence and
+// build two transactions of which at most one can succeed. The lock covers
+// the whole getAccount → build → simulate → sign → submit → poll lifecycle,
+// so the next caller always observes a consumed sequence.
+const accountLocks = new Map<string, Promise<void>>();
+
+async function withAccountLock<T>(publicKey: string, fn: () => Promise<T>): Promise<T> {
+  const previous = accountLocks.get(publicKey) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // Chain before waiting so later callers queue behind this one.
+  accountLocks.set(
+    publicKey,
+    previous.then(() => current)
+  );
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+function isBadSeqError(err: unknown): boolean {
+  return String(err).includes("txBadSeq");
+}
+
 export class SorobanClient {
   private server: rpc.Server;
   private networkPassphrase: string;
@@ -58,6 +96,11 @@ export class SorobanClient {
   /**
    * Write contract call — simulates, assembles auth, signs, and submits.
    * Returns the transaction result.
+   *
+   * The full lifecycle runs under the signer's account lock (see
+   * `withAccountLock`), and a sequence-number rejection triggers a bounded
+   * retry that refetches the account and rebuilds/re-simulates from scratch —
+   * a stale sequence invalidates the old envelope entirely.
    */
   async invokeContract(
     contractId: string,
@@ -65,8 +108,33 @@ export class SorobanClient {
     args: xdr.ScVal[],
     signerSecret: string
   ): Promise<any> {
-    const contract = new Contract(contractId);
     const signerKeypair = Keypair.fromSecret(signerSecret);
+    return withAccountLock(signerKeypair.publicKey(), async () => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await this.submitInvocation(contractId, method, args, signerKeypair);
+        } catch (err) {
+          if (attempt < MAX_BAD_SEQ_RETRIES && isBadSeqError(err)) {
+            console.warn(
+              `[soroban] ${method}: bad sequence (attempt ${attempt + 1}) — refetching account and rebuilding`
+            );
+            continue;
+          }
+          throw err;
+        }
+      }
+    });
+  }
+
+  // Single submission attempt: fetch the account, build, simulate, sign,
+  // submit, and poll to a terminal status. Callers hold the account lock.
+  private async submitInvocation(
+    contractId: string,
+    method: string,
+    args: xdr.ScVal[],
+    signerKeypair: Keypair
+  ): Promise<any> {
+    const contract = new Contract(contractId);
     const sourceAccount = await this.server.getAccount(signerKeypair.publicKey());
 
     const tx = new TransactionBuilder(sourceAccount, {
@@ -111,7 +179,18 @@ export class SorobanClient {
     const sendResult = await this.server.sendTransaction(bumped);
 
     if (sendResult.status === "ERROR") {
-      throw new Error(`Send failed for ${method}: ${JSON.stringify(sendResult)}`);
+      // Surface the transaction-level result code (e.g. txBadSeq) in the
+      // message — the retry logic matches on it, and JSON.stringify does not
+      // reliably render the XDR union's discriminant.
+      let code = "";
+      try {
+        code = (sendResult as any).errorResult?.result().switch().name ?? "";
+      } catch {
+        // leave code empty — the raw payload below still identifies the failure
+      }
+      throw new Error(
+        `Send failed for ${method}: code=${code} ${JSON.stringify(sendResult)}`
+      );
     }
 
     // Poll for completion

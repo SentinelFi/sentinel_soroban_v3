@@ -149,11 +149,11 @@ fn preemptive_cancellation_blocks_all_purchases_without_jamming_protocol() {
     }
 
     // No policies → no pending PnL: the vault's settlement barrier stays
-    // lifted and LPs can still enter.
+    // lifted and LP entries still price through the queue.
     assert!(!t.oracle.has_pending_outcomes());
     let lp = Address::generate(&t.env);
     t.asset_admin.mint(&lp, &DEPOSIT_AMOUNT);
-    t.vault.deposit(&DEPOSIT_AMOUNT, &lp, &lp, &lp);
+    assert!(t.lp_deposit(&lp, DEPOSIT_AMOUNT) > 0);
 
     // Keeper cycles run clean and an unrelated flight completes its full
     // cancelled lifecycle alongside the tombstoned one.

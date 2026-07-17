@@ -65,10 +65,13 @@ fn setup() -> TestEnv {
     vault.set_controller(&controller);
     pool.set_controller(&controller);
 
-    // Seed vault with asset liquidity (mint then deposit through vault as a fake underwriter)
+    // Seed vault with asset liquidity via the two-phase entry (request,
+    // mature past the pricing delay, process as the controller).
     let underwriter = Address::generate(&env);
     asset_admin_client.mint(&underwriter, &VAULT_LIQUIDITY);
-    vault.deposit(&VAULT_LIQUIDITY, &underwriter, &underwriter, &underwriter);
+    vault.request_deposit(&underwriter, &VAULT_LIQUIDITY);
+    env.ledger().with_mut(|l| l.timestamp += 6 * 3_600);
+    vault.process_deposit_queue(&controller);
 
     // Pre-fund buyers with enough asset to pay premiums; they'll transfer to pool in tests
     asset_admin_client.mint(&buyer1, &(PREMIUM * 10));

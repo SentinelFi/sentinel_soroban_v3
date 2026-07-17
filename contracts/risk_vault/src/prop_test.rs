@@ -11,19 +11,22 @@
 //!    never under-collect (withdraw), ceil ≥ floor, and monotonicity.
 //!
 //! 2. **Stateful invariant machine** — random operation sequences against a
-//!    real vault (deposits, exits, queue lifecycle, controller capital ops,
-//!    ratio changes, donations, settlement-barrier flips), asserting the
-//!    full invariant block after EVERY op — not just at chosen checkpoints:
-//!    solvency (`locked ≤ TMA`), the reserve-aware withdrawable formula,
-//!    asset conservation (`balance == TMA + Σclaimable + donations`), share
-//!    supply/escrow accounting, queue caps, and share-price monotonicity
-//!    (rounding must always favor the vault, so no LP-driven op may ever
-//!    lower the price for remaining holders — only a settlement, which
-//!    recognizes losses, may). Payouts appear as the controller performs
-//!    them — paired with their collateral unlock in one action — because
-//!    `send_payout` alone transiently suspends `locked ≤ TMA` inside the
-//!    controller's atomic settlement; the vault's guarantee (and this
-//!    suite's assertion) is at controller-action granularity.
+//!    real vault (two-phase entry/exit requests and cancellations, both
+//!    queue-processing passes, time advancement across the pricing delay,
+//!    controller capital ops, ratio changes, donations, settlement-barrier
+//!    flips, and disabled-direct-op probes), asserting the full invariant
+//!    block after EVERY op — not just at chosen checkpoints: solvency
+//!    (`locked ≤ TMA`), the reserve-aware withdrawable formula, asset
+//!    conservation (`balance == TMA + Σclaimable + Σdeposit_escrow +
+//!    donations`), share supply/escrow accounting, queue caps, and
+//!    share-price monotonicity (rounding must always favor the vault, so no
+//!    LP-driven op may ever lower the price for remaining holders — only a
+//!    settlement, which recognizes losses, may). Payouts appear as the
+//!    controller performs them — paired with their collateral unlock in one
+//!    action — because `send_payout` alone transiently suspends
+//!    `locked ≤ TMA` inside the controller's atomic settlement; the vault's
+//!    guarantee (and this suite's assertion) is at controller-action
+//!    granularity.
 //!
 //! Deliberately out of scope: `recover_uncollected`. Its two modes
 //! re-classify untracked surplus into liabilities by owner judgment, which
@@ -39,7 +42,7 @@ use std::vec::Vec as StdVec;
 
 use proptest::prelude::*;
 use sentinel_types::test_support::{MockPendingOracle, MockPendingOracleClient};
-use soroban_sdk::testutils::EnvTestConfig;
+use soroban_sdk::testutils::{EnvTestConfig, Ledger};
 use soroban_sdk::{testutils::Address as _, token, Address, Env};
 use stellar_contract_utils::math::Rounding;
 use stellar_tokens::fungible::Base;
@@ -197,27 +200,28 @@ proptest! {
 const NUM_USERS: usize = 3;
 /// Per-user starting balance: 10M asset units at 7 decimals.
 const INITIAL_ASSET: i128 = 10_000_000_0000000;
-/// Queue cap mirrored from the contract constants.
-const QUEUE_CAP: u32 = 250;
+/// Queue caps mirrored from the contract constants. The AdvanceTime op's
+/// range straddles the 6-hour pricing delay so sequences exercise immature,
+/// just-matured, and long-matured requests.
+const QUEUE_CAP: u32 = 150;
+const DEPOSIT_QUEUE_CAP: u32 = 100;
 const PER_ADDRESS_CAP: u32 = 20;
 
 #[derive(Clone, Debug)]
 enum Op {
-    Deposit {
+    RequestDeposit {
         user: usize,
         amount: i128,
     },
-    Mint {
+    CancelDeposit {
         user: usize,
-        shares: i128,
+        request_id: u64,
     },
-    Withdraw {
+    ProcessDepositQueue,
+    /// Probe: every immediate-pricing operation must reject unconditionally.
+    DirectOpProbe {
         user: usize,
         amount: i128,
-    },
-    Redeem {
-        user: usize,
-        shares: i128,
     },
     TransferShares {
         from: usize,
@@ -235,6 +239,11 @@ enum Op {
     ProcessQueue,
     Collect {
         user: usize,
+    },
+    /// Advance ledger time — requests mature only by crossing the pricing
+    /// delay, so sequences interleave partial and full advances.
+    AdvanceTime {
+        secs: u64,
     },
     IncreaseLocked {
         amount: i128,
@@ -288,10 +297,10 @@ fn amount_strategy() -> impl Strategy<Value = i128> {
 fn op_strategy() -> impl Strategy<Value = Op> {
     let user = 0..NUM_USERS;
     prop_oneof![
-        6 => (user.clone(), amount_strategy()).prop_map(|(user, amount)| Op::Deposit { user, amount }),
-        2 => (user.clone(), amount_strategy()).prop_map(|(user, shares)| Op::Mint { user, shares }),
-        4 => (user.clone(), amount_strategy()).prop_map(|(user, amount)| Op::Withdraw { user, amount }),
-        4 => (user.clone(), amount_strategy()).prop_map(|(user, shares)| Op::Redeem { user, shares }),
+        6 => (user.clone(), amount_strategy()).prop_map(|(user, amount)| Op::RequestDeposit { user, amount }),
+        2 => (user.clone(), 0u64..48).prop_map(|(user, request_id)| Op::CancelDeposit { user, request_id }),
+        5 => Just(Op::ProcessDepositQueue),
+        2 => (user.clone(), amount_strategy()).prop_map(|(user, amount)| Op::DirectOpProbe { user, amount }),
         2 => (user.clone(), user.clone(), amount_strategy())
             .prop_map(|(from, to, amount)| Op::TransferShares { from, to, amount }),
         4 => (user.clone(), amount_strategy())
@@ -299,6 +308,7 @@ fn op_strategy() -> impl Strategy<Value = Op> {
         2 => (user.clone(), 0u64..48).prop_map(|(user, request_id)| Op::CancelWithdrawal { user, request_id }),
         4 => Just(Op::ProcessQueue),
         3 => user.clone().prop_map(|user| Op::Collect { user }),
+        5 => (0u64..=8 * 3600).prop_map(|secs| Op::AdvanceTime { secs }),
         4 => amount_strategy().prop_map(|amount| Op::IncreaseLocked { amount }),
         3 => amount_strategy().prop_map(|amount| Op::DecreaseLocked { amount }),
         3 => amount_strategy().prop_map(|amount| Op::RecordPremium { amount }),
@@ -334,21 +344,30 @@ impl Harness<'_> {
     fn apply(&mut self, op: &Op) {
         let c = &self.client;
         match op {
-            Op::Deposit { user, amount } => {
+            Op::RequestDeposit { user, amount } => {
                 let u = self.user(*user);
-                let _ = c.try_deposit(amount, u, u, u);
+                let _ = c.try_request_deposit(u, amount);
             }
-            Op::Mint { user, shares } => {
-                let u = self.user(*user);
-                let _ = c.try_mint(shares, u, u, u);
+            Op::CancelDeposit { user, request_id } => {
+                let _ = c.try_cancel_deposit(self.user(*user), request_id);
             }
-            Op::Withdraw { user, amount } => {
-                let u = self.user(*user);
-                let _ = c.try_withdraw(amount, u, u, u);
+            Op::ProcessDepositQueue => {
+                let _ = c.try_process_deposit_queue(&self.controller);
             }
-            Op::Redeem { user, shares } => {
-                let u = self.user(*user);
-                let _ = c.try_redeem(shares, u, u, u);
+            Op::DirectOpProbe { user, amount } => {
+                // The immediate-pricing surface is permanently disabled; any
+                // acceptance would reopen stale-price entry/exit.
+                let u = self.user(*user).clone();
+                assert!(c.try_deposit(amount, &u, &u, &u).is_err());
+                assert!(c.try_mint(amount, &u, &u, &u).is_err());
+                assert!(c.try_withdraw(amount, &u, &u, &u).is_err());
+                assert!(c.try_redeem(amount, &u, &u, &u).is_err());
+            }
+            Op::AdvanceTime { secs } => {
+                self.client
+                    .env
+                    .ledger()
+                    .with_mut(|li| li.timestamp += *secs);
             }
             Op::TransferShares { from, to, amount } => {
                 let _ = c.try_transfer(self.user(*from), self.user(*to), amount);
@@ -463,14 +482,17 @@ impl Harness<'_> {
         assert!(withdrawable <= free, "withdrawable above free after {op:?}");
 
         // Conservation: every asset unit the vault holds is either managed
-        // (TMA), owed to a specific user (claimable), or a tracked donation.
+        // (TMA), owed to a specific user (claimable), escrowed for a pending
+        // entry (deposit queue), or a tracked donation.
         let claimable_sum: i128 = self.users.iter().map(|u| c.get_claimable_balance(u)).sum();
+        let dep_queue = c.get_deposit_queue();
+        let deposit_escrow: i128 = dep_queue.iter().map(|r| r.assets).sum();
         let balance = self.asset.balance(&self.client.address);
         assert_eq!(
             balance,
-            tma + claimable_sum + self.donated,
+            tma + claimable_sum + deposit_escrow + self.donated,
             "conservation broken after {op:?}: balance={balance}, tma={tma}, \
-             claimable={claimable_sum}, donated={}",
+             claimable={claimable_sum}, deposit_escrow={deposit_escrow}, donated={}",
             self.donated,
         );
 
@@ -491,13 +513,22 @@ impl Harness<'_> {
             "escrow != queued shares after {op:?}"
         );
 
-        // Queue caps hold at all times.
+        // Queue caps hold at all times, on both queues.
         assert!(queue.len() <= QUEUE_CAP, "queue over cap after {op:?}");
+        assert!(
+            dep_queue.len() <= DEPOSIT_QUEUE_CAP,
+            "deposit queue over cap after {op:?}"
+        );
         for u in &self.users {
             let own = queue.iter().filter(|r| r.owner == *u).count() as u32;
             assert!(
                 own <= PER_ADDRESS_CAP,
                 "per-address queue cap broken after {op:?}"
+            );
+            let own_dep = dep_queue.iter().filter(|r| r.owner == *u).count() as u32;
+            assert!(
+                own_dep <= PER_ADDRESS_CAP,
+                "per-address deposit queue cap broken after {op:?}"
             );
         }
 

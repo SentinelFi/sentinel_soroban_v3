@@ -30,6 +30,7 @@ pub trait VaultInterface {
     fn record_premium_income(env: &Env, controller: Address, amount: i128);
     fn send_payout(env: &Env, controller: Address, to: Address, amount: i128);
     fn process_withdrawal_queue(env: &Env, controller: Address);
+    fn process_deposit_queue(env: &Env, controller: Address);
     fn set_solvency_ratio(env: &Env, controller: Address, ratio: u32);
     fn snapshot(env: &Env);
 }

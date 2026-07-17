@@ -8,6 +8,10 @@ pub enum VaultKey {
     TotalManagedAssets,
     LockedCapital,
     WithdrawalQueue,
+    // FIFO queue of pending LP entries (escrowed assets awaiting delayed
+    // pricing) — the entry-side mirror of WithdrawalQueue. Shares the same
+    // NextRequestId counter, so request ids are unique across both queues.
+    DepositQueue,
     NextRequestId,
     LastSnapshotTime,
     // OracleAggregator address, wired at construction (owner-rotatable via
@@ -37,16 +41,34 @@ pub enum VaultKey {
     SnapshotPrice(u64),
 }
 
-// No timestamp field: request time is never read on-chain (the queue is
-// strict-FIFO by position, not by age) and the `wd_req` event already
-// timestamps each request via its ledger. Omitting it keeps the size-capped
-// single-entry queue as small as possible.
+// `requested_at` is load-bearing: a request may only be priced once it is
+// older than the LP pricing delay, so the share price it receives already
+// reflects every flight outcome that was publicly knowable when the request
+// was committed. Without the age gate, an LP who learns an outcome before
+// the oracle transaction lands could exit (or enter) at the stale
+// pre-outcome price and shift the known loss (or gain) to the other LPs —
+// the on-chain settlement barrier only activates once the outcome is
+// written, which is strictly after it becomes publicly knowable.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct WithdrawalRequest {
     pub request_id: u64,
     pub owner: Address,
     pub shares: i128,
+    pub requested_at: u64,
+}
+
+/// A pending LP entry: `assets` sit escrowed in the vault (excluded from
+/// managed assets) until the request matures past the LP pricing delay and
+/// queue processing mints shares at the then-current — post-outcome — share
+/// price. See `WithdrawalRequest` on why pricing is delayed.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DepositRequest {
+    pub request_id: u64,
+    pub owner: Address,
+    pub assets: i128,
+    pub requested_at: u64,
 }
 
 /// Mode for `recover_uncollected` — owner-driven manual recovery of an

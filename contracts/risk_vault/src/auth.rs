@@ -32,14 +32,3 @@ pub(crate) fn settlement_pending(e: &Env) -> bool {
         .expect("oracle not set");
     OracleClient::new(e, &oracle).has_pending_outcomes()
 }
-
-/// Block LP entry/exit while pending PnL is unrecognized. Pricing a deposit,
-/// mint, withdraw, or redeem while a flight outcome is public but unsettled would
-/// let an LP take the pre-outcome share price and shift the pending gain/loss to
-/// the other LPs. During such windows LPs must use `request_withdrawal`, which is
-/// priced only when the queue is processed after settlement.
-pub(crate) fn assert_no_settlement_pending(e: &Env) {
-    if settlement_pending(e) {
-        panic_with_error!(e, Error::SettlementPending);
-    }
-}
