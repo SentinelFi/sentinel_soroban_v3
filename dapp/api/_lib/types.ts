@@ -17,12 +17,16 @@ export interface TTLResult {
 
 // audit M-03 split queue maintenance out of settlement; queue_maintainer
 // is a Phase 3 addition not present in the phase-2 executor.
+// sale_authorizer ports the executor's cron #0 (sale-window attestation);
+// route_agent is the daily ML-pricing + weather governance agent.
 export type JobName =
   | "fetcher"
   | "classifier"
   | "settler"
   | "queue_maintainer"
-  | "ttl_extender";
+  | "ttl_extender"
+  | "sale_authorizer"
+  | "route_agent";
 
 export interface RunLogEntry {
   timestamp: string;
@@ -86,7 +90,21 @@ export interface Config {
   oracleSecretKey: string;
   keeperSecretKey: string;
   ttlExtenderSecretKey: string;
+  // Governance agent key (4th identity) — a GovernanceModule ADMIN, never
+  // the owner. Only the route_agent job and the whitelist script need it,
+  // so it is optional here and enforced at job start.
+  governanceAdminSecretKey?: string;
   // AeroAPI.
   aeroApiBaseUrl: string;
   aeroApiKey: string;
+  // Sale authorization (cron #0). Horizon defaults come from
+  // config/routes.testnet.json; env overrides win.
+  saleAuthHorizonDays: number;
+  saleAuthValiditySecs: number;
+  // ML pricing agent (Render-hosted FastAPI). Optional — route_agent falls
+  // back to the routes-file terms when unset or unreachable.
+  agentBaseUrl?: string;
+  agentToken?: string;
+  // Weather (Open-Meteo, keyless).
+  weatherBaseUrl: string;
 }

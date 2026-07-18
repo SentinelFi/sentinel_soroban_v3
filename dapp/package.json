@@ -11,7 +11,8 @@
     "build": "tsc -b && vite build",
     "install:contracts": "npm install --workspaces && npm run build --workspaces --if-present",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "whitelist:routes": "tsx scripts/whitelist_routes.ts"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^1.9.5",

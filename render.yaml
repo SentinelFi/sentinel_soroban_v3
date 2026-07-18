@@ -1,0 +1,23 @@
+services:
+  # Python ML pricing service — the one piece that cannot live in Vercel
+  # (xgboost + sklearn + pandas exceed serverless size limits). Everything
+  # else (frontend + all crons) deploys as the single Vercel project in
+  # dapp/.
+  - type: web
+    name: sentinel-pricing-agent
+    runtime: python
+    rootDir: agent
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: AGENT_MARGIN
+        value: "1.3"
+      - key: AGENT_PREMIUM_MIN
+        value: "10"
+      - key: AGENT_PREMIUM_MAX
+        value: "100"
+      - key: AGENT_TOKEN
+        sync: false

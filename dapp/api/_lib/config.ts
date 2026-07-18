@@ -50,9 +50,27 @@ export function loadConfig(): Config {
     oracleSecretKey: requireEnv("ORACLE_SECRET_KEY"),
     keeperSecretKey: requireEnv("KEEPER_SECRET_KEY"),
     ttlExtenderSecretKey: requireEnv("TTL_EXTENDER_SECRET_KEY"),
+    // Optional 4th identity: GovernanceModule admin for the route agent
+    // and the whitelist script. Never the owner key.
+    governanceAdminSecretKey: process.env.GOVERNANCE_ADMIN_SECRET_KEY || undefined,
     aeroApiBaseUrl: envOrDefault("AEROAPI_BASE_URL"),
     aeroApiKey: process.env.AEROAPI_KEY ?? "",
+    // Sale authorization. 0/unset horizon falls back to the routes file's
+    // sale_horizon_days at job start.
+    saleAuthHorizonDays: parsePositiveInt(process.env.SALE_AUTH_HORIZON_DAYS, 0),
+    saleAuthValiditySecs: Math.min(
+      parsePositiveInt(process.env.SALE_AUTH_VALIDITY_SECS, 21_600), // 6h
+      86_400 // on-chain cap — larger values would revert every open_sale
+    ),
+    agentBaseUrl: process.env.AGENT_BASE_URL || undefined,
+    agentToken: process.env.AGENT_TOKEN || undefined,
+    weatherBaseUrl: process.env.WEATHER_BASE_URL ?? "https://api.open-meteo.com/v1/forecast",
   };
+}
+
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
 /**

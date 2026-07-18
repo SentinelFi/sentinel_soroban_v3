@@ -10,6 +10,7 @@
        so extensionless relative imports resolve the same way as in src/. */
     "module": "esnext",
     "moduleResolution": "bundler",
+    "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
@@ -22,5 +23,5 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["api"]
+  "include": ["api", "scripts", "config"]
 }

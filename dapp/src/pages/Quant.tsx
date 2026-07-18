@@ -142,6 +142,7 @@ interface McResult {
 	median: number
 	mean: number
 	var5: number
+	p95: number
 	pProfit: number
 	minNet: number
 	maxNet: number
@@ -150,22 +151,31 @@ interface McResult {
 function runMonteCarlo(
 	travelers: number,
 	onTimePct: number,
+	uncertaintyPp: number,
 	premium: number,
 	payout: number,
 	runs: number,
 ): McResult {
 	const pDelay = 1 - onTimePct / 100
+	const pSpread = uncertaintyPp / 100
 	const premiums = travelers * premium
 	// deterministic seed from all inputs → stable across renders
 	const rng = mulberry32(
-		hashInputs(travelers, onTimePct, premium, payout, runs),
+		hashInputs(travelers, onTimePct, uncertaintyPp, premium, payout, runs),
 	)
 	const nets: number[] = new Array(runs)
 	for (let i = 0; i < runs; i++) {
-		// sample delayed count ~ Binomial(travelers, pDelay)
+		// parameter uncertainty: each month's true delay rate is itself
+		// uncertain — draw p ~ Uniform(pDelay ± spread), clamped to [0, 1]
+		// (from the yield_analysis Monte Carlo; spread 0 = old behaviour)
+		const p = Math.min(
+			1,
+			Math.max(0, pDelay + (2 * rng() - 1) * pSpread),
+		)
+		// sample delayed count ~ Binomial(travelers, p)
 		let delayed = 0
 		for (let j = 0; j < travelers; j++) {
-			if (rng() < pDelay) delayed++
+			if (rng() < p) delayed++
 		}
 		nets[i] = premiums - delayed * payout
 	}
@@ -175,6 +185,7 @@ function runMonteCarlo(
 	const median = pct(0.5)
 	const mean = nets.reduce((s, v) => s + v, 0) / runs
 	const var5 = pct(0.05)
+	const p95 = pct(0.95)
 	const pProfit = nets.filter((v) => v >= 0).length / runs
 	const minNet = sorted[0]
 	const maxNet = sorted[sorted.length - 1]
@@ -196,7 +207,7 @@ function runMonteCarlo(
 		buckets[idx].count++
 	}
 
-	return { nets, buckets, median, mean, var5, pProfit, minNet, maxNet }
+	return { nets, buckets, median, mean, var5, p95, pProfit, minNet, maxNet }
 }
 
 /* ── histogram (inline SVG) ───────────────────────────────────────── */
@@ -309,8 +320,10 @@ export default function Quant() {
 
 	const [travelers, setTravelers] = useState(100)
 	const [onTimePct, setOnTimePct] = useState(80)
+	const [uncertainty, setUncertainty] = useState(0)
 	const [premium, setPremium] = useState(50)
 	const [payout, setPayout] = useState(400)
+	const [capital, setCapital] = useState(100000)
 	const [runs, setRuns] = useState(2000)
 
 	// deterministic readout (unchanged EV model)
@@ -321,9 +334,10 @@ export default function Quant() {
 
 	// monte carlo — memoized on inputs so a drag recomputes once per value
 	const mc = useMemo(
-		() => runMonteCarlo(travelers, onTimePct, premium, payout, runs),
-		[travelers, onTimePct, premium, payout, runs],
+		() => runMonteCarlo(travelers, onTimePct, uncertainty, premium, payout, runs),
+		[travelers, onTimePct, uncertainty, premium, payout, runs],
 	)
+	const yieldPct = (mc.mean / capital) * 100
 
 	return (
 		<div className="mx-auto max-w-5xl space-y-8 px-4 py-8">
@@ -364,6 +378,14 @@ export default function Quant() {
 						readout={`${onTimePct}%`}
 					/>
 					<Slider
+						label={t.quant.leverUncertainty}
+						value={uncertainty}
+						min={0}
+						max={15}
+						onChange={setUncertainty}
+						readout={`±${uncertainty}pp`}
+					/>
+					<Slider
 						label={t.quant.leverPremium}
 						value={premium}
 						min={10}
@@ -379,6 +401,15 @@ export default function Quant() {
 						step={10}
 						onChange={setPayout}
 						readout={`$${payout}`}
+					/>
+					<Slider
+						label={t.quant.leverCapital}
+						value={capital}
+						min={10000}
+						max={1000000}
+						step={10000}
+						onChange={setCapital}
+						readout={usd(capital)}
 					/>
 					<Slider
 						label={t.quant.leverRuns}
@@ -423,7 +454,7 @@ export default function Quant() {
 					</div>
 
 					{/* stat cards */}
-					<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+					<div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
 						<StatCard
 							label={t.quant.statMedian}
 							value={usd(mc.median)}
@@ -443,10 +474,22 @@ export default function Quant() {
 							tone={mc.var5 >= 0 ? "ink" : "loss"}
 						/>
 						<StatCard
+							label={t.quant.statP95}
+							value={usd(mc.p95)}
+							note={t.quant.statP95Note}
+							tone={mc.p95 >= 0 ? "win" : "loss"}
+						/>
+						<StatCard
 							label={t.quant.statProfit}
 							value={`${Math.round(mc.pProfit * 100)}%`}
 							note={t.quant.statProfitNote}
 							tone={mc.pProfit >= 0.5 ? "win" : "gold"}
+						/>
+						<StatCard
+							label={t.quant.statYield}
+							value={`${yieldPct >= 0 ? "" : "-"}${Math.abs(yieldPct).toFixed(1)}%`}
+							note={t.quant.statYieldNote}
+							tone={yieldPct >= 0 ? "gold" : "loss"}
 						/>
 					</div>
 				</section>
