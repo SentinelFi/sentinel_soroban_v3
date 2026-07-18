@@ -33,4 +33,5 @@ pub enum Error {
     DirectEntryDisabled = 727,
     DirectExitDisabled = 728,
     DepositQueueFull = 729,
+    OracleActiveExposureUnreconciled = 730,
 }

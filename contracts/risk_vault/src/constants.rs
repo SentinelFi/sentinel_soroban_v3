@@ -52,16 +52,22 @@ pub(crate) const MAX_DEPOSIT_QUEUE_LEN: u32 = 100;
 /// and starving other underwriters' exits.
 pub(crate) const MAX_ACTIVE_REQUESTS_PER_ADDRESS: u32 = 20;
 
-/// Runtime clamp on the owner-configured minimum withdrawal-request value:
-/// the effective floor is `min(configured, TMA / MIN_REQUEST_FLOOR_DIVISOR)`.
-/// Owner setters are bounded by convention — without the clamp, a mistaken or
-/// hostile configuration could block queue admission entirely. With it, no
-/// configured value can exclude a position above 1/2500 (0.04%) of the vault,
-/// while slot occupation stays expensive: filling all
-/// `MAX_WITHDRAWAL_QUEUE_LEN` slots at the clamped floor still escrows
-/// ~10% of managed assets. Applied at request time (not set time) so the
-/// floor self-scales with the vault and can be configured before the first
-/// deposit.
+/// Runtime clamps on the owner-configured minimum request value. With
+/// `floor_cap = TMA / MIN_REQUEST_FLOOR_DIVISOR`, the effective floor is
+/// `clamp(configured, floor_cap × queue_len / queue_cap, floor_cap)`:
+///  - The upper clamp bounds the owner setter by construction — without it,
+///    a mistaken or hostile configuration could block queue admission
+///    entirely; with it, no configured value can exclude a position above
+///    1/2500 (0.04%) of the vault while a slot is free (the occupancy term
+///    stays strictly below `floor_cap`, so it never breaks this guarantee).
+///  - The occupancy-scaled lower clamp keeps slot squatting expensive even
+///    when the configured minimum is low or unset (the default): an empty
+///    queue admits any non-dust request, but each further slot prices
+///    higher, so pinning the withdrawal queue full escrows ~3% of managed
+///    assets (deposit queue ~2%) with the marginal slot at the full 0.04%,
+///    no matter what the owner configured.
+/// Applied at request time (not set time) so the floor self-scales with the
+/// vault and can be configured before the first deposit.
 pub(crate) const MIN_REQUEST_FLOOR_DIVISOR: i128 = 2500;
 
 /// Bounds on the controller-pushed solvency ratio, mirroring the controller's
