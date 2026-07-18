@@ -1,0 +1,45 @@
+{
+  "$schema_note": "Single human source of truth for insurable routes. Consumed by: scripts/whitelist_routes.ts (governance whitelisting), api/cron/authorize.ts (sale-window attestation list), api/cron/agent.ts (ML/weather repricing rails + human intent). Amounts are human USDC; scripts convert to 7-decimal base units. 'enabled': false = human-disabled — agents will disable it on-chain if needed and will NEVER re-enable it.",
+  "network": "testnet",
+  "defaults": {
+    "premium_usdc": 50,
+    "payoff_usdc": 500,
+    "delay_hours": 3
+  },
+  "rails": {
+    "premium_usdc": { "min": 10, "max": 100 },
+    "payoff_usdc": { "min": 100, "max": 1000 },
+    "max_daily_premium_change_pct": 50,
+    "elevated_weather_multiplier": 1.25
+  },
+  "sale_horizon_days": 7,
+  "routes": [
+    {
+      "flight_id": "AA100",
+      "carrier": "AA",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": { "premium_usdc": 45, "payoff_usdc": 450, "delay_hours": 3 },
+      "notes": "example with per-route term overrides"
+    },
+    {
+      "flight_id": "UA456",
+      "carrier": "UA",
+      "origin": "ORD",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "null overrides = protocol defaults; agent reprices within rails"
+    },
+    {
+      "flight_id": "DL789",
+      "carrier": "DL",
+      "origin": "ATL",
+      "destination": "BOS",
+      "enabled": false,
+      "overrides": null,
+      "notes": "enabled:false = human-disabled; agents never re-enable"
+    }
+  ]
+}

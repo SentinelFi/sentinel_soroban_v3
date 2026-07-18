@@ -1,0 +1,18 @@
+{
+  "installCommand": "npm install && npm run install:contracts",
+  "rewrites": [
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "crons": [
+    { "path": "/api/cron/authorize", "schedule": "30 */2 * * *" },
+    { "path": "/api/cron/fetcher", "schedule": "0 */2 * * *" },
+    { "path": "/api/cron/classify", "schedule": "0 * * * *" },
+    { "path": "/api/cron/settle", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/queue", "schedule": "2-59/5 * * * *" },
+    { "path": "/api/cron/agent", "schedule": "0 6 * * *" },
+    { "path": "/api/cron/ttl", "schedule": "0 0 * * *" }
+  ]
+}

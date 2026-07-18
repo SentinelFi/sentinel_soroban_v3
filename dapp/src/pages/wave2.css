@@ -1,0 +1,331 @@
+/*
+ * Page-scoped styling for the Wave-2 pages (Flight Map + Monte Carlo).
+ * Imported by MarketsGlobe.tsx / Quant.tsx so we don't touch index.css.
+ *
+ * Colours reference the shared theme tokens (--color-*), so the whole thing
+ * re-tints for free when the MODE dock flips fun ↔ serious. Structural theme
+ * differences (pixel vs radar) are branched in the components with useTheme();
+ * this file only carries the shared skeleton + the per-theme skin bolt-ons.
+ *
+ * SERIOUS HAS ZERO PIXEL FONTS: nothing here sets "Press Start 2P" or "VT323".
+ * Figures use .board-figure / --font-board, which serious already overrides to
+ * a clean tabular monospace.
+ */
+
+/* ── globe / map surface ─────────────────────────────────────────── */
+
+.globe-stage {
+	position: relative;
+	width: 100%;
+	aspect-ratio: 4 / 3;
+	overflow: hidden;
+	touch-action: none;
+	cursor: grab;
+	user-select: none;
+	background: var(--color-inset);
+	border: 2px solid var(--color-line);
+}
+.globe-stage.dragging {
+	cursor: grabbing;
+}
+.globe-stage svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+/* fun map: hard border + CRT scanline overlay carried by .scanlines */
+.globe-node-fun {
+	stroke: var(--color-page);
+	stroke-width: 2;
+}
+.globe-node-fun.is-selected {
+	stroke: var(--color-ink);
+	stroke-width: 3;
+}
+.globe-arc-fun {
+	fill: none;
+	stroke-width: 2;
+	stroke-linecap: butt;
+	opacity: 0.5;
+}
+.globe-arc-fun.is-selected {
+	opacity: 1;
+	stroke-width: 3;
+}
+.globe-label-fun {
+	font-family: var(--font-board);
+	font-size: 11px;
+	fill: var(--color-dim);
+	paint-order: stroke;
+	stroke: var(--color-page);
+	stroke-width: 3px;
+}
+.globe-label-fun.is-selected {
+	font-size: 13px;
+	fill: var(--color-ink);
+}
+/* international landmark labels — quieter than market airports */
+.globe-hublabel-fun {
+	font-family: var(--font-board);
+	font-size: 8.5px;
+	fill: var(--color-mute);
+	paint-order: stroke;
+	stroke: var(--color-page);
+	stroke-width: 2.5px;
+	opacity: 0.85;
+}
+
+/* serious map: soft glowing nodes, thin elegant arcs, rounded stage */
+[data-theme="serious"] .globe-stage {
+	border-radius: 16px;
+	border: 1px solid var(--color-line);
+	box-shadow: var(--shadow-soft-md);
+	background:
+		radial-gradient(
+			120% 100% at 50% 0%,
+			rgba(34, 184, 214, 0.06),
+			transparent 60%
+		),
+		var(--color-inset);
+}
+.globe-node-serious {
+	stroke: none;
+}
+.globe-node-serious.is-selected {
+	stroke: var(--color-ink);
+	stroke-width: 2;
+}
+.globe-arc-serious {
+	fill: none;
+	stroke-width: 1.1;
+	stroke-linecap: round;
+	opacity: 0.35;
+}
+.globe-arc-serious.is-selected {
+	opacity: 0.95;
+	stroke-width: 1.8;
+}
+.globe-label-serious {
+	font-family: var(--font-display);
+	font-size: 10px;
+	font-weight: 600;
+	fill: var(--color-mute);
+	paint-order: stroke;
+	stroke: var(--color-page);
+	stroke-width: 2.5px;
+}
+.globe-label-serious.is-selected {
+	font-size: 12px;
+	fill: var(--color-ink);
+}
+/* international landmark labels — quieter than market airports */
+.globe-hublabel-serious {
+	font-family: var(--font-display);
+	font-size: 8px;
+	font-weight: 500;
+	fill: var(--color-mute);
+	paint-order: stroke;
+	stroke: var(--color-page);
+	stroke-width: 2px;
+	opacity: 0.8;
+}
+.globe-graticule {
+	fill: none;
+	stroke: var(--color-line);
+	opacity: 0.5;
+}
+[data-theme="serious"] .globe-graticule {
+	stroke: var(--color-line-mid);
+	opacity: 0.4;
+}
+
+/* ── landmasses ──────────────────────────────────────────────────── */
+
+/* FUN — 8-bit world: chunky muted blue-slate blocks, crisp pixel coastline. */
+.globe-land-fun {
+	fill: #2c3f63;
+	stroke: #5b7bb0;
+	stroke-width: 1;
+	shape-rendering: crispEdges;
+	image-rendering: pixelated;
+}
+
+/* SERIOUS — radar hologram: soft translucent slate, hairline coast, glow. */
+.globe-land-serious {
+	fill: rgba(89, 132, 173, 0.16);
+	stroke: rgba(120, 168, 205, 0.34);
+	stroke-width: 0.5;
+	shape-rendering: geometricPrecision;
+	vector-effect: non-scaling-stroke;
+	filter: drop-shadow(0 0 6px rgba(34, 184, 214, 0.14));
+}
+
+/* base-map hub airports (no open market) — quiet neutral landmarks */
+.globe-hub-fun {
+	fill: var(--color-line-mid);
+	stroke: var(--color-page);
+	stroke-width: 1;
+	shape-rendering: crispEdges;
+	opacity: 0.7;
+}
+.globe-hub-serious {
+	fill: var(--color-mute);
+	opacity: 0.55;
+}
+
+/* ── zoom controls ───────────────────────────────────────────────── */
+.globe-zoom {
+	position: absolute;
+	right: 10px;
+	bottom: 10px;
+	z-index: 2;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.globe-zoom-btn {
+	display: grid;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	font-size: 18px;
+	line-height: 1;
+	color: var(--color-ink);
+	background: var(--color-surface);
+	border: 2px solid var(--color-line);
+	cursor: pointer;
+	user-select: none;
+	transition: background 120ms ease;
+}
+.globe-zoom-btn:hover {
+	background: var(--color-inset);
+}
+[data-theme="serious"] .globe-zoom-btn {
+	border-radius: 8px;
+	border: 1px solid var(--color-line);
+	box-shadow: var(--shadow-soft-md);
+	font-weight: 600;
+}
+
+/* ── tracking status tag (list rows) ─────────────────────────────── */
+.globe-track-tag {
+	font-family: var(--font-board);
+	font-size: 11px;
+	line-height: 1;
+	padding: 2px 5px;
+	border: 1px solid currentColor;
+	letter-spacing: 0.02em;
+	white-space: nowrap;
+}
+.globe-track-tag.is-air {
+	color: var(--color-sky);
+}
+.globe-track-tag.is-cancelled {
+	color: var(--color-loss);
+}
+[data-theme="serious"] .globe-track-tag {
+	font-family: var(--font-display);
+	font-size: 10px;
+	font-weight: 600;
+	border-radius: 999px;
+	padding: 2px 8px;
+}
+
+/* selectable list rows shared skeleton */
+.mkt-row {
+	display: block;
+	width: 100%;
+	text-align: left;
+	border: 2px solid var(--color-line);
+	background: var(--color-surface);
+	padding: 10px 12px;
+	transition:
+		background 120ms ease,
+		border-color 120ms ease;
+}
+.mkt-row + .mkt-row {
+	margin-top: 8px;
+}
+.mkt-row:hover {
+	background: var(--color-raised);
+}
+.mkt-row.is-selected {
+	border-color: var(--color-gold);
+	background: var(--color-raised);
+}
+.mkt-row:focus-visible {
+	outline: 2px solid var(--color-sky);
+	outline-offset: 2px;
+}
+[data-theme="serious"] .mkt-row {
+	border-radius: 12px;
+	border: 1px solid var(--color-line);
+	box-shadow: var(--shadow-soft-sm);
+}
+[data-theme="serious"] .mkt-row.is-selected {
+	border-color: var(--color-highlight);
+}
+
+.mkt-list-scroll {
+	max-height: 460px;
+	overflow-y: auto;
+	padding-right: 4px;
+}
+
+/* legend dots */
+.risk-dot {
+	display: inline-block;
+	width: 12px;
+	height: 12px;
+	border: 2px solid var(--color-page);
+}
+[data-theme="serious"] .risk-dot {
+	border: none;
+	border-radius: 9999px;
+	box-shadow: 0 0 8px currentColor;
+}
+
+/* ── monte-carlo histogram ───────────────────────────────────────── */
+
+.mc-hist {
+	display: block;
+	width: 100%;
+	height: auto;
+}
+.mc-bar-fun {
+	shape-rendering: crispEdges;
+}
+.mc-bar-serious {
+	shape-rendering: geometricPrecision;
+}
+.mc-breakeven-fun {
+	stroke: var(--color-ink);
+	stroke-width: 2;
+	stroke-dasharray: 4 3;
+}
+.mc-breakeven-serious {
+	stroke: var(--color-mute);
+	stroke-width: 1.25;
+	stroke-dasharray: 3 3;
+}
+.mc-axis-label {
+	font-family: var(--font-board);
+	font-size: 11px;
+	fill: var(--color-mute);
+}
+[data-theme="serious"] .mc-axis-label {
+	font-family: var(--font-display);
+}
+
+/* stat cards */
+.mc-stat {
+	border: 2px solid var(--color-line);
+	background: var(--color-surface);
+	padding: 12px 14px;
+}
+[data-theme="serious"] .mc-stat {
+	border-radius: 12px;
+	border: 1px solid var(--color-line);
+	box-shadow: var(--shadow-soft-sm);
+}
