@@ -10,7 +10,7 @@ use stellar_tokens::vault::Vault;
 
 use crate::constants::{
     CLAIMABLE_TTL_LEDGERS, MAX_ACTIVE_REQUESTS_PER_ADDRESS, MAX_DEPOSIT_QUEUE_LEN,
-    MAX_WITHDRAWAL_QUEUE_LEN, MIN_REQUEST_FLOOR_DIVISOR,
+    MAX_WITHDRAWAL_QUEUE_LEN, MIN_REQUEST_FLOOR_CAP_ABS, MIN_REQUEST_FLOOR_DIVISOR,
 };
 use crate::events::{
     Collected, DepositCancelled, DepositRequested, Recovered, WithdrawalCancelled,
@@ -46,17 +46,6 @@ impl RiskVault {
         if managed_convert_to_shares(e, assets, Rounding::Floor) == 0 {
             panic_with_error!(e, Error::AssetsConvertToZeroShares);
         }
-        // Same anti-squatting floor as the withdrawal queue: each slot of the
-        // bounded queue must carry meaningful escrowed value (see
-        // request_withdrawal / MIN_REQUEST_FLOOR_DIVISOR).
-        let floor_cap = Self::get_total_managed_assets(e)
-            .checked_div(MIN_REQUEST_FLOOR_DIVISOR)
-            .expect("division by zero");
-        let effective_min = Self::get_min_withdrawal_request(e).min(floor_cap);
-        if assets < effective_min {
-            panic_with_error!(e, Error::RequestBelowMinimum);
-        }
-
         let mut queue: Vec<DepositRequest> = e
             .storage()
             .instance()
@@ -64,6 +53,28 @@ impl RiskVault {
             .unwrap_or(Vec::new(e));
         if queue.len() >= MAX_DEPOSIT_QUEUE_LEN {
             panic_with_error!(e, Error::DepositQueueFull);
+        }
+        // Same anti-squatting floor as the withdrawal queue: each slot of the
+        // bounded queue must carry meaningful escrowed value, with the
+        // occupancy-scaled lower bound keeping slots expensive even when the
+        // configured minimum is low or unset (see request_withdrawal /
+        // MIN_REQUEST_FLOOR_DIVISOR). The absolute floor on the cap keeps
+        // both protections alive at near-zero TMA (see
+        // MIN_REQUEST_FLOOR_CAP_ABS).
+        let floor_cap = Self::get_total_managed_assets(e)
+            .checked_div(MIN_REQUEST_FLOOR_DIVISOR)
+            .expect("division by zero")
+            .max(MIN_REQUEST_FLOOR_CAP_ABS);
+        let occupancy_floor = floor_cap
+            .checked_mul(queue.len() as i128)
+            .expect("multiplication overflow")
+            .checked_div(MAX_DEPOSIT_QUEUE_LEN as i128)
+            .expect("division by zero");
+        let effective_min = Self::get_min_withdrawal_request(e)
+            .min(floor_cap)
+            .max(occupancy_floor);
+        if assets < effective_min {
+            panic_with_error!(e, Error::RequestBelowMinimum);
         }
         let mut own_count: u32 = 0;
         for i in 0..queue.len() {
@@ -175,21 +186,6 @@ impl RiskVault {
         if preview <= 0 {
             panic_with_error!(e, Error::SharesRedeemToZeroAssets);
         }
-        // Enforce the owner-configured minimum request value: each slot of the
-        // bounded queue must carry meaningful escrowed capital, or one actor
-        // could cheaply occupy every slot via many small requests spread
-        // across addresses. The floor is clamped to a small fraction of
-        // managed assets so no configuration — mistaken or hostile — can
-        // exclude ordinary positions from the queue (see
-        // MIN_REQUEST_FLOOR_DIVISOR).
-        let floor_cap = Self::get_total_managed_assets(e)
-            .checked_div(MIN_REQUEST_FLOOR_DIVISOR)
-            .expect("division by zero");
-        let effective_min = Self::get_min_withdrawal_request(e).min(floor_cap);
-        if preview < effective_min {
-            panic_with_error!(e, Error::RequestBelowMinimum);
-        }
-
         let mut queue: Vec<WithdrawalRequest> = e
             .storage()
             .instance()
@@ -200,6 +196,36 @@ impl RiskVault {
         // contract-instance entry-size limit and become unwritable.
         if queue.len() >= MAX_WITHDRAWAL_QUEUE_LEN {
             panic_with_error!(e, Error::WithdrawalQueueFull);
+        }
+        // Enforce the request-value floor: each slot of the bounded queue must
+        // carry meaningful escrowed capital, or one actor could cheaply occupy
+        // every slot via many small requests spread across addresses. Two
+        // clamps shape the owner-configured minimum (MIN_REQUEST_FLOOR_DIVISOR):
+        //  - from above, TMA/2500, so no configuration — mistaken or hostile —
+        //    can exclude ordinary positions from the queue;
+        //  - from below, that same cap scaled by current occupancy, so a low
+        //    or unset configuration cannot make slots free to squat: an empty
+        //    queue admits any non-dust request, but each further slot prices
+        //    higher, and pinning the queue full escrows a material fraction
+        //    of managed assets no matter what the owner configured.
+        // Both clamps are value-relative, so the cap itself is floored by an
+        // absolute constant — otherwise near-zero TMA (launch, severe
+        // drawdown) would zero every protection at once and make slots free
+        // (see MIN_REQUEST_FLOOR_CAP_ABS).
+        let floor_cap = Self::get_total_managed_assets(e)
+            .checked_div(MIN_REQUEST_FLOOR_DIVISOR)
+            .expect("division by zero")
+            .max(MIN_REQUEST_FLOOR_CAP_ABS);
+        let occupancy_floor = floor_cap
+            .checked_mul(queue.len() as i128)
+            .expect("multiplication overflow")
+            .checked_div(MAX_WITHDRAWAL_QUEUE_LEN as i128)
+            .expect("division by zero");
+        let effective_min = Self::get_min_withdrawal_request(e)
+            .min(floor_cap)
+            .max(occupancy_floor);
+        if preview < effective_min {
+            panic_with_error!(e, Error::RequestBelowMinimum);
         }
         // Bound how many pending requests one address may hold, so a single
         // underwriter can't monopolize the queue and starve others.
@@ -386,9 +412,18 @@ impl RiskVault {
                 // restore always fits (its asset is still part of the
                 // surplus); only a mis-keyed amount is rejected. The bound is
                 // a floor, not exact accounting: other users' uncollected
-                // credits also sit in the surplus, so it cannot catch every
-                // overpay — but it caps the damage at value already owed to
-                // users, never asset backing shares. Escrowed deposit-queue
+                // credits also sit in the surplus, so it cannot catch an
+                // overpay that overlaps them — if both parties later collect,
+                // the shortfall falls on the asset backing shares. Exact
+                // aggregate accounting is not achievable on-chain: archived
+                // entries are neither enumerable nor measurable (restoring
+                // them is this function's purpose), so any liability counter
+                // either misses them or double-counts their restore. The
+                // guard therefore caps the MAGNITUDE of owner error at the
+                // total already owed to users, and the event trail
+                // (credited / collected / recovered) is the authoritative
+                // ledger the owner must reconcile against before recrediting.
+                // Escrowed deposit-queue
                 // assets also sit in the raw balance without backing shares,
                 // and they are owed back to their requesters — subtract them
                 // so a mis-keyed recredit can never be satisfied out of

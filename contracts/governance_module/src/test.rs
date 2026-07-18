@@ -41,8 +41,9 @@ fn route_ids() -> (Symbol, Symbol, Symbol) {
     )
 }
 
-// Count events on `addr` whose first TWO topics match (`prefix0`, `prefix1`).
-// Governance events use the 2-element prefix scheme (e.g. ["route", "listed"]).
+// Count events on `addr` whose first two topics are ("sentinel", verb).
+// Governance events use a 2-symbol prefix with the action folded into the
+// second symbol (e.g. ["sentinel", "route_listed"]).
 //
 // IMPORTANT: `env.events().all()` returns events only from the MOST RECENT
 // contract invocation. Call this helper IMMEDIATELY after the emitting call,
@@ -450,6 +451,18 @@ fn test_pause_gates_writes_but_not_protective_reads() {
         .try_disable_route(&owner, &flight_id, &origin, &dest)
         .is_err());
     assert!(client.try_add_admin(&Address::generate(&env)).is_err());
+
+    // Revocation stays available while paused — remove_admin only removes
+    // authority, and an incident response plausibly needs to revoke a
+    // compromised admin key with the module already paused (same convention
+    // as the oracle's pause-exempt close_sale).
+    let doomed = Address::generate(&env);
+    client.unpause(&owner);
+    client.add_admin(&doomed);
+    assert!(client.is_admin(&doomed));
+    client.pause(&owner);
+    client.remove_admin(&doomed);
+    assert!(!client.is_admin(&doomed));
 
     // The reads purchases flow through stay open — route_status is
     // deliberately pause-exempt (its TTL renewals and index self-heal are

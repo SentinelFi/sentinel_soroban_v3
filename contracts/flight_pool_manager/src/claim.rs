@@ -1,5 +1,4 @@
 use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, Symbol};
-use stellar_macros::when_not_paused;
 
 use crate::auth::extend_instance_ttl;
 use crate::constants::BUYER_TTL_LEDGERS;
@@ -79,7 +78,17 @@ impl FlightPoolManager {
 
     /// After claim_expiry, credit unclaimed payouts to RecoveredBalance.
     /// Idempotent: subsequent calls find unclaimed == 0 and return.
-    #[when_not_paused]
+    ///
+    /// Intentionally NOT `#[when_not_paused]`, for the same reason as `claim`:
+    /// this path's effective deadline runs on the ledger clock, which keeps
+    /// advancing during a pause. The FlightConfig TTL is sized to claim_expiry
+    /// plus a fixed buffer, and after expiry no claim can renew it — sweeping
+    /// is the last routine on-chain touch before the entry archives, so a
+    /// pause outlasting that buffer would strand the unclaimed obligation
+    /// outside RecoveredBalance until a manual storage restore. Sweeping is
+    /// permissionless, idempotent, and accounting-only (no token moves — the
+    /// transfer lives in the still pause-gated, owner-only
+    /// `withdraw_recovered`), so keeping it open grants no privilege.
     pub fn sweep_expired(e: &Env, flight_id: Symbol, date: u64) {
         let cfg_key = PoolKey::FlightConfig(flight_id.clone(), date);
         let mut cfg: FlightConfig = e

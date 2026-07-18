@@ -48,8 +48,8 @@ The estimated arrival time must be the published schedule (AeroAPI `scheduled_in
 
 Called by the authorized oracle executor:
 
-- `set_estimated_arrival`: records the scheduled arrival and activates the flight.
-- `set_landed`: records the actual arrival time.
+- `set_estimated_arrival`: records the scheduled arrival and activates the flight. Rejects zero, pre-departure-day, and implausibly late (past `date + 3 days`) timestamps — the bounds a unit-confused (e.g. millisecond-scale) value could never pass.
+- `set_landed`: records the actual arrival time. Same validation shape with a `date + 30 days` ceiling.
 - `set_cancelled`: marks a cancellation (and deletes any live sale authorization for the flight).
 - `open_sale(flight_id, date, expires_at)`: opens or refreshes the sale window — the oracle's short-lived attestation (at most 24 hours, never past the departure day) that the flight instance was verified scheduled and not cancelled. The Controller requires a live window for every purchase.
 - `close_sale(flight_id, date)`: revokes a sale window ahead of its expiry. Deliberately works even while the contract is paused — already-open windows keep authorizing purchases through the Controller for up to 24 hours regardless of the oracle's pause state, so the revoking write must stay available during incidents.
@@ -66,6 +66,7 @@ Called by the authorized oracle executor:
 ## Owner edge path
 
 - `evict_missing_flight`: removes a flight whose data never arrived, paired with a Controller-side `settle_evicted_flight` to unwind its policies.
+- `set_oracle(new_oracle)`: rotates the authorized oracle executor key. Outstanding sale windows survive the rotation (they are not enumerable on-chain), so a rotation performed as a compromise response must be followed by a `close_sale` sweep over every window still open — reconstructed from the sale events — or a Controller pause for the 24-hour validity horizon.
 
 ## Reads
 

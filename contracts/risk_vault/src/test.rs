@@ -660,6 +660,19 @@ fn test_solvency_reserve_bounds_withdrawable_capital() {
 }
 
 #[test]
+fn test_withdrawable_capital_zero_when_reserve_exceeds_assets() {
+    // A ratio raised after capital was locked can push the required reserve
+    // above TMA (1000 deposited, 600 locked, 200% ratio → 1200 required).
+    // The query must clamp to zero, not error, so exit paths stay callable.
+    let (env, client, _owner, controller, depositor) = setup();
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
+    client.increase_locked(&controller, &600_0000000);
+    client.set_solvency_ratio(&controller, &200);
+
+    assert_eq!(client.get_withdrawable_capital(), 0);
+}
+
+#[test]
 fn test_queue_processing_holds_back_solvency_reserve() {
     // Queued exits are funded only from capital above the configured
     // reserve: the head partial-fills to that bound and the remainder waits
@@ -711,6 +724,29 @@ fn test_set_oracle_refuses_while_outcomes_pending() {
 
     // Once the pending PnL is settled, the routine rotation proceeds.
     mock.set_pending_outcomes(&false);
+    client.set_oracle(&new_oracle);
+    assert_eq!(client.get_oracle(), Some(new_oracle));
+}
+
+#[test]
+fn test_set_oracle_refuses_while_capital_is_locked() {
+    // Locked collateral means policies are outstanding whose outcomes will
+    // surface on the OLD oracle's settlement pipeline. A replacement oracle
+    // starts blind to those flights, so rotating before they settle would
+    // leave the barrier open through their future public-but-unsettled
+    // windows even though nothing is pending at the instant of rotation.
+    let (env, client, _owner, controller, depositor) = setup();
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
+    client.increase_locked(&controller, &400_0000000);
+
+    let new_oracle = env.register(MockPendingOracle, ());
+    let old_oracle = client.get_oracle().unwrap();
+    // No outcome is public yet — only the locked-exposure check can refuse.
+    assert!(client.try_set_oracle(&new_oracle).is_err());
+    assert_eq!(client.get_oracle(), Some(old_oracle));
+
+    // Settlement releases the collateral; rotation then proceeds.
+    client.decrease_locked(&controller, &400_0000000);
     client.set_oracle(&new_oracle);
     assert_eq!(client.get_oracle(), Some(new_oracle));
 }
@@ -839,6 +875,70 @@ fn test_min_request_floor_enforced_on_both_queues() {
     let id = client.request_withdrawal(&depositor, &small_shares);
     client.cancel_withdrawal(&depositor, &id);
     assert!(client.try_set_min_withdrawal_request(&-1).is_err());
+}
+
+#[test]
+fn test_occupancy_floor_blocks_cheap_queue_squatting() {
+    // With the owner minimum unset (the default 0), slot occupation must
+    // still cost escrow that scales with queue depth: an empty queue admits
+    // a small request, but once slots are taken the occupancy-scaled
+    // protocol floor prices dust out, so near-zero capital spread across
+    // sybil addresses can no longer pin the bounded queues shut.
+    let (env, client, _owner, controller, depositor) = setup();
+    // 10,000-asset vault → floor_cap = TMA/2500 = 4 assets; the occupancy
+    // floor at queue length L is 4 × L/150 assets (withdrawals) or
+    // 4 × L/100 assets (deposits).
+    lp_deposit(&env, &client, &controller, &depositor, 10_000_0000000);
+    assert_eq!(client.get_min_withdrawal_request(), 0);
+
+    // Empty withdrawal queue: a dust-sized (but non-zero) request is
+    // admitted — small LPs keep their exit path in normal operation.
+    let dust_shares = client.convert_to_shares(&10_000); // 0.001 assets
+    client.request_withdrawal(&depositor, &dust_shares);
+    // One slot occupied → the floor (≈0.027 assets) now rejects the same
+    // dust from any address.
+    let sybil = Address::generate(&env);
+    client.transfer(&depositor, &sybil, &dust_shares);
+    assert!(client.try_request_withdrawal(&sybil, &dust_shares).is_err());
+    // A position at the full clamp (0.04% of TMA) is never excluded while a
+    // slot is free — the occupancy floor stays strictly below floor_cap.
+    let clamp_shares = client.convert_to_shares(&4_0000000);
+    client.request_withdrawal(&depositor, &clamp_shares);
+
+    // The deposit queue gets the same protection.
+    let asset_admin = token::StellarAssetClient::new(&env, &client.query_asset());
+    asset_admin.mint(&depositor, &100_0000000);
+    client.request_deposit(&depositor, &10_000);
+    assert!(client.try_request_deposit(&depositor, &10_000).is_err());
+    client.request_deposit(&depositor, &4_0000000);
+}
+
+#[test]
+fn test_bootstrap_floor_prices_slots_at_near_zero_tma() {
+    // Both queue floors are value-relative, so at launch (or after a severe
+    // drawdown) TMA near zero would degenerate them to nothing — and the
+    // upper clamp would zero any owner-configured minimum with them — making
+    // the bounded queues nearly free to squat during exactly the phase the
+    // vault most needs deposits. The absolute floor on the clamp keeps
+    // bootstrap slots priced and the owner lever meaningful.
+    let (_env, client, _owner, _controller, depositor) = setup();
+    assert_eq!(client.get_total_managed_assets(), 0);
+
+    // Empty queue: any non-dust request is still admitted (the documented
+    // guarantee at every scale).
+    let id = client.request_deposit(&depositor, &1);
+    // One slot occupied: the occupancy-scaled floor (now anchored on the
+    // absolute cap, not 0) rejects the same dust...
+    assert!(client.try_request_deposit(&depositor, &1).is_err());
+    // ...while a request at the absolute cap (one whole token) always passes.
+    client.request_deposit(&depositor, &1_0000000);
+    client.cancel_deposit(&depositor, &id);
+
+    // A configured minimum now binds up to the absolute cap even at zero
+    // TMA, pricing empty and near-empty slots too.
+    client.set_min_withdrawal_request(&1_0000000);
+    assert!(client.try_request_deposit(&depositor, &50_0000).is_err());
+    client.request_deposit(&depositor, &1_0000000);
 }
 
 #[test]

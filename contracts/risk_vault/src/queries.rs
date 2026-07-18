@@ -46,21 +46,16 @@ impl RiskVault {
     /// The same required-backing formula the controller admits new policies
     /// against — using the nominal margin here instead would let exits drain
     /// the configured reserve down to 100% backing the moment a purchase
-    /// passed. Gates direct withdraw/redeem, the `max_*` views, and
-    /// withdrawal-queue processing.
+    /// passed. Gates withdrawal-queue processing — the only LP exit path now
+    /// that the immediate exit operations are disabled.
     pub fn get_withdrawable_capital(e: &Env) -> i128 {
         let tma = Self::get_total_managed_assets(e);
         let locked = Self::get_locked_capital(e);
-        let ratio = Self::get_solvency_ratio(e) as i128;
-        // ceil(locked * ratio / 100): round the reserve up so integer
-        // truncation can never under-provision it.
-        let required = locked
-            .checked_mul(ratio)
-            .expect("multiplication overflow")
-            .checked_add(99)
-            .expect("addition overflow")
-            .checked_div(100)
-            .expect("division by zero");
+        let ratio = Self::get_solvency_ratio(e);
+        // ceil(locked * ratio / 100) — the same shared formula the
+        // controller's purchase admission uses, so the reserve exits are
+        // held back from is exactly the reserve admission verified.
+        let required = sentinel_types::solvency::required_reserve(locked, ratio);
         // A ratio raised after capital was locked can push the required
         // reserve above current assets; report zero withdrawable rather than
         // a negative amount.

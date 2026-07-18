@@ -12,7 +12,9 @@ pub enum OracleKey {
     AuthorizedController,
     PruneCursor, // u32 — rotating slot cursor into the paginated active set
     // Count of flights whose outcome is publicly recorded (Landed/Cancelled or
-    // any ToBeSettled*) but not yet financially settled. The vault reads this to
+    // any ToBeSettled*) but not yet financially settled — pre-registration
+    // cancellation tombstones excepted (no policy exists, nothing to settle).
+    // The vault reads this to
     // block entry/exit while pending PnL is unrecognized, so no LP can transact
     // at a stale share price after an outcome is public but before settlement.
     PendingOutcomes, // u64
@@ -84,8 +86,9 @@ pub(crate) fn extend_sale_auth_ttl(e: &Env, flight_id: &Symbol, date: u64, expir
         .extend_ttl(&key, extend_to, extend_to);
 }
 
-// Bump the pending-outcome counter when a flight's outcome first becomes public
-// (Active/NotInitiated -> Landed/Cancelled).
+// Bump the pending-outcome counter when a flight's outcome first becomes
+// public: Active/NotInitiated -> Landed/Cancelled, or a timeout void
+// classified straight to ToBeSettledOnTime.
 pub(crate) fn increment_pending_outcomes(e: &Env) {
     let n: u64 = e
         .storage()
@@ -98,7 +101,8 @@ pub(crate) fn increment_pending_outcomes(e: &Env) {
 }
 
 // Drop the pending-outcome counter when a flight is financially settled
-// (ToBeSettled* -> Settled). Saturating so it can never underflow.
+// (ToBeSettled* -> Settled) or owner-evicted with its outcome still pending.
+// Saturating so it can never underflow.
 pub(crate) fn decrement_pending_outcomes(e: &Env) {
     let n: u64 = e
         .storage()

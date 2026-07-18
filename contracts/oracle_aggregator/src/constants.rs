@@ -46,13 +46,38 @@ pub(crate) const SETTLEMENT_GRACE_SECS: u64 = 90 * SECONDS_PER_DAY;
 // visible to off-chain monitoring / indexers / observability tooling for the
 // retention window before they disappear from the list.
 //
-// Kept deliberately short (7 days, not 30): the active list is a single
-// capped vector, and settled flights lingering in it consume capacity that new
-// registrations need. Every settlement already emits an event, so off-chain
-// consumers do not depend on this on-chain window — 7 days is ample for direct
-// queries while quadrupling the settled-flight throughput the cap tolerates.
+// Kept deliberately short (7 days, not 30): settled flights lingering in the
+// paginated active set inflate keeper sweep and prune footprints for no
+// benefit. Every settlement already emits an event, so off-chain consumers do
+// not depend on this on-chain window — 7 days is ample for direct queries.
 pub(crate) const SETTLED_RETENTION_DAYS: u64 = 7;
 pub(crate) const SECONDS_PER_DAY: u64 = 86_400;
+
+/// Latest scheduled arrival `set_estimated_arrival` accepts, measured from
+/// the departure-day midnight the flight is keyed on. No published schedule
+/// puts arrival days after departure — the longest commercial routes are
+/// under 24 h, and departure falls inside the key's own day — so a value
+/// past this horizon is malformed, not late. The lower-bound checks catch
+/// zeroed and before-departure values; this is the symmetric upper half,
+/// aimed squarely at unit confusion in a future executor backend: a
+/// milliseconds-for-seconds timestamp (~10¹²) sails over every lower bound
+/// but sits five orders of magnitude above this ceiling. Without it, one
+/// such write would zero the delay computation for the flight (saturating
+/// subtraction), classifying genuinely delayed flights on-time with no
+/// correction path in the forward-only machine — and push the Active-void
+/// timeout out of reach.
+pub(crate) const MAX_SCHEDULED_ARRIVAL_AFTER_DATE_SECS: u64 = 3 * SECONDS_PER_DAY;
+
+/// Latest actual arrival `set_landed` accepts, measured from the
+/// departure-day midnight. Generous — comfortably past any real diversion,
+/// recovery, or days-late resolution (the classify pipeline voids an
+/// unresolved flight 14 days past its scheduled arrival anyway) — while
+/// still five orders of magnitude below a milliseconds-for-seconds value.
+/// The stakes of the missing upper bound are highest here: a unit-confused
+/// actual arrival computes to a ~10¹²-second delay, classifying EVERY
+/// flight the buggy backend settles as delayed and paying
+/// `(payoff − premium) × buyer_count` per flight, irreversibly.
+pub(crate) const MAX_ACTUAL_ARRIVAL_AFTER_DATE_SECS: u64 = 30 * SECONDS_PER_DAY;
 
 /// Hard cap on how far ahead a sale authorization (`open_sale`) may expire.
 /// The authorization is the oracle's attestation that the flight was

@@ -180,9 +180,11 @@ pub struct SolvencyRatioSet {
     pub(crate) ratio: u32,
 }
 
-// Owner tuned the minimum asset value a queued withdrawal request must carry
-// (anti dust-squatting floor for the bounded queue; 0 disables it). Emitted
-// for the audit trail, matching the controller's owner-setter events.
+// Owner tuned the configured minimum asset value a queued request
+// (withdrawal or deposit) must carry — the anti dust-squatting floor for the
+// bounded queues; 0 disables the configured component (the occupancy-scaled
+// protocol floor remains). Emitted for the audit trail, matching the
+// controller's owner-setter events.
 #[contractevent(topics = ["sentinel", "min_wd_req_set"], data_format = "single-value")]
 pub struct MinWithdrawalRequestSet {
     pub(crate) min_assets: i128,

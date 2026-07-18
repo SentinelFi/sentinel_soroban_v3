@@ -25,7 +25,7 @@ pub mod test_support;
 /// `extend_ttl` / `extend_instance_ttl` call. Values are the same across
 /// contracts so they live here to avoid drift.
 pub mod ttl {
-    /// ~7 days at 5s/ledger (60 * 24 * 60 * 12 / 5).
+    /// ~7 days at 5s/ledger (7 * 24 * 60 * 12).
     pub const INSTANCE_TTL_THRESHOLD: u32 = 120_960;
     /// ~31 days at 5s/ledger (31 * 24 * 60 * 12).
     pub const INSTANCE_TTL_EXTEND: u32 = 535_680;
@@ -128,6 +128,35 @@ pub mod timeouts {
             == BUYER_PROOF_TTL_LEDGERS as u64,
         "buyer proof TTL seconds/ledgers mismatch at the assumed cadence",
     );
+}
+
+/// Solvency-reserve parameters shared by the Controller (owner setter and
+/// purchase admission) and the RiskVault (controller-pushed mirror and exit
+/// bound). The vault rejects pushed ratios outside these bounds and the
+/// controller rejects owner updates outside them, so a drifted copy on either
+/// side would brick `set_solvency_ratio` — one definition removes the hazard.
+pub mod solvency {
+    /// Lower bound on the solvency ratio (percent): payouts must be at least
+    /// nominally backed.
+    pub const MIN_SOLVENCY_RATIO: u32 = 100;
+    /// Upper bound on the solvency ratio (percent): 100× practical sanity cap.
+    pub const MAX_SOLVENCY_RATIO: u32 = 10_000;
+
+    /// Reserve required to back `locked` payoff liabilities at `ratio`
+    /// percent: `ceil(locked × ratio / 100)`, rounded up so integer
+    /// truncation can never under-provision the reserve. The purchase
+    /// admission check and the vault's withdrawable-capital bound both use
+    /// this — sharing the computation keeps the reserve a purchase just
+    /// verified identical to the reserve exits are held back from.
+    pub fn required_reserve(locked: i128, ratio: u32) -> i128 {
+        locked
+            .checked_mul(ratio as i128)
+            .expect("multiplication overflow")
+            .checked_add(99)
+            .expect("addition overflow")
+            .checked_div(100)
+            .expect("division by zero")
+    }
 }
 
 // =========================================================================

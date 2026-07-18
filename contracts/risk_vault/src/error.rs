@@ -17,11 +17,18 @@ pub enum Error {
     NothingToCollect = 711,
     RecreditWouldUnderpay = 712,
     AmountExceedsClaimableBalance = 713,
-    WithdrawalQueueActive = 714,
-    ExceedsFreeCapital = 715,
+    // Retired codes — removed from the enum so they cannot be raised by
+    // accident; the values stay reserved and must never be reassigned a
+    // different meaning (integrators may still have handlers for them):
+    //   714 WithdrawalQueueActive — was raised by the direct (immediate)
+    //       exit path, permanently disabled in favor of the queued
+    //       two-phase flow.
+    //   715 ExceedsFreeCapital — same disabled direct-exit path.
+    //   718 SettlementPending — queue processing now defers silently
+    //       (no-op) while the settlement barrier is engaged instead of
+    //       reverting.
     WithdrawalQueueFull = 716,
     TooManyActiveRequests = 717,
-    SettlementPending = 718,
     RequestBelowMinimum = 719,
     AssetsConvertToZeroShares = 720,
     RequestNotFound = 721,
@@ -33,4 +40,5 @@ pub enum Error {
     DirectEntryDisabled = 727,
     DirectExitDisabled = 728,
     DepositQueueFull = 729,
+    OracleActiveExposureUnreconciled = 730,
 }

@@ -49,8 +49,9 @@ impl Controller {
     }
 
     /// Owner-only kill-switch. When `false` (default), `buy_insurance` is
-    /// open to anyone. When `true`, only addresses with a `true` entry in
-    /// `BuyerWhitelisted` can call `buy_insurance`.
+    /// open to anyone. When `true`, only addresses holding an unexpired
+    /// `BuyerApprovalExpiry` deadline (added via `add_whitelisted_buyer`,
+    /// not lapsed) can call `buy_insurance`.
     #[only_owner]
     pub fn set_whitelist_enabled(e: &Env, enabled: bool) {
         e.storage()

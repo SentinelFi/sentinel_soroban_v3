@@ -37,10 +37,12 @@ impl FlightPoolManager {
         }
         // Defense in depth. Governance resolves partially-
         // defaulted route terms against MUTABLE defaults, and a later
-        // set_defaults can make a route resolve to payoff <= premium without
-        // revalidation. Settlement computes `payoff - premium`, which would
-        // underflow and brick the flight. Reject such terms here so the bad
-        // config can never be stored (the purchase reverts instead).
+        // set_defaults can make a route resolve to payoff <= premium on its
+        // write path (route_status re-validates at read time and reports such
+        // routes Disabled). Settlement computes `payoff - premium`: payoff <
+        // premium would underflow and brick the flight, and payoff == premium
+        // is a zero-margin policy. Reject both here so the bad config can
+        // never be stored (the purchase reverts instead).
         if payoff <= premium {
             panic_with_error!(e, Error::PayoffNotAbovePremium);
         }

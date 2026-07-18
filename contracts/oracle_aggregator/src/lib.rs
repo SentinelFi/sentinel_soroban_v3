@@ -9,9 +9,11 @@
 //! state machine**:
 //!
 //! ```text
-//! NotInitiated → Active → Landed    → ToBeSettledOnTime    → Settled
-//!                       → Cancelled  → ToBeSettledDelayed   → Settled
-//!                                    → ToBeSettledCancelled → Settled
+//! NotInitiated → Active
+//! Active       → Landed | Cancelled
+//! Landed       → ToBeSettledOnTime | ToBeSettledDelayed
+//! Cancelled    → ToBeSettledCancelled
+//! ToBeSettled* → Settled
 //! ```
 //!
 //! Two additional timeout-gated void edges guarantee every collateral-locking

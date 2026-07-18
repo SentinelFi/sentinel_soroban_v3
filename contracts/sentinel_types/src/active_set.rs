@@ -320,7 +320,8 @@ pub fn remove(e: &Env, flight_id: &Symbol, date: u64) -> bool {
 
 /// Up to `limit` entries starting at global slot `offset`. The bounded,
 /// footprint-cheap enumeration the keeper scans use: a batch touches at most
-/// `limit / ACTIVE_SET_PAGE_SIZE + 1` page entries. Visited pages get their
+/// `ceil(limit / ACTIVE_SET_PAGE_SIZE) + 1` page entries (the `+ 1` covers a
+/// range that starts mid-page). Visited pages get their
 /// TTL re-extended; an archived page is skipped after emitting
 /// [`ActivePageMissing`] (its flights come back on restoration).
 pub fn get_range(e: &Env, offset: u32, limit: u32) -> Vec<(Symbol, u64)> {

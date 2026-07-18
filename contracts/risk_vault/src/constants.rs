@@ -13,12 +13,24 @@ pub(crate) const SECONDS_PER_DAY: u64 = 86400;
 /// Sized to exceed the oracle pipeline's worst-case observation-to-write
 /// latency in normal operation (fetcher every 2 h, landed resolution waits
 /// ETA + 1 h, plus submission — ≈ 3 h worst case) with margin for one missed
-/// fetch cycle. By the time a request matures, every outcome knowable at
-/// commitment is on-chain: either settled (already in the price) or pending
-/// (the barrier holds the request queued until settlement). An extended
-/// oracle outage exceeding this delay reopens the window — the pause switch
-/// is the incident response, and the executor's fail-closed sale windows
-/// stop new exposure in the same outage.
+/// fetch cycle. The guarantee this buys has a precise horizon: by the time a
+/// request matures, every outcome that was WRITABLE at commitment — i.e.
+/// already observable by the oracle, roughly landing time minus this delay —
+/// is on-chain: either settled (already in the price) or pending (the
+/// barrier holds the request queued until settlement).
+///
+/// Outcomes that are publicly PREDICTABLE before the oracle can possibly
+/// write them are outside that horizon, and the delay cannot close them:
+/// the earliest write for a delay outcome is the landing itself, so a
+/// departure delay on a flight longer than this constant is knowable to an
+/// LP a full flight-duration before the barrier can engage, and a
+/// stale-void's premium income is computable arbitrarily far ahead. These
+/// pre-write foreknowledge channels are accepted residuals, documented
+/// together with the outage residual as the pricing-delay horizon in
+/// `spec/architecture.md` — retune this constant only against all of them
+/// at once. An extended oracle outage exceeding this delay likewise reopens
+/// the window — the pause switch is the incident response, and the
+/// executor's fail-closed sale windows stop new exposure in the same outage.
 pub(crate) const LP_PRICING_DELAY_SECS: u64 = 6 * 3600;
 
 /// Maximum withdrawal requests examined per
@@ -48,28 +60,54 @@ pub(crate) const MAX_WITHDRAWAL_QUEUE_LEN: u32 = 150;
 pub(crate) const MAX_DEPOSIT_QUEUE_LEN: u32 = 100;
 
 /// Cap on how many pending requests one address may hold in the queue at once.
-/// Prevents a single underwriter from monopolizing the shared queue capacity
-/// and starving other underwriters' exits.
+/// A convenience bound on careless or buggy clients, NOT a monopolization
+/// defense: shares transfer freely, so any per-address limit is trivially
+/// split across sybil addresses. Economic defense of the shared queue
+/// capacity comes from the request-value floor (`MIN_REQUEST_FLOOR_DIVISOR`),
+/// which prices slots by occupancy regardless of how ownership is spread;
+/// the full fix for entry-blocking (individually-keyed requests with no
+/// shared cap) is the storage migration tracked at
+/// `MAX_WITHDRAWAL_QUEUE_LEN`.
 pub(crate) const MAX_ACTIVE_REQUESTS_PER_ADDRESS: u32 = 20;
 
-/// Runtime clamp on the owner-configured minimum withdrawal-request value:
-/// the effective floor is `min(configured, TMA / MIN_REQUEST_FLOOR_DIVISOR)`.
-/// Owner setters are bounded by convention — without the clamp, a mistaken or
-/// hostile configuration could block queue admission entirely. With it, no
-/// configured value can exclude a position above 1/2500 (0.04%) of the vault,
-/// while slot occupation stays expensive: filling all
-/// `MAX_WITHDRAWAL_QUEUE_LEN` slots at the clamped floor still escrows
-/// ~10% of managed assets. Applied at request time (not set time) so the
-/// floor self-scales with the vault and can be configured before the first
-/// deposit.
+/// Runtime clamps on the owner-configured minimum request value. With
+/// `floor_cap = TMA / MIN_REQUEST_FLOOR_DIVISOR`, the effective floor is
+/// `clamp(configured, floor_cap × queue_len / queue_cap, floor_cap)`:
+///  - The upper clamp bounds the owner setter by construction — without it,
+///    a mistaken or hostile configuration could block queue admission
+///    entirely; with it, no configured value can exclude a position above
+///    1/2500 (0.04%) of the vault while a slot is free (the occupancy term
+///    stays strictly below `floor_cap`, so it never breaks this guarantee).
+///  - The occupancy-scaled lower clamp keeps slot squatting expensive even
+///    when the configured minimum is low or unset (the default): an empty
+///    queue admits any non-dust request, but each further slot prices
+///    higher, so pinning the withdrawal queue full escrows ~3% of managed
+///    assets (deposit queue ~2%) with the marginal slot at the full 0.04%,
+///    no matter what the owner configured.
+///
+/// Applied at request time (not set time) so the floor self-scales with the
+/// vault and can be configured before the first deposit.
 pub(crate) const MIN_REQUEST_FLOOR_DIVISOR: i128 = 2500;
 
-/// Bounds on the controller-pushed solvency ratio, mirroring the controller's
-/// own owner-setter bounds so the two contracts can never hold a value the
-/// other would reject: at least nominal backing (100%), at most a 100×
-/// sanity cap.
-pub(crate) const MIN_SOLVENCY_RATIO: u32 = 100;
-pub(crate) const MAX_SOLVENCY_RATIO: u32 = 10_000;
+/// Absolute lower bound on `floor_cap`, in asset stroops (one whole token at
+/// the 7-decimal Stellar asset convention — revisit at wiring time for an
+/// asset with different decimals). Both protective floor terms above are
+/// value-relative, so at launch or after a severe drawdown (TMA near zero)
+/// they degenerate to zero — and the upper clamp then also nullifies any
+/// owner-configured minimum, making the bounded queues nearly free to squat
+/// during exactly the phase the vault most needs deposits. Flooring
+/// `floor_cap` here keeps the occupancy term pricing bootstrap slots and
+/// lets a configured minimum bind up to one token, while leaving the
+/// documented behavior at scale untouched: an empty queue still admits any
+/// non-dust request, and no configuration can exclude a position above
+/// `max(TMA/2500, one token)` while a slot is free.
+pub(crate) const MIN_REQUEST_FLOOR_CAP_ABS: i128 = 1_0000000;
+
+// Bounds on the controller-pushed solvency ratio. Shared with the
+// controller's owner setter via `sentinel_types::solvency`, so the two
+// contracts can never hold a value the other would reject: at least nominal
+// backing (100%), at most a 100× sanity cap.
+pub(crate) use sentinel_types::solvency::{MAX_SOLVENCY_RATIO, MIN_SOLVENCY_RATIO};
 
 /// 60 days at 5s/ledger = 60 * 24 * 60 * 12 = 1_036_800.
 /// Applied on every `ClaimableBalance(addr)` write to prevent silent archival

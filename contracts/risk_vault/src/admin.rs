@@ -75,10 +75,23 @@ impl RiskVault {
     /// pre-settlement share price — exactly the LP-vs-LP value transfer the
     /// barrier exists to prevent. When the old oracle is unreachable and
     /// this check cannot even execute, use `force_set_oracle`.
+    ///
+    /// Also refuses while any capital is locked: locked collateral means
+    /// policies are outstanding whose outcomes will become public on the OLD
+    /// oracle's settlement pipeline (the controller's oracle pointer is fixed
+    /// at construction). A replacement oracle starts blind to those flights,
+    /// so rotating before they settle would leave the barrier open through
+    /// their future public-but-unsettled windows. The pending check alone
+    /// only covers outcomes already public at the instant of rotation;
+    /// together the two checks span the whole policy lifetime from purchase
+    /// to settlement.
     #[only_owner]
     pub fn set_oracle(e: &Env, oracle: Address) {
         if settlement_pending(e) {
             panic_with_error!(e, Error::OraclePendingOutcomesUnreconciled);
+        }
+        if Self::get_locked_capital(e) > 0 {
+            panic_with_error!(e, Error::OracleActiveExposureUnreconciled);
         }
         e.storage().instance().set(&VaultKey::Oracle, &oracle);
         Self::extend_ttl(e);
@@ -92,10 +105,12 @@ impl RiskVault {
     /// Rotate the oracle WITHOUT consulting the current one — the escape
     /// hatch for the very contingency rotation exists for: the old oracle is
     /// dead, archived, or itself the incident, so `set_oracle`'s
-    /// pending-outcomes check cannot even execute. Requires the vault to be
-    /// paused first: the new oracle knows nothing of outcomes still pending
-    /// against the old one, so every LP entry/exit must stay blocked until
-    /// the owner reconciles that PnL and deliberately unpauses. The emitted
+    /// pending-outcomes check cannot even execute (and its locked-capital
+    /// check may never clear if the dead pipeline can no longer settle the
+    /// outstanding policies). Requires the vault to be paused first: the new
+    /// oracle knows nothing of policies still outstanding or outcomes still
+    /// pending against the old one, so every LP entry/exit must stay blocked
+    /// until the owner reconciles that PnL and deliberately unpauses. The emitted
     /// event carries `forced = true` so monitoring treats the rotation as an
     /// open incident rather than routine configuration.
     #[only_owner]
@@ -112,14 +127,16 @@ impl RiskVault {
         .publish(e);
     }
 
-    /// Set the minimum asset value a queued withdrawal request must carry at
-    /// submission time (owner-only). The withdrawal queue is a bounded shared
-    /// resource: without a value floor, one participant can split shares
-    /// across many addresses and occupy every slot with near-dust requests,
-    /// locking later underwriters out of the FIFO exit path. A meaningful
+    /// Set the minimum asset value a queued request — withdrawal or deposit —
+    /// must carry at submission time (owner-only). Both queues are bounded
+    /// shared resources: without a value floor, one participant can split
+    /// capital across many addresses and occupy every slot with near-dust
+    /// requests, locking later underwriters out of the FIFO paths. A meaningful
     /// minimum makes each slot cost real escrowed capital. Zero disables the
-    /// floor. Choose the value in underlying-asset units, well below typical
-    /// LP position sizes so small underwriters can still queue their exits.
+    /// configured floor (an occupancy-scaled protocol floor still applies at
+    /// request time, so unset does not mean slots are free to squat). Choose
+    /// the value in underlying-asset units, well below typical LP position
+    /// sizes so small underwriters can still queue their exits.
     ///
     /// The enforcement is clamped at request time to a small fraction of
     /// managed assets (see `MIN_REQUEST_FLOOR_DIVISOR`), so no configured

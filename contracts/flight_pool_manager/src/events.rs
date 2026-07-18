@@ -3,8 +3,11 @@ use soroban_sdk::{contractevent, Address, Symbol};
 use crate::storage::SettlementStatus;
 
 // Topics prefix scheme: every Sentinel-protocol event leads
-// with `"sentinel"` so off-chain indexers can subscribe once and discriminate
-// across the 5 contracts via the second prefix (`register`, `settle`, etc.).
+// with `"sentinel"` so off-chain indexers can subscribe once; the second
+// prefix discriminates the event type (`register`, `settle`, etc.). The
+// emitting contract is identified by the event envelope's contract address —
+// some second prefixes (e.g. `controller_set`, `upgrade`) are shared across
+// contracts.
 #[contractevent(topics = ["sentinel", "register"], data_format = "map")]
 pub struct FlightRegistered {
     #[topic]
