@@ -38,11 +38,11 @@ Withdrawal-queue processing is strict FIFO with **head partial fills**: if the o
 
 ## Settlement barrier and pricing delay
 
-The vault is wired at construction with the Oracle Aggregator address. While any flight outcome is written on-chain but not yet settled, neither queue prices anything — requests stay committed and wait. The 6-hour pricing delay covers the window the on-chain barrier cannot see: the time between an outcome becoming publicly knowable and the oracle transaction landing. Together they mean a request is always priced with every outcome knowable at its commitment already reflected.
+The vault is wired at construction with the Oracle Aggregator address. While any flight outcome is written on-chain but not yet settled, neither queue prices anything — requests stay committed and wait. The 6-hour pricing delay covers the window the on-chain barrier cannot see: the time between an outcome being observed by the oracle and the oracle transaction landing. Together they mean a request is always priced with every outcome the oracle could have written at its commitment already reflected. Outcomes that are publicly predictable before the oracle can write them (a long-haul flight already departed late, a stale flight approaching its void timeout) sit outside that horizon — see the pricing-delay-horizon residuals in the architecture spec's Known Limitations.
 
 ## Owner functions
 
-- `set_min_withdrawal_request(amount)`: anti-dust floor for queue entries (clamped at request time).
+- `set_min_withdrawal_request(amount)`: anti-dust floor for queue entries (clamped at request time to max(TMA/2500, one whole token) — the absolute term keeps queue slots priced during bootstrap, when the value-relative clamp would otherwise vanish).
 - `recover_uncollected(user, amount, mode)`: recovery path for archived claimable balances, either re-crediting the user or transferring out.
 - `set_oracle(oracle)`: rotate the settlement-barrier oracle. Refuses while the current oracle still reports pending public outcomes — a fresh oracle starts with none, so swapping mid-incident would open the barrier at a stale share price.
 - `force_set_oracle(oracle)`: the escape hatch when the old oracle is unreachable. Requires the vault to be paused first, and the emitted event is flagged as forced, so exits stay blocked until the pending profit and loss is reconciled and the owner deliberately unpauses.

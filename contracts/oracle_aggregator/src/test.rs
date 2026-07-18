@@ -226,6 +226,45 @@ fn test_arrival_timestamps_validated() {
 }
 
 #[test]
+fn test_arrival_timestamps_upper_bounded() {
+    // A unit-confused write — milliseconds where the contract expects
+    // seconds — clears every lower bound (a millisecond-scale value is far
+    // above any day key) yet corrupts the delay classification just as
+    // irreversibly: a ms-scale actual arrival computes to a ~10¹²-second
+    // delay and pays every affected flight, while a ms-scale ETA zeroes the
+    // saturating delay math and denies every genuinely delayed claim. Both
+    // writes therefore also reject arrivals implausibly far past the
+    // departure day.
+    let (env, client, _owner, oracle, controller) = setup();
+    let fid = flight_id(&env);
+    client.register_flight(&controller, &fid, &FLIGHT_DATE);
+
+    // The value a buggy backend would actually send, and the exact boundary.
+    assert!(client
+        .try_set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &(EST_ARRIVAL * 1000))
+        .is_err());
+    assert!(client
+        .try_set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &(FLIGHT_DATE + 3 * 86_400 + 1))
+        .is_err());
+    // The latest plausible schedule is still accepted...
+    client.set_estimated_arrival(&oracle, &fid, &FLIGHT_DATE, &(FLIGHT_DATE + 3 * 86_400));
+
+    assert!(client
+        .try_set_landed(&oracle, &fid, &FLIGHT_DATE, &(ACT_ARRIVAL * 1000))
+        .is_err());
+    assert!(client
+        .try_set_landed(
+            &oracle,
+            &fid,
+            &FLIGHT_DATE,
+            &(FLIGHT_DATE + 30 * 86_400 + 1)
+        )
+        .is_err());
+    // ...and a days-late real resolution still lands.
+    client.set_landed(&oracle, &fid, &FLIGHT_DATE, &(FLIGHT_DATE + 30 * 86_400));
+}
+
+#[test]
 fn test_set_cancelled_before_registration_creates_purchase_blocking_record() {
     // A publicly known cancellation must be recordable BEFORE any purchase
     // registers the flight — otherwise the purchase gate, seeing no record,

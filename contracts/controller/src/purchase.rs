@@ -197,15 +197,10 @@ impl Controller {
         let locked = vault.get_locked_capital();
         let solvency_ratio: u32 = e.storage().instance().get(&CtrlKey::SolvencyRatio).unwrap();
         let new_locked = locked.checked_add(terms.payoff).expect("addition overflow");
-        // required = ceil(new_locked * ratio / 100), rounded up so the reserve
-        // is never under-provisioned by integer truncation.
-        let required = new_locked
-            .checked_mul(solvency_ratio as i128)
-            .expect("multiplication overflow")
-            .checked_add(99)
-            .expect("addition overflow")
-            .checked_div(100)
-            .expect("division by zero");
+        // ceil(new_locked * ratio / 100) — the same shared formula the
+        // vault's withdrawable-capital bound uses, so the reserve this
+        // admission verifies is exactly the reserve exits are held back from.
+        let required = sentinel_types::solvency::required_reserve(new_locked, solvency_ratio);
         if tma < required {
             panic_with_error!(e, Error::InsufficientVaultCapital);
         }

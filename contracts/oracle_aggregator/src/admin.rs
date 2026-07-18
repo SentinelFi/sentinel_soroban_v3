@@ -42,6 +42,23 @@ impl OracleAggregator {
     }
 
     /// Update the authorized oracle address (for backend migration).
+    ///
+    /// Rotation does NOT invalidate outstanding sale authorizations: every
+    /// window the outgoing oracle opened lives in temporary storage (not
+    /// enumerable on-chain, so no bulk revoke exists) and keeps authorizing
+    /// purchases through the controller until it expires — up to
+    /// `SALE_AUTH_MAX_VALIDITY_SECS` — or is individually closed. For a
+    /// routine backend migration that is harmless: the windows are honest
+    /// attestations and the new backend re-attests on its own cadence.
+    ///
+    /// **Rotation as a compromise response is a two-step operation.** The
+    /// departing key's parting attestations survive the swap, so flights the
+    /// honest pipeline never verified (including publicly cancelled ones)
+    /// stay purchasable until each window lapses. Immediately after the
+    /// swap, the new oracle must sweep `close_sale` over every window still
+    /// open — reconstructed off-chain from the `SaleOpened`/`SaleClosed`
+    /// event stream — or the controller must be paused for the full validity
+    /// horizon so nothing can purchase against them.
     #[only_owner]
     pub fn set_oracle(e: &Env, new_oracle: Address) {
         e.storage()

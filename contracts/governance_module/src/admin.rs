@@ -114,8 +114,14 @@ impl GovernanceModule {
     }
 
     /// Revoke admin rights from an address.
+    ///
+    /// Deliberately NOT pause-gated: this write only removes authority — it
+    /// grants nothing — and an incident response plausibly has the module
+    /// paused at exactly the moment a compromised admin key most needs
+    /// revoking; gating it would force an unpause first. Same convention as
+    /// the oracle's pause-exempt `close_sale` and the controller's
+    /// `remove_whitelisted_buyer`.
     #[only_owner]
-    #[when_not_paused]
     pub fn remove_admin(e: &Env, admin: Address) {
         Self::extend_ttl(e);
         e.storage()

@@ -130,6 +130,35 @@ pub mod timeouts {
     );
 }
 
+/// Solvency-reserve parameters shared by the Controller (owner setter and
+/// purchase admission) and the RiskVault (controller-pushed mirror and exit
+/// bound). The vault rejects pushed ratios outside these bounds and the
+/// controller rejects owner updates outside them, so a drifted copy on either
+/// side would brick `set_solvency_ratio` — one definition removes the hazard.
+pub mod solvency {
+    /// Lower bound on the solvency ratio (percent): payouts must be at least
+    /// nominally backed.
+    pub const MIN_SOLVENCY_RATIO: u32 = 100;
+    /// Upper bound on the solvency ratio (percent): 100× practical sanity cap.
+    pub const MAX_SOLVENCY_RATIO: u32 = 10_000;
+
+    /// Reserve required to back `locked` payoff liabilities at `ratio`
+    /// percent: `ceil(locked × ratio / 100)`, rounded up so integer
+    /// truncation can never under-provision the reserve. The purchase
+    /// admission check and the vault's withdrawable-capital bound both use
+    /// this — sharing the computation keeps the reserve a purchase just
+    /// verified identical to the reserve exits are held back from.
+    pub fn required_reserve(locked: i128, ratio: u32) -> i128 {
+        locked
+            .checked_mul(ratio as i128)
+            .expect("multiplication overflow")
+            .checked_add(99)
+            .expect("addition overflow")
+            .checked_div(100)
+            .expect("division by zero")
+    }
+}
+
 // =========================================================================
 // governance_module
 // =========================================================================

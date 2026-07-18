@@ -914,6 +914,34 @@ fn test_occupancy_floor_blocks_cheap_queue_squatting() {
 }
 
 #[test]
+fn test_bootstrap_floor_prices_slots_at_near_zero_tma() {
+    // Both queue floors are value-relative, so at launch (or after a severe
+    // drawdown) TMA near zero would degenerate them to nothing — and the
+    // upper clamp would zero any owner-configured minimum with them — making
+    // the bounded queues nearly free to squat during exactly the phase the
+    // vault most needs deposits. The absolute floor on the clamp keeps
+    // bootstrap slots priced and the owner lever meaningful.
+    let (_env, client, _owner, _controller, depositor) = setup();
+    assert_eq!(client.get_total_managed_assets(), 0);
+
+    // Empty queue: any non-dust request is still admitted (the documented
+    // guarantee at every scale).
+    let id = client.request_deposit(&depositor, &1);
+    // One slot occupied: the occupancy-scaled floor (now anchored on the
+    // absolute cap, not 0) rejects the same dust...
+    assert!(client.try_request_deposit(&depositor, &1).is_err());
+    // ...while a request at the absolute cap (one whole token) always passes.
+    client.request_deposit(&depositor, &1_0000000);
+    client.cancel_deposit(&depositor, &id);
+
+    // A configured minimum now binds up to the absolute cap even at zero
+    // TMA, pricing empty and near-empty slots too.
+    client.set_min_withdrawal_request(&1_0000000);
+    assert!(client.try_request_deposit(&depositor, &50_0000).is_err());
+    client.request_deposit(&depositor, &1_0000000);
+}
+
+#[test]
 #[should_panic]
 fn test_set_min_withdrawal_request_unauthorized() {
     // The request-value floor is an owner-only lever (it gates queue
