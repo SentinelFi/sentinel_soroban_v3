@@ -74,6 +74,13 @@ Server-side (no `PUBLIC_` prefix — set in Vercel project settings, never bundl
 - `AEROAPI_BASE_URL` (defaults to the real FlightAware API), `AEROAPI_KEY`
 - `CRON_SECRET` — shared secret guarding the cron endpoints (recommended)
 
+Without an `AEROAPI_KEY`, everything still runs safely: the four contract-only
+jobs are fully functional, and the fetcher fails soft — API errors are logged,
+each flight is recorded as `skipped: "No AeroAPI data"`, nothing bad is written
+on-chain, and it retries next cycle. For a keyless demo, point
+`AEROAPI_BASE_URL` at a hosted `executor/mock-api` instance instead (scripted
+scenarios, no key needed).
+
 ### Auth
 
 - If `CRON_SECRET` is set, every cron request must carry `Authorization: Bearer $CRON_SECRET`. Vercel's scheduler sends this header automatically when the `CRON_SECRET` env var exists, so no extra config is needed for scheduled runs.
