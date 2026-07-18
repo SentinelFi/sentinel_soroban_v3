@@ -61,3 +61,6 @@ test_snapshots/
 *.pid
 *.seed
 .vercel
+
+# Scout
+.scout-src/
