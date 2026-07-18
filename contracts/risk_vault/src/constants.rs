@@ -48,8 +48,14 @@ pub(crate) const MAX_WITHDRAWAL_QUEUE_LEN: u32 = 150;
 pub(crate) const MAX_DEPOSIT_QUEUE_LEN: u32 = 100;
 
 /// Cap on how many pending requests one address may hold in the queue at once.
-/// Prevents a single underwriter from monopolizing the shared queue capacity
-/// and starving other underwriters' exits.
+/// A convenience bound on careless or buggy clients, NOT a monopolization
+/// defense: shares transfer freely, so any per-address limit is trivially
+/// split across sybil addresses. Economic defense of the shared queue
+/// capacity comes from the request-value floor (`MIN_REQUEST_FLOOR_DIVISOR`),
+/// which prices slots by occupancy regardless of how ownership is spread;
+/// the full fix for entry-blocking (individually-keyed requests with no
+/// shared cap) is the storage migration tracked at
+/// `MAX_WITHDRAWAL_QUEUE_LEN`.
 pub(crate) const MAX_ACTIVE_REQUESTS_PER_ADDRESS: u32 = 20;
 
 /// Runtime clamps on the owner-configured minimum request value. With

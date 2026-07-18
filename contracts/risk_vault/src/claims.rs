@@ -404,9 +404,18 @@ impl RiskVault {
                 // restore always fits (its asset is still part of the
                 // surplus); only a mis-keyed amount is rejected. The bound is
                 // a floor, not exact accounting: other users' uncollected
-                // credits also sit in the surplus, so it cannot catch every
-                // overpay — but it caps the damage at value already owed to
-                // users, never asset backing shares. Escrowed deposit-queue
+                // credits also sit in the surplus, so it cannot catch an
+                // overpay that overlaps them — if both parties later collect,
+                // the shortfall falls on the asset backing shares. Exact
+                // aggregate accounting is not achievable on-chain: archived
+                // entries are neither enumerable nor measurable (restoring
+                // them is this function's purpose), so any liability counter
+                // either misses them or double-counts their restore. The
+                // guard therefore caps the MAGNITUDE of owner error at the
+                // total already owed to users, and the event trail
+                // (credited / collected / recovered) is the authoritative
+                // ledger the owner must reconcile against before recrediting.
+                // Escrowed deposit-queue
                 // assets also sit in the raw balance without backing shares,
                 // and they are owed back to their requesters — subtract them
                 // so a mis-keyed recredit can never be satisfied out of
