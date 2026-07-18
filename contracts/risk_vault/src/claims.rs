@@ -46,17 +46,6 @@ impl RiskVault {
         if managed_convert_to_shares(e, assets, Rounding::Floor) == 0 {
             panic_with_error!(e, Error::AssetsConvertToZeroShares);
         }
-        // Same anti-squatting floor as the withdrawal queue: each slot of the
-        // bounded queue must carry meaningful escrowed value (see
-        // request_withdrawal / MIN_REQUEST_FLOOR_DIVISOR).
-        let floor_cap = Self::get_total_managed_assets(e)
-            .checked_div(MIN_REQUEST_FLOOR_DIVISOR)
-            .expect("division by zero");
-        let effective_min = Self::get_min_withdrawal_request(e).min(floor_cap);
-        if assets < effective_min {
-            panic_with_error!(e, Error::RequestBelowMinimum);
-        }
-
         let mut queue: Vec<DepositRequest> = e
             .storage()
             .instance()
@@ -64,6 +53,25 @@ impl RiskVault {
             .unwrap_or(Vec::new(e));
         if queue.len() >= MAX_DEPOSIT_QUEUE_LEN {
             panic_with_error!(e, Error::DepositQueueFull);
+        }
+        // Same anti-squatting floor as the withdrawal queue: each slot of the
+        // bounded queue must carry meaningful escrowed value, with the
+        // occupancy-scaled lower bound keeping slots expensive even when the
+        // configured minimum is low or unset (see request_withdrawal /
+        // MIN_REQUEST_FLOOR_DIVISOR).
+        let floor_cap = Self::get_total_managed_assets(e)
+            .checked_div(MIN_REQUEST_FLOOR_DIVISOR)
+            .expect("division by zero");
+        let occupancy_floor = floor_cap
+            .checked_mul(queue.len() as i128)
+            .expect("multiplication overflow")
+            .checked_div(MAX_DEPOSIT_QUEUE_LEN as i128)
+            .expect("division by zero");
+        let effective_min = Self::get_min_withdrawal_request(e)
+            .min(floor_cap)
+            .max(occupancy_floor);
+        if assets < effective_min {
+            panic_with_error!(e, Error::RequestBelowMinimum);
         }
         let mut own_count: u32 = 0;
         for i in 0..queue.len() {
@@ -175,21 +183,6 @@ impl RiskVault {
         if preview <= 0 {
             panic_with_error!(e, Error::SharesRedeemToZeroAssets);
         }
-        // Enforce the owner-configured minimum request value: each slot of the
-        // bounded queue must carry meaningful escrowed capital, or one actor
-        // could cheaply occupy every slot via many small requests spread
-        // across addresses. The floor is clamped to a small fraction of
-        // managed assets so no configuration — mistaken or hostile — can
-        // exclude ordinary positions from the queue (see
-        // MIN_REQUEST_FLOOR_DIVISOR).
-        let floor_cap = Self::get_total_managed_assets(e)
-            .checked_div(MIN_REQUEST_FLOOR_DIVISOR)
-            .expect("division by zero");
-        let effective_min = Self::get_min_withdrawal_request(e).min(floor_cap);
-        if preview < effective_min {
-            panic_with_error!(e, Error::RequestBelowMinimum);
-        }
-
         let mut queue: Vec<WithdrawalRequest> = e
             .storage()
             .instance()
@@ -200,6 +193,31 @@ impl RiskVault {
         // contract-instance entry-size limit and become unwritable.
         if queue.len() >= MAX_WITHDRAWAL_QUEUE_LEN {
             panic_with_error!(e, Error::WithdrawalQueueFull);
+        }
+        // Enforce the request-value floor: each slot of the bounded queue must
+        // carry meaningful escrowed capital, or one actor could cheaply occupy
+        // every slot via many small requests spread across addresses. Two
+        // clamps shape the owner-configured minimum (MIN_REQUEST_FLOOR_DIVISOR):
+        //  - from above, TMA/2500, so no configuration — mistaken or hostile —
+        //    can exclude ordinary positions from the queue;
+        //  - from below, that same cap scaled by current occupancy, so a low
+        //    or unset configuration cannot make slots free to squat: an empty
+        //    queue admits any non-dust request, but each further slot prices
+        //    higher, and pinning the queue full escrows a material fraction
+        //    of managed assets no matter what the owner configured.
+        let floor_cap = Self::get_total_managed_assets(e)
+            .checked_div(MIN_REQUEST_FLOOR_DIVISOR)
+            .expect("division by zero");
+        let occupancy_floor = floor_cap
+            .checked_mul(queue.len() as i128)
+            .expect("multiplication overflow")
+            .checked_div(MAX_WITHDRAWAL_QUEUE_LEN as i128)
+            .expect("division by zero");
+        let effective_min = Self::get_min_withdrawal_request(e)
+            .min(floor_cap)
+            .max(occupancy_floor);
+        if preview < effective_min {
+            panic_with_error!(e, Error::RequestBelowMinimum);
         }
         // Bound how many pending requests one address may hold, so a single
         // underwriter can't monopolize the queue and starve others.
