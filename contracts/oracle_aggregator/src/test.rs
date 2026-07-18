@@ -1419,7 +1419,7 @@ fn test_prune_settled_only_removes_aged_settled() {
 
     client.prune_settled();
 
-    // f1 should be evicted (31d > 30d retention).
+    // f1 should be evicted (31d > 7d retention).
     // f2 stays (just settled).
     // f3 stays (not settled).
     let flights = client.get_active_flights();

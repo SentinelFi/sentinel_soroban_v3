@@ -41,8 +41,9 @@ fn route_ids() -> (Symbol, Symbol, Symbol) {
     )
 }
 
-// Count events on `addr` whose first TWO topics match (`prefix0`, `prefix1`).
-// Governance events use the 2-element prefix scheme (e.g. ["route", "listed"]).
+// Count events on `addr` whose first two topics are ("sentinel", verb).
+// Governance events use a 2-symbol prefix with the action folded into the
+// second symbol (e.g. ["sentinel", "route_listed"]).
 //
 // IMPORTANT: `env.events().all()` returns events only from the MOST RECENT
 // contract invocation. Call this helper IMMEDIATELY after the emitting call,

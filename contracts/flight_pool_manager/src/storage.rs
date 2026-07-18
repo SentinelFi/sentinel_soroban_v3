@@ -52,9 +52,10 @@ pub(crate) fn extend_flight_ttl_to(e: &Env, flight_id: &Symbol, date: u64, deadl
 }
 
 // Remove a settled flight from the paginated active set. Tolerant of an
-// absent entry (idempotent settlement paths): `remove` swap-moves the
-// globally last entry into the freed slot — O(1), and consumers already
-// treat the set as unordered.
+// absent or unreachable entry (e.g. its page or index archived — `remove`
+// returns false) so settlement completes rather than reverting. `remove`
+// swap-moves the globally last entry into the freed slot — O(1), and
+// consumers already treat the set as unordered.
 pub(crate) fn prune_active_list(e: &Env, flight_id: &Symbol, date: u64) {
     sentinel_types::active_set::remove(e, flight_id, date);
 }

@@ -23,10 +23,13 @@ impl GovernanceModule {
     }
 
     /// Typed status reader. Returns `Active(ResolvedTerms)` (defaults folded)
-    /// if the entry exists, is approved, and owns its flight_id per the
-    /// uniqueness index; `Disabled` if the entry exists but is not approved;
-    /// `Unknown` if the entry is missing (never whitelisted, removed, or
-    /// storage archived) or the flight_id is mapped to a different route.
+    /// if the entry exists, is approved, owns its flight_id per the uniqueness
+    /// index, and its resolved terms pass the current validity rules and term
+    /// limits; `Disabled` if the entry exists but is not approved, or is
+    /// approved but its resolved terms fail those checks (e.g. after a
+    /// defaults or term-limits change); `Unknown` if the entry is missing
+    /// (never whitelisted, removed, or storage archived) or the flight_id is
+    /// mapped to a different route.
     pub fn route_status(e: &Env, flight_id: Symbol, origin: Symbol, dest: Symbol) -> RouteStatus {
         // NOTE ON PAUSE: this reader is deliberately not pause-gated, and its
         // side effects (TTL renewals, uniqueness-index self-heal below) still

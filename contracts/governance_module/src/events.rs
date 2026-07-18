@@ -1,9 +1,10 @@
-// Topic prefix scheme: ["sentinel", "route", <action>] for route-lifecycle
-// events, ["sentinel", "gov", <action>] for governance-meta events. Every
-// event leads with `"sentinel"` so a shared off-chain indexer can subscribe
-// once and discriminate against unrelated Soroban contracts.
+// Topic prefix scheme: ["sentinel", "route_<action>"] for route-lifecycle
+// events, ["sentinel", "gov_<action>"] for governance-meta events — the action
+// is folded into the second symbol, and some events append a flight_id/admin
+// topic. Every event leads with `"sentinel"` so a shared off-chain indexer can
+// subscribe once and discriminate against unrelated Soroban contracts.
 //
-// route.listed / route.updated carry Option<T> values (NOT resolved):
+// route_listed / route_updated carry Option<T> values (NOT resolved):
 // indexers mirror option-ness in their schema (NULL = UseDefault) and
 // resolve against the latest gov.defaults singleton at read time. This
 // means a defaults change does not require updating every UseDefault

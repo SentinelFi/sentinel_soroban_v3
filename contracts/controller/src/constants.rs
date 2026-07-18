@@ -44,8 +44,8 @@ pub(crate) const SECONDS_PER_HOUR: u64 = 3_600;
 // window) rather than a flat 60 days, so the per-traveler "My Policies" index
 // cannot archive while a referenced policy is still active or claimable. The
 // off-chain TTL cron still refreshes idle entries; this is the on-write floor.
-// Also governs `BuyerWhitelisted(addr)` entries — keeping
-// approved buyers from silently aging out of the whitelist.
+// Also governs `BuyerApprovalExpiry(addr)` entries — keeping approved
+// buyers' deadline entries from silently archiving out of the whitelist.
 pub(crate) const TRAVELER_FLIGHTS_TTL_LEDGERS: u32 = 180 * 24 * 60 * 12;
 
 /// Bound on the per-traveler `TravelerFlights(addr)` index. The index is a single
