@@ -905,6 +905,25 @@ fn test_sweep_expired_double_call_idempotent() {
 }
 
 #[test]
+fn test_sweep_expired_succeeds_while_paused() {
+    // Sweep must remain callable during an emergency pause — the FlightConfig
+    // TTL buffer past claim_expiry runs on the ledger clock, so gating the
+    // sweep would let a long pause archive the entry with the unclaimed
+    // obligation still uncredited to RecoveredBalance.
+    let t = setup();
+    register(&t);
+    buy(&t, &t.buyer1);
+    settle_delayed_and_topup(&t, 1);
+    advance(&t, CLAIM_WINDOW_SEC + 1);
+
+    t.pool.pause(&t.owner);
+    assert!(t.pool.paused());
+
+    t.pool.sweep_expired(&flight_a(), &FLIGHT_DATE);
+    assert_eq!(t.pool.get_recovered_balance(), PAYOFF);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #416)")]
 fn test_sweep_expired_before_expiry_fails() {
     let t = setup();
