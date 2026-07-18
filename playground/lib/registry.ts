@@ -255,6 +255,9 @@ export const REGISTRY: ContractEntry[] = [
         a("to", "address"),
         a("amount", "amount7"),
       ]),
+      fn("process_deposit_queue", "controller", false, "Batch-mint shares for matured deposit requests (FIFO, entry-side mirror of the withdrawal queue)", [
+        a("controller", "address"),
+      ]),
       fn("process_withdrawal_queue", "controller", false, "Batch-drain the FIFO withdrawal queue", [
         a("controller", "address"),
       ]),
