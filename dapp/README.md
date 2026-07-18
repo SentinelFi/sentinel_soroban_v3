@@ -1,0 +1,105 @@
+# React + TypeScript + Vite
+
+This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+
+Currently, two official plugins are available:
+
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+
+## React Compiler
+
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+
+## Expanding the Oxlint configuration
+
+If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+
+```json
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "typescript", "oxc"],
+  "options": {
+    "typeAware": true
+  },
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/only-export-components": ["warn", { "allowConstantExport": true }]
+  }
+}
+```
+
+See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+
+## Serverless crons (Vercel)
+
+The five executor cron jobs (`executor/centralized_cron`) are also available as Vercel serverless functions inside this app, so a single Vercel deployment serves the frontend **and** keeps the protocol running. The logic is a faithful port — same contract calls, same AeroAPI handling, same simulate → assemble (with 40% resource-fee bump) → sign → send → poll transaction pattern.
+
+### Layout
+
+```
+api/
+  _lib/               ported logic (underscore dir — not routed by Vercel)
+    config.ts         env-driven config, testnet defaults for non-secrets
+    soroban_client.ts raw stellar-sdk Contract calls (no bindings)
+    aeroapi_client.ts AeroAPI fetch with retry/backoff + ambiguity guard
+    handler.ts        auth + makeCronHandler wrapper
+    types.ts          RunLogEntry / FlightStatus / Config (executor shapes)
+    jobs/             fetcher, classifier, settler, queue, ttl — each exports run(config)
+  cron/               routed functions
+    fetcher.ts  classify.ts  settle.ts  queue.ts  ttl.ts  health.ts
+vercel.json           cron schedules
+tsconfig.api.json     type-checks api/ with node types (wired into tsc -b)
+```
+
+### Schedules (vercel.json)
+
+| Endpoint            | Schedule       | Job                                             |
+| ------------------- | -------------- | ----------------------------------------------- |
+| `/api/cron/fetcher` | `0 */2 * * *`  | AeroAPI → oracle (ETA / landed / cancelled)     |
+| `/api/cron/classify`| `0 * * * *`    | `Controller.classify_flights`                   |
+| `/api/cron/settle`  | `*/5 * * * *`  | `Controller.execute_settlements`                |
+| `/api/cron/queue`   | `2-59/5 * * * *` | `Controller.run_queue_maintenance` (off-tempo from settle to avoid keeper sequence-number contention) |
+| `/api/cron/ttl`     | `0 0 * * *`    | `extend_ttl` on all 5 contracts + `prune_settled` |
+
+`/api/cron/health` is an unauthenticated GET that returns the network, contract IDs, and `hasKeys` booleans (secrets are never echoed).
+
+### Env vars
+
+Server-side (no `PUBLIC_` prefix — set in Vercel project settings, never bundled into the browser; see `.env.example`):
+
+- `STELLAR_RPC_URL`, `STELLAR_NETWORK_PASSPHRASE` — default to testnet
+- `ORACLE_AGGREGATOR_ID`, `CONTROLLER_ID`, `RISK_VAULT_ID`, `GOVERNANCE_ID`, `FLIGHT_POOL_MANAGER_ID` — default to `deployments/testnet.json`
+- `ORACLE_SECRET_KEY`, `KEEPER_SECRET_KEY`, `TTL_EXTENDER_SECRET_KEY` — **required**, no defaults
+- `AEROAPI_BASE_URL` (defaults to the real FlightAware API), `AEROAPI_KEY`
+- `CRON_SECRET` — shared secret guarding the cron endpoints (recommended)
+
+### Auth
+
+- If `CRON_SECRET` is set, every cron request must carry `Authorization: Bearer $CRON_SECRET`. Vercel's scheduler sends this header automatically when the `CRON_SECRET` env var exists, so no extra config is needed for scheduled runs.
+- If `CRON_SECRET` is unset, requests carrying the `x-vercel-cron` header are accepted (Vercel sets it on scheduled invocations and strips it from external traffic).
+- Anything else gets `401`.
+
+### Plan caveat
+
+The 5-minute schedules (`settle`, `queue`) and `maxDuration: 300` require **Vercel Pro** — the Hobby plan only allows daily-granularity crons and shorter function durations. On Hobby, keep `vercel.json` crons for `fetcher`/`classify`/`ttl` reduced to daily or remove them, and drive the endpoints with an external pinger (GitHub Actions schedule, cron-job.org, UptimeRobot, …) that curls each endpoint with the Bearer `CRON_SECRET` header.
+
+### Local testing
+
+```sh
+# Option A — full emulation (needs vercel CLI; .env supplies server-side vars)
+vercel dev
+
+curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/settle
+curl http://localhost:3000/api/cron/health
+
+# Option B — no vercel CLI: invoke a handler directly with tsx
+npx tsx -e '
+  import handler from "./api/cron/health";
+  const res = { statusCode: 0, status(c){ this.statusCode = c; return this; }, json(b){ console.log(this.statusCode, JSON.stringify(b, null, 2)); } };
+  handler({ method: "GET", headers: {} } as any, res as any);
+'
+```
+
+To exercise the fetcher without spending AeroAPI credits, start the fixture server in `executor/mock-api` and set `AEROAPI_BASE_URL=http://localhost:3001`.
+
