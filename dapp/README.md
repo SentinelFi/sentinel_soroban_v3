@@ -54,13 +54,15 @@ tsconfig.api.json     type-checks api/ with node types (wired into tsc -b)
 
 ### Schedules (vercel.json)
 
-| Endpoint            | Schedule       | Job                                             |
-| ------------------- | -------------- | ----------------------------------------------- |
-| `/api/cron/fetcher` | `0 */2 * * *`  | AeroAPI → oracle (ETA / landed / cancelled)     |
-| `/api/cron/classify`| `0 * * * *`    | `Controller.classify_flights`                   |
-| `/api/cron/settle`  | `*/5 * * * *`  | `Controller.execute_settlements`                |
-| `/api/cron/queue`   | `2-59/5 * * * *` | `Controller.run_queue_maintenance` (off-tempo from settle to avoid keeper sequence-number contention) |
-| `/api/cron/ttl`     | `0 0 * * *`    | `extend_ttl` on all 5 contracts + `prune_settled` |
+| Endpoint             | Schedule       | Job                                             |
+| -------------------- | -------------- | ----------------------------------------------- |
+| `/api/cron/authorize`| `30 */2 * * *` | Sale authorizer (cron #0) — attests sale windows for the enabled flights in `config/routes.testnet.json` over the sale horizon; closes windows / tombstones cancellations (fail closed) |
+| `/api/cron/fetcher`  | `0 */2 * * *`  | AeroAPI → oracle (ETA / landed / cancelled)     |
+| `/api/cron/classify` | `0 * * * *`    | `Controller.classify_flights`                   |
+| `/api/cron/settle`   | `*/5 * * * *`  | `Controller.execute_settlements`                |
+| `/api/cron/queue`    | `2-59/5 * * * *` | `Controller.run_queue_maintenance` (off-tempo from settle to avoid keeper sequence-number contention) |
+| `/api/cron/agent`    | `0 6 * * *`    | Route agent — ML baseline premium (Python service) + Open-Meteo weather rules (elevated → premium × multiplier, severe → disable) + 24h re-evaluation of disabled routes; all writes clamped to the routes-file rails and the on-chain term limits |
+| `/api/cron/ttl`      | `0 0 * * *`    | `extend_ttl` on all 5 contracts + `prune_settled` |
 
 `/api/cron/health` is an unauthenticated GET that returns the network, contract IDs, and `hasKeys` booleans (secrets are never echoed).
 
@@ -72,7 +74,30 @@ Server-side (no `PUBLIC_` prefix — set in Vercel project settings, never bundl
 - `ORACLE_AGGREGATOR_ID`, `CONTROLLER_ID`, `RISK_VAULT_ID`, `GOVERNANCE_ID`, `FLIGHT_POOL_MANAGER_ID` — default to `deployments/testnet.json`
 - `ORACLE_SECRET_KEY`, `KEEPER_SECRET_KEY`, `TTL_EXTENDER_SECRET_KEY` — **required**, no defaults
 - `AEROAPI_BASE_URL` (defaults to the real FlightAware API), `AEROAPI_KEY`
+- `GOVERNANCE_ADMIN_SECRET_KEY` — 4th identity for the route agent + whitelist script; must be a `GovernanceModule` admin (owner runs `add_admin` once), never the owner key
+- `AGENT_BASE_URL`, `AGENT_TOKEN` — the Python pricing service (`agent/` on Render); unset = route agent prices from the routes file
+- `SALE_AUTH_HORIZON_DAYS`, `SALE_AUTH_VALIDITY_SECS` — sale-authorizer overrides (horizon defaults to the routes file's `sale_horizon_days`)
+- `WEATHER_BASE_URL` — Open-Meteo override (keyless; testing only)
 - `CRON_SECRET` — shared secret guarding the cron endpoints (recommended)
+
+### Routes file + whitelist script
+
+`config/routes.testnet.json` is the single human source of truth for
+insurable routes: whitelist entries with optional term overrides, hard rails
+(premium/payoff min-max, max daily premium step, weather multiplier), the
+sale horizon, and per-route `enabled` flags. `enabled: false` is permanent
+human intent — the route agent will disable such a route on-chain but will
+NEVER re-enable it; flip the flag back to `true` to hand it back to the
+agent's 24h re-evaluation.
+
+Whitelisting NEW routes is deliberately script-only (the agent never lists
+routes):
+
+```sh
+# after filling config/routes.testnet.json (needs GOVERNANCE_ADMIN_SECRET_KEY)
+npm run whitelist:routes                 # list missing + enable/disable per file
+npm run whitelist:routes -- --sync-terms # also force file terms onto active routes
+```
 
 Without an `AEROAPI_KEY`, everything still runs safely: the four contract-only
 jobs are fully functional, and the fetcher fails soft — API errors are logged,
@@ -89,7 +114,7 @@ scenarios, no key needed).
 
 ### Plan caveat
 
-The 5-minute schedules (`settle`, `queue`) and `maxDuration: 300` require **Vercel Pro** — the Hobby plan only allows daily-granularity crons and shorter function durations. On Hobby, keep `vercel.json` crons for `fetcher`/`classify`/`ttl` reduced to daily or remove them, and drive the endpoints with an external pinger (GitHub Actions schedule, cron-job.org, UptimeRobot, …) that curls each endpoint with the Bearer `CRON_SECRET` header.
+The 5-minute schedules (`settle`, `queue`) and `maxDuration: 300` require **Vercel Pro** — the Hobby plan only allows daily-granularity crons and shorter function durations. On Hobby, keep `vercel.json` crons for `authorize`/`fetcher`/`classify`/`agent`/`ttl` reduced to daily or remove them, and drive the endpoints with an external pinger (GitHub Actions schedule, cron-job.org, UptimeRobot, …) that curls each endpoint with the Bearer `CRON_SECRET` header.
 
 ### Local testing
 
