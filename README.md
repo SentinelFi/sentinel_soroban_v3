@@ -27,6 +27,7 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
   - [Flight status state machine](#flight-status-state-machine)
 - [Off-Chain Executors (Oracles and Keepers)](#off-chain-executors-oracles-and-keepers)
 - [Automated Governance (Route Agent)](#automated-governance-route-agent)
+- [Deployment Plan](#deployment-plan)
 - [Getting Started](#getting-started)
 - [License](#license)
 - [Contributing](#contributing)
@@ -130,6 +131,31 @@ Whitelisting stays human; *pricing and weather response* are automated with hard
    - sub-$1 premium drift → `noop` (no churn transactions)
 
 Failure posture: model down → file terms; forecast API down or unknown airport → no weather signal → `noop`. The agent can degrade to doing nothing, never to unsafe writes — and everything it *can* write is bounded by the on-chain owner-set term limits (payoff cap + payoff/premium ratio).
+
+## Deployment Plan
+
+What runs where. Three hosted surfaces plus the chain itself:
+
+| What | Source | Deployed on | Notes |
+|------|--------|-------------|-------|
+| Smart contracts (×6) | [`contracts/`](contracts/) | **Stellar testnet** (Soroban) | Addresses in [`deployments/testnet.json`](deployments/testnet.json); deployed via `make deploy-testnet` |
+| dApp frontend (Fun/Serious UI) | [`dapp/`](dapp/) | **Vercel** (static build) | One Vercel project, root = `dapp/` |
+| Serverless crons (×7) | [`dapp/api/cron/`](dapp/api/) | **Vercel** (same project) | Schedules in [`dapp/vercel.json`](dapp/vercel.json); 5-min crons need Vercel Pro (Hobby: external pinger with the `CRON_SECRET` bearer) |
+| ML pricing service | [`agent/`](agent/) | **Render** (Docker web service) | Via root [`render.yaml`](render.yaml); crons reach it over HTTPS (`AGENT_BASE_URL` + `AGENT_TOKEN`); optional — unset falls back to routes-file terms |
+| Node executor (legacy/local) | [`executor/centralized_cron/`](executor/) | **not deployed** (local/self-host option) | Superseded by the Vercel crons; kept for local runs and reference |
+| Mock AeroAPI | [`executor/mock-api/`](executor/) | **local only** | Keyless test fixture; point `AEROAPI_BASE_URL` at it for demos |
+
+Secrets live only in host env stores (Vercel project settings / Render env), never in the repo:
+
+- **Vercel**: `ORACLE_SECRET_KEY`, `KEEPER_SECRET_KEY`, `TTL_EXTENDER_SECRET_KEY`, `GOVERNANCE_ADMIN_SECRET_KEY`, `AEROAPI_KEY`, `AGENT_BASE_URL`, `AGENT_TOKEN`, `CRON_SECRET` (full list + defaults in [`dapp/.env.example`](dapp/.env.example))
+- **Render**: `AGENT_TOKEN` (matching the Vercel value)
+
+First-time deploy order:
+
+1. **Contracts** — already live on testnet (see `deployments/testnet.json`); redeploys follow [`contracts/deploy_order.md`](contracts/deploy_order.md)
+2. **Render** — deploy `agent/` (Docker), set `AGENT_TOKEN`
+3. **Vercel** — import the repo with root directory `dapp/`, set the env vars above, deploy; crons start on their schedules automatically
+4. **One-time on-chain setup** — owner runs `GovernanceModule.add_admin` for the governance-admin key; fill [`dapp/config/routes.testnet.json`](dapp/config/routes.testnet.json) and run `npm run whitelist:routes`
 
 ## Getting Started
 
