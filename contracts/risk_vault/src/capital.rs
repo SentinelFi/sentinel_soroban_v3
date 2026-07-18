@@ -156,9 +156,10 @@ impl RiskVault {
         }
 
         // Fund queued exits only from capital above the configured solvency
-        // reserve — the same bound direct exits use. Paying out to the
-        // nominal margin instead would let the queue drain the reserve that
-        // the purchase path just verified.
+        // reserve — the same required-backing bound the controller admits
+        // policies against. Paying out to the nominal margin instead would
+        // let the queue drain the reserve that the purchase path just
+        // verified.
         let mut remaining_free = Self::get_withdrawable_capital(e);
         let mut processed: u32 = 0;
         let mut tma = Self::get_total_managed_assets(e);
@@ -219,8 +220,8 @@ impl RiskVault {
                 // free capital covers NOW (burn that share slice, credit its
                 // asset value) and keep the remainder at the head. Without the
                 // partial fill, one oversized request would pin the queue —
-                // and, because direct exits are disabled while the queue is
-                // non-empty, freeze every underwriter exit — until enough
+                // and, since the queue is the only exit path, freeze every
+                // underwriter exit — until enough
                 // collateral unlocked to cover it in full, even while free
                 // capital sat idle. With it, the queue makes progress whenever
                 // any free capital exists, and strict FIFO fairness holds:

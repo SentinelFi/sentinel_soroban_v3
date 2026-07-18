@@ -25,7 +25,7 @@ pub mod test_support;
 /// `extend_ttl` / `extend_instance_ttl` call. Values are the same across
 /// contracts so they live here to avoid drift.
 pub mod ttl {
-    /// ~7 days at 5s/ledger (60 * 24 * 60 * 12 / 5).
+    /// ~7 days at 5s/ledger (7 * 24 * 60 * 12).
     pub const INSTANCE_TTL_THRESHOLD: u32 = 120_960;
     /// ~31 days at 5s/ledger (31 * 24 * 60 * 12).
     pub const INSTANCE_TTL_EXTEND: u32 = 535_680;

@@ -7,8 +7,9 @@
 //!    with the virtual-share offset, exercised across arbitrary
 //!    (TMA, supply) states including extreme skews. The properties are the
 //!    exact guarantees the call sites rely on: floor-floor round trips never
-//!    create value (deposit/redeem, queue partial fills), ceil round trips
-//!    never under-collect (withdraw), ceil ≥ floor, and monotonicity.
+//!    create value (queue minting/pricing and partial fills), ceil round
+//!    trips never under-collect (the ceil-rounded `preview_*` quotes),
+//!    ceil ≥ floor, and monotonicity.
 //!
 //! 2. **Stateful invariant machine** — random operation sequences against a
 //!    real vault (two-phase entry/exit requests and cancellations, both

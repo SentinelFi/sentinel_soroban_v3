@@ -67,8 +67,8 @@ impl RiskVault {
             .expect("decimals power overflow");
 
         let total_supply = Base::total_supply(e);
-        // Price on the internal managed-asset basis, the same figure the
-        // executable deposit/redeem conversions use — NOT the raw token balance.
+        // Price on the internal managed-asset basis, the same figure queue
+        // pricing and the `preview_*` quotes use — NOT the raw token balance.
         // The raw balance additionally includes processed-but-uncollected
         // withdrawal liabilities (and any direct donations), which no longer back
         // outstanding shares, so pricing on it would publish an inflated share

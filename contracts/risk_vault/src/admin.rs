@@ -127,11 +127,11 @@ impl RiskVault {
         .publish(e);
     }
 
-    /// Set the minimum asset value a queued withdrawal request must carry at
-    /// submission time (owner-only). The withdrawal queue is a bounded shared
-    /// resource: without a value floor, one participant can split shares
-    /// across many addresses and occupy every slot with near-dust requests,
-    /// locking later underwriters out of the FIFO exit path. A meaningful
+    /// Set the minimum asset value a queued request — withdrawal or deposit —
+    /// must carry at submission time (owner-only). Both queues are bounded
+    /// shared resources: without a value floor, one participant can split
+    /// capital across many addresses and occupy every slot with near-dust
+    /// requests, locking later underwriters out of the FIFO paths. A meaningful
     /// minimum makes each slot cost real escrowed capital. Zero disables the
     /// configured floor (an occupancy-scaled protocol floor still applies at
     /// request time, so unset does not mean slots are free to squat). Choose

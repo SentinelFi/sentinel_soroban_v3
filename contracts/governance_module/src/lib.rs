@@ -11,7 +11,8 @@
 //! enforced per `flight_id` so downstream pool/oracle keys can't collide.
 //!
 //! Core operations:
-//! - **Owner:** `set_defaults`, `add_admin` / `remove_admin`, `upgrade`.
+//! - **Owner:** `set_defaults`, `set_term_limits`, `add_admin` / `remove_admin`,
+//!   `pause` / `unpause`, `upgrade`.
 //! - **Owner or Admin:** route lifecycle — `whitelist_route`, `disable_route`,
 //!   `enable_route`, `remove_route` (only when disabled), `update_route_terms`
 //!   (per-field keep / override / revert-to-default).

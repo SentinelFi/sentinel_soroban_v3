@@ -84,9 +84,9 @@ pub(crate) fn extend_route_ttl(e: &Env, key: &DataKey) {
 }
 
 // Refresh the `FlightRoute(flight_id)` uniqueness-index TTL in lockstep with the
-// route entry. The index and the route were both written with a 60-day TTL at
-// whitelist time, but only the route key was re-extended on reads/mutations —
-// so the index could archive while the route stayed live, after which a second
+// route entry. Both keys are written with `ROUTE_TTL_LEDGERS` (120 days) at
+// whitelist time; if only the route key were re-extended on reads/mutations,
+// the index could archive while the route stayed live, after which a second
 // `whitelist_route` would see no index and accept a conflicting (origin, dest)
 // for the same flight_id, colliding downstream (flight_id, date) state. No-op
 // if the index is absent (extend_ttl on a missing key would panic).

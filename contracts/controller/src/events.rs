@@ -36,7 +36,8 @@ pub struct FlightSettledEvent {
     pub(crate) outcome: FlightStatus,
 }
 
-// Diagnostic warning emitted by `classify_flights` when oracle returns
+// Diagnostic warning emitted by the classification passes (`classify_flights`
+// / `classify_flight`) when oracle returns
 // NotInitiated for a flight in the active list — signals that FlightData
 // may have archived (or oracle hasn't fetched data yet for an overdue
 // flight). Consumed by the off-chain TTL-extender cron.
@@ -47,7 +48,8 @@ pub struct TtlMiss {
     pub(crate) date: u64,
 }
 
-// Diagnostic emitted by `classify_flights` / `execute_settlements`
+// Diagnostic emitted by the classification and settlement passes (both the
+// sweeps and the exact-tuple `classify_flight` / `settle_flight` variants)
 // when a flight is present in the oracle active list but its FlightConfig is
 // missing from FlightPoolManager (archived past TTL, or never registered).
 // The flight is skipped instead of panicking the whole keeper loop; the
@@ -59,7 +61,8 @@ pub struct FlightConfigMissing {
     pub(crate) date: u64,
 }
 
-// Emitted when `classify_flights` voids a purchased flight whose oracle row
+// Emitted when a classification pass (`classify_flights` / `classify_flight`)
+// voids a purchased flight whose oracle row
 // never left NotInitiated within the stale timeout after departure — no
 // flight data ever arrived, so the date most likely never matched a physical
 // flight. The bucket settles like an on-time flight (premiums to the vault,
@@ -72,7 +75,8 @@ pub struct FlightVoided {
     pub(crate) date: u64,
 }
 
-// Emitted when `classify_flights` voids an Active flight whose terminal
+// Emitted when a classification pass (`classify_flights` / `classify_flight`)
+// voids an Active flight whose terminal
 // oracle outcome (Landed/Cancelled) never arrived within the active timeout
 // past its recorded scheduled arrival — the oracle pipeline stopped resolving
 // this flight after the estimated-arrival write. The bucket settles like an

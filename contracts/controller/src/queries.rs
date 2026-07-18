@@ -5,9 +5,11 @@ use crate::{Controller, ControllerArgs, ControllerClient};
 
 #[contractimpl]
 impl Controller {
-    /// Per-traveler index — returns every `(flight_id, date)` the address has
-    /// ever bought insurance for. Append-only; frontend filters by current
-    /// status (looked up in FlightPoolManager / oracle).
+    /// Per-traveler index — returns the address's most recent
+    /// `(flight_id, date)` purchases, bounded at `MAX_TRAVELER_FLIGHTS` (the
+    /// oldest entries are evicted once the cap is reached; full history is
+    /// reconstructable from events). Frontend filters by current status
+    /// (looked up in FlightPoolManager / oracle).
     pub fn get_flights_for_traveler(e: &Env, address: Address) -> Vec<(Symbol, u64)> {
         e.storage()
             .persistent()

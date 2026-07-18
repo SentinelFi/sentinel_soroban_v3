@@ -19,9 +19,11 @@ pub enum VaultKey {
     // unsettled public flight outcome, so no LP can transact at a stale
     // share price during the outcome-public-but-not-yet-settled window.
     Oracle,
-    // Minimum asset value (at request time) a queued withdrawal must carry.
-    // Owner-tuned per deployment; 0 (the default) disables the floor. Raises
-    // the capital cost of occupying the bounded queue's slots with many small
+    // Owner-configured minimum asset value (at request time) a queued
+    // request — withdrawal or deposit — must carry. 0 (the default) disables
+    // only this configured component; the occupancy-scaled protocol floor
+    // still applies at request time (see MIN_REQUEST_FLOOR_DIVISOR). Raises
+    // the capital cost of occupying the bounded queues' slots with many small
     // requests spread across addresses.
     MinWithdrawalRequest, // i128
     // Percentage of locked capital that managed assets must keep covering

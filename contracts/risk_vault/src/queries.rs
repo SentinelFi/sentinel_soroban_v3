@@ -46,8 +46,8 @@ impl RiskVault {
     /// The same required-backing formula the controller admits new policies
     /// against — using the nominal margin here instead would let exits drain
     /// the configured reserve down to 100% backing the moment a purchase
-    /// passed. Gates direct withdraw/redeem, the `max_*` views, and
-    /// withdrawal-queue processing.
+    /// passed. Gates withdrawal-queue processing — the only LP exit path now
+    /// that the immediate exit operations are disabled.
     pub fn get_withdrawable_capital(e: &Env) -> i128 {
         let tma = Self::get_total_managed_assets(e);
         let locked = Self::get_locked_capital(e);

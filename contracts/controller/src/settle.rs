@@ -15,9 +15,12 @@ use crate::{Controller, ControllerArgs, ControllerClient, Error};
 impl Controller {
     /// Iterate the oracle's active-flight list (the canonical source of
     /// in-flight registrations plus a 7-day retention window of recently-
-    /// settled flights). For each Landed/Cancelled flight, compute the
-    /// settlement outcome from FlightPoolManager's locked terms and write
-    /// `ToBeSettled*` back to the oracle.
+    /// settled flights) and write `ToBeSettled*` classifications back to the
+    /// oracle: Landed flights are classified on-time/delayed against
+    /// FlightPoolManager's locked delay threshold, Cancelled maps directly to
+    /// `ToBeSettledCancelled`, and NotInitiated/Active flights stuck past
+    /// their lifecycle timeouts are voided (classified `ToBeSettledOnTime` —
+    /// premiums to the vault, no payout).
     #[when_not_paused]
     pub fn classify_flights(e: &Env, keeper: Address) {
         require_keeper(e, &keeper);
