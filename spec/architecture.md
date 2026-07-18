@@ -1830,9 +1830,15 @@ contract atomically; `unpause(caller)` resumes. State reads and permissionless
 housekeeping (`extend_ttl`, `prune_settled`) remain available while paused so the
 operator can keep observability and TTL hygiene running during incident response.
 `recover_uncollected` on the vault is intentionally exempt so the owner can still
-settle archived claims during a pause. Two further deliberate exemptions:
+settle archived claims during a pause. Three further deliberate exemptions:
 `flight_pool_manager.claim` stays open (the claim window runs on the ledger clock;
-gating it would let a pause silently expire valid, already-funded payouts), and
+gating it would let a pause silently expire valid, already-funded payouts);
+`flight_pool_manager.sweep_expired` stays open for the same clock reason — the
+FlightConfig TTL buffer past `claim_expiry` keeps counting down during a pause,
+and the sweep is the last routine touch before the entry archives, so gating it
+would let a long pause strand the unclaimed obligation outside `RecoveredBalance`
+until a manual storage restore (the sweep is accounting-only; the actual transfer,
+`withdraw_recovered`, remains owner-only and pause-gated); and
 `governance.route_status` — nominally a read — still commits its protective side
 effects (route/index TTL renewals and the uniqueness-index self-heal) while the
 module is paused. Those writes grant no privilege; the pause switch halts the
