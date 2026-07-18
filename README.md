@@ -20,21 +20,18 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
 
 ## Project Structure
 
-- [contracts/](contracts/) — Soroban smart contracts (Rust workspace)
-  - [controller/](contracts/controller/)
-  - [risk_vault/](contracts/risk_vault/)
-  - [flight_pool_manager/](contracts/flight_pool_manager/)
-  - [oracle_aggregator/](contracts/oracle_aggregator/)
-  - [governance_module/](contracts/governance_module/)
-  - [mock_usdc/](contracts/mock_usdc/)
-  - [sentinel_types/](contracts/sentinel_types/)
-  - [integration_tests/](contracts/integration_tests/)
-- [executor/](executor/) — off-chain executor layer (oracle and keeper cron jobs)
-- [playground/](playground/) — web playground for the testnet deployment ([live](https://sentinel-soroban-v3.vercel.app/))
-- [deployments/](deployments/) — deployed contract addresses and parameters
-- [spec/](spec/) — architecture and design documents
-- [docs/](docs/) — documentation site (Docusaurus)
-- [audits/](audits/) — audit reports and remediations
+| Folder | What it does |
+|--------|--------------|
+| [contracts/](contracts/) | Soroban smart contracts (Rust workspace): [controller/](contracts/controller/) (orchestrator), [risk_vault/](contracts/risk_vault/) (underwriter capital), [flight_pool_manager/](contracts/flight_pool_manager/) (per-flight policy state), [oracle_aggregator/](contracts/oracle_aggregator/) (flight status state machine), [governance_module/](contracts/governance_module/) (route whitelist + terms), [mock_usdc/](contracts/mock_usdc/) (testnet stablecoin), [sentinel_types/](contracts/sentinel_types/) (shared types), [integration_tests/](contracts/integration_tests/) |
+| [dapp/](dapp/) | The deployable app: Vite + React frontend at the root, plus [dapp/api/](dapp/api/) — Vercel serverless functions running the five executor cron jobs (see [Off-chain executors](#off-chain-executors-oracles-and-keepers)). Contract TypeScript bindings live in [dapp/packages/](dapp/packages/). One Vercel project serves UI and crons together. |
+| [executor/](executor/) | Off-chain executor layer, long-running variant: [centralized_cron/](executor/centralized_cron/) (node-cron service with the same five jobs) and [mock-api/](executor/mock-api/) (AeroAPI fixture server for local testing). |
+| [playground/](playground/) | Web playground for poking the testnet deployment ([live](https://sentinel-soroban-v3.vercel.app/)). |
+| [deployments/](deployments/) | Deployed contract addresses, wasm hashes, executor accounts, and constructor parameters per network. |
+| [spec/](spec/) | Architecture and design documents ([architecture.md](spec/architecture.md), chain-agnostic [simple_architecture.md](spec/simple_architecture.md)). |
+| [docs/](docs/) | Documentation site (Docusaurus), published via CI. |
+| [audits/](audits/) | Audit reports and remediations, by date and auditor. |
+| [slides/](slides/) | Project slide deck ([live](https://sentinel-soroban-v3-slides.vercel.app/)). |
+| [sequence_diagrams.md](sequence_diagrams.md) | End-to-end message sequence diagrams for the core flows. |
 
 ## Key Contracts
 
@@ -47,6 +44,60 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
 | [GovernanceModule](contracts/governance_module/) | The route authority owning canonical terms (premium, payoff, delay threshold) for whitelisted flight routes. |
 
 Deployed addresses are listed in [deployments/](deployments/).
+
+## How a Flight Moves Through the System
+
+A flight goes from whitelisted route, to purchasable market, to tracked flight, to settled outcome. Every step below is enforced on-chain; the off-chain executors only *trigger* transitions, they never decide outcomes locally.
+
+1. **Route whitelisting** — the Owner (or a delegated Admin) calls `GovernanceModule.whitelist_route(flight_id, origin, dest, [term overrides])`. Terms (premium, payoff, delay-hours threshold) fold with global defaults; routes can later be disabled, re-enabled, updated, or removed. Only routes reporting `Active` status are buyable.
+2. **Sale window** — the oracle account attests via `OracleAggregator.open_sale(flight_id, date, expires_at)` (max 24h) that the flight instance is scheduled and not cancelled. `buy_insurance` fails closed without a live attestation.
+3. **Purchase and registration** — `Controller.buy_insurance` checks: route `Active`, lead time (`date > now + min_lead_time`), live sale window, oracle status has no recorded outcome, and vault solvency on *aggregate* liabilities (`TMA >= ceil((locked + payoff) * solvency_ratio / 100)`). The first buyer registers the flight in both `FlightPoolManager` (locks the terms snapshot) and `OracleAggregator` (status `NotInitiated`, joins the active flight list). The premium escrows in the pool; the full payoff is locked in the vault. If the Controller's buyer allowlist is enabled (admin-toggled `set_whitelist_enabled` + `add_whitelisted_buyer`), only allowlisted addresses can buy.
+4. **Activation** — the oracle-role fetcher cron reads the active list, queries AeroAPI, and pushes the **scheduled** arrival via `set_estimated_arrival` → status becomes `Active`. A flight cancelled before ever activating is pushed as `set_cancelled` immediately, closing the purchase gate in the same cycle.
+5. **Tracking** — every fetcher cycle re-checks Active flights. Cancellations are pushed the moment they are visible; the landed resolution waits until ETA + 1h and requires an actual gate-arrival timestamp (`actual_in`) before `set_landed`. Ambiguous AeroAPI data (more than one physical flight for the day) is never guessed at — the flight stays unresolved for operator attention.
+6. **Classification** — the keeper cron calls `Controller.classify_flights`, which compares actual vs. estimated arrival against the route's delay threshold and moves `Landed`/`Cancelled` flights to `ToBeSettledOnTime` / `ToBeSettledDelayed` / `ToBeSettledCancelled`. Flights with no oracle data for ≥ 14 days are voided to on-time (no payout against an unattested outcome, and a dead row can never pin vault collateral forever).
+7. **Settlement** — the keeper cron calls `Controller.execute_settlements`. On-time: pooled premiums forward to the vault as underwriter yield and the locked payoff is released. Delayed/cancelled: the vault tops the pool up to `payoff × buyers` and a claim window opens. The oracle marks the flight `Settled`.
+8. **Claim, sweep, prune** — travelers call `FlightPoolManager.claim` before the claim window expires; after expiry, anyone may `sweep_expired` (unclaimed funds accrue to the protocol's recovered balance, withdrawable by the Owner). `OracleAggregator.prune_settled` (permissionless, run daily by the TTL cron) evicts flights settled ≥ 30 days ago from the active list.
+
+### Flight status state machine
+
+`OracleAggregator` enforces a forward-only state machine — an oracle bug or replay can never move a flight backwards or double-pay a settlement:
+
+```
+NotInitiated ──▶ Active            (oracle: set_estimated_arrival)
+     │  └──────▶ Cancelled         (oracle: set_cancelled, pre-activation)
+     └─────────▶ ToBeSettledOnTime (controller: void, ≥14 days, no data)
+
+Active ────────▶ Landed            (oracle: set_landed, actual arrival)
+     │  └──────▶ Cancelled         (oracle: set_cancelled)
+     └─────────▶ ToBeSettledOnTime (controller: void, ≥14 days past ETA)
+
+Landed ────────▶ ToBeSettledOnTime | ToBeSettledDelayed   (keeper: classify)
+Cancelled ─────▶ ToBeSettledCancelled                     (keeper: classify)
+
+ToBeSettled* ──▶ Settled           (keeper: execute_settlements)
+```
+
+## Off-Chain Executors (Oracles and Keepers)
+
+Three trusted signing identities drive the protocol forward; their addresses are registered on-chain and every entry point checks the caller. All decision logic lives on-chain — the executors are dumb triggers.
+
+| Identity | Authorized for | Env var |
+|----------|----------------|---------|
+| **Oracle** | `OracleAggregator`: `open_sale`/`close_sale`, `set_estimated_arrival`, `set_landed`, `set_cancelled` | `ORACLE_SECRET_KEY` |
+| **Keeper** | `Controller`: `classify_flights`, `execute_settlements`, `run_queue_maintenance` | `KEEPER_SECRET_KEY` |
+| **TTL extender** | Permissionless housekeeping: `extend_ttl` on all five contracts, `prune_settled` (any funded account works) | `TTL_EXTENDER_SECRET_KEY` |
+
+Five cron jobs use those identities. They exist in two interchangeable deployments — a long-running node-cron service ([executor/centralized_cron/](executor/centralized_cron/)) and Vercel serverless functions ([dapp/api/cron/](dapp/api/cron/), schedules in [dapp/vercel.json](dapp/vercel.json)):
+
+| Job | Identity | Cadence | What it triggers |
+|-----|----------|---------|------------------|
+| Flight data fetcher | Oracle | every 2h | AeroAPI → `set_estimated_arrival` / `set_landed` / `set_cancelled` |
+| Flight classifier | Keeper | hourly | `Controller.classify_flights` |
+| Settlement executor | Keeper | every 5 min | `Controller.execute_settlements` |
+| Queue maintainer | Keeper | every 5 min, offset | `Controller.run_queue_maintenance` — drains the underwriter withdrawal queue + share-price snapshot; decoupled so heavy settlements can't starve exits |
+| TTL extender | TTL | daily | `extend_ttl` × 5 contracts + `prune_settled` (Soroban storage-rent housekeeping) |
+
+See the [dapp README](dapp/README.md#serverless-crons-vercel) for serverless deployment, auth, and plan caveats, and [spec/simple_architecture.md](spec/simple_architecture.md) for the full chain-agnostic flows and invariants.
 
 ## Getting Started
 
