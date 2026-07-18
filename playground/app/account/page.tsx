@@ -425,7 +425,7 @@ function VaultCard() {
 
       <div className="grid-2">
         <div>
-          <label className="field-label">Deposit USDC (mints RVS shares to you)</label>
+          <label className="field-label">Request deposit (USDC, minted as RVS after the pricing delay)</label>
           <div style={{ display: "flex", gap: 8 }}>
             <input
               value={depositAmount}
@@ -446,14 +446,14 @@ function VaultCard() {
                 }
                 void action.run(
                   v,
-                  "deposit",
-                  [i128v(scaled), addr(address), addr(address), addr(address)],
-                  "Deposit complete — RVS shares minted to your account.",
+                  "request_deposit",
+                  [addr(address), i128v(scaled)],
+                  "Deposit request queued. The keeper mints your RVS shares once the request matures past the pricing delay.",
                   position.reload,
                 );
               }}
             >
-              Deposit
+              Request
             </button>
           </div>
         </div>
@@ -555,9 +555,10 @@ function VaultCard() {
       )}
 
       <p className="muted" style={{ fontSize: 13, marginTop: 16 }}>
-        Immediate withdraw/redeem is only possible while the queue is empty and
-        capital is free — use the Interact page for those. The request queue is
-        the reliable exit path.
+        All LP entry and exit is two-phase: requests escrow value immediately
+        and are priced by the keeper only after a delay, so nobody can trade
+        on a flight outcome before the oracle records it. Queued deposit
+        requests can be cancelled from the Interact page (cancel_deposit).
       </p>
       <StatusBox status={action.status} />
     </section>

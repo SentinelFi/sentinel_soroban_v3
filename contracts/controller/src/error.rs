@@ -25,4 +25,5 @@ pub enum Error {
     FlightNotRegisteredInPool = 318,
     SaleNotOpen = 319,
     SnapshotTermsExceedLimits = 320,
+    FlightNotListed = 321,
 }

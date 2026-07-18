@@ -17,6 +17,9 @@ const MIN_LEAD_TIME: u64 = 3_600;
 const CLAIM_EXPIRY_WINDOW: u64 = 5_184_000; // 60 days
 const DEPOSIT_AMOUNT: i128 = 1_000_0000000; // 1000 asset
 const INITIAL_TIMESTAMP: u64 = 1_710_400_000;
+// Mirrors the vault's LP_PRICING_DELAY_SECS — queued deposit/withdrawal
+// requests may only be priced once they are at least this old.
+const LP_PRICING_DELAY_SECS: u64 = 6 * 3_600;
 const EST_ARRIVAL: u64 = 1_710_500_000;
 const ACTUAL_ON_TIME: u64 = 1_710_501_800; // 30 min late (< 3h)
 const ACTUAL_DELAYED: u64 = 1_710_510_800; // 3h late (>= 3h)
@@ -127,10 +130,15 @@ fn setup() -> TestEnv {
         &None::<u32>,
     );
 
-    // Seed underwriter capital so solvency checks pass.
+    // Seed underwriter capital so solvency checks pass. LP entry is
+    // two-phase: request, mature past the pricing delay, then let the
+    // keeper's maintenance pass mint at the current price.
     let underwriter = Address::generate(&env);
     asset_admin.mint(&underwriter, &DEPOSIT_AMOUNT);
-    vault.deposit(&DEPOSIT_AMOUNT, &underwriter, &underwriter, &underwriter);
+    vault.request_deposit(&underwriter, &DEPOSIT_AMOUNT);
+    env.ledger()
+        .with_mut(|l| l.timestamp += LP_PRICING_DELAY_SECS);
+    ctrl.run_queue_maintenance(&keeper);
 
     TestEnv {
         env,
@@ -1497,7 +1505,12 @@ fn test_execute_settlements_delayed_flow() {
         cfg.status,
         flight_pool_manager::SettlementStatus::SettledDelayed
     );
-    assert_eq!(cfg.claim_expiry, INITIAL_TIMESTAMP + CLAIM_EXPIRY_WINDOW);
+    // Settlement runs at the current ledger time — setup's pricing-delay
+    // advance included — so the claim window is anchored there.
+    assert_eq!(
+        cfg.claim_expiry,
+        INITIAL_TIMESTAMP + LP_PRICING_DELAY_SECS + CLAIM_EXPIRY_WINDOW
+    );
 }
 
 #[test]
@@ -1551,6 +1564,10 @@ fn test_run_queue_maintenance_processes_withdrawal_queue() {
     let withdraw_shares = underwriter_shares / 2;
     t.vault.request_withdrawal(&t.underwriter, &withdraw_shares);
     assert_eq!(t.vault.get_withdrawal_queue().len(), 1);
+    // Requests are priced only once they outlive the LP pricing delay.
+    t.env
+        .ledger()
+        .with_mut(|l| l.timestamp += LP_PRICING_DELAY_SECS);
 
     oracle_on_time(&t);
     t.ctrl.classify_flights(&t.keeper);
@@ -1577,6 +1594,156 @@ fn test_execute_settlements_panics_on_non_keeper() {
     let t = setup();
     let stranger = Address::generate(&t.env);
     t.ctrl.execute_settlements(&stranger);
+}
+
+// =========================================================================
+// Exact-tuple classification / settlement (classify_flight, settle_flight)
+// =========================================================================
+
+#[test]
+fn test_classify_flight_classifies_exact_tuple() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    oracle_delayed(&t);
+
+    // Targeted call classifies without touching the sweep cursor.
+    assert!(t
+        .ctrl
+        .classify_flight(&t.keeper, &symbol_short!("AA100"), &FLIGHT_DATE));
+    let data = t
+        .oracle
+        .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(
+        data.status,
+        oracle_aggregator::FlightStatus::ToBeSettledDelayed
+    );
+
+    // Idempotent: an already-classified flight needs no transition.
+    assert!(!t
+        .ctrl
+        .classify_flight(&t.keeper, &symbol_short!("AA100"), &FLIGHT_DATE));
+}
+
+#[test]
+fn test_classify_flight_no_op_before_outcome() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    // No oracle outcome yet — NotInitiated, pre-departure: nothing to classify.
+    assert!(!t
+        .ctrl
+        .classify_flight(&t.keeper, &symbol_short!("AA100"), &FLIGHT_DATE));
+    let data = t
+        .oracle
+        .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(data.status, oracle_aggregator::FlightStatus::NotInitiated);
+}
+
+#[test]
+fn test_settle_flight_settles_exact_tuple() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    oracle_delayed(&t);
+
+    // Outcome written but unclassified: nothing settleable yet.
+    assert!(!t
+        .ctrl
+        .settle_flight(&t.keeper, &symbol_short!("AA100"), &FLIGHT_DATE));
+    assert!(t.oracle.has_pending_outcomes());
+
+    assert!(t
+        .ctrl
+        .classify_flight(&t.keeper, &symbol_short!("AA100"), &FLIGHT_DATE));
+    assert!(t
+        .ctrl
+        .settle_flight(&t.keeper, &symbol_short!("AA100"), &FLIGHT_DATE));
+
+    // Same terminal state the sweep produces: collateral unlocked, pool funded
+    // to the full payoff, oracle Settled, barrier released.
+    assert_eq!(t.vault.get_locked_capital(), 0);
+    assert_eq!(t.asset.balance(&t.pool_addr), PAYOFF);
+    assert!(!t.oracle.has_pending_outcomes());
+    let data = t
+        .oracle
+        .get_flight_data(&symbol_short!("AA100"), &FLIGHT_DATE);
+    assert_eq!(data.status, oracle_aggregator::FlightStatus::Settled);
+    let (_, _, distributed) = t.ctrl.get_stats();
+    assert_eq!(distributed, PAYOFF);
+
+    // Idempotent: a settled flight settles nothing further.
+    assert!(!t
+        .ctrl
+        .settle_flight(&t.keeper, &symbol_short!("AA100"), &FLIGHT_DATE));
+}
+
+#[test]
+fn test_settle_flight_on_time_credits_premium() {
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    buy(&t, &traveler);
+    oracle_on_time(&t);
+    let tma_before = t.vault.get_total_managed_assets();
+
+    assert!(t
+        .ctrl
+        .classify_flight(&t.keeper, &symbol_short!("AA100"), &FLIGHT_DATE));
+    assert!(t
+        .ctrl
+        .settle_flight(&t.keeper, &symbol_short!("AA100"), &FLIGHT_DATE));
+
+    assert_eq!(t.vault.get_locked_capital(), 0);
+    assert_eq!(t.vault.get_total_managed_assets(), tma_before + PREMIUM);
+    assert!(!t.oracle.has_pending_outcomes());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #321)")]
+fn test_classify_flight_panics_on_unlisted_flight() {
+    let t = setup();
+    t.ctrl
+        .classify_flight(&t.keeper, &symbol_short!("ZZ999"), &FLIGHT_DATE);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #321)")]
+fn test_settle_flight_panics_on_unlisted_flight() {
+    let t = setup();
+    t.ctrl
+        .settle_flight(&t.keeper, &symbol_short!("ZZ999"), &FLIGHT_DATE);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #321)")]
+fn test_classify_flight_panics_on_cancellation_tombstone() {
+    // A pre-registration cancellation creates a FlightData tombstone but no
+    // active-set entry — the targeted path must reject it exactly like the
+    // sweep never sees it (classifying it would strand a ToBeSettled* row
+    // with no pool bucket).
+    let t = setup();
+    t.oracle
+        .set_cancelled(&t.oracle_account, &symbol_short!("AA100"), &FLIGHT_DATE);
+    t.ctrl
+        .classify_flight(&t.keeper, &symbol_short!("AA100"), &FLIGHT_DATE);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #304)")]
+fn test_classify_flight_panics_on_non_keeper() {
+    let t = setup();
+    let stranger = Address::generate(&t.env);
+    t.ctrl
+        .classify_flight(&stranger, &symbol_short!("AA100"), &FLIGHT_DATE);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #304)")]
+fn test_settle_flight_panics_on_non_keeper() {
+    let t = setup();
+    let stranger = Address::generate(&t.env);
+    t.ctrl
+        .settle_flight(&stranger, &symbol_short!("AA100"), &FLIGHT_DATE);
 }
 
 // =========================================================================

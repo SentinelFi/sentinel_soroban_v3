@@ -8,29 +8,29 @@ use soroban_sdk::{symbol_short, testutils::Address as _, token, Address};
 // =========================================================================
 
 #[test]
-fn deposit_then_immediate_redeem_within_free_capital() {
+fn queued_exit_drains_when_capital_free() {
     let t = TestEnv::new();
-    // The default underwriter already deposited 1000 asset during setup.
+    // The default underwriter already entered 1000 asset during setup.
     // Pre-purchase, all capital is free.
     assert_eq!(t.vault.get_free_capital(), DEPOSIT_AMOUNT);
 
     let shares = t.vault.balance(&t.underwriter);
     assert!(shares > 0);
 
-    // Redeem half — succeeds because no capital is locked.
+    // Exit half through the queue — prices as soon as the request matures,
+    // because no capital is locked.
     let half = shares / 2;
-    let assets = t
-        .vault
-        .redeem(&half, &t.underwriter, &t.underwriter, &t.underwriter);
-    assert!(assets > 0);
+    t.vault.request_withdrawal(&t.underwriter, &half);
+    t.mature_requests();
+    t.ctrl.run_queue_maintenance(&t.keeper);
+    assert_eq!(t.vault.get_withdrawal_queue().len(), 0);
+    assert!(t.vault.get_claimable_balance(&t.underwriter) > 0);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #715)")]
-fn redeem_blocked_when_capital_locked() {
+fn queued_exit_starved_while_capital_locked() {
     let t = TestEnv::new();
-    // Lock all capital by buying many policies until free is below the
-    // redemption.
+    // Lock all capital by buying many policies.
     for _ in 0..20 {
         let buyer = Address::generate(&t.env);
         t.buy_flight(
@@ -39,10 +39,14 @@ fn redeem_blocked_when_capital_locked() {
             FLIGHT_DATE + SECONDS_PER_DAY,
         );
     }
-    // 20 buys × 50 asset payoff = 1000 asset locked. Free is now 0.
+    // 20 buys × 50 asset payoff = 1000 asset locked. Free is now 0: a
+    // matured exit request stays queued with nothing credited.
     let shares = t.vault.balance(&t.underwriter);
-    t.vault
-        .redeem(&shares, &t.underwriter, &t.underwriter, &t.underwriter);
+    t.vault.request_withdrawal(&t.underwriter, &shares);
+    t.mature_requests();
+    t.ctrl.run_queue_maintenance(&t.keeper);
+    assert_eq!(t.vault.get_withdrawal_queue().len(), 1);
+    assert_eq!(t.vault.get_claimable_balance(&t.underwriter), 0);
 }
 
 #[test]
@@ -55,6 +59,7 @@ fn request_withdrawal_processed_after_settle() {
     let half = shares / 2;
     t.vault.request_withdrawal(&t.underwriter, &half);
     assert_eq!(t.vault.get_withdrawal_queue().len(), 1);
+    t.mature_requests();
 
     t.oracle_on_time();
     t.classify_and_settle();
@@ -73,6 +78,7 @@ fn collect_after_credit() {
     let shares = t.vault.balance(&t.underwriter);
     let half = shares / 2;
     t.vault.request_withdrawal(&t.underwriter, &half);
+    t.mature_requests();
     t.oracle_on_time();
     t.classify_and_settle();
 

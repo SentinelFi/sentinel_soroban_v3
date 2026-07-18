@@ -209,11 +209,10 @@ fn concurrent_underwriters_share_payout_burden() {
     let t = TestEnv::new();
     let asset_admin = token::StellarAssetClient::new(&t.env, &t.asset_addr);
 
-    // Add a second underwriter with a smaller deposit.
+    // Add a second underwriter with a smaller entry.
     let underwriter2 = Address::generate(&t.env);
     asset_admin.mint(&underwriter2, &500_0000000);
-    t.vault
-        .deposit(&500_0000000, &underwriter2, &underwriter2, &underwriter2);
+    t.lp_deposit(&underwriter2, 500_0000000);
 
     let tma_before = t.vault.get_total_managed_assets();
     assert_eq!(tma_before, DEPOSIT_AMOUNT + 500_0000000);

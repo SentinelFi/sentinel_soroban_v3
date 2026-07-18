@@ -7,6 +7,8 @@ title: Risk Vault
 
 The Risk Vault holds all underwriter capital. It is built on the OpenZeppelin `FungibleVault`, an ERC-4626 equivalent for Soroban. Depositors receive transferable share tokens named **RiskVault Share (RVS)**.
 
+All LP entry and exit is **two-phase**: a request escrows value (USDC on entry, shares on exit) immediately, and the keeper's queue-processing pass prices it only after the request is at least the LP pricing delay old (6 hours). By then, every flight outcome that was publicly knowable when the request was committed has reached the chain — either settled into the share price, or holding the queue via the settlement barrier — so nobody can enter before a known gain or exit before a known loss at the other LPs' expense. The immediate `deposit`/`mint`/`withdraw`/`redeem` operations are permanently disabled (any call-time price can be stale), and the `max_*` views report zero.
+
 ## Share accounting
 
 - The vault prices shares against an internal **total managed assets** counter rather than its raw token balance, so direct token transfers to the vault cannot manipulate the share price.
@@ -21,22 +23,22 @@ The Risk Vault holds all underwriter capital. It is built on the OpenZeppelin `F
 
 ## Underwriter functions
 
-- `deposit(assets, receiver, from, operator)` and `mint`: enter the vault.
-- `redeem` and `withdraw`: exit immediately, capped to withdrawable capital.
-- `request_withdrawal(shares)`: join the FIFO withdrawal queue, shares are escrowed, returns a stable request id.
-- `cancel_withdrawal(caller, request_id)`: cancel a pending request.
+- `request_deposit(caller, assets)`: queue an entry — USDC transfers into the vault immediately (escrowed, backing no shares yet) and returns a stable request id. Once matured, processing mints shares at the then-current price. A request whose assets no longer buy a single share (price rose sharply) is returned rather than minted for nothing (`dep_dropped` event).
+- `cancel_deposit(caller, request_id)`: cancel a pending entry and take the escrowed USDC back. Cancellation carries no pricing optionality — a queued deposit always prices post-outcome, so backing out never dodges a loss or captures someone else's gain.
+- `request_withdrawal(caller, shares)`: queue an exit — shares are escrowed FIFO, returns a stable request id. Once matured, processing pays out at the then-current price, bounded by withdrawable capital.
+- `cancel_withdrawal(caller, request_id)`: cancel a pending exit request.
 
-Queue processing is strict FIFO with **head partial fills**: if the oldest request is worth more than the currently withdrawable capital, the fundable slice is paid out immediately (shares burned, value credited) and the remainder stays at the head of the queue. Withdrawable capital always flows to the oldest request first, and a single oversized request can never freeze everyone else's exit while payable capital sits idle. Partial fills emit a `wd_partial` event alongside the regular credit.
+Withdrawal-queue processing is strict FIFO with **head partial fills**: if the oldest matured request is worth more than the currently withdrawable capital, the fundable slice is paid out immediately (shares burned, value credited) and the remainder stays at the head of the queue. Withdrawable capital always flows to the oldest request first, and a single oversized request can never freeze everyone else's exit while payable capital sits idle. Partial fills emit a `wd_partial` event alongside the regular credit; a fill remainder keeps its original request time, so maturity is never re-earned.
 - `collect()`: pull USDC credited by processed withdrawal requests.
 - `snapshot()`: permissionless, records the daily share price (kept 30 days).
 
 ## Controller-only functions
 
-`increase_locked`, `decrease_locked`, `send_payout`, `process_withdrawal_queue`, `record_premium_income`, and `set_solvency_ratio` (the mirror push from the Controller's owner setter) can only be called by the Controller.
+`increase_locked`, `decrease_locked`, `send_payout`, `process_deposit_queue`, `process_withdrawal_queue`, `record_premium_income`, and `set_solvency_ratio` (the mirror push from the Controller's owner setter) can only be called by the Controller.
 
-## Settlement barrier
+## Settlement barrier and pricing delay
 
-The vault is wired at construction with the Oracle Aggregator address. While any flight outcome is publicly known but not yet settled, deposits and withdrawals are blocked so nobody can trade against a stale share price.
+The vault is wired at construction with the Oracle Aggregator address. While any flight outcome is written on-chain but not yet settled, neither queue prices anything — requests stay committed and wait. The 6-hour pricing delay covers the window the on-chain barrier cannot see: the time between an outcome becoming publicly knowable and the oracle transaction landing. Together they mean a request is always priced with every outcome knowable at its commitment already reflected.
 
 ## Owner functions
 

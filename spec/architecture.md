@@ -64,7 +64,7 @@ The system requires four off-chain cron jobs to keep ticking:
 | #1 | **FlightDataFetcher** | Every 2 hours | Fetches flight data from AeroAPI, writes estimated/actual arrival times to OracleAggregator |
 | #2 | **FlightClassifier** | Every 1 hour | Reads oracle data + FlightPoolManager terms, classifies landed flights as on_time / delayed / cancelled |
 | #3 | **SettlementExecutor** | Every 5 minutes | Executes money movement for classified flights |
-| #3b | **QueueMaintainer** | Every 5 minutes | Drains underwriter withdrawal queue + share-price snapshot (split out from #3 per audit M-03 so settlement gas pressure can't block underwriter payouts) |
+| #3b | **QueueMaintainer** | Every 5 minutes | Prices matured LP deposit + withdrawal requests + share-price snapshot (split out from #3 per audit M-03 so settlement gas pressure can't block underwriter entries/exits) |
 
 These run inside a modular **Executor Backend** that is fully swappable. The contracts
 enforce authorization via `require_auth()` on owner-updatable addresses — they don't know
@@ -305,22 +305,46 @@ vault is composable with any vault-aware tooling.
   `process_withdrawal_queue` and a read-back during that call would be reentrant.
   `max_withdraw` and `max_redeem` are overridden to cap redemptions at the withdrawable
   amount.
-- **Two withdrawal paths, one contract:**
-  - **Immediate (`redeem`)** — OZ Vault standard. Burns shares and transfers USDC when
-    `withdrawable_capital >= redemption`.
-  - **Queued (`request_withdrawal`)** — non-standard extension for locked capital.
-    Enqueues `(request_id, caller, shares)` in a FIFO queue stored in **Instance**
-    storage. Returns the freshly-issued `request_id: u64` (monotonic counter, audit M-04 fix).
-    After each settlement cycle the keeper calls `run_queue_maintenance()`, which drives
-    `process_withdrawal_queue()` and credits fulfilled requests to `claimable_balance`.
-    Underwriters call `collect()` to pull USDC.
-  - **Head partial fill.** When the oldest request prices above the current withdrawable
-    capital, `process_withdrawal_queue` funds the share slice that amount covers
-    (burn + credit), keeps the remainder at the head, and defers everything behind it.
-    Strict FIFO fairness holds — withdrawable capital always goes to the oldest request
-    first — but one oversized request can no longer pin the queue (and with it every
-    direct exit, which defers to a non-empty queue) while payable capital sits idle. Each
-    partial pass emits `Credited` plus
+- **All LP entry and exit is two-phase (request → delayed pricing).** The immediate
+  `deposit`/`mint`/`withdraw`/`redeem` operations are permanently disabled (they revert;
+  the `max_*` views report zero): any call-time price can be stale with respect to a
+  flight outcome that is publicly knowable but not yet written on-chain — the settlement
+  barrier only engages once the oracle transaction lands. Instead, LPs commit value up
+  front and are priced by queue processing only once their request outlives
+  `LP_PRICING_DELAY_SECS` (6 h, sized above the oracle pipeline's worst-case
+  observation-to-write latency with a missed-cycle margin). By pricing time, every
+  outcome knowable at commitment is on-chain: settled (in the price) or pending (the
+  barrier holds the request queued until settlement). Request cancellation carries no
+  optionality — a queued request always prices post-outcome, so backing out never dodges
+  a loss or captures a gain that belongs to others. `preview_*` remain as current-price
+  estimates for request sizing.
+  - **Entry (`request_deposit`)** — transfers the USDC into the vault immediately
+    (escrowed — deliberately NOT counted in `total_managed_assets` and backing no shares
+    yet), enqueues `(request_id, owner, assets, requested_at)` in the FIFO
+    `DepositQueue`, and returns the stable `request_id`. `process_deposit_queue`
+    (controller-only, driven by `run_queue_maintenance`) mints matured requests at the
+    then-current share price; a request whose assets no longer buy one share (price rose
+    sharply since it was queued) is returned and closed out via `DepositDropped`.
+    `cancel_deposit(caller, request_id)` returns the escrow. Bounded: 100 entries
+    (`DepositQueueFull`), 20 per address, same anti-dust floor as the exit queue.
+  - **Exit (`request_withdrawal`)** — enqueues `(request_id, caller, shares,
+    requested_at)` in a FIFO queue stored in **Instance** storage. Returns the
+    freshly-issued `request_id: u64` (monotonic counter, audit M-04 fix; the counter is
+    shared with the deposit queue). After each settlement cycle the keeper calls
+    `run_queue_maintenance()`, which drives `process_deposit_queue()` then
+    `process_withdrawal_queue()` (deposits first — fresh entries add capital that can
+    fund matured exits in the same pass) and credits fulfilled requests to
+    `claimable_balance`. Underwriters call `collect()` to pull USDC.
+  - **Maturity stop.** Both queues are chronological, so the first request younger than
+    the pricing delay defers itself and everything behind it — exactly like the capacity
+    stop. A partial-fill remainder keeps its original `requested_at`: maturity, once
+    reached, is never re-earned.
+  - **Head partial fill.** When the oldest matured request prices above the current
+    withdrawable capital, `process_withdrawal_queue` funds the share slice that amount
+    covers (burn + credit), keeps the remainder at the head, and defers everything
+    behind it. Strict FIFO fairness holds — withdrawable capital always goes to the
+    oldest request first — but one oversized request can no longer pin the queue while
+    payable capital sits idle. Each partial pass emits `Credited` plus
     `RequestPartiallyFilled(request_id, shares_filled, shares_remaining)`.
   - **Zero-value drop.** A request whose asset value has decayed to zero (share price fell
     after it was queued) is not left blocking the head: its escrowed shares are returned to
@@ -348,7 +372,8 @@ vault is composable with any vault-aware tooling.
   snapshots are permanently deleted (no archival rent). Historical data lives off-chain
   via the `SharePriceSnapshot` event.
 - Only the Controller (set once via `set_controller()`) can call: `increase_locked`,
-  `decrease_locked`, `send_payout`, `process_withdrawal_queue`, `record_premium_income`.
+  `decrease_locked`, `send_payout`, `process_deposit_queue`, `process_withdrawal_queue`,
+  `record_premium_income`.
 - **`recover_uncollected(user, amount, mode)`** — owner-only function that re-credits or
   transfers funds if a `ClaimableBalance` entry expires. Single function with a
   `RecoveryMode { Recredit, Transfer }` enum:
@@ -372,10 +397,11 @@ pub enum VaultKey {
     TotalManagedAssets,        // i128 — Instance
     LockedCapital,             // i128 — Instance
     WithdrawalQueue,           // Vec<WithdrawalRequest> — Instance
-    NextRequestId,             // u64 — Instance (monotonic counter)
+    DepositQueue,              // Vec<DepositRequest> — Instance (escrowed LP entries)
+    NextRequestId,             // u64 — Instance (monotonic counter, shared by both queues)
     LastSnapshotTime,          // u64 — Instance
     Oracle,                    // Address — Instance (settlement-barrier target, wired at construction, owner-rotatable)
-    MinWithdrawalRequest,      // i128 — Instance (anti-dust floor for queue entries, 0 disables)
+    MinWithdrawalRequest,      // i128 — Instance (anti-dust floor for both queues' entries, 0 disables)
     SolvencyRatio,             // u32 — Instance (controller-mirrored reserve ratio, absent = 100)
     ClaimableBalance(Address), // i128 — Persistent (TTL extended to 60 days on write)
     SnapshotPrice(u64),        // i128 — Temporary (30-day TTL, keyed by day)
@@ -386,11 +412,29 @@ pub struct WithdrawalRequest {
     pub request_id: u64,    // stable id — audit M-04
     pub owner: Address,
     pub shares: i128,
-    // No timestamp: request time is never read on-chain (the queue is
-    // strict-FIFO by position) and the wd_req event already timestamps
-    // each request via its ledger.
+    pub requested_at: u64,  // load-bearing: pricing is gated on request age
+}
+
+#[contracttype]
+pub struct DepositRequest {
+    pub request_id: u64,
+    pub owner: Address,
+    pub assets: i128,       // escrowed — not in TMA until minted
+    pub requested_at: u64,
 }
 ```
+
+The exact conservation identity is
+`raw_balance == TMA + Σ uncollected ClaimableBalance + Σ DepositQueue escrow`;
+`recover_uncollected`'s Recredit surplus bound subtracts the deposit escrow so a
+mis-keyed recredit can never be satisfied out of pending entrants' funds.
+
+**Upgrade note:** `WithdrawalRequest` gained the `requested_at` field, which changes the
+stored layout of `VaultKey::WithdrawalQueue`. Upgrading an existing deployment requires
+the withdrawal queue to be **empty** at the moment of upgrade — entries written under
+the old layout do not deserialize under the new type. Runbook: pause the vault, have
+outstanding requests cancelled (or drain them via a final maintenance pass before the
+pause), verify `get_withdrawal_queue_len() == 0`, upgrade, unpause.
 
 **Storage tier rationale:**
 
@@ -713,14 +757,30 @@ fn execute_settlements(env: Env, keeper: Address) {
 /// atomic, so a too-large fixed window would otherwise retry-fail forever).
 fn execute_settlements_bounded(env: Env, keeper: Address, limit: u32);
 
+/// Exact-tuple variants: classify / settle ONE flight without scanning the
+/// active list. The rotating sweeps guarantee eventual coverage, but their
+/// latency grows with total active-set occupancy (future bookings and
+/// recently-settled rows share the same enumeration windows), and while a
+/// public outcome waits for the cursors the vault's settlement barrier stays
+/// engaged protocol-wide. The executor knows exactly which flight's outcome
+/// it just wrote, so it drives that tuple straight through these two calls;
+/// the sweeps remain the repair backstop. Both are keeper-gated, require the
+/// flight to be in the oracle active set (FlightNotListed = 321 otherwise —
+/// tombstones and evicted flights are unreachable), and are idempotent on
+/// state: the bool reports whether a transition/settlement actually ran.
+fn classify_flight(env: Env, keeper: Address, flight_id: Symbol, date: u64) -> bool;
+fn settle_flight(env: Env, keeper: Address, flight_id: Symbol, date: u64) -> bool;
+
 /// Called by QueueMaintainer cron (every 5 minutes, decoupled from settlement).
-/// Drains the underwriter withdrawal queue + records the daily share-price
-/// snapshot. Split out from execute_settlements so heavy settlements can't
-/// block underwriter payouts (audit M-03).
+/// Prices both LP request queues (deposits first — fresh entries add capital
+/// that can fund matured exits in the same pass) + records the daily
+/// share-price snapshot. Split out from execute_settlements so heavy
+/// settlements can't block underwriter entries/exits (audit M-03).
 fn run_queue_maintenance(env: Env, keeper: Address) {
     keeper.require_auth();
     let authorized = env.storage().instance().get(&CtrlKey::AuthorizedKeeper).unwrap();
     assert!(keeper == authorized, "not authorized keeper");
+    vault.process_deposit_queue(&controller_addr);
     vault.process_withdrawal_queue(&controller_addr);
     vault.snapshot();
 }
@@ -1213,6 +1273,12 @@ data + FlightPoolManager terms). Settlement is a write-heavy operation (moves mo
 them allows the classification to run less frequently (1 hour) while settlement runs more
 frequently (5 minutes) to process the queue quickly.
 
+**Targeted fast path.** The hourly sweep is the backstop, not the primary latency path:
+whichever executor job writes an outcome (`set_landed` / `set_cancelled`) immediately
+calls `controller.classify_flight(keeper, flight_id, date)` followed by
+`controller.settle_flight(...)` for that exact tuple, so a fresh outcome normally
+classifies and settles within seconds regardless of active-set size.
+
 ### Cron #3 — SettlementExecutor (Keeper, every 5 minutes)
 
 Processes all flights that have been classified and executes the actual money movement.
@@ -1254,6 +1320,12 @@ SettlementExecutor -> signs + submits Soroban tx:
          run_queue_maintenance — split per audit M-03.)
 ```
 
+The cron drives this in a drain loop, not as a single submission: while
+`oracle.get_pending_outcomes() > 0` it alternates `classify_flights` and
+`execute_settlements` passes (bounded per run, stopping early when passes make no
+progress), because the vault blocks every LP entry/exit until the pending count
+reaches zero. When nothing is pending the run submits no transaction at all.
+
 ### Cron #3b — QueueMaintainer (Keeper, every 5 minutes)
 
 ```
@@ -1261,7 +1333,8 @@ QueueMaintainer -> signs + submits Soroban tx:
     Controller.run_queue_maintenance(keeper_address)
         |
         +-> keeper.require_auth()
-        +-> vault.process_withdrawal_queue()   (FIFO — see Underwriter Withdrawals)
+        +-> vault.process_deposit_queue()      (FIFO, matured requests only)
+        +-> vault.process_withdrawal_queue()   (FIFO — see Underwriter Entry/Exit)
         +-> vault.snapshot()                   (no-op if already snapshotted today)
 ```
 
@@ -1579,31 +1652,43 @@ Owner -> FlightPoolManager.withdraw_recovered(amount)
     +-> emit RecoveredWithdrawn { owner, amount }
 ```
 
-### Underwriter Withdrawing Capital (FIFO)
+### Underwriter Entering and Exiting Capital (two-phase FIFO)
+
+There is no immediate path: `deposit`/`mint`/`withdraw`/`redeem` revert
+(`DirectEntryDisabled` / `DirectExitDisabled`) and the `max_*` views report zero. Every
+entry and exit commits first and is priced by queue processing only after the request
+outlives the LP pricing delay (6 h).
 
 ```
--- Immediate path (OZ Vault) --
+-- Entry --
 
-Underwriter -> RiskVault.redeem(shares, receiver, owner, operator)
-    +-> operator.require_auth()
-    +-> max_redeem check: panic if shares > withdrawable_capital equivalent
-        (withdrawable = TMA - ceil(locked * solvency_ratio / 100))
-    +-> burn shares, decrease total_managed_assets
-    +-> usdc_client.transfer(vault, receiver, assets)
+Underwriter -> RiskVault.request_deposit(caller, assets) -> request_id
+    +-> caller.require_auth()
+    +-> panic if assets <= 0, previews to zero shares, or below the request floor
+    +-> usdc_client.transfer(caller, vault, assets)      <- escrowed, NOT in TMA
+    +-> request queued as (request_id, caller, assets, requested_at) (Instance)
+    +-> returns request_id (monotonic counter) — cancel_deposit returns the escrow
 
--- Queued path (FIFO — used when withdrawable_capital < redemption) --
+                (keeper maintenance drives process_deposit_queue)
+                    +-> no-op while a written outcome is unsettled (barrier)
+                    +-> walks FIFO list; stops at the first request younger
+                        than the pricing delay (chronological queue)
+                    +-> shares minted at the CURRENT price; TMA += assets
+                    +-> zero-share requests (price outgrew them) are returned
+
+-- Exit --
 
 Underwriter -> RiskVault.request_withdrawal(caller, shares) -> request_id
     +-> caller.require_auth()
     +-> panic if shares == 0 or shares > balance
-    +-> underwriter specifies how much they want to withdraw
-    +-> request queued as (request_id, caller, shares) in FIFO list (Instance storage)
-    +-> shares reserved
+    +-> request queued as (request_id, caller, shares, requested_at) (Instance)
+    +-> shares escrowed
     +-> returns request_id (monotonic counter) — use to cancel later, audit M-04
 
                 (queue drains after each settlement via process_withdrawal_queue)
-                    +-> walks FIFO list in order
-                    +-> for each request: if solvency allows, amount is "unlocked"
+                    +-> no-op while a written outcome is unsettled (barrier)
+                    +-> walks FIFO list in order; stops at the first immature request
+                    +-> for each matured request: if solvency allows, priced NOW
                     +-> shares burned; ClaimableBalance(caller) += redemption amount
                     +-> total_managed_assets -= redemption amount   <- TMA reduced HERE,
                                                                        at credit time
@@ -1620,11 +1705,18 @@ Underwriter -> RiskVault.collect(caller)
          vault's raw token balance but outside TMA)
 ```
 
+**Why the delay:** the settlement barrier only engages once the oracle WRITES an outcome,
+which is strictly after that outcome becomes publicly knowable. Pricing a request only
+after it is older than the oracle pipeline's worst-case observation-to-write latency
+guarantees the price it receives reflects everything knowable at commitment — an
+informed LP can no longer exit before a known loss or enter before a known gain at the
+other LPs' expense.
+
 **FIFO withdrawal semantics:** Underwriters are in a list. When flights are settled and
 capital is freed, the queue processor walks the list in order. If the vault's solvency
-allows it, the requested amount is unlocked for that underwriter. The underwriter then
-calls `collect()` to pull the USDC. Requests that cannot be fulfilled yet remain in the
-queue for the next settlement cycle.
+allows it, each matured request is priced and credited. The underwriter then calls
+`collect()` to pull the USDC. Requests that cannot be fulfilled yet remain in the queue
+for the next settlement cycle.
 
 ---
 
@@ -1827,15 +1919,26 @@ inaccessible until restored" rather than "permanently lost."
   Multi-oracle aggregation is a future enhancement.
 - **Front-running** — Stellar's transaction ordering is validator-determined. A mempool
   watcher could theoretically front-run `buy_insurance`, but this is a legitimate purchase.
-- **Void-path barrier lag** — for a flight voided via the stale timeout, the outcome
-  (premiums become vault income) is deterministically computable from on-chain state the
-  moment `date + 14 days` passes, but the vault's settlement barrier only engages when the
-  classifier writes `ToBeSettledOnTime`. In that gap (up to one classifier cycle, longer
-  under batch-cursor rotation) an LP can deposit at the pre-income share price and capture
-  a pro-rata slice of the pending premium income. Exposure is bounded by the voided
-  flights' premiums — and an attacker seeding bogus flights always loses more in premiums
-  than they can recapture — so this is accepted; running the classifier at the 5-minute
-  cadence recommended under load minimizes the window.
+- **LP pricing is delayed, not immediate (deliberate).** Every entry and exit is a
+  two-phase request priced only once it outlives `LP_PRICING_DELAY_SECS` (6 h). This
+  closes the window between a flight outcome becoming publicly knowable and the oracle
+  writing it on-chain (where the settlement barrier cannot see it): by pricing time,
+  everything knowable at commitment is settled into the price or barrier-held. The
+  residual is an oracle-pipeline outage longer than the delay — outcomes then stay
+  unwritten past request maturity and matured requests price stale. **Operational
+  requirement:** on an oracle/fetcher outage approaching the pricing delay, pause the
+  vault (queue processing stops with it); the sale authorizer's fail-closed windows
+  already stop new exposure in the same outage.
+- **Void-path income is predictable in advance** — for a flight voided via the stale
+  timeout, the outcome (premiums become vault income) is deterministically computable
+  from on-chain state the moment `date + 14 days` passes, but the vault's settlement
+  barrier only engages when the classifier writes `ToBeSettledOnTime`. The pricing delay
+  does not close this one: the income is knowable arbitrarily far in advance, so an LP
+  can time a deposit request to mature inside the gap (up to one classifier cycle) and
+  capture a pro-rata slice at the pre-income share price. Exposure is bounded by the
+  voided flights' premiums — and an attacker seeding bogus flights always loses more in
+  premiums than they can recapture — so this is accepted; a tight classifier cadence
+  minimizes the window.
 - **An extended oracle outage can void real flights.** The stale-void timeout assumes a
   row still `NotInitiated` 14 days past departure never matched a physical flight, and
   the active-void timeout assumes a row still `Active` 14 days past its recorded
@@ -1863,20 +1966,25 @@ inaccessible until restored" rather than "permanently lost."
 - **Correlated event risk** — simultaneous delays across many flights are protected only
   by `minimum_solvency_ratio`. At 100% the vault covers all; underwriters bear correlated risk.
 - **No per-underwriter capital attribution** — `locked_capital` is pool-level.
-- **Classification lag** — up to 1 hour between oracle data write and classification.
-  Settlement lag is at most 5 minutes after classification.
-- **Settlement-barrier duration scales with keeper cadence.** The vault blocks LP
-  entry/exit from the moment any outcome is public until it settles. Classification
-  processes at most `MAX_CLASSIFY_BATCH = 25` flights per call and settlement at most
-  `MAX_SETTLE_BATCH = 10` (settlement writes far more ledger entries per flight), so at
-  high active-flight volume an hourly classifier can leave outcomes unclassified for many
-  hours — keeping the barrier engaged most of the day and making the withdrawal queue the
-  only LP path.
-  **Operational invariant:** under load, run the classifier at the same 5-minute cadence
-  as the settler (the contracts accept any cadence; batch caps bound the per-call cost).
-  If a settlement window ever exceeds the network's per-transaction resource budgets,
-  `execute_settlements_bounded(keeper, limit)` shrinks the window — down to one flight —
-  so the ready set always drains.
+- **Classification lag** — the primary path is targeted: whichever executor job writes
+  an outcome immediately calls `classify_flight` + `settle_flight` for that exact tuple,
+  so outcome-to-settlement latency is a few transactions, independent of active-set size.
+  If the targeted call fails (paused controller, RPC glitch), the sweeps pick the flight
+  up: up to 1 hour to the next classifier pass, plus settler rotation.
+- **Sweep-based settlement latency scales with active-set occupancy.** The vault blocks
+  LP entry/exit from the moment any outcome is written until it settles. The sweeping
+  passes inspect at most `MAX_CLASSIFY_BATCH = 25` / `MAX_SETTLE_BATCH = 10` consecutive
+  active-set slots per call (settlement writes far more ledger entries per flight), and
+  the set mixes future bookings, in-flight rows, and a 7-day retention window of settled
+  rows — so a full rotation at high volume takes many calls. The targeted per-flight
+  entry points exist precisely so ready work never depends on that rotation; the settler
+  cron additionally loops classify+settle passes until `PendingOutcomes == 0` (bounded
+  per run) rather than submitting a single fixed window.
+  **Operational invariant:** alert on the age of the oldest pending outcome (the
+  `PendingOutcomes` counter plus status events give the signal), not merely on cron
+  success. If a settlement window ever exceeds the network's per-transaction resource
+  budgets, `execute_settlements_bounded(keeper, limit)` shrinks the window — down to one
+  flight — so the ready set always drains.
   A flight that can never settle (missing pool config, stalled restore) keeps the barrier
   on until operations resolves it — see `evict_missing_flight` for the terminal escape
   hatch and its `outcome_pending` flag.
@@ -1917,19 +2025,21 @@ user's policies — not all flights across the protocol.
 
 ### Underwriter
 
-**Deposit:** Sign transaction calling `RiskVault.deposit(assets, receiver, from, operator)`.
-Shares issued proportional to `total_managed_assets / total_supply`.
+All entry/exit is two-phase — commit now, priced after the 6-hour LP pricing delay at
+the then-current share price. The immediate `deposit`/`mint`/`withdraw`/`redeem` calls
+revert.
 
-**Withdraw (immediate):** `RiskVault.redeem(shares, receiver, owner, operator)` — executes
-when `get_withdrawable_capital() >= redemption` (the margin above the configured solvency
-reserve on locked capital; equals free capital at the default 100% ratio).
+**Deposit:** `RiskVault.request_deposit(caller, assets)` — the USDC escrows immediately;
+the keeper's maintenance pass mints shares (proportional to
+`total_managed_assets / total_supply` at processing time) once the request matures.
+Cancel with `RiskVault.cancel_deposit(caller, request_id)` to take the escrow back.
 
-**Withdraw (queued FIFO):** `RiskVault.request_withdrawal(caller, shares)` — enqueues when
-capital is locked. Specify desired withdrawal amount. The request's asset value must meet
-the owner-configured minimum (`get_min_withdrawal_request`) — a floor that keeps the
-bounded queue's slots from being occupied by dust requests. Queue drains FIFO after each
-settlement — if solvency allows, the amount is unlocked. Call `RiskVault.collect(caller)`
-to pull USDC.
+**Withdraw (queued FIFO):** `RiskVault.request_withdrawal(caller, shares)` — always the
+exit path. The request's asset value must meet the owner-configured minimum
+(`get_min_withdrawal_request`, shared by both queues) — a floor that keeps the bounded
+queues' slots from being occupied by dust requests. Queue drains FIFO after each
+settlement, matured requests first — if solvency allows, the amount is credited. Call
+`RiskVault.collect(caller)` to pull USDC.
 
 **Cancel queued request:** `RiskVault.cancel_withdrawal(caller, request_id)` — uses the
 stable id returned from `request_withdrawal`, NOT the current queue index (audit M-04).
@@ -1948,11 +2058,12 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Add admin | Owner | `governance.add_admin(admin)` |
 | Remove admin | Owner | `governance.remove_admin(admin)` |
 | Read route status | Anyone | `governance.route_status(flight_id, origin, dest) -> RouteStatus` |
-| Deposit capital | Underwriter | `risk_vault.deposit(assets, receiver, from, operator)` |
-| Withdraw immediately | Underwriter | `risk_vault.redeem(shares, receiver, owner, operator)` |
-| Withdraw (queued) | Underwriter | `risk_vault.request_withdrawal(caller, shares) -> request_id` |
+| Deposit capital (queued) | Underwriter | `risk_vault.request_deposit(caller, assets) -> request_id` (escrows; minted after the pricing delay) |
+| Cancel queued deposit | Underwriter | `risk_vault.cancel_deposit(caller, request_id)` |
+| Withdraw (queued) | Underwriter | `risk_vault.request_withdrawal(caller, shares) -> request_id` (escrows; priced after the pricing delay) |
 | Collect credited USDC | Underwriter | `risk_vault.collect(caller)` |
 | Cancel queued withdrawal | Underwriter | `risk_vault.cancel_withdrawal(caller, request_id)` |
+| Read deposit queue | Anyone | `risk_vault.get_deposit_queue()` / `get_deposit_queue_len()` |
 | Recover uncollected balance | Owner | `risk_vault.recover_uncollected(user, amount, mode: RecoveryMode)` (Recredit must not underpay; Transfer requires prior credit) |
 | Rotate settlement-barrier oracle | Owner | `risk_vault.set_oracle(oracle)` (refuses while the current oracle has pending outcomes) |
 | Force-rotate barrier oracle (old oracle unreachable) | Owner | `risk_vault.force_set_oracle(oracle)` (requires the vault paused; emits `oracle_set` with `forced = true`) |
@@ -1974,8 +2085,10 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Close sale window early | Oracle | `oracle.close_sale(oracle, flight_id, date)` |
 | Check sale window | Anyone | `oracle.is_sale_open(flight_id, date)` / `oracle.get_sale_auth(flight_id, date)` |
 | Classify flights | Keeper | `controller.classify_flights(keeper)` (window of `MAX_CLASSIFY_BATCH = 25` per call) |
+| Classify one exact flight | Keeper | `controller.classify_flight(keeper, flight_id, date) -> bool` (must be active-listed; no cursor dependency) |
 | Execute settlements | Keeper | `controller.execute_settlements(keeper)` (window of `MAX_SETTLE_BATCH = 10` per call) |
 | Execute settlements, smaller window | Keeper | `controller.execute_settlements_bounded(keeper, limit)` (limit clamped to [1, 10]; escape hatch if a full window exceeds tx resource budgets) |
+| Settle one exact flight | Keeper | `controller.settle_flight(keeper, flight_id, date) -> bool` (must be active-listed; no cursor dependency) |
 | Drain withdrawal queue + snapshot | Keeper | `controller.run_queue_maintenance(keeper)` |
 | Toggle buyer whitelist | Owner | `controller.set_whitelist_enabled(bool)` (default off — open purchases) |
 | Approve / revoke a buyer | Owner or Governance admin | `controller.add_whitelisted_buyer(caller, addr)` / `remove_whitelisted_buyer(caller, addr)` (approval carries an explicit 180-day inactivity deadline; each purchase slides it forward) |

@@ -27,9 +27,9 @@ All USDC sits in exactly two places: the Risk Vault (underwriter capital) and th
 
 The Risk Vault tracks an internal total managed assets counter instead of reading its raw token balance, so donating tokens to the vault cannot distort the share price. A virtual share offset (decimals offset of 3) defends against inflation attacks, and rounding always favors the vault.
 
-## Settlement barrier
+## Settlement barrier and delayed LP pricing
 
-Once a flight outcome is publicly known but not yet settled on-chain, underwriter deposits and withdrawals are temporarily blocked. This prevents anyone from entering or exiting the vault at a stale share price ahead of a known payout.
+LP entry and exit are two-phase: requests escrow value immediately and are priced only after a 6-hour delay, at the share price current when processed. The delay guarantees that every flight outcome publicly knowable when a request was committed has reached the chain before the request prices — closing the window between an outcome becoming public and the oracle recording it. On top of that, once an outcome is written on-chain but not yet settled, queue processing pauses entirely, so no request is ever priced while recognized-but-unsettled PnL is missing from the share price.
 
 ## Forward-only oracle state machine
 

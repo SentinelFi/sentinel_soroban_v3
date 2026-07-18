@@ -1,4 +1,11 @@
 {
+  "installCommand": "npm install && npm run install:contracts",
+  "rewrites": [
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ],
   "crons": [
     { "path": "/api/cron/fetcher", "schedule": "0 */2 * * *" },
     { "path": "/api/cron/classify", "schedule": "0 * * * *" },

@@ -1,6 +1,6 @@
 use soroban_sdk::{contractimpl, Address, Env, Vec};
 
-use crate::storage::VaultKey;
+use crate::storage::{DepositRequest, VaultKey};
 use crate::{RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
 #[contractimpl]
@@ -97,8 +97,23 @@ impl RiskVault {
         Self::get_withdrawal_queue(e).len()
     }
 
-    /// Return the minimum asset value a queued withdrawal request must carry
-    /// (0 = no minimum configured).
+    /// Return the current pending deposit request queue (escrowed LP entries
+    /// awaiting delayed pricing).
+    pub fn get_deposit_queue(e: &Env) -> Vec<DepositRequest> {
+        e.storage()
+            .instance()
+            .get(&VaultKey::DepositQueue)
+            .unwrap_or(Vec::new(e))
+    }
+
+    /// Return the number of pending deposit requests — the entry-side
+    /// occupancy gauge (see `get_withdrawal_queue_len`).
+    pub fn get_deposit_queue_len(e: &Env) -> u32 {
+        Self::get_deposit_queue(e).len()
+    }
+
+    /// Return the minimum asset value a queued request (withdrawal or
+    /// deposit) must carry (0 = no minimum configured).
     pub fn get_min_withdrawal_request(e: &Env) -> i128 {
         e.storage()
             .instance()

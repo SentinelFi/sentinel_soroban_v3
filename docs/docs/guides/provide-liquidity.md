@@ -11,37 +11,32 @@ This guide describes the underwriter flow: depositing USDC into the Risk Vault t
 
 Underwriter capital backs all outstanding policies. Premiums from on-time flights are added to the vault, increasing the value of every share. Payouts for delayed and cancelled flights are paid from the vault, decreasing it. Your return is the net of premiums earned minus payouts absorbed, proportional to your share of the vault.
 
+All entry and exit is **two-phase**: you commit value now, and it is priced after a short delay. This is deliberate — it means nobody (including you) can enter or exit based on a flight outcome that is already publicly known but not yet recorded on-chain.
+
 ## Depositing
 
-Call `deposit` on the Risk Vault with the USDC amount and your address as the receiver. You receive **RVS** shares priced by the current share price:
+Call `request_deposit` on the Risk Vault with the USDC amount. Your USDC transfers into the vault immediately (escrowed), and after the pricing delay (6 hours) the keeper's next maintenance pass mints your **RVS** shares at the share price current at that moment:
 
 ```bash
 stellar contract invoke \
   --id <RISK_VAULT_ADDRESS> \
   --source <YOUR_KEY> \
   --network testnet \
-  -- deposit \
-  --assets 1000000000 \
-  --receiver <YOUR_ADDRESS> \
-  --from <YOUR_ADDRESS> \
-  --operator <YOUR_ADDRESS>
+  -- request_deposit \
+  --caller <YOUR_ADDRESS> \
+  --assets 1000000000
 ```
 
-For a self-deposit, `receiver`, `from`, and `operator` are all your own address (`operator` is the account whose authorization is required).
-
-Amounts use 7 decimals, so `1000000000` is 100 USDC.
+Amounts use 7 decimals, so `1000000000` is 100 USDC. The call returns a request id; you can cancel with `cancel_deposit` any time before your request is processed and get the USDC back. `preview_deposit` quotes the shares at the current price — an estimate, since actual pricing happens at processing.
 
 ## Withdrawing
 
-There are two paths:
+Call `request_withdrawal` with your shares. Your shares are escrowed and your request joins a FIFO queue; once it matures past the pricing delay it is paid at the then-current share price, as capital allows. A request larger than the currently withdrawable capital — assets above the solvency reserve held against outstanding policies (`get_withdrawable_capital` shows the figure) — is filled progressively (partial fills), so the queue keeps moving whenever any capital is payable. Once processed — fully or partially — call `collect` to receive the USDC credited so far. You can cancel a pending request (its remaining shares) with `cancel_withdrawal`.
 
-1. **Immediate**: call `redeem` with your shares. This succeeds when the vault has enough withdrawable capital — assets above the solvency reserve held against outstanding policies (`get_withdrawable_capital` shows the current figure).
-2. **Queued**: call `request_withdrawal` with your shares. Your shares are escrowed and your request joins a FIFO queue. The queue is processed automatically every few minutes as capital frees up; a request larger than the currently withdrawable capital is filled progressively (partial fills), so the queue keeps moving whenever any capital is payable. Once processed — fully or partially — call `collect` to receive the USDC credited so far. You can cancel a pending request (its remaining shares) with `cancel_withdrawal`.
+A minimum request size applies to both queues (100 USDC on testnet) to prevent dust spam.
 
-A minimum withdrawal request size applies (100 USDC on testnet) to prevent dust spam.
-
-:::info[Settlement barrier]
-Deposits and withdrawals are briefly blocked while a flight outcome is publicly known but not yet settled on-chain. This protects existing shareholders from being front-run at a stale share price. Retry after settlement completes, which usually takes minutes.
+:::info[Why the delay?]
+The share price only reflects a flight outcome once the oracle records and settles it on-chain, which happens some time after the outcome is publicly known. Pricing your request only after it is 6 hours old guarantees that everything knowable when you committed is already in the price — so an informed trader can never exit before a known loss or enter before a known gain at other LPs' expense. While an outcome is recorded but unsettled, queue processing additionally pauses; your request simply waits and prices after settlement.
 :::
 
 ## Monitoring

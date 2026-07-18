@@ -167,26 +167,18 @@ fn lp_exit_cannot_drain_solvency_reserve() {
         DEPOSIT_AMOUNT - 4 * PAYOFF
     );
 
-    // Withdrawing the nominal free margin would collapse the configured
-    // reserve to 100% backing — rejected.
-    assert!(t
-        .vault
-        .try_withdraw(
-            &(DEPOSIT_AMOUNT - 2 * PAYOFF),
-            &t.underwriter,
-            &t.underwriter,
-            &t.underwriter,
-        )
-        .is_err());
+    // A full-position exit request is funded only up to the reserve-aware
+    // bound: processing credits ~800 and holds the remainder queued, leaving
+    // the book at exactly the configured ratio.
+    let shares = t.vault.balance(&t.underwriter);
+    t.vault.request_withdrawal(&t.underwriter, &shares);
+    t.mature_requests();
+    t.ctrl.run_queue_maintenance(&t.keeper);
 
-    // The reserve-aware bound leaves the book exactly at the configured ratio.
-    t.vault.withdraw(
-        &(DEPOSIT_AMOUNT - 4 * PAYOFF),
-        &t.underwriter,
-        &t.underwriter,
-        &t.underwriter,
-    );
-    assert_eq!(t.vault.get_total_managed_assets(), 4 * PAYOFF);
+    let credited = t.vault.get_claimable_balance(&t.underwriter);
+    assert!(credited > 0 && credited <= DEPOSIT_AMOUNT - 4 * PAYOFF);
+    assert!(DEPOSIT_AMOUNT - 4 * PAYOFF - credited < 100); // rounding dust only
+    assert_eq!(t.vault.get_withdrawal_queue().len(), 1);
     assert!(t.vault.get_total_managed_assets() >= 2 * t.vault.get_locked_capital());
     assert_eq!(t.vault.get_withdrawable_capital(), 0);
 }
@@ -218,10 +210,10 @@ fn lead_time_gate_blocks_short_notice() {
 #[test]
 fn lp_cannot_transact_at_stale_price_during_pending_outcome() {
     // After an outcome is public (oracle Cancelled) but before the keeper
-    // settles, the vault's share price still reflects the pre-loss state. An LP
-    // must not be able to exit at that stale price (dumping the loss on passive
-    // LPs), nor deposit to capture not-yet-booked income. Both are blocked until
-    // settlement recognizes the PnL.
+    // settles, the vault's share price still reflects the pre-loss state. No
+    // LP may transact at that price: the immediate entry/exit surface is
+    // permanently disabled (any call-time price can be stale), and queue
+    // processing refuses to price anything while the outcome is unsettled.
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);
     t.buy(&traveler); // locks collateral against the underwriter capital
@@ -229,65 +221,67 @@ fn lp_cannot_transact_at_stale_price_during_pending_outcome() {
     // Outcome is public but not yet classified/settled.
     t.oracle_cancelled();
 
-    // Exit at the stale (pre-loss) price is rejected.
+    // The immediate-pricing surface is disabled outright, and the max_*
+    // views report zero so integrations don't build doomed calls.
     let shares = t.vault.balance(&t.underwriter);
-    let redeem = t
-        .vault
-        .try_redeem(&shares, &t.underwriter, &t.underwriter, &t.underwriter);
-    assert!(
-        redeem.is_err(),
-        "redeem must be blocked while an outcome is unsettled"
-    );
-
-    // Entry at the stale (pre-income) price is likewise rejected.
     let newcomer = Address::generate(&t.env);
     t.asset_admin.mint(&newcomer, &DEPOSIT_AMOUNT);
-    let deposit = t
+    assert!(t
         .vault
-        .try_deposit(&DEPOSIT_AMOUNT, &newcomer, &newcomer, &newcomer);
-    assert!(
-        deposit.is_err(),
-        "deposit must be blocked while an outcome is unsettled"
-    );
-
-    // The max_* views must mirror the barrier: while every entry/exit path
-    // reverts, each view reports zero so integrations don't build doomed calls.
+        .try_redeem(&shares, &t.underwriter, &t.underwriter, &t.underwriter)
+        .is_err());
+    assert!(t
+        .vault
+        .try_deposit(&DEPOSIT_AMOUNT, &newcomer, &newcomer, &newcomer)
+        .is_err());
     assert_eq!(t.vault.max_deposit(&newcomer), 0);
     assert_eq!(t.vault.max_mint(&newcomer), 0);
     assert_eq!(t.vault.max_withdraw(&t.underwriter), 0);
     assert_eq!(t.vault.max_redeem(&t.underwriter), 0);
 
-    // Once the keeper settles, the PnL is recognized and the barrier lifts.
+    // Queued requests commit but do NOT price: even matured, both queues
+    // hold while the outcome is unsettled.
+    t.vault.request_withdrawal(&t.underwriter, &shares);
+    t.vault.request_deposit(&newcomer, &DEPOSIT_AMOUNT);
+    t.mature_requests();
+    t.ctrl.run_queue_maintenance(&t.keeper);
+    assert_eq!(t.vault.get_withdrawal_queue().len(), 1);
+    assert_eq!(t.vault.get_deposit_queue_len(), 1);
+    assert_eq!(t.vault.get_claimable_balance(&t.underwriter), 0);
+
+    // Once the keeper settles, the PnL is recognized and both queues price
+    // at the post-settlement rate.
     t.classify_and_settle();
-    assert!(t.vault.max_deposit(&newcomer) > 0);
-    assert!(t.vault.max_redeem(&t.underwriter) > 0);
-    let out = t
-        .vault
-        .redeem(&shares, &t.underwriter, &t.underwriter, &t.underwriter);
+    assert_eq!(t.vault.get_withdrawal_queue().len(), 0);
+    assert_eq!(t.vault.get_deposit_queue_len(), 0);
+    let exited = t.vault.get_claimable_balance(&t.underwriter);
+    assert!(exited > 0, "exit should price after settlement");
+    // The loss (payoff − premium) was recognized before the exit priced.
     assert!(
-        out > 0,
-        "redeem should succeed at the post-settlement price"
+        exited < DEPOSIT_AMOUNT,
+        "exit priced at the stale pre-loss rate: {}",
+        exited
+    );
+    assert!(
+        t.vault.balance(&newcomer) > 0,
+        "entry should mint after settlement"
     );
 }
 
 #[test]
-fn withdrawal_queue_stays_open_during_pending_outcome() {
-    // The barrier blocks direct exits during a pending outcome but must NOT
-    // freeze exits entirely: the queued path stays open, and it is priced only
-    // after settlement (never at the stale pre-loss rate).
+fn withdrawal_queue_prices_only_after_settlement() {
+    // The exit queue stays open for commitments during a pending outcome,
+    // and it is priced only after settlement (never at the stale pre-loss
+    // rate).
     let t = TestEnv::new();
     let traveler = Address::generate(&t.env);
     t.buy(&traveler);
     t.oracle_cancelled(); // outcome public, not yet settled
 
     let shares = t.vault.balance(&t.underwriter);
-    // Direct exit blocked, but request_withdrawal is allowed (no price locked).
-    assert!(t
-        .vault
-        .try_redeem(&shares, &t.underwriter, &t.underwriter, &t.underwriter)
-        .is_err());
     t.vault.request_withdrawal(&t.underwriter, &shares);
     assert_eq!(t.vault.get_withdrawal_queue().len(), 1);
+    t.mature_requests();
 
     // Draining is a no-op while the outcome is unsettled (would price stale).
     t.ctrl.run_queue_maintenance(&t.keeper);
@@ -393,6 +387,9 @@ fn snapshot_skipped_while_outcome_pending() {
     t.buy(&traveler);
     t.oracle_cancelled(); // outcome public, not yet settled
 
+    // Setup's maintenance pass already snapshotted today — probe a fresh day
+    // so the once-per-day gate isn't what suppresses the write.
+    t.advance_time(SECONDS_PER_DAY);
     let now = t.env.ledger().timestamp();
     let day = now / SECONDS_PER_DAY;
     t.vault.snapshot();

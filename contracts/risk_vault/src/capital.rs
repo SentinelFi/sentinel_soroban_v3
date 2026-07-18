@@ -9,10 +9,14 @@ use stellar_tokens::vault::Vault;
 
 use crate::auth::{require_controller, settlement_pending};
 use crate::constants::{
-    CLAIMABLE_TTL_LEDGERS, MAX_QUEUE_BATCH, MAX_SOLVENCY_RATIO, MIN_SOLVENCY_RATIO,
+    CLAIMABLE_TTL_LEDGERS, LP_PRICING_DELAY_SECS, MAX_QUEUE_BATCH, MAX_SOLVENCY_RATIO,
+    MIN_SOLVENCY_RATIO,
 };
-use crate::events::{Credited, RequestDropped, RequestPartiallyFilled, SolvencyRatioSet};
-use crate::storage::VaultKey;
+use crate::events::{
+    Credited, DepositDropped, DepositProcessed, RequestDropped, RequestPartiallyFilled,
+    SolvencyRatioSet,
+};
+use crate::storage::{DepositRequest, VaultKey};
 use crate::vault_ops::{convert_to_assets_with_tma, convert_to_shares_with_tma};
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
@@ -168,6 +172,7 @@ impl RiskVault {
         // the loop.
         let limit = queue.len().min(MAX_QUEUE_BATCH);
         let mut kept: Vec<WithdrawalRequest> = Vec::new(e);
+        let now = e.ledger().timestamp();
         let mut hit_capacity = false;
         let mut returned_any = false;
         let mut partially_filled = false;
@@ -180,6 +185,24 @@ impl RiskVault {
             // call.
             if hit_capacity {
                 kept.push_back(request);
+                continue;
+            }
+
+            // Pricing-delay gate: a request may only be priced once it has
+            // outlived the LP pricing delay, so the price it receives already
+            // reflects every outcome publicly knowable when it was committed
+            // (see LP_PRICING_DELAY_SECS). The queue is chronological — later
+            // requests are younger — so an immature head defers everything
+            // behind it, exactly like the capacity stop. A partial-fill
+            // remainder keeps its original requested_at: maturity, once
+            // reached, is permanent.
+            let mature_at = request
+                .requested_at
+                .checked_add(LP_PRICING_DELAY_SECS)
+                .expect("addition overflow");
+            if now < mature_at {
+                kept.push_back(request);
+                hit_capacity = true;
                 continue;
             }
 
@@ -254,6 +277,7 @@ impl RiskVault {
                         request_id: request.request_id,
                         owner: request.owner,
                         shares: shares_remaining,
+                        requested_at: request.requested_at,
                     });
                 } else {
                     // Free capital too small to fund even one share of the
@@ -334,6 +358,110 @@ impl RiskVault {
             e.storage()
                 .instance()
                 .set(&VaultKey::WithdrawalQueue, &kept);
+        }
+    }
+
+    /// Controller-only: mint shares for matured deposit requests (batched,
+    /// FIFO) — the entry-side mirror of `process_withdrawal_queue`. Each
+    /// matured request's escrowed assets convert to shares at the CURRENT
+    /// share price and join managed assets; requests younger than the LP
+    /// pricing delay stay queued, and the whole pass is a no-op while a
+    /// public outcome is unsettled, so nobody is ever minted at a price that
+    /// omits recognized or imminent PnL.
+    #[when_not_paused]
+    pub fn process_deposit_queue(e: &Env, controller: Address) {
+        require_controller(e, &controller);
+        Self::extend_ttl(e);
+
+        // Same barrier as withdrawal processing: pricing while a public
+        // flight outcome is unsettled would hand the entrant the stale
+        // pre-settlement share price.
+        if settlement_pending(e) {
+            return;
+        }
+
+        let queue: Vec<DepositRequest> = e
+            .storage()
+            .instance()
+            .get(&VaultKey::DepositQueue)
+            .unwrap_or(Vec::new(e));
+        if queue.is_empty() {
+            return;
+        }
+
+        let now = e.ledger().timestamp();
+        let limit = queue.len().min(MAX_QUEUE_BATCH);
+        let mut kept: Vec<DepositRequest> = Vec::new(e);
+        let mut tma = Self::get_total_managed_assets(e);
+        let mut changed = false;
+        let mut deferred = false;
+        let vault_addr = e.current_contract_address();
+
+        for i in 0..limit {
+            let request = queue.get(i).unwrap();
+
+            // The queue is chronological, so the first immature request
+            // defers everything behind it (mirrors the withdrawal pass).
+            if deferred {
+                kept.push_back(request);
+                continue;
+            }
+            let mature_at = request
+                .requested_at
+                .checked_add(LP_PRICING_DELAY_SECS)
+                .expect("addition overflow");
+            if now < mature_at {
+                kept.push_back(request);
+                deferred = true;
+                continue;
+            }
+
+            // Price against the running TMA: each mint grows supply and
+            // managed assets in lockstep, so later requests in the pass see
+            // a consistent share price.
+            let shares = convert_to_shares_with_tma(e, request.assets, tma, Rounding::Floor);
+            if shares == 0 {
+                // Share price rose so far since the request that its assets
+                // no longer buy a single share. Minting zero would donate the
+                // escrow to existing holders — return it instead and close
+                // the request out.
+                let asset = token::Client::new(e, &Vault::query_asset(e));
+                asset.transfer(&vault_addr, &request.owner, &request.assets);
+                DepositDropped {
+                    owner: request.owner.clone(),
+                    request_id: request.request_id,
+                    assets: request.assets,
+                }
+                .publish(e);
+                changed = true;
+                continue;
+            }
+
+            // Mint to the owner and recognize the escrowed assets as managed.
+            Base::update(e, None, Some(&request.owner), shares);
+            tma = tma.checked_add(request.assets).expect("addition overflow");
+            DepositProcessed {
+                owner: request.owner.clone(),
+                request_id: request.request_id,
+                assets: request.assets,
+                shares,
+            }
+            .publish(e);
+            changed = true;
+        }
+
+        // Requests beyond the batch window carry over untouched.
+        if limit < queue.len() {
+            kept.append(&queue.slice(limit..));
+        }
+
+        // Nothing minted or dropped means `kept` equals the stored queue —
+        // skip both writes. (Deferral alone changes nothing.)
+        if changed {
+            e.storage()
+                .instance()
+                .set(&VaultKey::TotalManagedAssets, &tma);
+            e.storage().instance().set(&VaultKey::DepositQueue, &kept);
         }
     }
 }

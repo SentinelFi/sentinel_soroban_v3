@@ -29,8 +29,10 @@ If a buyer whitelist is enabled (off by default), only whitelisted addresses can
 All gated by the authorized keeper address:
 
 - `classify_flights()`: compares actual versus scheduled arrival against each route's delay threshold and marks flights to be settled as on time, delayed, or cancelled. Runs hourly.
+- `classify_flight(flight_id, date) -> bool`: classifies one exact flight instance without scanning the active list. The executor calls this right after writing an outcome so classification does not wait for the sweep's rotating cursor; the flight must be in the oracle active set, and the return value reports whether a transition ran.
 - `execute_settlements()`: performs the money movement for classified flights, at most 10 per call (settlement writes many ledger entries per flight, and the window is sized to the network's per-transaction budgets; larger backlogs drain across successive runs). On time: premiums move from pool to vault and locked capital is released. Delayed or cancelled: the vault tops up the pool so each buyer can claim the full payoff. Runs every 5 minutes.
 - `execute_settlements_bounded(limit)`: the same pass with a caller-chosen window (clamped to 1–10) — an operator escape hatch to keep settlement advancing if a full window ever exceeds transaction resource limits.
+- `settle_flight(flight_id, date) -> bool`: settles one exact classified flight without scanning the active list — the companion to `classify_flight`, releasing the vault's settlement barrier as soon as the outcome's PnL is recognized instead of after a full cursor rotation.
 - `run_queue_maintenance()`: processes the vault withdrawal queue and records share price snapshots. Kept separate from settlement so a heavy settlement batch can never block underwriter withdrawals. Runs every 5 minutes.
 
 ## Owner functions
