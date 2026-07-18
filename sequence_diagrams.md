@@ -269,6 +269,7 @@ sequenceDiagram
             Ctrl->>Pool: get_flight_config(flight_id, date)
         end
         Ctrl->>Oracle: set_to_be_settled(status: OnTime | Delayed | Cancelled)
+        Note over Ctrl,Oracle: NotInitiated or Active rows stuck past their 14 day<br/>lifecycle timeout are voided as OnTime — premiums<br/>to the vault, no payout
     end
     end
 
@@ -324,7 +325,7 @@ sequenceDiagram
 
     rect rgba(64, 200, 112, 0.14)
     Note over Traveler,Asset: Claim within the window
-    Traveler->>Pool: claim(flight_id, date)
+    Traveler->>Pool: claim(traveler, flight_id, date)
     Note over Pool: traveler.require_auth()<br/>checks: SettledDelayed/Cancelled,<br/>window open, has policy, not already claimed
     Pool->>Pool: mark claimed, claimed_count++
     Pool->>Asset: transfer(pool → traveler, payoff)

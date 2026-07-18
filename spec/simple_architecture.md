@@ -94,7 +94,9 @@ The system has 5 production contracts plus a test stablecoin.
   to default per field).
 - Anyone: read route status — returns one of:
   - `Active(resolvedTerms)` — buyable, terms folded with defaults
-  - `Disabled` — exists but soft-disabled
+  - `Disabled` — exists but is not approved, or is approved but its resolved
+    terms fail the current validity rules / term limits (e.g. after a
+    defaults or term-limits change)
   - `Unknown` — never whitelisted, removed, or storage-expired
 
 **Why a typed status enum:** lets the controller distinguish "never approved"
@@ -137,13 +139,17 @@ disabled and nobody can trade against the other LPs' pending PnL.
   credited funds).
 - Controller-only: increase_locked, decrease_locked, record_premium_income,
   send_payout, process_deposit_queue, process_withdrawal_queue,
-  set_solvency_ratio (mirror push), snapshot.
+  set_solvency_ratio (mirror push).
+- Anyone: snapshot — rate-limited daily share-price sample for off-chain
+  analytics; no-ops if today's sample exists or an outcome is pending.
 - Owner-only: recover_uncollected (manual fallback for archived claimable
   balances) — has two modes: re-credit storage or transfer directly;
-  set_min_withdrawal_request (anti-dust queue floor); set_oracle (rotate the
-  settlement-barrier oracle — refuses while the current oracle still reports
-  pending outcomes) and force_set_oracle (skips that check, but only while
-  the vault is paused).
+  set_min_withdrawal_request (anti-dust value floor for both request queues;
+  zero leaves the occupancy-scaled protocol floor in force); set_oracle
+  (rotate the settlement-barrier oracle — refuses while the current oracle
+  still reports pending outcomes or while any locked policy exposure
+  remains) and force_set_oracle (skips those checks, but only while the
+  vault is paused).
 
 **Why a withdrawal queue:** redemptions can exceed withdrawable capital when
 policies are heavily locked. The queue lets underwriters request now and
@@ -252,7 +258,8 @@ counters and a per-traveler purchase index.
   far ahead a flight must be to insure), claim expiry window (how long after
   settlement a delayed/cancelled claim can be collected).
 - Aggregate counters: total policies sold, total premiums, total payouts.
-- Per-traveler index: list of `(flight_id, date)` ever purchased — feeds
+- Per-traveler index: list of the most recent `(flight_id, date)` purchases
+  (bounded, oldest evicted at the cap; full history lives in events) — feeds
   the "my policies" frontend without scanning all flights.
 
 **Key operations:**
@@ -263,14 +270,19 @@ counters and a per-traveler purchase index.
   premium, locks collateral, records buyer, updates index.
 - Keeper: classify_flights — iterates oracle's active list, classifies
   Landed/Cancelled flights into ToBeSettled* by comparing actual vs.
-  estimated arrival times against the route's delay threshold.
+  estimated arrival times against the route's delay threshold; also voids
+  NotInitiated/Active flights stuck past their 14-day lifecycle timeouts
+  (classified on-time — premiums to the vault, no payout).
 - Keeper: execute_settlements — iterates oracle's active list, processes
   every ToBeSettled* flight (moves money between pool and vault, marks
-  oracle as Settled).
-- Keeper: run_queue_maintenance — drains the underwriter withdrawal queue
-  and takes a share-price snapshot. Decoupled from settlement so a heavy
-  settlement batch can never block underwriter exits.
-- Owner: rotate keeper address, set tunables.
+  oracle as Settled). Exact-tuple variants classify_flight / settle_flight
+  serve the low-latency path, and execute_settlements_bounded caps a pass.
+- Keeper: run_queue_maintenance — drains both LP request queues (deposits
+  first, so fresh mints can fund matured exits) and takes a share-price
+  snapshot. Decoupled from settlement so a heavy settlement batch can never
+  block underwriter exits.
+- Owner: rotate keeper address, set tunables, settle_evicted_flight
+  (reconcile a flight the oracle owner evicted from its active set).
 - Anyone: read flights for a traveler, read aggregate stats.
 
 **Why split classify and execute:** classification only reads
@@ -331,8 +343,9 @@ faucet for testnet experimentation.
 ```
 
 The **Controller** is the only contract that calls every other contract.
-All other inter-contract calls are minimal (Pool ↔ Vault on settle_on_time
-to forward premiums).
+All other inter-contract interaction is minimal (the Pool's only
+vault-directed action is a token transfer to the Vault's address on
+settle_on_time — it never invokes the Vault contract).
 
 ---
 
@@ -371,7 +384,7 @@ only required on chains with storage-rent / archival semantics (see
 ### Cron 3b — QueueMaintainer (Keeper, every ~5 minutes, offset)
 
 - Calls `Controller.run_queue_maintenance()`, which drains the underwriter
-  withdrawal queue and snapshots share price.
+  deposit and withdrawal queues (deposits first) and snapshots share price.
 - Runs on its own cadence (offset from the settler) so settlement gas
   pressure can never starve underwriter exits.
 - Authorized as the keeper role.
@@ -415,6 +428,8 @@ Traveler
 Controller:
    1. Read Governance.route_status(flight_id, origin, dest) — must be Active.
    2. Check lead time (date > now + min_lead_time).
+   2a. Check booking horizon (date <= now + 90 days) so the policy lifecycle
+       fits inside the buyer proof's fixed 180-day TTL.
    2b. Oracle status must be NotInitiated or Active (no recorded outcome),
        AND Oracle.is_sale_open(flight_id, date) must be true — the oracle's
        live attestation that the flight is scheduled and not cancelled.
@@ -471,7 +486,8 @@ For each ToBeSettled* flight:
    ToBeSettledOnTime:
       Pool.settle_on_time(flight_id, date)
          + Stablecoin.transfer(Pool -> Vault, premium * buyer_count)
-         + Vault.record_premium_income(premium * buyer_count)
+         + returns premium * buyer_count to the Controller
+      Vault.record_premium_income(premium * buyer_count)   (Controller call)
       Vault.decrease_locked(payoff * buyer_count)
       Oracle.set_settled(flight_id, date)
 
@@ -488,6 +504,7 @@ For each ToBeSettled* flight:
 ```
 Keeper account
    -> Controller.run_queue_maintenance()
+      -> Vault.process_deposit_queue()
       -> Vault.process_withdrawal_queue()
       -> Vault.snapshot()
 ```
@@ -574,7 +591,8 @@ Underwriter
 | Governance: defaults, admin set, term limits | Owner |
 | Governance: route lifecycle | Owner or Admin |
 | Vault: deposit queue / withdrawal queue / collect | Underwriter (self) |
-| Vault: lock / unlock / payout / queue / solvency-ratio mirror / snapshot | Controller only |
+| Vault: lock / unlock / payout / queue / solvency-ratio mirror | Controller only |
+| Vault: snapshot (rate-limited daily sample) | Anyone |
 | Vault: recover_uncollected, oracle rotation (checked or paused-forced) | Owner |
 | Pool: register / add_buyer / settle | Controller only |
 | Pool: claim | Traveler (self) |
@@ -602,8 +620,9 @@ contract.
   can rotate the oracle key at any time; off-chain monitoring should alert
   on suspicious patterns.
 - **Keeper is trusted to call the right functions.** Keeper cannot move
-  funds — it can only invoke `classify_flights` and `execute_settlements`.
-  All money movement is gated by the controller's logic.
+  funds — it can only invoke the classification, settlement, and
+  queue-maintenance entry points. All money movement is gated by the
+  controller's logic.
 - **Owner is trusted.** Owner can recover stuck funds, rotate roles, and
   change tunables. Production deployments should make Owner a multisig.
 - **Travelers and underwriters are trustless.** They sign their own
