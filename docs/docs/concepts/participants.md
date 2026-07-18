@@ -11,7 +11,7 @@ Travelers pay a fixed premium to insure a specific flight on a specific date. If
 
 ## Underwriters (liquidity providers)
 
-Underwriters deposit USDC into the Risk Vault and receive **RVS** share tokens, following a vault standard modeled on ERC-4626. They earn premiums from on-time flights and absorb payouts for delayed and cancelled ones. Shares are transferable. Withdrawals happen either instantly (when the vault holds enough capital above its solvency reserve) or through a FIFO queue.
+Underwriters deposit USDC into the Risk Vault and receive **RVS** share tokens, following a vault standard modeled on ERC-4626. They earn premiums from on-time flights and absorb payouts for delayed and cancelled ones. Shares are transferable. Entry and exit are both **two-phase**: capital (or shares) is escrowed by a request now and priced by the keeper only after a delay, so nobody can enter or exit on a flight outcome that is already publicly known but not yet on-chain. Exits are paid from a FIFO queue as capital above the solvency reserve allows.
 
 ## Owner
 
