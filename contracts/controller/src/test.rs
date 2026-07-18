@@ -1925,6 +1925,52 @@ fn test_remove_whitelisted_buyer_blocks_next_purchase() {
 }
 
 #[test]
+fn test_whitelist_touch_skips_rewrite_within_refresh_interval() {
+    // Every gated purchase used to rewrite the approval deadline — a
+    // persistent write on the hot path for a deadline that had barely
+    // moved. The slide is now skipped while the stored deadline is within
+    // the refresh interval of the ideal: an actively-buying address still
+    // cannot lapse (the deadline stays within 10 days of now + 180d, far
+    // above the dormancy horizon), but most purchases cost no write.
+    let t = setup();
+    let traveler = Address::generate(&t.env);
+    t.ctrl.add_whitelisted_buyer(&t.owner, &traveler);
+
+    let read_deadline = || {
+        t.env.as_contract(&t.ctrl_addr, || {
+            t.env
+                .storage()
+                .persistent()
+                .get::<_, u64>(&crate::storage::CtrlKey::BuyerApprovalExpiry(
+                    traveler.clone(),
+                ))
+                .unwrap()
+        })
+    };
+    let window = 180 * SECONDS_PER_DAY;
+    let approved_at = t.env.ledger().timestamp();
+    assert_eq!(read_deadline(), approved_at + window);
+
+    // A touch within the refresh interval leaves the stored deadline alone.
+    t.env
+        .ledger()
+        .with_mut(|l| l.timestamp += 5 * SECONDS_PER_DAY);
+    t.env.as_contract(&t.ctrl_addr, || {
+        crate::storage::touch_buyer_whitelisted(&t.env, &traveler);
+    });
+    assert_eq!(read_deadline(), approved_at + window);
+
+    // Past the interval the deadline slides forward again.
+    t.env
+        .ledger()
+        .with_mut(|l| l.timestamp += 6 * SECONDS_PER_DAY);
+    t.env.as_contract(&t.ctrl_addr, || {
+        crate::storage::touch_buyer_whitelisted(&t.env, &traveler);
+    });
+    assert_eq!(read_deadline(), approved_at + 11 * SECONDS_PER_DAY + window);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #306)")]
 fn test_removed_buyer_cannot_purchase() {
     let t = setup();

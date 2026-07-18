@@ -313,8 +313,11 @@ vault is composable with any vault-aware tooling.
   front and are priced by queue processing only once their request outlives
   `LP_PRICING_DELAY_SECS` (6 h, sized above the oracle pipeline's worst-case
   observation-to-write latency with a missed-cycle margin). By pricing time, every
-  outcome knowable at commitment is on-chain: settled (in the price) or pending (the
-  barrier holds the request queued until settlement). Request cancellation carries no
+  outcome the oracle could have written at commitment — roughly, anything observable at
+  or after landing minus 6 h — is on-chain: settled (in the price) or pending (the
+  barrier holds the request queued until settlement). Outcomes publicly predictable
+  before the oracle can possibly write them sit outside that horizon — see the
+  pricing-delay-horizon residuals under Known Limitations. Request cancellation carries no
   optionality — a queued request always prices post-outcome, so backing out never dodges
   a loss or captures a gain that belongs to others. `preview_*` remain as current-price
   estimates for request sizing.
@@ -954,12 +957,17 @@ moment before the void is classified.
 - `register_flight` is **idempotent** (audit M-05): re-registering an existing flight
   is a no-op (extends TTL).
 - **`set_landed` / `set_estimated_arrival` input validation**: zero timestamps
-  (the unset sentinel) and arrivals before the departure day's midnight are
-  rejected (`InvalidTimestamp`). Early arrivals (`actual < estimated`) are
-  deliberately **accepted** — they are legitimate flight outcomes, and rejecting
-  them would strand such flights `Active` forever (never classifiable, collateral
-  locked). The delay math in `classify_flights` saturates a negative delay to
-  zero, so an early arrival classifies as on-time.
+  (the unset sentinel), arrivals before the departure day's midnight, and arrivals
+  implausibly far after it — past `date + 3 days` for the scheduled arrival, past
+  `date + 30 days` for the actual — are rejected (`InvalidTimestamp`). The upper
+  bounds exist for unit confusion: a milliseconds-for-seconds timestamp from a
+  future executor backend passes every lower bound but would irreversibly corrupt
+  the delay classification (a ~10¹²-second "delay" pays every flight; a
+  ms-scale ETA classifies every delayed flight on-time). Early arrivals
+  (`actual < estimated`) are deliberately **accepted** — they are legitimate
+  flight outcomes, and rejecting them would strand such flights `Active` forever
+  (never classifiable, collateral locked). The delay math in `classify_flights`
+  saturates a negative delay to zero, so an early arrival classifies as on-time.
 - **Delayed prune.** `set_settled` records `settled_at` but does NOT remove the flight
   from `ActiveFlightList`. A separate permissionless `prune_settled()` entry is what
   evicts settled flights from the list, and only after they have been settled for at
@@ -1462,6 +1470,17 @@ During the dual-running window, both backends submit transactions, but only the 
 one succeeds. Unauthorized transactions simply fail auth checks — no side effects, no
 double execution. Rollback = set addresses back to old backend.
 
+**Rotation as a compromise response needs one extra step.** Sale authorizations the
+outgoing oracle opened live in temporary storage (not enumerable on-chain) and survive
+`OracleAggregator.set_oracle`: they keep authorizing purchases until each expires (up to
+24 h) or is individually closed. Routine migrations can ignore this — the windows are
+honest. If the rotation is revoking a compromised oracle key, the new oracle must
+immediately sweep `close_sale` over every window still open (reconstructed from the
+`SaleOpened`/`SaleClosed` event stream), or the Controller must be paused for the full
+24 h validity horizon — otherwise the attacker's parting attestations (including windows
+on publicly cancelled flights, each a deterministic claim once the cancellation is
+recorded) stay purchasable after the key swap.
+
 ---
 
 ## Data Flow
@@ -1871,8 +1890,10 @@ defense against inflation attacks:
 5. Oracle is decoupled from settlement — can only write data, not trigger payouts or
    classify outcomes. Classification is done by the Controller using on-chain business rules.
 6. **Outcome-write input validation**: `set_estimated_arrival` and `set_landed`
-   reject zero timestamps and arrivals before the departure day's midnight
-   (`InvalidTimestamp`). There is deliberately NO `actual >= estimated` floor —
+   reject zero timestamps, arrivals before the departure day's midnight, and
+   arrivals past a plausibility ceiling (`date + 3 days` scheduled /
+   `date + 30 days` actual — bounds a unit-confused millisecond-scale timestamp
+   could never pass) (`InvalidTimestamp`). There is deliberately NO `actual >= estimated` floor —
    early arrivals are legitimate outcomes and rejecting them would strand flights
    `Active` forever; the classifier saturates a negative delay to zero, so an
    early arrival settles as on-time. The oracle remains trusted for the
@@ -1925,26 +1946,44 @@ inaccessible until restored" rather than "permanently lost."
   Multi-oracle aggregation is a future enhancement.
 - **Front-running** — Stellar's transaction ordering is validator-determined. A mempool
   watcher could theoretically front-run `buy_insurance`, but this is a legitimate purchase.
-- **LP pricing is delayed, not immediate (deliberate).** Every entry and exit is a
-  two-phase request priced only once it outlives `LP_PRICING_DELAY_SECS` (6 h). This
-  closes the window between a flight outcome becoming publicly knowable and the oracle
-  writing it on-chain (where the settlement barrier cannot see it): by pricing time,
-  everything knowable at commitment is settled into the price or barrier-held. The
-  residual is an oracle-pipeline outage longer than the delay — outcomes then stay
-  unwritten past request maturity and matured requests price stale. **Operational
-  requirement:** on an oracle/fetcher outage approaching the pricing delay, pause the
-  vault (queue processing stops with it); the sale authorizer's fail-closed windows
-  already stop new exposure in the same outage.
-- **Void-path income is predictable in advance** — for a flight voided via the stale
-  timeout, the outcome (premiums become vault income) is deterministically computable
-  from on-chain state the moment `date + 14 days` passes, but the vault's settlement
-  barrier only engages when the classifier writes `ToBeSettledOnTime`. The pricing delay
-  does not close this one: the income is knowable arbitrarily far in advance, so an LP
-  can time a deposit request to mature inside the gap (up to one classifier cycle) and
-  capture a pro-rata slice at the pre-income share price. Exposure is bounded by the
-  voided flights' premiums — and an attacker seeding bogus flights always loses more in
-  premiums than they can recapture — so this is accepted; a tight classifier cadence
-  minimizes the window.
+- **LP pricing is delayed, not immediate (deliberate) — and the delay has a stated
+  horizon.** Every entry and exit is a two-phase request priced only once it outlives
+  `LP_PRICING_DELAY_SECS` (6 h). This closes the window between a flight outcome being
+  **observed by the oracle** and the oracle writing it on-chain (where the settlement
+  barrier cannot see it): by pricing time, everything the oracle could have written at
+  commitment is settled into the price or barrier-held. The guarantee's horizon is
+  therefore *outcomes observable at or after landing minus 6 h* — not everything an
+  informed LP can predict. Three accepted residuals share this single boundary, and
+  any retuning of `LP_PRICING_DELAY_SECS` or the barrier semantics must be evaluated
+  against all three at once:
+  1. **Oracle-pipeline outage longer than the delay** — outcomes stay unwritten past
+     request maturity and matured requests price stale. **Operational requirement:** on
+     an oracle/fetcher outage approaching the pricing delay, pause the vault (queue
+     processing stops with it); the sale authorizer's fail-closed windows already stop
+     new exposure in the same outage.
+  2. **Pre-landing delay foreknowledge (healthy pipeline).** For delay outcomes the
+     earliest possible oracle write is the landing itself, but the outcome is often
+     near-certain at departure: a departure delay beyond the route threshold makes the
+     arrival delay effectively certain a full flight-duration before `set_landed` can
+     land on-chain. For any flight whose duration plus write latency exceeds the 6 h
+     delay (most long-haul traffic), an LP watching public flight-tracking data can
+     request a withdrawal at departure, mature mid-flight, and be priced pre-loss —
+     shifting that flight's pending loss, up to `(payoff − premium) × buyer_count`, to
+     the remaining LPs (the entry-side mirror captures premium income and is
+     premium-bounded). Accepted: closing it would require the barrier to treat every
+     flight past its scheduled arrival as pending (barrier duty-cycle cost) or a
+     pricing delay near the scheduled-arrival horizon (UX cost), and neither is
+     airtight against departure-delay foreknowledge. Bounded per event, requires
+     capital already at risk in the vault, and no protocol insolvency.
+  3. **Void-path income predictability** — for a flight voided via the stale timeout,
+     the outcome (premiums become vault income) is deterministically computable from
+     on-chain state the moment `date + 14 days` passes, but the barrier only engages
+     when the classifier writes `ToBeSettledOnTime`. The income is knowable arbitrarily
+     far in advance, so an LP can time a deposit request to mature inside the gap (up
+     to one classifier cycle) and capture a pro-rata slice at the pre-income share
+     price. Exposure is bounded by the voided flights' premiums — and an attacker
+     seeding bogus flights always loses more in premiums than they can recapture — so
+     this is accepted; a tight classifier cadence minimizes the window.
 - **An extended oracle outage can void real flights.** The stale-void timeout assumes a
   row still `NotInitiated` 14 days past departure never matched a physical flight, and
   the active-void timeout assumes a row still `Active` 14 days past its recorded
@@ -2106,7 +2145,7 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Settle an evicted flight's bucket | Owner | `controller.settle_evicted_flight(flight_id, date)` (terminal reconciliation after `evict_missing_flight`: settles the pool bucket with void semantics — premiums to the vault, no payout — and releases the flight's locked collateral. Requires the FlightData row to still be absent and the flight to be out of the oracle active list; do not restore the row after eviction) |
 | Update keeper address | Owner | `controller.set_keeper(new_keeper)` |
 | Update oracle address | Owner | `oracle.set_oracle(new_oracle)` |
-| Set min withdrawal request size | Owner | `risk_vault.set_min_withdrawal_request(min_assets)` (0 disables; deployment must set a per-asset floor; enforcement clamped to TMA/2500) |
+| Set min withdrawal request size | Owner | `risk_vault.set_min_withdrawal_request(min_assets)` (0 disables; deployment must set a per-asset floor; enforcement clamped to max(TMA/2500, one whole token)) |
 | Read queue occupancy | Anyone | `risk_vault.get_withdrawal_queue_len()` (alert as it nears the queue cap) |
 
 ---
@@ -2256,10 +2295,15 @@ Network configuration (testnet RPC URL, passphrase, contract addresses) lives in
                                                                       also the response lever if queue
                                                                       saturation is observed. Bounded:
                                                                       enforcement is clamped at request
-                                                                      time to TMA/2500, so no configured
-                                                                      value can lock positions above
-                                                                      0.04% of the vault out of the
-                                                                      queue.
+                                                                      time to max(TMA/2500, one whole
+                                                                      token), so no configured value can
+                                                                      lock positions above 0.04% of the
+                                                                      vault (or one token, whichever is
+                                                                      larger) out of the queue; the
+                                                                      absolute term keeps the clamp — and
+                                                                      the occupancy-scaled protocol
+                                                                      floor — from vanishing while TMA
+                                                                      is near zero at bootstrap.
 
 4. Set global defaults:
         GovernanceModule.set_defaults(premium, payoff, delay_hours)

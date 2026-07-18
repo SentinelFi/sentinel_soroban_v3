@@ -7,7 +7,8 @@ use stellar_macros::when_not_paused;
 
 use crate::auth::{extend_instance_ttl, require_controller, require_oracle};
 use crate::constants::{
-    MAX_ACTIVE_FLIGHTS, MAX_PRUNE_BATCH, SALE_AUTH_MAX_VALIDITY_SECS, SECONDS_PER_DAY,
+    MAX_ACTIVE_FLIGHTS, MAX_ACTUAL_ARRIVAL_AFTER_DATE_SECS, MAX_PRUNE_BATCH,
+    MAX_SCHEDULED_ARRIVAL_AFTER_DATE_SECS, SALE_AUTH_MAX_VALIDITY_SECS, SECONDS_PER_DAY,
     SETTLED_RETENTION_DAYS,
 };
 use crate::events::{emit_status_event, MissingFlightData, SaleClosed, SaleOpened};
@@ -118,8 +119,18 @@ impl OracleAggregator {
         // precede the departure day's midnight. Rejecting malformed values
         // here matters because the state machine is forward-only: a bad
         // timestamp accepted now corrupts the delay classification later with
-        // no on-chain correction path.
-        if estimated_arrival_time == 0 || estimated_arrival_time < date {
+        // no on-chain correction path. The upper bound is the symmetric half
+        // of the same defense: no schedule puts arrival days past departure,
+        // and a unit-confused value (milliseconds-for-seconds) passes every
+        // lower bound while corrupting the same downstream math — see
+        // MAX_SCHEDULED_ARRIVAL_AFTER_DATE_SECS.
+        let latest_plausible = date
+            .checked_add(MAX_SCHEDULED_ARRIVAL_AFTER_DATE_SECS)
+            .expect("addition overflow");
+        if estimated_arrival_time == 0
+            || estimated_arrival_time < date
+            || estimated_arrival_time > latest_plausible
+        {
             panic_with_error!(e, Error::InvalidTimestamp);
         }
 
@@ -156,8 +167,18 @@ impl OracleAggregator {
         // saturate the delay computation to zero and settle every such flight
         // as on-time, silently denying delayed-flight payouts with no
         // correction path in the forward-only machine. An arrival before the
-        // departure day's midnight is equally malformed.
-        if actual_arrival_time == 0 || actual_arrival_time < date {
+        // departure day's midnight is equally malformed. The upper bound
+        // rejects the opposite malformation — a unit-confused
+        // (milliseconds-for-seconds) value that would classify the flight as
+        // delayed by ~10¹² seconds and mint a wrongful payout, equally
+        // uncorrectable — see MAX_ACTUAL_ARRIVAL_AFTER_DATE_SECS.
+        let latest_plausible = date
+            .checked_add(MAX_ACTUAL_ARRIVAL_AFTER_DATE_SECS)
+            .expect("addition overflow");
+        if actual_arrival_time == 0
+            || actual_arrival_time < date
+            || actual_arrival_time > latest_plausible
+        {
             panic_with_error!(e, Error::InvalidTimestamp);
         }
 

@@ -451,6 +451,18 @@ fn test_pause_gates_writes_but_not_protective_reads() {
         .is_err());
     assert!(client.try_add_admin(&Address::generate(&env)).is_err());
 
+    // Revocation stays available while paused — remove_admin only removes
+    // authority, and an incident response plausibly needs to revoke a
+    // compromised admin key with the module already paused (same convention
+    // as the oracle's pause-exempt close_sale).
+    let doomed = Address::generate(&env);
+    client.unpause(&owner);
+    client.add_admin(&doomed);
+    assert!(client.is_admin(&doomed));
+    client.pause(&owner);
+    client.remove_admin(&doomed);
+    assert!(!client.is_admin(&doomed));
+
     // The reads purchases flow through stay open — route_status is
     // deliberately pause-exempt (its TTL renewals and index self-heal are
     // protective writes that grant no privilege), and terms_valid backs the

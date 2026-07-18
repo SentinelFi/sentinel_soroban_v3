@@ -62,9 +62,10 @@ pub(crate) const MAX_TRAVELER_FLIGHTS: u32 = 1_000;
 
 // Bounds on owner-tunable parameters. Owner is single-key by default
 // (single-key owner), so a compromised key cannot brick the protocol by
-// pushing these values to extremes.
-pub(crate) const MIN_SOLVENCY_RATIO: u32 = 100; // 100% — must at least back payouts
-pub(crate) const MAX_SOLVENCY_RATIO: u32 = 10_000; // 100x — practical sanity cap
+// pushing these values to extremes. The solvency-ratio bounds live in
+// `sentinel_types::solvency` — shared with the vault, which enforces the
+// same bounds on the pushed mirror.
+pub(crate) use sentinel_types::solvency::{MAX_SOLVENCY_RATIO, MIN_SOLVENCY_RATIO};
 pub(crate) const MIN_CLAIM_EXPIRY_WINDOW_SECS: u64 = 86_400; // 1 day — travelers need time
                                                              // Reduced from 180d → 60d. The buyer policy key
                                                              // (`PoolKey::Buyer`) is written at purchase with a fixed 180-day TTL and is
@@ -91,6 +92,15 @@ pub(crate) const MAX_BOOK_AHEAD_SECS: u64 = 7_776_000; // 90 days
 /// slides the deadline forward, so an actively-buying approved address never
 /// needs re-approval; a dormant one lapses and must be re-attested.
 pub(crate) const BUYER_APPROVAL_WINDOW_SECS: u64 = 15_552_000;
+
+/// 10 days — minimum forward slide before `touch_buyer_whitelisted` rewrites
+/// an approval deadline. Every gated purchase used to rewrite the deadline
+/// (and re-extend its storage TTL) unconditionally, putting a persistent
+/// write on the hot path for a deadline that had barely moved. Skipping
+/// rewrites within this interval keeps the stored deadline within 10 days of
+/// the ideal slide — irrelevant against the 180-day dormancy window it
+/// guards — while dropping the write from most whitelisted purchases.
+pub(crate) const BUYER_APPROVAL_REFRESH_INTERVAL_SECS: u64 = 10 * SECONDS_PER_DAY;
 
 // Invariant: a buyer's policy proof must outlive the latest claim deadline
 // its flight can ever open. Proofs are written once at purchase with the

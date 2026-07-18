@@ -10,7 +10,7 @@ use stellar_tokens::vault::Vault;
 
 use crate::constants::{
     CLAIMABLE_TTL_LEDGERS, MAX_ACTIVE_REQUESTS_PER_ADDRESS, MAX_DEPOSIT_QUEUE_LEN,
-    MAX_WITHDRAWAL_QUEUE_LEN, MIN_REQUEST_FLOOR_DIVISOR,
+    MAX_WITHDRAWAL_QUEUE_LEN, MIN_REQUEST_FLOOR_CAP_ABS, MIN_REQUEST_FLOOR_DIVISOR,
 };
 use crate::events::{
     Collected, DepositCancelled, DepositRequested, Recovered, WithdrawalCancelled,
@@ -58,10 +58,13 @@ impl RiskVault {
         // bounded queue must carry meaningful escrowed value, with the
         // occupancy-scaled lower bound keeping slots expensive even when the
         // configured minimum is low or unset (see request_withdrawal /
-        // MIN_REQUEST_FLOOR_DIVISOR).
+        // MIN_REQUEST_FLOOR_DIVISOR). The absolute floor on the cap keeps
+        // both protections alive at near-zero TMA (see
+        // MIN_REQUEST_FLOOR_CAP_ABS).
         let floor_cap = Self::get_total_managed_assets(e)
             .checked_div(MIN_REQUEST_FLOOR_DIVISOR)
-            .expect("division by zero");
+            .expect("division by zero")
+            .max(MIN_REQUEST_FLOOR_CAP_ABS);
         let occupancy_floor = floor_cap
             .checked_mul(queue.len() as i128)
             .expect("multiplication overflow")
@@ -205,9 +208,14 @@ impl RiskVault {
         //    queue admits any non-dust request, but each further slot prices
         //    higher, and pinning the queue full escrows a material fraction
         //    of managed assets no matter what the owner configured.
+        // Both clamps are value-relative, so the cap itself is floored by an
+        // absolute constant — otherwise near-zero TMA (launch, severe
+        // drawdown) would zero every protection at once and make slots free
+        // (see MIN_REQUEST_FLOOR_CAP_ABS).
         let floor_cap = Self::get_total_managed_assets(e)
             .checked_div(MIN_REQUEST_FLOOR_DIVISOR)
-            .expect("division by zero");
+            .expect("division by zero")
+            .max(MIN_REQUEST_FLOOR_CAP_ABS);
         let occupancy_floor = floor_cap
             .checked_mul(queue.len() as i128)
             .expect("multiplication overflow")

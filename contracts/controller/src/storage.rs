@@ -105,9 +105,10 @@ pub(crate) fn read_buyer_whitelisted(e: &Env, addr: &Address) -> bool {
 /// its approval alive on its own — only a buyer dormant for the full window
 /// lapses and must be re-attested. Rewrites the deadline (not just the TTL:
 /// the deadline is what expiry is judged by) and keeps the entry's storage
-/// TTL covering it. No-op if the entry is absent.
+/// TTL covering it, at most once per refresh interval — see
+/// `BUYER_APPROVAL_REFRESH_INTERVAL_SECS`. No-op if the entry is absent.
 pub(crate) fn touch_buyer_whitelisted(e: &Env, addr: &Address) {
-    use crate::constants::BUYER_APPROVAL_WINDOW_SECS;
+    use crate::constants::{BUYER_APPROVAL_REFRESH_INTERVAL_SECS, BUYER_APPROVAL_WINDOW_SECS};
     let key = CtrlKey::BuyerApprovalExpiry(addr.clone());
     let now = e.ledger().timestamp();
     let current: u64 = e.storage().persistent().get(&key).unwrap_or(0);
@@ -118,6 +119,16 @@ pub(crate) fn touch_buyer_whitelisted(e: &Env, addr: &Address) {
         let expires_at = now
             .checked_add(BUYER_APPROVAL_WINDOW_SECS)
             .expect("addition overflow");
+        // Skip the persistent rewrite while the stored deadline is still
+        // nearly fresh — sliding it forward by less than the refresh
+        // interval buys nothing (the deadline stays within one interval of
+        // the ideal, far above the dormancy horizon it guards) and would put
+        // a persistent write on every whitelisted purchase. An archived
+        // entry is restored with its original value on next access, so the
+        // matching TTL skip is a restoration cost, not a lapse.
+        if expires_at.saturating_sub(current) < BUYER_APPROVAL_REFRESH_INTERVAL_SECS {
+            return;
+        }
         e.storage().persistent().set(&key, &expires_at);
         e.storage().persistent().extend_ttl(
             &key,
