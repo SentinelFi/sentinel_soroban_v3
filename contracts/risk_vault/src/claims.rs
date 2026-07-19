@@ -16,7 +16,7 @@ use crate::events::{
     Collected, DepositCancelled, DepositRequested, Recovered, WithdrawalCancelled,
     WithdrawalRequested,
 };
-use crate::storage::{DepositRequest, VaultKey};
+use crate::storage::{sum_escrowed_deposits, DepositRequest, VaultKey};
 use crate::vault_ops::{managed_convert_to_assets, managed_convert_to_shares};
 use crate::{Error, RecoveryMode, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
@@ -430,13 +430,7 @@ impl RiskVault {
                 // pending entrants' escrow.
                 let asset = token::Client::new(e, &Vault::query_asset(e));
                 let balance = asset.balance(&e.current_contract_address());
-                let mut escrowed_deposits: i128 = 0;
-                let dep_queue = Self::get_deposit_queue(e);
-                for i in 0..dep_queue.len() {
-                    escrowed_deposits = escrowed_deposits
-                        .checked_add(dep_queue.get(i).unwrap().assets)
-                        .expect("addition overflow");
-                }
+                let escrowed_deposits = sum_escrowed_deposits(e);
                 let surplus = balance
                     .checked_sub(Self::get_total_managed_assets(e))
                     .expect("subtraction overflow")

@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address};
+use soroban_sdk::{contracttype, Address, Env, Vec};
 
 #[contracttype]
 #[derive(Clone)]
@@ -87,4 +87,24 @@ pub enum RecoveryMode {
     /// Transfer asset directly from vault to user. No `ClaimableBalance`
     /// storage write. Indexer DELETEs the address from its tracker.
     Transfer,
+}
+
+/// Sum the assets escrowed in the pending deposit queue. These sit in the
+/// vault's raw token balance but back no shares yet (they become managed only
+/// when queue processing mints against them), so any check that reasons about
+/// backing-vs-raw-balance must exclude them first. The queue is one bounded
+/// instance entry, so this is a single ledger read plus an in-memory sum.
+pub(crate) fn sum_escrowed_deposits(e: &Env) -> i128 {
+    let queue: Vec<DepositRequest> = e
+        .storage()
+        .instance()
+        .get(&VaultKey::DepositQueue)
+        .unwrap_or(Vec::new(e));
+    let mut total: i128 = 0;
+    for i in 0..queue.len() {
+        total = total
+            .checked_add(queue.get(i).unwrap().assets)
+            .expect("addition overflow");
+    }
+    total
 }

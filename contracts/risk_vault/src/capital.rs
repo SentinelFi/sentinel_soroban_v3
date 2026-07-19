@@ -16,7 +16,7 @@ use crate::events::{
     Credited, DepositDropped, DepositProcessed, RequestDropped, RequestPartiallyFilled,
     SolvencyRatioSet,
 };
-use crate::storage::{DepositRequest, VaultKey};
+use crate::storage::{sum_escrowed_deposits, DepositRequest, VaultKey};
 use crate::vault_ops::{convert_to_assets_with_tma, convert_to_shares_with_tma};
 use crate::{Error, RiskVault, RiskVaultArgs, RiskVaultClient, WithdrawalRequest};
 
@@ -91,14 +91,23 @@ impl RiskVault {
         let new_tma = old_tma.checked_add(amount).expect("addition overflow");
 
         // Defensive: the pool transfers asset to the vault BEFORE calling this.
-        // Reject the credit if the vault's asset balance can't cover the new
+        // Reject the credit if the vault's BACKING balance can't cover the new
         // TMA — catches the "controller called us but no asset arrived" path
-        // (compromised or buggy caller). Note: outstanding ClaimableBalance
-        // entries are not part of TMA (they were decremented at credit
-        // time), so the check is a strict floor on managed assets.
+        // (compromised or buggy caller). Escrowed deposit-queue assets sit in
+        // the raw balance without backing any shares yet, so they are
+        // subtracted first: otherwise a full deposit queue would mask a missing
+        // premium transfer and let TMA outrun real backing while the check
+        // still passed. Outstanding ClaimableBalance entries are decremented
+        // from TMA at credit time and are not enumerable on-chain, so they
+        // remain an owed-to-users residual this floor cannot exclude — the
+        // guard is a floor on managed assets, tightest against the enumerable
+        // (deposit-escrow) liability.
         let asset = token::Client::new(e, &Vault::query_asset(e));
         let balance = asset.balance(&e.current_contract_address());
-        if balance < new_tma {
+        let backing = balance
+            .checked_sub(sum_escrowed_deposits(e))
+            .expect("subtraction overflow");
+        if backing < new_tma {
             panic_with_error!(e, Error::PremiumNotReceived);
         }
 
