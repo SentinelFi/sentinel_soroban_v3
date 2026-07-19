@@ -25,6 +25,17 @@ impl RiskVault {
     ///   would let LPs enter/exit at stale share prices during
     ///   outcome-public-but-unsettled windows. (The deploy order places the
     ///   oracle before the vault, so the address is always available here.)
+    ///
+    ///   INVARIANT: this MUST be the exact same OracleAggregator the controller
+    ///   is constructed with. The controller registers flights and drives
+    ///   settlement against ITS oracle (an immutable, construction-time
+    ///   pointer with no setter), while the barrier reads pending outcomes from
+    ///   the vault's oracle. If the two ever diverge, the pending-outcome
+    ///   counter the barrier watches is maintained on a different contract than
+    ///   the one recording outcomes, so the barrier reads zero and LP
+    ///   entry/exit prices at a stale share price. Nothing on-chain can
+    ///   cross-check this (the vault is deployed before the controller exists),
+    ///   so it is a deployment-verification obligation — see `set_oracle`.
     pub fn __constructor(e: &Env, owner: Address, asset_token: Address, oracle: Address) {
         ownable::set_owner(e, &owner);
         Vault::set_asset(e, asset_token);
@@ -85,6 +96,18 @@ impl RiskVault {
     /// only covers outcomes already public at the instant of rotation;
     /// together the two checks span the whole policy lifetime from purchase
     /// to settlement.
+    ///
+    /// CRITICAL — these guards only prove the state is clean AT rotation time;
+    /// they do NOT bind the new oracle to the controller. The controller's
+    /// oracle pointer is immutable, so the ONLY correct target here is the
+    /// controller's own oracle (see the constructor's INVARIANT note).
+    /// Pointing the vault at any other live oracle silently defeats the
+    /// barrier for every FUTURE policy: new flights still register on the
+    /// controller's oracle, whose outcome disclosures never touch this new
+    /// oracle's pending counter. Because the controller cannot follow a
+    /// rotation, a genuine oracle redeploy requires redeploying the controller
+    /// (and re-wiring the vault) too — this setter is not an escape from that.
+    /// Verify `new == controller.oracle` off-chain before calling.
     #[only_owner]
     pub fn set_oracle(e: &Env, oracle: Address) {
         if settlement_pending(e) {
