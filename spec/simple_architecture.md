@@ -183,7 +183,11 @@ window, payout escrow, recovered (unclaimed) funds.
   window), settle_cancelled (opens claim window).
 - Traveler: claim (collects payoff if eligible).
 - Anyone: sweep_expired (after claim window closes, credits unclaimed funds
-  to recovered balance).
+  to recovered balance); reconcile_settled_active_entry (frees a stale
+  active-list slot left behind when settlement could not prune a bucket whose
+  active-set page had archived — the pool analogue of the oracle's
+  evict_missing_flight, but safe to leave permissionless because it only
+  removes an already-settled bucket).
 - Owner: withdraw_recovered (claims swept funds).
 
 **Why one singleton (not per-flight contracts):** simpler deployment, no
@@ -596,7 +600,7 @@ Underwriter
 | Vault: recover_uncollected, oracle rotation (checked or paused-forced) | Owner |
 | Pool: register / add_buyer / settle | Controller only |
 | Pool: claim | Traveler (self) |
-| Pool: sweep_expired | Anyone |
+| Pool: sweep_expired, reconcile_settled_active_entry | Anyone |
 | Pool: withdraw_recovered | Owner |
 | Oracle: set_estimated / set_landed / set_cancelled | Authorized oracle |
 | Oracle: open_sale / close_sale (close works while paused) | Authorized oracle |

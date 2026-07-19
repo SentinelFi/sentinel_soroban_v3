@@ -48,6 +48,18 @@ use soroban_sdk::{contractevent, contracttype, Env, Symbol, Vec};
 
 use crate::ttl::{deadline_extension_ledgers, PERSISTENT_TTL_EXTEND, PERSISTENT_TTL_THRESHOLD};
 
+/// Operational sanity cap on the total number of entries in the set, shared
+/// by BOTH consumers (OracleAggregator, FlightPoolManager) so the two caps
+/// can never drift. It is no longer a storage-entry limit — the paginated
+/// layout removed the old 1,000-flight ceiling the single-vector list imposed
+/// — but a guard against unbounded growth (runaway registration, stalled
+/// pruning), set far above any plausible concurrent flight volume. Lives here,
+/// next to the structure it bounds, because both contracts compare it against
+/// this module's `count()`: a divergent copy on either side would let one
+/// contract reject a registration the other still accepts, silently breaking
+/// the pool⇔oracle first-buy registration invariant.
+pub const MAX_ACTIVE_FLIGHTS: u32 = 100_000;
+
 /// Entries per page. Sized so a full page (~40 bytes/entry) stays a small
 /// ledger entry while a keeper batch (25–60 entries) touches at most two
 /// pages per call.

@@ -341,6 +341,75 @@ fn test_prune_missed_emits_diagnostic_and_settlement_still_completes() {
 }
 
 #[test]
+fn test_reconcile_settled_active_entry_corrects_prune_missed_drift() {
+    // Continuation of the prune-miss scenario: after a settlement could not
+    // drop a bucket from the active set (its page had archived), the
+    // permissionless reconciliation lever frees the stale slot once the page
+    // is restored — the recovery path the standalone diagnostic previously
+    // lacked.
+    use sentinel_types::active_set::ActiveSetKey;
+    let t = setup();
+    register(&t);
+
+    // Snapshot the live page, then simulate it archiving before settlement.
+    let saved_page: soroban_sdk::Vec<(Symbol, u64)> = t.env.as_contract(&t.pool_addr, || {
+        t.env
+            .storage()
+            .persistent()
+            .get(&ActiveSetKey::ActivePage(0))
+            .unwrap()
+    });
+    t.env.as_contract(&t.pool_addr, || {
+        t.env
+            .storage()
+            .persistent()
+            .remove(&ActiveSetKey::ActivePage(0));
+    });
+
+    t.pool
+        .settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
+    // Prune missed: the terminally-settled bucket still counts.
+    assert_eq!(t.pool.get_active_flight_count(), 1);
+
+    // While the page is still archived, reconciliation is a safe no-op: it
+    // cannot reach the entry, so it removes nothing and leaves the count.
+    assert!(!t
+        .pool
+        .reconcile_settled_active_entry(&flight_a(), &FLIGHT_DATE));
+    assert_eq!(t.pool.get_active_flight_count(), 1);
+
+    // Restore the page (ledger restoration) and reconcile: the stale slot is
+    // freed and the count corrected.
+    t.env.as_contract(&t.pool_addr, || {
+        t.env
+            .storage()
+            .persistent()
+            .set(&ActiveSetKey::ActivePage(0), &saved_page);
+    });
+    assert!(t
+        .pool
+        .reconcile_settled_active_entry(&flight_a(), &FLIGHT_DATE));
+    assert_eq!(t.pool.get_active_flight_count(), 0);
+
+    // Idempotent: a second call finds nothing to remove.
+    assert!(!t
+        .pool
+        .reconcile_settled_active_entry(&flight_a(), &FLIGHT_DATE));
+    assert_eq!(t.pool.get_active_flight_count(), 0);
+}
+
+#[test]
+#[should_panic] // FlightStillActive
+fn test_reconcile_settled_active_entry_rejects_live_flight() {
+    // The lever must never drop a still-live (Active) flight from the set —
+    // that would strip it from keeper enumeration before it can settle.
+    let t = setup();
+    register(&t);
+    t.pool
+        .reconcile_settled_active_entry(&flight_a(), &FLIGHT_DATE);
+}
+
+#[test]
 fn test_register_flight_duplicate_is_idempotent() {
     // Re-registering with matching terms is a no-op so two travelers
     // racing to the first purchase don't both have their txs revert.

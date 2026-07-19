@@ -67,13 +67,13 @@ pub(crate) const MAX_TRAVELER_FLIGHTS: u32 = 1_000;
 // same bounds on the pushed mirror.
 pub(crate) use sentinel_types::solvency::{MAX_SOLVENCY_RATIO, MIN_SOLVENCY_RATIO};
 pub(crate) const MIN_CLAIM_EXPIRY_WINDOW_SECS: u64 = 86_400; // 1 day — travelers need time
-// Reduced from 180d → 60d. The buyer policy key (`PoolKey::Buyer`) is written
-// at purchase with a fixed 180-day TTL and is never re-extended (the contract
-// can't iterate buyers post-settlement, and 180d is Stellar's max persistent
-// TTL — it cannot be raised). For a claim to always be possible the key must
-// still exist at the claim deadline (flight_date + claim_window). Bounding
-// book-ahead + claim-window below the buyer TTL makes that an on-chain
-// guarantee instead of a cron dependency.
+                                                             // Reduced from 180d → 60d. The buyer policy key (`PoolKey::Buyer`) is written
+                                                             // at purchase with a fixed 180-day TTL and is never re-extended (the contract
+                                                             // can't iterate buyers post-settlement, and 180d is Stellar's max persistent
+                                                             // TTL — it cannot be raised). For a claim to always be possible the key must
+                                                             // still exist at the claim deadline (flight_date + claim_window). Bounding
+                                                             // book-ahead + claim-window below the buyer TTL makes that an on-chain
+                                                             // guarantee instead of a cron dependency.
 pub(crate) const MAX_CLAIM_EXPIRY_WINDOW_SECS: u64 = 5_184_000; // 60 days
 
 // Maximum future booking horizon. `buy_insurance` previously
