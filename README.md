@@ -26,7 +26,7 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
 - [Off-Chain Executors (Oracles and Keepers)](#off-chain-executors-oracles-and-keepers)
 - [Automated Governance (Route Agent)](#automated-governance-route-agent)
 - [Deployment Plan](#deployment-plan)
-- [Getting Started](#getting-started)
+- [Local Setup](#local-setup)
 - [License](#license)
 - [Contributing](#contributing)
 - [Security](#security)
@@ -155,7 +155,7 @@ First-time deploy order:
 3. **Vercel** — import the repo with root directory `dapp/`, set the env vars above, deploy; crons start on their schedules automatically
 4. **One-time on-chain setup** — owner runs `GovernanceModule.add_admin` for the governance-admin key; fill [`dapp/config/routes.testnet.json`](dapp/config/routes.testnet.json) and run `npm run whitelist:routes`
 
-## Getting Started
+## Local Setup
 
 Prerequisites: [Rust](https://www.rust-lang.org/tools/install) (the pinned toolchain installs automatically via `rust-toolchain.toml`), the [Stellar CLI](https://developers.stellar.org/docs/tools/cli), and `make`.
 
