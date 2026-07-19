@@ -53,3 +53,4 @@ The addresses of the Governance Module, Risk Vault, Oracle Aggregator, Flight Po
 
 - `get_flights_for_traveler(address)`: list of flights a traveler has insured.
 - `get_stats()`: returns `(total_policies_sold, total_premiums_collected, total_payouts_distributed)`.
+- Wiring getters — `get_oracle()`, `get_risk_vault()`, `get_governance()`, `get_flight_pool_manager()`, `get_asset_token()`, `get_keeper()`: expose the controller's (immutable, construction-time) downstream addresses so every cross-contract wiring invariant is verifiable on-chain after deployment — in particular `controller.get_oracle() == vault.get_oracle()` (the settlement-barrier identity), `controller.get_risk_vault() == pool.get_risk_vault()`, and a single shared asset token across controller, pool, and vault.

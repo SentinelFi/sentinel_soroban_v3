@@ -101,6 +101,18 @@ impl OracleAggregator {
     /// payout) and unlock the collateral; skipping it leaves that capital
     /// stranded forever. That reconciliation requires the `FlightData` row to
     /// remain absent — do not restore the archived row after evicting.
+    ///
+    /// **Runbook precondition for step two.** Nothing on-chain ties the two
+    /// steps together — `settle_evicted_flight` cannot verify that an
+    /// eviction happened for the same flight or which `outcome_pending`
+    /// value it carried. Before running it, quote this call's
+    /// `FlightEvicted` event (including the `outcome_pending` flag) in the
+    /// change record, and confirm the pairing is consistent. Be explicit
+    /// about what a `true` flag means: the flight's last public status was
+    /// Landed / Cancelled / ToBeSettled\*, and the void-semantics
+    /// reconciliation will settle it WITHOUT the payout buyers may have
+    /// been owed — restoring the row and settling through the normal
+    /// pipeline is always preferred when the row is restorable.
     #[only_owner]
     pub fn evict_missing_flight(e: &Env, flight_id: Symbol, date: u64, outcome_pending: bool) {
         if e.storage()

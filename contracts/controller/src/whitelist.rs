@@ -23,9 +23,20 @@ impl Controller {
     /// one admin call. The deadline is contract state, NOT the entry's
     /// storage TTL: an archived Persistent entry is restored with its
     /// original value on next access rather than read as absent, so a TTL
-    /// alone could never expire an authorization. Off-chain tooling can
-    /// watch `buyer_whitelisted` events to alert before dormant approvals
-    /// age out.
+    /// alone could never expire an authorization.
+    ///
+    /// Off-chain monitoring note: deadline SLIDES emit no event, and a
+    /// slide is skipped while the stored deadline is within the 10-day
+    /// refresh interval of the ideal. Tooling that alerts before dormant
+    /// approvals age out must therefore reconstruct the deadline as
+    /// `latest(buyer_whitelisted event, last GATED InsuranceBought by the
+    /// address) + 180 days`, accurate to within the refresh interval —
+    /// where "gated" means a purchase made while the whitelist was enabled
+    /// (`whitelist_toggled` events delimit those periods; purchases made
+    /// while the gate was off never slide the deadline). Watching
+    /// `buyer_whitelisted` events alone will show active buyers as expiring
+    /// and false-alarm. `is_whitelisted` is the on-chain source of truth at
+    /// any instant.
     pub fn add_whitelisted_buyer(e: &Env, caller: Address, addr: Address) {
         require_owner_or_gov_admin(e, &caller);
         write_buyer_whitelisted(e, &addr, true);

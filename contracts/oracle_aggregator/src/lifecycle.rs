@@ -461,15 +461,21 @@ impl OracleAggregator {
                 .get::<_, FlightData>(&OracleKey::FlightData(flight_id.clone(), date))
             {
                 None => {
-                    // FlightData archived past its TTL. RETAIN the entry: a
-                    // missing persistent read means archived, not settled —
+                    // FlightData row unobservable. RETAIN the entry: a
+                    // missing persistent read is never proof of settlement —
                     // the flight may still have unresolved premiums, payouts,
                     // or locked collateral, and evicting it here would strip
                     // the tuple from keeper enumeration, turning a temporary
-                    // TTL lapse into an orphaned workflow item. Emit the
+                    // lapse into an orphaned workflow item. Emit the
                     // diagnostic so operators restore the entry (ledger
                     // restoration) or, once finality is confirmed off-chain,
                     // free the slot via the owner-only `evict_missing_flight`.
+                    // (Under the current protocol model an archived entry in
+                    // the footprint is restored before execution — or the
+                    // transaction fails requiring restoration — rather than
+                    // read as absent, so this branch is fail-safe
+                    // defense-in-depth: it commits only under an archival
+                    // model where lapsed entries are observable as missing.)
                     MissingFlightData {
                         flight_id: flight_id.clone(),
                         date,
