@@ -62,6 +62,18 @@ impl Controller {
             .unwrap()
     }
 
+    /// Returns the configured OracleAggregator address. The controller's oracle
+    /// pointer is immutable (set once at construction, no setter), and the
+    /// RiskVault's settlement barrier MUST consult this exact same oracle — the
+    /// barrier reads pending outcomes from the vault's oracle while outcomes are
+    /// recorded against this one, so a divergence silently defeats the barrier
+    /// for every policy (see `RiskVault::set_oracle`). Exposed so that
+    /// invariant — otherwise only a deployment-verification obligation — is
+    /// checkable on-chain: `controller.get_oracle() == vault.get_oracle()`.
+    pub fn get_oracle(e: &Env) -> Address {
+        e.storage().instance().get(&CtrlKey::Oracle).unwrap()
+    }
+
     /// Whether the buyer whitelist gate is currently active.
     pub fn whitelist_enabled(e: &Env) -> bool {
         read_whitelist_enabled(e)

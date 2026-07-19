@@ -86,3 +86,15 @@ pub struct ActiveSetPruneMissed {
     #[topic]
     pub(crate) date: u64,
 }
+
+// A stale active-set slot left behind by a prune-miss (see ActiveSetPruneMissed)
+// was reconciled: the terminally-settled bucket has now been removed from the
+// paginated active set and the count corrected. Lets indexers close out the
+// `prune_missed` they saw earlier.
+#[contractevent(topics = ["sentinel", "reconciled"], data_format = "single-value")]
+pub struct ActiveEntryReconciled {
+    #[topic]
+    pub(crate) flight_id: Symbol,
+    #[topic]
+    pub(crate) date: u64,
+}

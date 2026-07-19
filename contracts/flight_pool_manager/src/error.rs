@@ -23,4 +23,8 @@ pub enum Error {
     ActiveFlightListFull = 417,
     PayoutNotReceived = 418,
     DelayHoursNotPositive = 419,
+    // `reconcile_settled_active_entry` was called on a bucket still Active — a
+    // live flight legitimately belongs in the active set, so only a settled
+    // bucket (whose settlement already attempted the prune) may be reconciled.
+    FlightStillActive = 420,
 }
