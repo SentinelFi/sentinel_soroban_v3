@@ -102,7 +102,10 @@ impl FlightPoolManager {
         )) {
             panic_with_error!(e, Error::FlightNotClaimable);
         }
-        if e.ledger().timestamp() <= cfg.claim_expiry {
+        // Strict complement of claim's `now >= claim_expiry` cutoff: the
+        // instant the window closes to claims it opens to sweeping, with no
+        // dead ledger second belonging to neither path.
+        if e.ledger().timestamp() < cfg.claim_expiry {
             panic_with_error!(e, Error::ClaimWindowStillOpen);
         }
         extend_instance_ttl(e);

@@ -164,6 +164,15 @@ impl GovernanceModule {
     }
 
     /// Mark a whitelisted route as disabled (not purchasable).
+    ///
+    /// Deliberately pause-gated, unlike the revocation-only writes that stay
+    /// callable during a pause (`remove_admin`, the oracle's `close_sale`,
+    /// the controller's `remove_whitelisted_buyer`). Those exist because a
+    /// pause leaves no other lever against their hazard; a bad route has
+    /// two: pausing the controller halts every purchase outright, and the
+    /// oracle's pause-exempt `close_sale` kills insurability per flight. With
+    /// coverage already guaranteed mid-incident, keeping route lifecycle
+    /// writes uniformly gated is the simpler invariant.
     #[when_not_paused]
     pub fn disable_route(
         e: &Env,
@@ -332,6 +341,29 @@ impl GovernanceModule {
 
         let key = DataKey::Route(flight_id.clone(), origin.clone(), dest.clone());
         let mut terms = read_route(e, &key);
+
+        // The route must still OWN its flight_id, mirroring the gate
+        // `route_status` / `whitelist_route` / `enable_route` all apply. An
+        // index pointing at a different origin/dest means this entry is a
+        // stale duplicate (`route_status` reports it Unknown): updating it
+        // would rewrite and TTL-refresh a zombie entry — keeping it alive and
+        // re-armed to reclaim the id on a future index lapse — while the
+        // admin believes they touched the live route. An absent index lapsed
+        // while this entry survived, so this route was its last known owner:
+        // recreate it, exactly as `route_status` self-heals.
+        let fr_key = DataKey::FlightRoute(flight_id.clone());
+        match e.storage().persistent().get::<_, (Symbol, Symbol)>(&fr_key) {
+            Some((idx_origin, idx_dest)) => {
+                if !(idx_origin == origin && idx_dest == dest) {
+                    panic_with_error!(e, Error::FlightIdAlreadyMapped);
+                }
+            }
+            None => {
+                e.storage()
+                    .persistent()
+                    .set(&fr_key, &(origin.clone(), dest.clone()));
+            }
+        }
 
         match premium {
             PremiumUpdate::Keep => {}

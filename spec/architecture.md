@@ -547,6 +547,18 @@ RecoveryPool contract.
   After expiry, `sweep_expired(flight_id, date)` credits `RecoveredBalance` internally —
   no cross-contract transfer needed.
 - **Owner recovery.** Owner calls `withdraw_recovered(amount)` to pull swept funds.
+- **Swept funds are protocol revenue — a deliberate economic choice underwriters should
+  know.** Each swept payoff has two components: the buyer's own premium (held by the pool
+  since purchase) and the `(payoff - premium)` top-up the vault transferred at settlement.
+  That second component was funded from LP capital and recognized as an LP loss when the
+  flight settled; when the claim then expires unclaimed, the recovered value accrues to the
+  owner via `withdraw_recovered` rather than flowing back to the vault. Underwriters
+  therefore bear the full settlement loss even for claims that are never collected. The
+  alternative — routing the vault-funded component back through `record_premium_income` to
+  make LPs whole on expired claims — was considered and not taken: unclaimed payoffs are
+  expected to be rare (travelers claim what they are owed), and a single owner-facing
+  recovery pot keeps the sweep path accounting-only and trivially auditable. Revisit if
+  expiry volume ever becomes material.
 - Only the Controller can call `register_flight`, `add_buyer`, `settle_on_time`,
   `settle_delayed`, `settle_cancelled`.
 

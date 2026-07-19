@@ -374,7 +374,7 @@ Concretely: each subsequent request in the queue gets MORE assets per share than
 
 ### H-07. Owner can brick the protocol by setting `claim_expiry_window = 0`
 
-**Status:** ✅ Fixed. New bounds in `controller/src/storage.rs`: `solvency_ratio ∈ [100, 10_000]`, `min_lead_time ≤ 90d`, `claim_expiry_window ∈ [1d, 180d]`. Asserted in `set_*` setters AND in `__constructor`. Six new should-panic tests lock the bounds. This also subsumes M-02.
+**Status:** ✅ Fixed. New bounds in `controller/src/storage.rs`: `solvency_ratio ∈ [100, 10_000]`, `min_lead_time < 90d`, `claim_expiry_window ∈ [1d, 60d]` (originally fixed as `[1d, 180d]`; later tightened to 60d when the 180-day buyer-proof-lifetime cap landed — the booking horizon plus the claim window must fit inside the proof TTL; `contracts/controller/src/constants.rs` is authoritative). Asserted in `set_*` setters AND in `__constructor`. Six new should-panic tests lock the bounds. This also subsumes M-02.
 
 **File:** `controller/src/admin.rs:85-90`.
 

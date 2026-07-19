@@ -1022,6 +1022,24 @@ fn test_sweep_expired_double_call_idempotent() {
 }
 
 #[test]
+fn test_claim_and_sweep_windows_are_exact_complements_at_expiry() {
+    // At exactly `now == claim_expiry` the window has closed to claims and
+    // opened to sweeping — no ledger second belongs to neither path.
+    let t = setup();
+    register(&t);
+    buy(&t, &t.buyer1);
+    settle_delayed_and_topup(&t, 1);
+    advance(&t, CLAIM_WINDOW_SEC); // now == claim_expiry exactly
+
+    assert!(t
+        .pool
+        .try_claim(&t.buyer1, &flight_a(), &FLIGHT_DATE)
+        .is_err());
+    t.pool.sweep_expired(&flight_a(), &FLIGHT_DATE);
+    assert_eq!(t.pool.get_recovered_balance(), PAYOFF);
+}
+
+#[test]
 fn test_sweep_expired_succeeds_while_paused() {
     // Sweep must remain callable during an emergency pause — the FlightConfig
     // TTL buffer past claim_expiry runs on the ledger clock, so gating the
