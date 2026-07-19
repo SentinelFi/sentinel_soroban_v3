@@ -148,7 +148,19 @@ pub mod solvency {
     /// admission check and the vault's withdrawable-capital bound both use
     /// this — sharing the computation keeps the reserve a purchase just
     /// verified identical to the reserve exits are held back from.
+    ///
+    /// PRECONDITION: `locked >= 0`. The `+99` ceil trick rounds toward +∞ only
+    /// for a non-negative product; a negative `locked` would truncate toward
+    /// zero and mis-round by one. Both callers pass a non-negative locked-capital
+    /// sum (locked collateral is only ever increased from zero and decreased no
+    /// further), so this never fires in correct operation. It is enforced in
+    /// PRODUCTION (not merely `debug_assert`) as a fail-closed backstop: this
+    /// figure gates solvency admission and LP-exit sizing, so reverting the
+    /// transaction on an upstream accounting bug is far safer than silently
+    /// returning a wrong reserve. Consistent with the panic-on-invariant idiom
+    /// the `.expect(...)` overflow checks below already use.
     pub fn required_reserve(locked: i128, ratio: u32) -> i128 {
+        assert!(locked >= 0, "required_reserve requires locked >= 0");
         locked
             .checked_mul(ratio as i128)
             .expect("multiplication overflow")

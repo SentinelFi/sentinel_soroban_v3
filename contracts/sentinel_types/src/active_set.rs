@@ -153,6 +153,17 @@ pub fn contains(e: &Env, flight_id: &Symbol, date: u64) -> bool {
 
 // Locate an entry's global slot by scanning pages (missing pages are
 // skipped). Fallback for a lost index entry; normal operation never runs it.
+//
+// Deliberately UNBOUNDED, unlike `add`'s absence check (capped by
+// ACTIVE_SET_ADD_SCAN_MAX). `add` can safely give up early — a false "absent"
+// only risks a duplicate, which its index `has()` guard still catches — but
+// `remove`/`contains` must be EXACT: capping this scan could report a
+// genuinely-present entry as absent, stranding it in the set (remove no-ops)
+// or misreporting membership. The scan only runs when the reverse index has
+// archived, which the deadline-sized index TTLs prevent for any still-live
+// flight; if it ever does run on a very large set its cost is bounded by the
+// page count, and the caller (settlement / reconciliation) is not on the
+// latency-critical purchase path.
 fn scan_position(e: &Env, flight_id: &Symbol, date: u64) -> Option<u32> {
     let n = count(e);
     if n == 0 {

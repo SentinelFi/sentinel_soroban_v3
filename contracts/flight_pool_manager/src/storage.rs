@@ -56,6 +56,18 @@ pub(crate) fn extend_flight_ttl_to(e: &Env, flight_id: &Symbol, date: u64, deadl
 // returns false) so settlement completes rather than reverting. `remove`
 // swap-moves the globally last entry into the freed slot — O(1), and
 // consumers already treat the set as unordered.
+//
+// A no-op removal is not silent: the pool trims the set only here, at
+// settlement, and never retries, so a bucket whose page was archived at this
+// instant would otherwise linger in the count forever with no on-chain signal.
+// Emit a diagnostic so operators can restore the page / reconcile the drift
+// (the count stays a saturation gauge against the registration cap).
 pub(crate) fn prune_active_list(e: &Env, flight_id: &Symbol, date: u64) {
-    sentinel_types::active_set::remove(e, flight_id, date);
+    if !sentinel_types::active_set::remove(e, flight_id, date) {
+        crate::events::ActiveSetPruneMissed {
+            flight_id: flight_id.clone(),
+            date,
+        }
+        .publish(e);
+    }
 }

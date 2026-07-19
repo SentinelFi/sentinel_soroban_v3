@@ -24,6 +24,37 @@ fn read_route(e: &Env, key: &DataKey) -> RouteTerms {
     }
 }
 
+// Reserve `flight_id` against being remapped to a DIFFERENT (origin, dest)
+// until every policy the removed route could have written downstream has aged
+// out. Downstream pool/oracle state is keyed by (flight_id, date) only, so a
+// route that had live policies must keep its id reserved even though removal
+// DELETES its uniqueness-index entry (`FlightRoute`) — without the marker a
+// conflicting route could immediately claim the freed id and collide their
+// (flight_id, date) state. Re-adding the IDENTICAL route stays allowed
+// (`whitelist_route` matches the stored origin/dest), and `enable_route` never
+// consults the marker.
+//
+// Used only by `remove_route`, and only when the removed route actually owns
+// the id (see its `owns_flight_id` guard) so a stale duplicate cannot reserve
+// the id against the legitimate owner. The `disable_route` path keeps its
+// index and instead extends its lifetime past the same exposure.
+fn reserve_flight_id(e: &Env, flight_id: &Symbol, origin: &Symbol, dest: &Symbol) {
+    let retired_until = e
+        .ledger()
+        .timestamp()
+        .checked_add(FLIGHT_ID_RETIREMENT_SECS)
+        .expect("addition overflow");
+    let retired_key = DataKey::RetiredFlight(flight_id.clone());
+    e.storage()
+        .persistent()
+        .set(&retired_key, &(origin.clone(), dest.clone(), retired_until));
+    e.storage().persistent().extend_ttl(
+        &retired_key,
+        RETIREMENT_TTL_LEDGERS,
+        RETIREMENT_TTL_LEDGERS,
+    );
+}
+
 #[contractimpl]
 impl GovernanceModule {
     /// Whitelist a NEW route with optional per-route term overrides.
@@ -151,8 +182,30 @@ impl GovernanceModule {
         }
         terms.approved = false;
         e.storage().persistent().set(&key, &terms);
-        extend_route_ttl(e, &key);
-        extend_route_index_ttl(e, &flight_id);
+        // A disabled route stops being read (no `route_status` refreshes its
+        // keys), yet its already-sold downstream (flight_id, date) policies can
+        // stay live for ~160 days. Extend the route entry AND its uniqueness
+        // index to the retirement horizon — longer than the default 120-day
+        // route TTL — so the index cannot archive before that exposure ends.
+        // While the index survives, the `whitelist_route` / `enable_route`
+        // uniqueness guard keeps the flight_id from being remapped to a
+        // different physical route and colliding the still-live state.
+        // (`remove_route` deletes the index outright, so it relies on the
+        // retirement marker instead; disable keeps the index, so extending its
+        // lifetime is the matching defense and — unlike a marker — cannot
+        // reserve the id against a legitimate current owner when a stale
+        // duplicate is the one being disabled.)
+        e.storage()
+            .persistent()
+            .extend_ttl(&key, RETIREMENT_TTL_LEDGERS, RETIREMENT_TTL_LEDGERS);
+        let fr_key = DataKey::FlightRoute(flight_id.clone());
+        if e.storage().persistent().has(&fr_key) {
+            e.storage().persistent().extend_ttl(
+                &fr_key,
+                RETIREMENT_TTL_LEDGERS,
+                RETIREMENT_TTL_LEDGERS,
+            );
+        }
 
         RouteDisabled {
             flight_id,
@@ -251,20 +304,7 @@ impl GovernanceModule {
             // origin/dest. The retirement marker blocks remapping until
             // that lifetime has provably elapsed. Written even when the
             // index had lapsed — the downstream exposure exists either way.
-            let retired_until = e
-                .ledger()
-                .timestamp()
-                .checked_add(FLIGHT_ID_RETIREMENT_SECS)
-                .expect("addition overflow");
-            let retired_key = DataKey::RetiredFlight(flight_id.clone());
-            e.storage()
-                .persistent()
-                .set(&retired_key, &(origin.clone(), dest.clone(), retired_until));
-            e.storage().persistent().extend_ttl(
-                &retired_key,
-                RETIREMENT_TTL_LEDGERS,
-                RETIREMENT_TTL_LEDGERS,
-            );
+            reserve_flight_id(e, &flight_id, &origin, &dest);
         }
 
         RouteRemoved {

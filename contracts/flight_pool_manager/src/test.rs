@@ -293,6 +293,54 @@ fn test_active_set_spans_pages_and_swap_removes_across_them() {
 }
 
 #[test]
+fn test_prune_missed_emits_diagnostic_and_settlement_still_completes() {
+    // If the active-set page holding a bucket has archived at the moment
+    // settlement tries to prune it, the swap-remove no-ops. Settlement must
+    // still complete (the flight settles), and the no-op must surface a
+    // `prune_missed` diagnostic rather than pass silently — the pool never
+    // retries the prune, so operators need the signal to reconcile the drift.
+    use sentinel_types::active_set::ActiveSetKey;
+    let t = setup();
+    register(&t);
+    assert_eq!(t.pool.get_active_flight_count(), 1);
+
+    // Simulate the page-0 ledger entry archiving past its TTL while the
+    // reverse index and count survive.
+    t.env.as_contract(&t.pool_addr, || {
+        t.env
+            .storage()
+            .persistent()
+            .remove(&ActiveSetKey::ActivePage(0));
+    });
+
+    t.pool
+        .settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
+
+    // Collect events IMMEDIATELY after settlement, before any other contract
+    // call replaces the event buffer: the no-op prune surfaced a diagnostic.
+    let prune_missed = Symbol::new(&t.env, "prune_missed");
+    let mut saw_diag = false;
+    for (addr, topics, _data) in collect_events(&t.env).iter() {
+        if addr != t.pool_addr || topics.len() < 2 {
+            continue;
+        }
+        use soroban_sdk::TryFromVal;
+        if let Ok(verb) = Symbol::try_from_val(&t.env, &topics.get(1).unwrap()) {
+            if verb == prune_missed {
+                saw_diag = true;
+            }
+        }
+    }
+    assert!(saw_diag, "expected a prune_missed diagnostic event");
+
+    // Settlement completed despite the failed prune.
+    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
+    assert_eq!(cfg.status, SettlementStatus::SettledOnTime);
+    // The count did not decrement — the residual drift the diagnostic flags.
+    assert_eq!(t.pool.get_active_flight_count(), 1);
+}
+
+#[test]
 fn test_register_flight_duplicate_is_idempotent() {
     // Re-registering with matching terms is a no-op so two travelers
     // racing to the first purchase don't both have their txs revert.
