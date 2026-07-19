@@ -20,11 +20,11 @@ repository = "https://github.com/SentinelFi/sentinel_soroban_v3"
 version = "1.0.0"
 
 [workspace.dependencies]
-soroban-sdk = "25.3.1"
-stellar-tokens = "0.7.1"
-stellar-access = "0.7.1"
-stellar-macros = "0.7.1"
-stellar-contract-utils = "0.7.1"
+soroban-sdk = "26.1.0"
+stellar-tokens = "0.7.2"
+stellar-access = "0.7.2"
+stellar-macros = "0.7.2"
+stellar-contract-utils = "0.7.2"
 # Property-based testing (dev-dependency only — never part of contract wasm).
 proptest = "1"
 
