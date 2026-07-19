@@ -65,7 +65,7 @@ Called by the authorized oracle executor:
 
 ## Owner edge path
 
-- `evict_missing_flight`: removes a flight whose data never arrived, paired with a Controller-side `settle_evicted_flight` to unwind its policies.
+- `evict_missing_flight`: removes a flight whose data never arrived, paired with a Controller-side `settle_evicted_flight` to unwind its policies. The pairing is not verifiable on-chain — the second step cannot check that an eviction happened or which `outcome_pending` flag it carried — so the runbook requires quoting the emitted `FlightEvicted` event (with its flag) in the change record before running the reconciliation, which settles with void semantics (no payout) regardless of what buyers may have been owed.
 - `set_oracle(new_oracle)`: rotates the authorized oracle executor key. Outstanding sale windows survive the rotation (they are not enumerable on-chain), so a rotation performed as a compromise response must be followed by a `close_sale` sweep over every window still open — reconstructed from the sale events — or a Controller pause for the 24-hour validity horizon.
 
 ## Reads

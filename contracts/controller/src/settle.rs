@@ -561,6 +561,18 @@ impl Controller {
     ///
     /// Not exempt from downstream pause gates: the pool/vault calls it makes
     /// are `when_not_paused`, so run it after unpausing those contracts.
+    ///
+    /// **Runbook precondition — verify the eviction pairing first.** The
+    /// gates below prove only that the flight is outside the normal
+    /// pipeline; they cannot prove an eviction ever happened for this
+    /// flight, nor which `outcome_pending` flag it carried. A mis-paired or
+    /// mis-flagged run silently converts payouts buyers may have been owed
+    /// (a flight whose last public status was Delayed/Cancelled) into vault
+    /// income, reconstructable only from the event trail after the fact.
+    /// Before calling: quote the flight's `FlightEvicted` event — including
+    /// its `outcome_pending` flag — in the change record, and confirm from
+    /// the flight's status-event history that void semantics (premiums to
+    /// the vault, no payout) are the intended outcome for its buyers.
     #[only_owner]
     pub fn settle_evicted_flight(e: &Env, flight_id: Symbol, date: u64) {
         let oracle_addr: Address = e.storage().instance().get(&CtrlKey::Oracle).unwrap();

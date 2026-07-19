@@ -46,3 +46,7 @@ Removal is strict: a route must be disabled before it can be removed.
 `update_route_terms` uses per-field operations, each of premium, payoff, and delay hours can independently be kept, set to a new value, or reset to the default.
 
 Routes live in persistent storage with no on-chain enumeration. Route listings for frontends are built off-chain from emitted events.
+
+## Pausing
+
+Pausing this module halts only its administrative writes — it does **not** stop sales, and it **blocks** `disable_route`. `route_status` deliberately keeps serving Active (with its protective TTL side effects), so the Controller keeps admitting purchases on every listed route while governance is paused. The intuitive incident response "pause governance, then disable the bad route" therefore does the opposite of its intent: the disable reverts and sales continue. To stop sales mid-incident, pause the **Controller** (halts every purchase) or use the oracle's pause-exempt `close_sale` (kills insurability per flight); unpause this module first if a route must be disabled or removed. The one exemption: `remove_admin` stays callable while paused so a compromised admin key can be revoked mid-incident.

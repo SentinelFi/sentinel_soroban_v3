@@ -48,6 +48,22 @@ fn version_initialized_to_one() {
     assert_eq!(t.ctrl.version(), 1);
 }
 
+#[test]
+fn test_wiring_getters_expose_construction_addresses() {
+    let t = setup();
+    assert_eq!(t.ctrl.get_oracle(), t.oracle.address);
+    assert_eq!(t.ctrl.get_risk_vault(), t.vault.address);
+    assert_eq!(t.ctrl.get_governance(), t.gov.address);
+    assert_eq!(t.ctrl.get_flight_pool_manager(), t.pool_addr);
+    assert_eq!(t.ctrl.get_asset_token(), t.asset.address);
+    // The cross-contract identity invariants the deploy checklist verifies —
+    // now checkable end-to-end on-chain: one oracle for controller + barrier,
+    // one vault for controller + pool, one asset everywhere.
+    assert_eq!(Some(t.ctrl.get_oracle()), t.vault.get_oracle());
+    assert_eq!(t.ctrl.get_risk_vault(), t.pool.get_risk_vault());
+    assert_eq!(t.ctrl.get_asset_token(), t.pool.get_asset_token());
+}
+
 fn setup() -> TestEnv {
     let env = Env::default();
     // Plain root-frame auth is sufficient: every contract-to-contract call that

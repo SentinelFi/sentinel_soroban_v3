@@ -74,6 +74,34 @@ impl Controller {
         e.storage().instance().get(&CtrlKey::Oracle).unwrap()
     }
 
+    /// Returns the configured RiskVault contract address. Immutable
+    /// (construction-time pointer, no setter). Exposed so the wiring
+    /// invariant `controller.get_risk_vault() == pool.get_risk_vault()` is
+    /// checkable on-chain, like the oracle-identity check above — a
+    /// mismatch would send settled premiums to a vault the controller
+    /// never credits, bricking settlement at the premium-receipt guard.
+    pub fn get_risk_vault(e: &Env) -> Address {
+        e.storage().instance().get(&CtrlKey::RiskVault).unwrap()
+    }
+
+    /// Returns the configured GovernanceModule contract address (immutable;
+    /// exposed for deployment verification alongside the other wiring
+    /// getters).
+    pub fn get_governance(e: &Env) -> Address {
+        e.storage().instance().get(&CtrlKey::Governance).unwrap()
+    }
+
+    /// Returns the configured settlement-asset token address. Immutable.
+    /// Exposed so `controller.get_asset_token() == pool.get_asset_token()
+    /// == vault's underlying asset` is checkable on-chain: premiums are
+    /// transferred in this asset while the pool pays claims and the vault
+    /// prices shares in theirs, so a divergence surfaces only at settlement
+    /// time (as a failed transfer or receipt guard) — never at any earlier,
+    /// cheaper check.
+    pub fn get_asset_token(e: &Env) -> Address {
+        e.storage().instance().get(&CtrlKey::AssetToken).unwrap()
+    }
+
     /// Whether the buyer whitelist gate is currently active.
     pub fn whitelist_enabled(e: &Env) -> bool {
         read_whitelist_enabled(e)

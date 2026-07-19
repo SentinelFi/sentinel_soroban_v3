@@ -37,6 +37,17 @@
 //! affordable (see [`ACTIVE_SET_ADD_SCAN_MAX`]), appends that would land on
 //! an archived tail page are rejected rather than overwrite it, and ledger
 //! restoration brings everything back.
+//!
+//! Archival-semantics note: under the current protocol model, an archived
+//! persistent entry that appears in a transaction footprint is restored
+//! before execution (or the transaction fails requiring restoration) — a
+//! committed execution does not observe it as absent. The missing-entry
+//! branches above therefore fire for keys that were explicitly `remove`d
+//! (legitimate: pages compact away, indexes are deleted on removal) and
+//! act as fail-safe defense-in-depth against any archival model where a
+//! lapsed entry could read as `None`. They are kept because they fail
+//! closed in every model; do not build operational procedures on the
+//! assumption that an archived page is *observable* as missing on-chain.
 
 // Module-level because `#[contracttype]` re-emits the enum without item
 // attributes: the shared `Active` prefix is load-bearing — variant names ARE

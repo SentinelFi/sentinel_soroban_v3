@@ -750,7 +750,15 @@ everything: it calls functions on other contracts that change state and move mon
     unless the traveler holds a currently valid approval. Approvals carry an explicit
     on-chain deadline (`now + 180 days`, stored in `BuyerApprovalExpiry(addr)`) that
     every gated purchase slides forward — an actively-buying address never lapses, a
-    dormant one expires by the ledger clock and must be re-attested. The deadline is
+    dormant one expires by the ledger clock and must be re-attested. Deadline slides
+    emit no event (and are skipped while the stored deadline is within a 10-day
+    refresh interval), so dormancy monitors must reconstruct the deadline as
+    `latest(buyer_whitelisted event, last GATED InsuranceBought by the address) +
+    180 days` — "gated" meaning a purchase made while the whitelist was enabled
+    (`whitelist_toggled` events delimit those periods; purchases made while the
+    gate was off never slide the deadline). Watching `buyer_whitelisted` events
+    alone false-alarms on active buyers; `is_whitelisted` is the on-chain truth
+    at any instant. The deadline is
     contract-checked state, NOT the storage entry's TTL: an archived Persistent entry
     is restored with its original value on next access rather than reading as absent,
     so a TTL alone could never expire an authorization. Admin-managed via
@@ -1709,7 +1717,9 @@ Traveler -> FlightPoolManager.claim(traveler, flight_id, date)
 
 ```
 Anyone -> FlightPoolManager.sweep_expired(flight_id, date)
-    +-> panic if env.ledger().timestamp() <= claim_expiry
+    +-> panic if env.ledger().timestamp() < claim_expiry
+        (strict complement of claim's `>= claim_expiry` cutoff — the instant
+         the window closes to claims it opens to sweeping)
     +-> calculate remaining unclaimed USDC for this flight
     +-> credit RecoveredBalance += remainder (Instance storage, internal)
     +-> emit event with flight_id, date, amount swept
@@ -1927,6 +1937,18 @@ every flight, and any already-public outcome keeps the vault's settlement barrie
 engaged (LP entry/exit blocked) until the paused contract is resumed and the
 keeper catches up. Incident procedure: pause all five contracts together, and
 unpause them together.
+
+**Pausing governance alone does NOT stop sales — and blocks the
+route-disable lever.** The governance pause halts only its administrative
+writes; `route_status` deliberately keeps serving `Active` (with its
+protective TTL side effects), so the controller keeps admitting purchases on
+every listed route while governance is paused — and `disable_route` /
+`remove_route` are pause-gated, so the intuitive combination "pause
+governance + disable the bad route" is internally contradictory: the disable
+reverts and sales continue. To stop sales mid-incident, pause the
+**Controller** (halts every purchase) or use the oracle's pause-exempt
+`close_sale` (kills insurability per flight); unpause governance first if a
+route must be disabled or removed.
 
 ### Share Price Manipulation (RiskVault)
 
@@ -2197,8 +2219,8 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 | Prune aged-out settled flights | Anyone | `oracle.prune_settled()` |
 | Read active flight count | Anyone | `oracle.get_active_flight_count()` (alert as it nears the list cap) |
 | Check flight data physically exists | Anyone | `oracle.has_flight_data(flight_id, date)` (distinguishes archived from unregistered) |
-| Evict archived flight from list | Owner | `oracle.evict_missing_flight(flight_id, date, outcome_pending)` (only when FlightData is missing; after off-chain finality confirmation. Restore-and-settle is always preferred. `outcome_pending = true` iff the flight's outcome was already public — Landed/Cancelled/ToBeSettled\* per its event history — so the eviction releases the settlement-barrier count that settlement would have released; getting the flag wrong either strands the barrier or opens it early. **Eviction is step one of two** — follow with `controller.settle_evicted_flight`, or the flight's pool bucket and vault collateral stay stranded forever) |
-| Settle an evicted flight's bucket | Owner | `controller.settle_evicted_flight(flight_id, date)` (terminal reconciliation after `evict_missing_flight`: settles the pool bucket with void semantics — premiums to the vault, no payout — and releases the flight's locked collateral. Requires the FlightData row to still be absent and the flight to be out of the oracle active list; do not restore the row after eviction) |
+| Evict archived flight from list | Owner | `oracle.evict_missing_flight(flight_id, date, outcome_pending)` (only when FlightData is missing; after off-chain finality confirmation. Restore-and-settle is always preferred. `outcome_pending = true` iff the flight's outcome was already public — Landed/Cancelled/ToBeSettled\* per its event history — so the eviction releases the settlement-barrier count that settlement would have released; getting the flag wrong either strands the barrier or opens it early. **Eviction is step one of two** — follow with `controller.settle_evicted_flight`, or the flight's pool bucket and vault collateral stay stranded forever. Record the emitted `FlightEvicted` event — including its `outcome_pending` flag — in the change record: step two cannot verify the pairing on-chain) |
+| Settle an evicted flight's bucket | Owner | `controller.settle_evicted_flight(flight_id, date)` (terminal reconciliation after `evict_missing_flight`: settles the pool bucket with void semantics — premiums to the vault, no payout — and releases the flight's locked collateral. Requires the FlightData row to still be absent and the flight to be out of the oracle active list; do not restore the row after eviction. The on-chain gates cannot verify an eviction happened for this flight or which flag it carried — before calling, quote the paired `FlightEvicted` event in the change record and confirm from the flight's status-event history that denying its buyers a payout is the intended outcome) |
 | Update keeper address | Owner | `controller.set_keeper(new_keeper)` |
 | Update oracle address | Owner | `oracle.set_oracle(new_oracle)` |
 | Set min request value floor (both queues) | Owner | `risk_vault.set_min_withdrawal_request(min_assets)` (0 disables only the configured component — the occupancy-scaled protocol floor always applies; enforcement clamped to max(TMA/2500, one whole token)) |
@@ -2367,6 +2389,27 @@ Network configuration (testnet RPC URL, passphrase, contract addresses) lives in
                                                                       the occupancy-scaled protocol
                                                                       floor — from vanishing while TMA
                                                                       is near zero at bootstrap.
+        RiskVault.request_deposit(owner_lp, SEED_ASSETS)           <- RECOMMENDED: seed the vault with a
+                                                                      genesis deposit (processed through
+                                                                      the normal two-phase queue) BEFORE
+                                                                      announcing public LP entry. While
+                                                                      TMA is near zero every request-
+                                                                      floor term degenerates to the
+                                                                      one-token absolute minimum — and
+                                                                      the anti-lockout clamp caps any
+                                                                      configured minimum at the same one
+                                                                      token — so pinning the bounded
+                                                                      queues full costs only ~50-75
+                                                                      tokens of refundable escrow.
+                                                                      Seeding TMA first makes the
+                                                                      TMA/2500 term dominate, restoring
+                                                                      value-relative slot pricing (and
+                                                                      the owner's configuration lever)
+                                                                      from the first public request.
+                                                                      Size the seed so TMA/2500 clearly
+                                                                      exceeds one token — the relative
+                                                                      term only binds above 2,500
+                                                                      tokens of TMA.
 
 4. Set global defaults:
         GovernanceModule.set_defaults(premium, payoff, delay_hours)

@@ -155,8 +155,28 @@ Step 10 ships disabled (0). Left at 0, one actor can occupy every slot of the
 bounded withdrawal queue with dust requests spread across addresses, locking
 other LPs out of the exit path. Pick a per-asset value meaningfully above dust
 and well below typical LP positions (e.g. `100_0000000` = 100 USDC at
-7 decimals). Enforcement is clamped at request time to TMA/2500, so no
-configured value can lock ordinary positions out.
+7 decimals). Enforcement is clamped at request time to
+`max(TMA/2500, one whole token)`, so no configured value can lock ordinary
+positions out.
+
+Two bootstrap caveats on that clamp:
+
+- **Seed the vault before announcing public LP entry.** While TMA is near
+  zero, every request-floor term degenerates to the one-token absolute
+  minimum — and the anti-lockout clamp caps any configured minimum at the
+  same one token — so pinning the bounded queues full costs only ~50–75
+  tokens of refundable escrow. Submit an owner/genesis `request_deposit`
+  (processed through the normal two-phase queue by the QueueMaintainer)
+  and let it mint **before** opening deposits to the public. Size the seed
+  so `TMA/2500` comfortably exceeds the one-token floor — the relative term
+  only starts binding above 2,500 tokens of TMA (e.g. a 25,000-token seed
+  prices the marginal slot at ~10 tokens and full-queue occupation at
+  ~500–750 tokens) — leaving slot pricing value-relative from the first
+  public request.
+- **The one-token absolute floor assumes a 7-decimal asset**
+  (`MIN_REQUEST_FLOOR_CAP_ABS = 1_0000000`, a compile-time constant). For a
+  settlement asset with different decimals, adjust the constant before
+  deployment or the floor shifts by a factor of ten per decimal.
 
 ## Phase 4 — Configure the protocol
 
@@ -225,6 +245,14 @@ oracle_aggregator.get_authorized_controller() == CONTROLLER
 risk_vault.get_controller()                   == CONTROLLER
 flight_pool_manager.get_controller()          == Some(CONTROLLER)
 risk_vault.get_oracle()                       == Some(ORACLE_AGGREGATOR)   # barrier active
+controller.get_oracle()                       == ORACLE_AGGREGATOR   # MUST equal the vault's —
+                                                 # a divergence silently defeats the barrier
+controller.get_risk_vault()                   == RISK_VAULT
+flight_pool_manager.get_risk_vault()          == RISK_VAULT          # same vault on both
+controller.get_governance()                   == GOVERNANCE
+controller.get_asset_token()                  == ASSET               # same asset on controller,
+flight_pool_manager.get_asset_token()         == ASSET               # pool, and the vault's
+                                                                     # underlying (query_asset)
 risk_vault.get_min_withdrawal_request()       >  0
 oracle_aggregator.get_authorized_oracle()     == ORACLE_EXECUTOR
 controller.get_keeper()                       == KEEPER_EXECUTOR
@@ -235,7 +263,8 @@ risk_vault.get_solvency_ratio()               == same ratio (controller-mirrored
 <each contract>.version()                     == 1
 ```
 
-Then run one end-to-end smoke test: underwriter `deposit` → traveler
+Then run one end-to-end smoke test: underwriter `request_deposit` → keeper
+`run_queue_maintenance` mints it after the pricing delay → traveler
 `buy_insurance` on a whitelisted route → oracle pushes data → keeper
 classifies and settles → traveler `claim` (or premiums arrive as vault
 yield).
@@ -245,7 +274,8 @@ yield).
 For reference, the recurring call sequence once live:
 
 ```
-Underwriter:  risk_vault.deposit / request_withdrawal / collect / cancel_withdrawal
+Underwriter:  risk_vault.request_deposit / cancel_deposit / request_withdrawal
+              / cancel_withdrawal / collect
 Traveler:     controller.buy_insurance → (later) flight_pool_manager.claim
 Oracle cron:  oracle.set_estimated_arrival → set_landed | set_cancelled
 Keeper cron:  controller.classify_flights → controller.execute_settlements
@@ -256,5 +286,8 @@ Owner:        flight_pool_manager.withdraw_recovered,
               risk_vault.recover_uncollected,
               pause/unpause (all five contracts as a set),
               oracle.evict_missing_flight → controller.settle_evicted_flight
-              (always in that pair; restore-and-settle is preferred over both)
+              (always in that pair — quote the FlightEvicted event and its
+              outcome_pending flag in the change record before step two, which
+              cannot verify the pairing on-chain; restore-and-settle is
+              preferred over both)
 ```
