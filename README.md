@@ -66,9 +66,28 @@ Deployed addresses are listed in [deployments/](deployments/).
 
 ## Underwriter Calculator
 
-Before depositing into the vault, an underwriter can size the risk on the **`/calculator`** page ([Quant.tsx](dapp/src/pages/Quant.tsx)) — an in-browser **Monte Carlo simulator** of a pool's monthly economics. It runs entirely client-side (a seeded `mulberry32` PRNG, no backend and no chain calls), so it recomputes smoothly as you drag a slider.
+Before depositing into the vault, an underwriter can size the risk on the **`/calculator`** page ([Quant.tsx](dapp/src/pages/Quant.tsx)) — an in-browser **Monte Carlo simulator** of a pool's monthly economics. A single expected-value line ("premiums look bigger than expected payouts, so this is profitable") hides the thing that actually matters to an underwriter: how *bad* an unlucky month can get. Monte Carlo answers that by simulating thousands of months and showing the whole distribution of outcomes, not just its average.
 
-Seven levers — travelers, on-time %, delay-rate uncertainty, premium, payout, capital, and trial count — feed each simulated month. A trial samples the number of delayed flights from `Binomial(travelers, 1 − onTime%)` (with the month's true delay rate itself drawn within the uncertainty band), then tallies pool net = premiums − payouts. Thousands of trials aggregate into an SVG histogram plus stat cards: **median**, **mean / expected value**, **5% Value-at-Risk** (the bad-month tail), **P(profit)**, and yield — alongside a plain deterministic EV readout and the break-even line, so the point estimate and the spread sit side by side. The spread *is* the risk: it turns "premiums look bigger than expected payouts" into a distribution an underwriter can actually judge.
+**The model.** Seven levers drive it — travelers, on-time %, delay-rate uncertainty, premium, payout, capital, and trial count (`runs`). Each trial is one hypothetical month, sampled in two stages:
+
+1. **Parameter uncertainty.** We don't know a route's true delay rate exactly, so it isn't held fixed. The base rate is `pDelay = 1 − onTime%`, and each month draws its *own* true rate `p ~ Uniform(pDelay ± uncertainty)`, clamped to `[0, 1]`. The uncertainty lever is that band's half-width in percentage points; set it to 0 and every month uses the same rate (the naive model).
+2. **Outcome sampling.** Given that month's `p`, each of the `travelers` policies is an independent Bernoulli trial, so the number of delayed flights is `Binomial(travelers, p)` — drawn by flipping one weighted coin per traveler. The month's result is `net = premiums − delayed × payout`, where `premiums = travelers × premium`.
+
+Running this `runs` times (thousands of trials) produces a full sample of possible monthly nets.
+
+**The output.** The nets are sorted and reduced to the stat cards the page shows:
+
+| Stat | Meaning |
+|------|---------|
+| **Median** | The typical month (50th percentile) |
+| **Mean / EV** | Average net across all trials — matches the deterministic readout |
+| **5% VaR** | The 5th-percentile net: "1 month in 20 is at least this bad" — the tail an underwriter is really buying |
+| **P(profit)** | Fraction of trials that finished ≥ 0 |
+| **Yield** | Mean net as a return on the capital lever |
+
+The distribution is also binned into a 21-bucket SVG histogram (spanning the observed range, always including 0 so the break-even line is visible), so the shape — tight and profitable vs. a fat loss tail — is legible at a glance next to the plain deterministic EV and break-even readouts.
+
+**Determinism.** All math is pure client-side JS — no backend, no chain calls. The PRNG is a `mulberry32` generator seeded by hashing the seven inputs, so the same levers always yield the same distribution and dragging a slider recomputes smoothly (no unseeded `Math.random` reflow flicker). It's decision-support, not an oracle: garbage-in assumptions give garbage-out spreads, but the *shape* of the risk is exactly what a deterministic EV number can't convey.
 
 ## How a Flight Moves Through the System
 
