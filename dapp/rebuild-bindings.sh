@@ -21,8 +21,15 @@ stellar contract build
 echo ""
 
 echo "=== Generating TypeScript bindings ==="
+# Generate straight from the built wasm — `stellar scaffold build
+# --build-clients` silently produces nothing here (no environments.toml).
 cd "$SCRIPT_DIR"
-STELLAR_SCAFFOLD_ENV=development stellar scaffold build --build-clients --manifest-path "$CONTRACTS_DIR/Cargo.toml"
+for name in controller flight_pool_manager governance_module mock_usdc oracle_aggregator risk_vault; do
+  stellar contract bindings typescript \
+    --wasm "$CONTRACTS_DIR/target/wasm32v1-none/release/$name.wasm" \
+    --output-dir "$SCRIPT_DIR/packages/$name" \
+    --overwrite
+done
 
 echo ""
 echo "=== Installing generated packages ==="

@@ -8,6 +8,7 @@ import {
 	useClaimableBalance,
 	useContractSync,
 	useConvertToAssets,
+	useDepositQueue,
 	useFreeCapital,
 	useLockedCapital,
 	useProtocolStats,
@@ -87,6 +88,9 @@ export default function House() {
 	const [requestTx, setRequestTx] = useState<TxState>("idle")
 	const [collectTx, setCollectTx] = useState<TxState>("idle")
 	const [cancelingId, setCancelingId] = useState<bigint | null>(null)
+	const [cancelingDepositId, setCancelingDepositId] = useState<bigint | null>(
+		null,
+	)
 	const [txError, setTxError] = useState<string | null>(null)
 
 	// ─── reads ───
@@ -98,6 +102,7 @@ export default function House() {
 	const { data: shares } = useVaultBalance(address)
 	const { data: positionAssets } = useConvertToAssets(shares)
 	const { data: withdrawalQueue } = useWithdrawalQueue()
+	const { data: depositQueue } = useDepositQueue()
 	const { data: claimable } = useClaimableBalance(address)
 
 	// illustrative (labelled) trend series + real-where-available share price
@@ -113,6 +118,10 @@ export default function House() {
 	const myQueueEntries =
 		withdrawalQueue && address
 			? withdrawalQueue.filter((entry) => entry.owner === address)
+			: []
+	const myDepositEntries =
+		depositQueue && address
+			? depositQueue.filter((entry) => entry.owner === address)
 			: []
 	const hasClaimable = claimable !== undefined && claimable > 0n
 
@@ -150,22 +159,44 @@ export default function House() {
 		setDepositTx("awaiting")
 		setTxError(null)
 		try {
-			// ERC-4626-style 4-arg deposit
-			const tx = await riskVaultClient.deposit({
+			// Two-phase LP entry: escrow assets now; the queue-maintenance
+			// cron mints shares at the post-delay share price.
+			const tx = await riskVaultClient.request_deposit({
+				caller: address,
 				assets: depositAssets,
-				receiver: address,
-				from: address,
-				operator: address,
 			})
 			setDepositTx("confirming")
 			await tx.signAndSend({ signTransaction })
 			setDepositTx("success")
 			setDepositAmount("")
-			addNotification("Deposited — you're underwriting flights", "success")
+			addNotification(
+				"Deposit queued — shares mint at the next pool pass",
+				"success",
+			)
 			invalidate()
 			setTimeout(() => setDepositTx("idle"), 3000)
 		} catch (err) {
 			fail(err, setDepositTx, "Deposit")
+		}
+	}
+
+	async function handleCancelDeposit(requestId: bigint) {
+		if (!address || cancelingDepositId !== null) return
+		setCancelingDepositId(requestId)
+		setTxError(null)
+		try {
+			const tx = await riskVaultClient.cancel_deposit({
+				caller: address,
+				request_id: requestId,
+			})
+			await tx.signAndSend({ signTransaction })
+			addNotification("Deposit request cancelled", "secondary")
+			invalidate()
+		} catch (err) {
+			console.error("Cancel deposit failed:", err)
+			setTxError(err instanceof Error ? err.message : String(err))
+		} finally {
+			setCancelingDepositId(null)
 		}
 	}
 
@@ -371,6 +402,41 @@ export default function House() {
 					>
 						{connected ? t.house.depositCta : t.house.connectWallet}
 					</TransactionButton>
+					<p className="mt-2 font-body text-[13px] text-mute">
+						{t.house.depositQueueHint}
+					</p>
+
+					{/* my escrowed deposits, cancellable until processed */}
+					{myDepositEntries.length > 0 && (
+						<div className="mt-3 space-y-2">
+							{myDepositEntries.map((entry) => (
+								<div
+									key={entry.request_id.toString()}
+									className="box-soft flex items-center justify-between border-2 border-line bg-inset px-3 py-2"
+								>
+									<span className="font-board text-[18px] text-ink">
+										{t.house.depositQueued(
+											formatUsdc(entry.assets),
+										)}
+									</span>
+									<button
+										type="button"
+										onClick={() =>
+											void handleCancelDeposit(
+												entry.request_id,
+											)
+										}
+										disabled={cancelingDepositId !== null}
+										className="btn-px btn-ghost btn-sm text-loss"
+									>
+										{cancelingDepositId === entry.request_id
+											? "…"
+											: t.house.cancel}
+									</button>
+								</div>
+							))}
+						</div>
+					)}
 				</section>
 
 				{/* position */}

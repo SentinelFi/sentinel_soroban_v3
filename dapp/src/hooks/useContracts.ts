@@ -239,11 +239,30 @@ export function useWithdrawalQueue() {
 		queryKey: ["vault", "withdrawalQueue"],
 		queryFn: async () => {
 			const tx = await riskVaultClient.get_withdrawal_queue()
-			// WithdrawalRequest { owner, request_id, shares }
+			// WithdrawalRequest { owner, request_id, shares, requested_at }
 			return tx.result as Array<{
 				owner: string
 				request_id: bigint
 				shares: bigint
+				requested_at: bigint
+			}>
+		},
+		refetchInterval: 15_000,
+		retry: 1,
+	})
+}
+
+export function useDepositQueue() {
+	return useQuery({
+		queryKey: ["vault", "depositQueue"],
+		queryFn: async () => {
+			const tx = await riskVaultClient.get_deposit_queue()
+			// DepositRequest { owner, request_id, assets, requested_at }
+			return tx.result as Array<{
+				owner: string
+				request_id: bigint
+				assets: bigint
+				requested_at: bigint
 			}>
 		},
 		refetchInterval: 15_000,

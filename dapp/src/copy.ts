@@ -97,6 +97,9 @@ const fun = {
 		walletBalance: "Wallet:",
 		walletHint: "· mint test USDC from the top bar.",
 		depositCta: "DEPOSIT — EARN YIELD",
+		depositQueueHint:
+			"Deposits queue briefly, then shares mint to your wallet automatically.",
+		depositQueued: (amt: string) => `${amt} USDC queued`,
 		connectWallet: "CONNECT WALLET",
 		position: "YOUR POSITION",
 		poolShares: "POOL SHARES",
@@ -359,6 +362,9 @@ const serious: Copy = {
 		walletBalance: "Wallet balance:",
 		walletHint: "· mint test USDC from the top bar.",
 		depositCta: "Deposit — Earn Yield",
+		depositQueueHint:
+			"Deposits queue briefly, then shares mint to your wallet automatically.",
+		depositQueued: (amt: string) => `${amt} USDC queued`,
 		connectWallet: "Connect Wallet",
 		position: "Your Position",
 		poolShares: "Vault Shares",
