@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { loadConfig } from "./config";
+import { cronTrigger, recordRun } from "./governance/runs";
 import type { Config, RunLogEntry } from "./types";
 
 /**
@@ -47,6 +48,7 @@ export function makeCronHandler(run: (config: Config) => Promise<RunLogEntry>) {
 
     try {
       const entry = await run(config);
+      await recordRun(entry, cronTrigger(req.headers));
       res.status(entry.success ? 200 : 500).json(entry);
     } catch (err) {
       // Jobs catch their own errors and return success:false; this is a

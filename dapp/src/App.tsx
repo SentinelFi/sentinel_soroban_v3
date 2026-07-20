@@ -11,6 +11,7 @@ import MyBets from "./pages/MyBets"
 import House from "./pages/House"
 import Quant from "./pages/Quant"
 import Admin from "./pages/Admin"
+import Status from "./pages/Status"
 import { Privacy, Terms } from "./pages/Legal"
 
 const GITHUB_URL = "https://github.com/SentinelFi"
@@ -35,6 +36,7 @@ export default function App() {
 					<Route path="/quant" element={<Quant />} />
 					<Route path="/privacy" element={<Privacy />} />
 					<Route path="/terms" element={<Terms />} />
+					<Route path="/status" element={<Status />} />
 					{/* hidden — not linked from any nav; ops only */}
 					<Route path="/admin" element={<Admin />} />
 					<Route path="*" element={<Markets />} />
@@ -64,6 +66,12 @@ function FooterLinks({ className }: { className?: string }) {
 			</span>
 			<Link to="/terms" className="footer-link">
 				Terms
+			</Link>
+			<span aria-hidden="true" className="text-mute/50">
+				·
+			</span>
+			<Link to="/status" className="footer-link">
+				Status
 			</Link>
 			<span aria-hidden="true" className="text-mute/50">
 				·

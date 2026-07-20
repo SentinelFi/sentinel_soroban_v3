@@ -39,6 +39,15 @@ const usd = (units: string | null | undefined) =>
 
 const shortTx = (h: string) => `${h.slice(0, 4)}…${h.slice(-4)}`
 
+export function relTime(iso: string | null): string {
+	if (!iso) return "never"
+	const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000)
+	if (mins < 1) return "just now"
+	if (mins < 60) return `${mins}m ago`
+	if (mins < 48 * 60) return `${Math.floor(mins / 60)}h ago`
+	return `${Math.floor(mins / 1440)}d ago`
+}
+
 /* ── board atoms ──────────────────────────────────────────────────── */
 
 /** Square board lamp — pixel-world status light. */
@@ -148,7 +157,10 @@ function BoardStat({ label, value, tone }: { label: string; value: string; tone?
 	return (
 		<div>
 			<p className="label-px">{label}</p>
-			<p className={`board-figure ${tone === "loss" ? "text-loss" : ""}`}>{value}</p>
+			{/* inline color: serious theme's .board-figure override beats utilities */}
+			<p className="board-figure" style={tone === "loss" ? { color: "var(--color-loss)" } : undefined}>
+				{value}
+			</p>
 		</div>
 	)
 }
@@ -211,6 +223,11 @@ function Console({ session }: { session: Session }) {
 	const qc = useQueryClient()
 	const invalidate = () => qc.invalidateQueries()
 
+	const jobsQ = useQuery({
+		queryKey: ["admin-jobs"],
+		queryFn: () => api("/api/admin/jobs", token),
+		refetchInterval: 60_000,
+	})
 	const routesQ = useQuery({
 		queryKey: ["admin-routes"],
 		queryFn: () => api("/api/admin/routes?chain=1", token),
@@ -264,12 +281,136 @@ function Console({ session }: { session: Session }) {
 				</div>
 			) : (
 				<div className="space-y-10">
+					<JobsBoard
+						registry={jobsQ.data?.registry ?? []}
+						latest={jobsQ.data?.latest ?? []}
+						loading={jobsQ.isLoading}
+						token={token}
+						onDone={invalidate}
+					/>
 					<RoutesBoard routes={routes} loading={routesQ.isLoading} token={token} onDone={invalidate} />
 					<SignalsPanel signals={signals} loading={signalsQ.isLoading} token={token} onDone={invalidate} />
 					<ActionLog log={logQ.data?.log ?? []} loading={logQ.isLoading} />
 				</div>
 			)}
 		</div>
+	)
+}
+
+/* ── jobs board ───────────────────────────────────────────────────── */
+
+/** Lamp logic: red = last run failed, gold = stale (2× interval with no
+ *  run) or never ran, green = on schedule and passing. */
+function jobTone(
+	last: { ran_at: string; success: boolean } | undefined,
+	intervalMinutes: number
+): { tone: "win" | "loss" | "gold"; word: string } {
+	if (!last) return { tone: "gold", word: "no runs" }
+	if (!last.success) return { tone: "loss", word: "failed" }
+	const ageMin = (Date.now() - new Date(last.ran_at).getTime()) / 60_000
+	if (ageMin > 2 * intervalMinutes) return { tone: "gold", word: "stale" }
+	return { tone: "win", word: "ok" }
+}
+
+function JobsBoard({
+	registry,
+	latest,
+	loading,
+	token,
+	onDone,
+}: {
+	registry: any[]
+	latest: any[]
+	loading: boolean
+	token: string
+	onDone: () => void
+}) {
+	const [busy, setBusy] = useState<string | null>(null)
+	const [note, setNote] = useState<string | null>(null)
+	const byJob = new Map(latest.map((r: any) => [r.job, r]))
+
+	async function runNow(job: string) {
+		setBusy(job)
+		setNote(null)
+		try {
+			const entry = await api("/api/admin/jobs", token, {
+				method: "POST",
+				body: JSON.stringify({ job }),
+			})
+			setNote(`${job}: ${entry.success ? "completed" : "FAILED"} in ${entry.duration_ms}ms`)
+			onDone()
+		} catch (err) {
+			setNote(`${job}: ${err instanceof Error ? err.message : String(err)}`)
+		} finally {
+			setBusy(null)
+		}
+	}
+
+	return (
+		<section>
+			<h2 className="h-section mb-3">Crons · job board</h2>
+			<div className="panel overflow-x-auto">
+				<table className="w-full border-collapse text-left">
+					<thead>
+						<tr className="border-b-2 border-line">
+							{["", "Job", "Schedule", "Signer", "Last run", "Took", "Trigger", ""].map((h, i) => (
+								<th key={i} className="label-px px-3 py-2 whitespace-nowrap">
+									{h}
+								</th>
+							))}
+						</tr>
+					</thead>
+					<tbody className="font-body text-[13px]">
+						{loading && (
+							<tr>
+								<td colSpan={8} className="px-3 py-4 text-mute">
+									Reading the job board…
+								</td>
+							</tr>
+						)}
+						{registry.map((info: any) => {
+							const last = byJob.get(info.job)
+							const { tone, word } = jobTone(last, info.intervalMinutes)
+							return (
+								<tr key={info.job} className="border-b border-line/60 last:border-b-0">
+									<td className="px-3 py-2">
+										<span className="flex items-center gap-2">
+											<Lamp tone={tone} blink={tone === "loss"} />
+											<span className="status-px text-mute">{word}</span>
+										</span>
+									</td>
+									<td className="px-3 py-2">
+										<span className="font-board text-[17px] text-ink">{info.job}</span>
+										<span className="block text-[12px] text-mute">{info.description}</span>
+									</td>
+									<td className="px-3 py-2 whitespace-nowrap">
+										<span className="font-board text-[16px] text-sky">{info.schedule}</span>
+									</td>
+									<td className="px-3 py-2 text-dim">{info.signer}</td>
+									<td className="px-3 py-2 whitespace-nowrap text-dim">{relTime(last?.ran_at ?? null)}</td>
+									<td className="px-3 py-2 whitespace-nowrap text-mute">
+										{last ? `${last.duration_ms}ms` : "—"}
+									</td>
+									<td className="px-3 py-2 text-mute">{last?.trigger ?? "—"}</td>
+									<td className="px-3 py-2">
+										{info.manualRunnable && (
+											<button
+												className="btn-px btn-blip btn-sm"
+												disabled={busy !== null}
+												onClick={() => runNow(info.job)}
+											>
+												{busy === info.job ? "Running…" : "Run"}
+											</button>
+										)}
+									</td>
+								</tr>
+							)
+						})}
+					</tbody>
+				</table>
+			</div>
+			{note && <p className="mt-2 font-body text-[13px] text-dim">{note}</p>}
+		</section>
 	)
 }
 

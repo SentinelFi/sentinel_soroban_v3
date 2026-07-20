@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { isAuthorized } from "../handler";
 import type { RunLogEntry } from "../types";
+import { cronTrigger, recordRun } from "./runs";
 
 /**
  * Config + handler wrapper for the governance crons (gov-reconcile,
@@ -63,6 +64,7 @@ export function makeGovCronHandler(run: (config: GovConfig) => Promise<RunLogEnt
 
     try {
       const entry = await run(config);
+      await recordRun(entry, cronTrigger(req.headers));
       res.status(entry.success ? 200 : 500).json(entry);
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
