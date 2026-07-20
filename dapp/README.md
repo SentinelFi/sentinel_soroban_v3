@@ -33,7 +33,7 @@ See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rule
 
 ## Serverless crons (Vercel)
 
-The five executor cron jobs (`executor/centralized_cron`) are also available as Vercel serverless functions inside this app, so a single Vercel deployment serves the frontend **and** keeps the protocol running. The logic is a faithful port — same contract calls, same AeroAPI handling, same simulate → assemble (with 40% resource-fee bump) → sign → send → poll transaction pattern.
+The six executor cron jobs (`executor/centralized_cron`) are also available as Vercel serverless functions inside this app, so a single Vercel deployment serves the frontend **and** keeps the protocol running. The logic is a faithful port — same contract calls, same AeroAPI handling, same simulate → assemble (with 40% resource-fee bump) → sign → send → poll transaction pattern.
 
 ### Layout
 
@@ -45,9 +45,9 @@ api/
     aeroapi_client.ts AeroAPI fetch with retry/backoff + ambiguity guard
     handler.ts        auth + makeCronHandler wrapper
     types.ts          RunLogEntry / FlightStatus / Config (executor shapes)
-    jobs/             fetcher, classifier, settler, queue, ttl — each exports run(config)
+    jobs/             authorizer, fetcher, classifier, settler, queue, ttl, route_agent — each exports run(config)
   cron/               routed functions
-    fetcher.ts  classify.ts  settle.ts  queue.ts  ttl.ts  health.ts
+    authorize.ts  fetcher.ts  classify.ts  settle.ts  queue.ts  agent.ts  ttl.ts  health.ts
 vercel.json           cron schedules
 tsconfig.api.json     type-checks api/ with node types (wired into tsc -b)
 ```

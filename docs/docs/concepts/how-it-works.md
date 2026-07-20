@@ -34,20 +34,20 @@ flowchart LR
    - *On time*: premiums are forwarded to the vault as underwriter yield, and the locked capital is released.
    - *Delayed or cancelled*: the vault tops up the flight pool so that every buyer can claim the full payoff, and a claim window opens.
 7. **Claim.** Affected travelers claim their payoff directly from the Flight Pool Manager, any time before the claim window expires (60 days on testnet).
-8. **Withdrawal.** Underwriters redeem shares immediately when the vault holds enough capital above its solvency reserve, or join a FIFO withdrawal queue that is processed automatically.
+8. **Withdrawal.** Underwriter entry and exit are two-phase: a request escrows USDC (on deposit) or shares (on withdrawal) now and is priced by the keeper only after a delay, so no one can enter or exit on an outcome that is publicly known but not yet on-chain. Exits are paid from a FIFO queue as capital above the solvency reserve allows. See [Provide Liquidity](../guides/provide-liquidity) for the request/cancel/collect flow.
 
 ## Who does what
 
 | Step | Actor | Automation |
 |---|---|---|
 | Whitelist routes | Owner or admin | Manual |
-| Deposit and withdraw | Underwriters | Self-service |
+| Request deposit and withdrawal | Underwriters | Self-service |
 | Buy policies | Travelers | Self-service |
 | Attest sale windows | Oracle executor | Cron, every 2 hours |
 | Push flight data | Oracle executor | Cron, every 2 hours |
 | Classify flights | Keeper executor | Cron, hourly |
 | Execute settlements | Keeper executor | Cron, every 5 minutes |
-| Process withdrawal queue | Keeper executor | Cron, every 5 minutes |
+| Process deposit and withdrawal queues | Keeper executor | Cron, every 5 minutes |
 | Claim payouts | Travelers | Self-service |
 
 The cron cadences are the current executor defaults, not protocol rules. Timing is off-chain configuration and can be tuned freely, as long as the oracle and keeper run often enough for timely settlement.

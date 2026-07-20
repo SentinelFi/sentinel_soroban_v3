@@ -293,6 +293,123 @@ fn test_active_set_spans_pages_and_swap_removes_across_them() {
 }
 
 #[test]
+fn test_prune_missed_emits_diagnostic_and_settlement_still_completes() {
+    // If the active-set page holding a bucket has archived at the moment
+    // settlement tries to prune it, the swap-remove no-ops. Settlement must
+    // still complete (the flight settles), and the no-op must surface a
+    // `prune_missed` diagnostic rather than pass silently — the pool never
+    // retries the prune, so operators need the signal to reconcile the drift.
+    use sentinel_types::active_set::ActiveSetKey;
+    let t = setup();
+    register(&t);
+    assert_eq!(t.pool.get_active_flight_count(), 1);
+
+    // Simulate the page-0 ledger entry archiving past its TTL while the
+    // reverse index and count survive.
+    t.env.as_contract(&t.pool_addr, || {
+        t.env
+            .storage()
+            .persistent()
+            .remove(&ActiveSetKey::ActivePage(0));
+    });
+
+    t.pool
+        .settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
+
+    // Collect events IMMEDIATELY after settlement, before any other contract
+    // call replaces the event buffer: the no-op prune surfaced a diagnostic.
+    let prune_missed = Symbol::new(&t.env, "prune_missed");
+    let mut saw_diag = false;
+    for (addr, topics, _data) in collect_events(&t.env).iter() {
+        if addr != t.pool_addr || topics.len() < 2 {
+            continue;
+        }
+        use soroban_sdk::TryFromVal;
+        if let Ok(verb) = Symbol::try_from_val(&t.env, &topics.get(1).unwrap()) {
+            if verb == prune_missed {
+                saw_diag = true;
+            }
+        }
+    }
+    assert!(saw_diag, "expected a prune_missed diagnostic event");
+
+    // Settlement completed despite the failed prune.
+    let cfg = t.pool.get_flight_config(&flight_a(), &FLIGHT_DATE).unwrap();
+    assert_eq!(cfg.status, SettlementStatus::SettledOnTime);
+    // The count did not decrement — the residual drift the diagnostic flags.
+    assert_eq!(t.pool.get_active_flight_count(), 1);
+}
+
+#[test]
+fn test_reconcile_settled_active_entry_corrects_prune_missed_drift() {
+    // Continuation of the prune-miss scenario: after a settlement could not
+    // drop a bucket from the active set (its page had archived), the
+    // permissionless reconciliation lever frees the stale slot once the page
+    // is restored — the recovery path the standalone diagnostic previously
+    // lacked.
+    use sentinel_types::active_set::ActiveSetKey;
+    let t = setup();
+    register(&t);
+
+    // Snapshot the live page, then simulate it archiving before settlement.
+    let saved_page: soroban_sdk::Vec<(Symbol, u64)> = t.env.as_contract(&t.pool_addr, || {
+        t.env
+            .storage()
+            .persistent()
+            .get(&ActiveSetKey::ActivePage(0))
+            .unwrap()
+    });
+    t.env.as_contract(&t.pool_addr, || {
+        t.env
+            .storage()
+            .persistent()
+            .remove(&ActiveSetKey::ActivePage(0));
+    });
+
+    t.pool
+        .settle_on_time(&t.controller, &flight_a(), &FLIGHT_DATE);
+    // Prune missed: the terminally-settled bucket still counts.
+    assert_eq!(t.pool.get_active_flight_count(), 1);
+
+    // While the page is still archived, reconciliation is a safe no-op: it
+    // cannot reach the entry, so it removes nothing and leaves the count.
+    assert!(!t
+        .pool
+        .reconcile_settled_active_entry(&flight_a(), &FLIGHT_DATE));
+    assert_eq!(t.pool.get_active_flight_count(), 1);
+
+    // Restore the page (ledger restoration) and reconcile: the stale slot is
+    // freed and the count corrected.
+    t.env.as_contract(&t.pool_addr, || {
+        t.env
+            .storage()
+            .persistent()
+            .set(&ActiveSetKey::ActivePage(0), &saved_page);
+    });
+    assert!(t
+        .pool
+        .reconcile_settled_active_entry(&flight_a(), &FLIGHT_DATE));
+    assert_eq!(t.pool.get_active_flight_count(), 0);
+
+    // Idempotent: a second call finds nothing to remove.
+    assert!(!t
+        .pool
+        .reconcile_settled_active_entry(&flight_a(), &FLIGHT_DATE));
+    assert_eq!(t.pool.get_active_flight_count(), 0);
+}
+
+#[test]
+#[should_panic] // FlightStillActive
+fn test_reconcile_settled_active_entry_rejects_live_flight() {
+    // The lever must never drop a still-live (Active) flight from the set —
+    // that would strip it from keeper enumeration before it can settle.
+    let t = setup();
+    register(&t);
+    t.pool
+        .reconcile_settled_active_entry(&flight_a(), &FLIGHT_DATE);
+}
+
+#[test]
 fn test_register_flight_duplicate_is_idempotent() {
     // Re-registering with matching terms is a no-op so two travelers
     // racing to the first purchase don't both have their txs revert.
@@ -902,6 +1019,24 @@ fn test_sweep_expired_double_call_idempotent() {
     let after_second = t.pool.get_recovered_balance();
     assert_eq!(after_first, PAYOFF * 2);
     assert_eq!(after_second, after_first);
+}
+
+#[test]
+fn test_claim_and_sweep_windows_are_exact_complements_at_expiry() {
+    // At exactly `now == claim_expiry` the window has closed to claims and
+    // opened to sweeping — no ledger second belongs to neither path.
+    let t = setup();
+    register(&t);
+    buy(&t, &t.buyer1);
+    settle_delayed_and_topup(&t, 1);
+    advance(&t, CLAIM_WINDOW_SEC); // now == claim_expiry exactly
+
+    assert!(t
+        .pool
+        .try_claim(&t.buyer1, &flight_a(), &FLIGHT_DATE)
+        .is_err());
+    t.pool.sweep_expired(&flight_a(), &FLIGHT_DATE);
+    assert_eq!(t.pool.get_recovered_balance(), PAYOFF);
 }
 
 #[test]

@@ -2,7 +2,7 @@ use soroban_sdk::{contractimpl, panic_with_error, token, Address, Env, Symbol};
 
 use crate::auth::extend_instance_ttl;
 use crate::constants::BUYER_TTL_LEDGERS;
-use crate::events::{ExpiredSwept, PayoutClaimed};
+use crate::events::{ActiveEntryReconciled, ExpiredSwept, PayoutClaimed};
 use crate::storage::{extend_flight_ttl, PoolKey};
 use crate::{
     Error, FlightConfig, FlightPoolManager, FlightPoolManagerArgs, FlightPoolManagerClient,
@@ -102,7 +102,10 @@ impl FlightPoolManager {
         )) {
             panic_with_error!(e, Error::FlightNotClaimable);
         }
-        if e.ledger().timestamp() <= cfg.claim_expiry {
+        // Strict complement of claim's `now >= claim_expiry` cutoff: the
+        // instant the window closes to claims it opens to sweeping, with no
+        // dead ledger second belonging to neither path.
+        if e.ledger().timestamp() < cfg.claim_expiry {
             panic_with_error!(e, Error::ClaimWindowStillOpen);
         }
         extend_instance_ttl(e);
@@ -140,5 +143,50 @@ impl FlightPoolManager {
             unclaimed,
         }
         .publish(e);
+    }
+
+    /// Permissionless housekeeping: drop a terminally-settled bucket that
+    /// lingers in the paginated active set because `prune_active_list` could
+    /// not reach it at settlement time — its active-set page had archived, so
+    /// the swap-remove no-op'd and emitted `ActiveSetPruneMissed`, leaving the
+    /// entry counted and enumerable with no on-chain retry. Settlement runs the
+    /// prune exactly once and never repeats it, so without this path the stale
+    /// slot — and its contribution to the `MAX_ACTIVE_FLIGHTS` registration
+    /// gauge — is permanent. This is the pool's analogue of the oracle's
+    /// owner-only `evict_missing_flight`; it is safe to leave permissionless
+    /// (like `sweep_expired` / oracle `prune_settled`) because it removes an
+    /// entry ONLY when the bucket's own `FlightConfig` proves the flight is
+    /// already settled (`status != Active`), so it can never drop a still-live
+    /// flight from the set.
+    ///
+    /// Accounting-only (no token moves). Idempotent: returns `true` if this
+    /// call removed the entry, `false` if there was nothing to remove — the
+    /// slot was already reconciled, or its page is still archived and
+    /// unreachable (restore the page named in the `ActiveSetPruneMissed` event,
+    /// then retry). Reverts only if the bucket is missing (restore the
+    /// `FlightConfig` first) or still `Active`.
+    pub fn reconcile_settled_active_entry(e: &Env, flight_id: Symbol, date: u64) -> bool {
+        let cfg_key = PoolKey::FlightConfig(flight_id.clone(), date);
+        let cfg: FlightConfig = e
+            .storage()
+            .persistent()
+            .get(&cfg_key)
+            .expect("flight not registered");
+        // Only a settled bucket may be reconciled. An Active bucket is a live
+        // flight that legitimately belongs in the set; removing it would strip
+        // it from keeper enumeration before it can settle.
+        if cfg.status == SettlementStatus::Active {
+            panic_with_error!(e, Error::FlightStillActive);
+        }
+        extend_instance_ttl(e);
+
+        // `remove` swap-moves the globally last entry into the freed slot and
+        // decrements the count. It returns false when the entry is absent or
+        // its page is still archived (unreachable) — either way nothing to do.
+        let removed = sentinel_types::active_set::remove(e, &flight_id, date);
+        if removed {
+            ActiveEntryReconciled { flight_id, date }.publish(e);
+        }
+        removed
     }
 }

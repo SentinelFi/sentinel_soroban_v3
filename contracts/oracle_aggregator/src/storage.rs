@@ -69,14 +69,21 @@ pub(crate) fn settlement_deadline(e: &Env, date: u64) -> u64 {
 // so an entry archived early merely fails closed (sale reads as not open)
 // and one lingering past expiry is inert.
 pub(crate) fn extend_sale_auth_ttl(e: &Env, flight_id: &Symbol, date: u64, expires_at: u64) {
-    use sentinel_types::ttl::{LEDGERS_PER_SECOND_DEN, LEDGERS_PER_SECOND_NUM};
+    use sentinel_types::ttl::{
+        LEDGERS_PER_SECOND_DEN, LEDGERS_PER_SECOND_NUM, MAX_PERSISTENT_TTL_LEDGERS,
+    };
 
     let secs_remaining = expires_at.saturating_sub(e.ledger().timestamp());
     let ledgers_remaining =
         secs_remaining.saturating_mul(LEDGERS_PER_SECOND_NUM) / LEDGERS_PER_SECOND_DEN;
+    // The network-max clamp mirrors `deadline_extension_ledgers`. Today's
+    // caller bounds `expires_at` to 24 h first, so the clamp is unreachable —
+    // it exists so a future caller with a laxer expiry bound gets a capped
+    // extension instead of an `extend_ttl` panic.
     let extend_to = u32::try_from(ledgers_remaining)
         .unwrap_or(u32::MAX)
-        .saturating_add(crate::constants::SALE_AUTH_TTL_BUFFER_LEDGERS);
+        .saturating_add(crate::constants::SALE_AUTH_TTL_BUFFER_LEDGERS)
+        .min(MAX_PERSISTENT_TTL_LEDGERS);
 
     let key = OracleKey::SaleAuth(flight_id.clone(), date);
     // Equal threshold/target forces the extension whenever the current TTL

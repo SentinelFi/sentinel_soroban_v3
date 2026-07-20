@@ -1849,3 +1849,102 @@ fn test_remove_stale_route_leaves_current_owner_unaffected() {
         &None::<u32>,
     );
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #505)")]
+fn test_update_route_terms_rejects_stale_duplicate() {
+    // A route entry whose flight_id index now points at a DIFFERENT route is
+    // a stale duplicate (`route_status` reports it Unknown). Updating it must
+    // be rejected: the write would rewrite and TTL-refresh a zombie entry the
+    // admin believes is the live route.
+    let (env, client, owner, _addr) = setup();
+    let (fid, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    // Index lapses; a conflicting route claims the id.
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&crate::storage::DataKey::FlightRoute(fid.clone()));
+    });
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &symbol_short!("SFO"),
+        &symbol_short!("ORD"),
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+
+    client.update_route_terms(
+        &owner,
+        &fid,
+        &origin,
+        &dest,
+        &PremiumUpdate::Set(20_0000000i128),
+        &PayoffUpdate::Keep,
+        &DelayHoursUpdate::Keep,
+    );
+}
+
+#[test]
+fn test_update_route_terms_heals_lapsed_index() {
+    // An absent index lapsed while this route entry survived, so the route
+    // being updated was its last known owner: the update recreates the index
+    // (the same self-heal `route_status` performs), keeping a later
+    // whitelist from mapping the id elsewhere.
+    let (env, client, owner, _addr) = setup();
+    let (fid, origin, dest) = route_ids();
+
+    client.whitelist_route(
+        &owner,
+        &fid,
+        &origin,
+        &dest,
+        &None::<i128>,
+        &None::<i128>,
+        &None::<u32>,
+    );
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&crate::storage::DataKey::FlightRoute(fid.clone()));
+    });
+
+    client.update_route_terms(
+        &owner,
+        &fid,
+        &origin,
+        &dest,
+        &PremiumUpdate::Set(20_0000000i128),
+        &PayoffUpdate::Keep,
+        &DelayHoursUpdate::Keep,
+    );
+
+    // Index restored to this route: it still resolves Active, and a
+    // conflicting whitelist for the same flight_id is blocked again.
+    assert!(matches!(
+        client.route_status(&fid, &origin, &dest),
+        RouteStatus::Active(_)
+    ));
+    assert!(client
+        .try_whitelist_route(
+            &owner,
+            &fid,
+            &symbol_short!("SFO"),
+            &symbol_short!("ORD"),
+            &None::<i128>,
+            &None::<i128>,
+            &None::<u32>,
+        )
+        .is_err());
+}

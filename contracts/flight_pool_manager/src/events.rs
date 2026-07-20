@@ -71,3 +71,30 @@ pub struct ControllerSet {
     #[topic]
     pub(crate) controller: Address,
 }
+
+// Diagnostic: settlement tried to drop this flight from the active set but the
+// swap-remove no-op'd (its page/index archived at that moment). The bucket
+// stays counted and enumerable, so nothing is lost — but the pool trims the
+// set only at settlement and never retries, so operators should reconcile
+// (restore the page, or accept the residual count drift) rather than let it
+// silently accumulate toward the registration cap. Mirrors the observability
+// of the oracle's page-miss / controller's ttl-miss diagnostics.
+#[contractevent(topics = ["sentinel", "prune_missed"], data_format = "single-value")]
+pub struct ActiveSetPruneMissed {
+    #[topic]
+    pub(crate) flight_id: Symbol,
+    #[topic]
+    pub(crate) date: u64,
+}
+
+// A stale active-set slot left behind by a prune-miss (see ActiveSetPruneMissed)
+// was reconciled: the terminally-settled bucket has now been removed from the
+// paginated active set and the count corrected. Lets indexers close out the
+// `prune_missed` they saw earlier.
+#[contractevent(topics = ["sentinel", "reconciled"], data_format = "single-value")]
+pub struct ActiveEntryReconciled {
+    #[topic]
+    pub(crate) flight_id: Symbol,
+    #[topic]
+    pub(crate) date: u64,
+}

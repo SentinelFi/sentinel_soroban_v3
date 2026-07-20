@@ -37,6 +37,17 @@
 //! affordable (see [`ACTIVE_SET_ADD_SCAN_MAX`]), appends that would land on
 //! an archived tail page are rejected rather than overwrite it, and ledger
 //! restoration brings everything back.
+//!
+//! Archival-semantics note: under the current protocol model, an archived
+//! persistent entry that appears in a transaction footprint is restored
+//! before execution (or the transaction fails requiring restoration) — a
+//! committed execution does not observe it as absent. The missing-entry
+//! branches above therefore fire for keys that were explicitly `remove`d
+//! (legitimate: pages compact away, indexes are deleted on removal) and
+//! act as fail-safe defense-in-depth against any archival model where a
+//! lapsed entry could read as `None`. They are kept because they fail
+//! closed in every model; do not build operational procedures on the
+//! assumption that an archived page is *observable* as missing on-chain.
 
 // Module-level because `#[contracttype]` re-emits the enum without item
 // attributes: the shared `Active` prefix is load-bearing — variant names ARE
@@ -47,6 +58,18 @@
 use soroban_sdk::{contractevent, contracttype, Env, Symbol, Vec};
 
 use crate::ttl::{deadline_extension_ledgers, PERSISTENT_TTL_EXTEND, PERSISTENT_TTL_THRESHOLD};
+
+/// Operational sanity cap on the total number of entries in the set, shared
+/// by BOTH consumers (OracleAggregator, FlightPoolManager) so the two caps
+/// can never drift. It is no longer a storage-entry limit — the paginated
+/// layout removed the old 1,000-flight ceiling the single-vector list imposed
+/// — but a guard against unbounded growth (runaway registration, stalled
+/// pruning), set far above any plausible concurrent flight volume. Lives here,
+/// next to the structure it bounds, because both contracts compare it against
+/// this module's `count()`: a divergent copy on either side would let one
+/// contract reject a registration the other still accepts, silently breaking
+/// the pool⇔oracle first-buy registration invariant.
+pub const MAX_ACTIVE_FLIGHTS: u32 = 100_000;
 
 /// Entries per page. Sized so a full page (~40 bytes/entry) stays a small
 /// ledger entry while a keeper batch (25–60 entries) touches at most two
@@ -153,6 +176,17 @@ pub fn contains(e: &Env, flight_id: &Symbol, date: u64) -> bool {
 
 // Locate an entry's global slot by scanning pages (missing pages are
 // skipped). Fallback for a lost index entry; normal operation never runs it.
+//
+// Deliberately UNBOUNDED, unlike `add`'s absence check (capped by
+// ACTIVE_SET_ADD_SCAN_MAX). `add` can safely give up early — a false "absent"
+// only risks a duplicate, which its index `has()` guard still catches — but
+// `remove`/`contains` must be EXACT: capping this scan could report a
+// genuinely-present entry as absent, stranding it in the set (remove no-ops)
+// or misreporting membership. The scan only runs when the reverse index has
+// archived, which the deadline-sized index TTLs prevent for any still-live
+// flight; if it ever does run on a very large set its cost is bounded by the
+// page count, and the caller (settlement / reconciliation) is not on the
+// latency-critical purchase path.
 fn scan_position(e: &Env, flight_id: &Symbol, date: u64) -> Option<u32> {
     let n = count(e);
     if n == 0 {

@@ -140,6 +140,13 @@ impl Controller {
     }
 
     /// Sets the claim expiry window (in seconds) after settlement (validated against allowed bounds).
+    ///
+    /// Note: this window is measured from SETTLEMENT time, but the pool
+    /// additionally caps each claim deadline at `flight_date +
+    /// MAX_CLAIM_DEADLINE_AFTER_DATE_SECS` (the buyer-proof-lifetime bound). So
+    /// when settlement runs late the EFFECTIVE window can be shorter than the
+    /// value set here — it never extends a claim deadline past that date-anchored
+    /// cap. Configure with that ceiling in mind.
     #[only_owner]
     pub fn set_claim_expiry_window(e: &Env, seconds: u64) {
         assert_claim_expiry_window(e, seconds);

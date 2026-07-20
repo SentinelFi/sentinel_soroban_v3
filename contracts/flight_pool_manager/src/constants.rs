@@ -22,11 +22,11 @@ pub(crate) use sentinel_types::timeouts::{
     BUYER_PROOF_TTL_LEDGERS as BUYER_TTL_LEDGERS, MAX_CLAIM_DEADLINE_AFTER_DATE_SECS,
 };
 
-/// Sanity cap on the paginated active-flight set. The set lives in
-/// per-page persistent entries (see `sentinel_types::active_set`), so
-/// capacity no longer competes with the 65,536-byte contract-instance entry
-/// that bounded the old single-vector list to 1,000 flights — the cap is now
-/// purely an operational guard against unbounded growth, set far above any
-/// plausible concurrent flight volume. Settled flights are removed on
-/// settlement, freeing capacity. Matches the OracleAggregator cap.
-pub(crate) const MAX_ACTIVE_FLIGHTS: u32 = 100_000;
+// Sanity cap on the paginated active-flight set. Defined once in
+// `sentinel_types::active_set` — next to the structure it bounds and shared
+// with the OracleAggregator — so the two caps can never drift (a divergent
+// copy would let one contract reject a first-buy registration the other still
+// accepts). Settled flights are removed on settlement, freeing capacity.
+// Re-exported here so existing `crate::constants::MAX_ACTIVE_FLIGHTS`
+// references keep resolving.
+pub(crate) use sentinel_types::active_set::MAX_ACTIVE_FLIGHTS;

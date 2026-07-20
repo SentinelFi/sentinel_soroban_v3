@@ -1,32 +1,32 @@
 {
   "network": "testnet",
   "network_passphrase": "Test SDF Network ; September 2015",
-  "deployed_at": "2026-07-11",
+  "deployed_at": "2026-07-18",
   "deployer": "alice",
   "contracts": {
     "mock_usdc": {
-      "address": "CC6QGWZYDSQ6BQRAK3WKEIBPVRFNTKLCNKRMF6NNWLAWLMQU7LQKIXDH",
+      "address": "CCGB4TFBJYG7FMMZYH4BZC5SJITQIJ33XTJHSKRAVFKOQKDBM4QJPTVB",
       "wasm_hash": "2c80bdda1c5e0a97b7e6e07d2b4aa64ddfea4155a5c46a13a9dd5f5e5cc1a8e5"
     },
     "governance_module": {
-      "address": "CB4GWBXFQ2TVHJVDYA7OOB7KNNASWCNNPW7BZDPYOCJZOBAXWK3B57VL",
-      "wasm_hash": "4671464ddc717e575f8bca3f6394fbcd70d4af80ae0b3e149e6726c6fbe4f11d"
+      "address": "CANSHOFUFZPLZPCVUQYL3LBO25FW5BP6AEVAMNN2QS2BINGDIVZVEWYZ",
+      "wasm_hash": "4b9d10e294d88b9cc43103127cb5c2a7e10425570f71ac34aebb9f9e42ab2cd4"
     },
     "oracle_aggregator": {
-      "address": "CDOLYXPIV63FGRCIPOFZY5HNRS34QZHZJVEUUVJHSFEFW5H4CHQHJEYZ",
-      "wasm_hash": "bf06748e73e68b3e79237ff104e0d7b5dd6fc1030d4526d0d7bfbb5aadef7875"
+      "address": "CBSX3KRT4JI7XAOB33OTGZMZVOFXOS2LWDQCQKR2UAGHRMWYMC2D6QUL",
+      "wasm_hash": "eb02c0baf40bed7c9c17d40c54e45a48f8349f5b41a1174048b29c716b0ff831"
     },
     "risk_vault": {
-      "address": "CDW5YUJXGJWPVOQBXYVDZN7P7QQSE3U6VGIHBN24HZKKCS5QQ75OLIJE",
-      "wasm_hash": "c83d733de62db5d6d7e32a68889f943f81aaac9a1639c1ceeae67f5fd60d2192"
+      "address": "CAHUWF7GMAKZK34C3BBQWHA4GLAI2OSXGL25KMLW45INBDJMVQRAL3QW",
+      "wasm_hash": "68000b6949ea5e84c1d72ce0deccd474362029a4256b97c9dcb658ae99e79379"
     },
     "flight_pool_manager": {
-      "address": "CCEOYQREEASJ3F2EMNDJDP35ZXTMRVO3LKH3TGEZ6O2UDBCFVQNGDLWJ",
-      "wasm_hash": "7338e546ec74c4bf66bca56381db711b4f8333bbb125a3b7f3a6c0a13438044d"
+      "address": "CD6XRCMKALQLB63ZYMA7GCW3Q2BQROGKYASRRRNZEFRPINQ6JFXO6YZT",
+      "wasm_hash": "cf4e48062755b52e1c3bd57b3e90e3faaaf7ba6447ec80ede5175e69d9ac6ff9"
     },
     "controller": {
-      "address": "CD7KCPQJFYSEUPJ43VXC6RIYCF4WPTVUHH3ANWNPYXTYGE2NBRXGFTXB",
-      "wasm_hash": "827a58829d3044665a4f8a5d96b3352a32afaf8268e7e0fb0a09a99eecf9b187"
+      "address": "CCWDQVAJCNMU2P35JF5RNGC7PM2LGWBXBSO6QUME2PJFK5LTVFNQZGHB",
+      "wasm_hash": "9d6c6a209f35565b974bf2b0de287e2c31c9b656b537be023861b749bbe52585"
     }
   },
   "accounts": {
