@@ -25,6 +25,7 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
   - [Flight status state machine](#flight-status-state-machine)
 - [Off-Chain Executors and Governance](#off-chain-executors-and-governance)
   - [Cron jobs](#cron-jobs)
+  - [Governance database](#governance-database)
   - [Automated governance](#automated-governance)
   - [Admin console and status](#admin-console-and-status)
 - [Deployment Plan](#deployment-plan)
@@ -132,6 +133,24 @@ Eight jobs run as Vercel serverless functions ([dapp/api/cron/](dapp/api/cron/),
 | TTL extender | TTL | daily | `extend_ttl` × 5 contracts + `prune_settled` (Soroban storage-rent housekeeping) |
 
 Every run is recorded in the governance DB (`cron_runs`), surfaced on the public `/status` page. See the [dapp README](dapp/README.md#serverless-crons-vercel) for deployment, auth, and plan caveats.
+
+### Governance database
+
+The contracts are the source of truth for *money and terms* — balances, locked collateral, canonical route premiums. They are deliberately not a place to accumulate operational memory: every stored value costs rent, every read is an RPC round-trip, and there is no way to query "show me the weather alerts from the last 6 hours" or "who disabled this route and when." The governance layer needs exactly that kind of memory, so it lives off-chain in a **Supabase (Postgres)** database — the automation's working state and audit trail, distinct from the on-chain settlement state.
+
+It holds seven tables:
+
+| Table | Purpose |
+|-------|---------|
+| `routes` | The set of routes the automation manages, mirrored from the routes file |
+| `signals` | Timestamped facts that should influence pricing/pausing — weather events, operational alerts — with a scope (route / origin / dest) and an expiry |
+| `pause_events` | Which routes the system has paused and why, so it knows what it may later un-pause |
+| `premium_adjustments` | Active multipliers stacked over base terms, with the admin pins that override automation |
+| `actions_log` | Every on-chain write the layer makes, attributed to the actor (cron or a named admin) — the audit trail |
+| `cron_runs` | Per-run health for all eight jobs, powering the public `/status` page |
+| `ingest_cursors` / `policies` | Bookmarks for incremental signal ingestion and a local mirror of purchased policies |
+
+Why it's needed: the **hourly reconciler** ([below](#automated-governance)) decides each route's state by reasoning over *history* — signals that arrived since the last run, how long a pause condition has been clear (hysteresis), whether an admin has pinned the route. None of that fits on-chain. Postgres gives it durable, queryable state; recomputing desired state from that state each run is what makes the reconciler idempotent and crash-safe. Supabase **Auth** additionally backs the `/admin` allowlist. Security posture: **RLS is deny-all with zero policies** — the anon key can read nothing, and the only data path is the server-side transaction-pooler connection used by the serverless functions.
 
 ### Automated governance
 
