@@ -33,7 +33,7 @@ See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rule
 
 ## Serverless crons (Vercel)
 
-The six executor cron jobs (`executor/centralized_cron`) are also available as Vercel serverless functions inside this app, so a single Vercel deployment serves the frontend **and** keeps the protocol running. The logic is a faithful port — same contract calls, same AeroAPI handling, same simulate → assemble (with 40% resource-fee bump) → sign → send → poll transaction pattern.
+Eight cron jobs run as Vercel serverless functions inside this app, so a single Vercel deployment serves the frontend **and** keeps the protocol running. All jobs share one transaction pattern: simulate → assemble (with 40% resource-fee bump) → sign → send → poll.
 
 ### Layout
 
@@ -46,8 +46,11 @@ api/
     handler.ts        auth + makeCronHandler wrapper
     types.ts          RunLogEntry / FlightStatus / Config (executor shapes)
     jobs/             authorizer, fetcher, classifier, settler, queue, ttl, route_agent — each exports run(config)
+    governance/       DB-driven governance layer: reconciler, rules, submitter, run recorder
   cron/               routed functions
-    authorize.ts  fetcher.ts  classify.ts  settle.ts  queue.ts  agent.ts  ttl.ts  health.ts
+    authorize.ts  fetcher.ts  classify.ts  settle.ts  queue.ts  agent.ts  ttl.ts  gov-reconcile.ts  health.ts
+  admin/              /admin console API (Supabase Auth identity + ADMIN_EMAILS allowlist)
+  status/             public cron-run health backing /status
 vercel.json           cron schedules
 tsconfig.api.json     type-checks api/ with node types (wired into tsc -b)
 ```
@@ -63,6 +66,7 @@ tsconfig.api.json     type-checks api/ with node types (wired into tsc -b)
 | `/api/cron/queue`    | `2-59/5 * * * *` | `Controller.run_queue_maintenance` (off-tempo from settle to avoid keeper sequence-number contention) |
 | `/api/cron/agent`    | `0 6 * * *`    | Route agent — ML baseline premium (Python service) + Open-Meteo weather rules (elevated → premium × multiplier, severe → disable) + 24h re-evaluation of disabled routes; all writes clamped to the routes-file rails and the on-chain term limits |
 | `/api/cron/ttl`      | `0 0 * * *`    | `extend_ttl` on all 5 contracts + `prune_settled` |
+| `/api/cron/gov-reconcile` | `10 * * * *` | Governance reconciler — recomputes each managed route's desired state from DB signals (admin pins win, pauses expand, multipliers stack, hysteresis damps) and submits the minimal on-chain diff; `GOV_DRY_RUN=true` logs decisions without submitting |
 
 `/api/cron/health` is an unauthenticated GET that returns the network, contract IDs, and `hasKeys` booleans (secrets are never echoed).
 
@@ -79,6 +83,7 @@ Server-side (no `PUBLIC_` prefix — set in Vercel project settings, never bundl
 - `SALE_AUTH_HORIZON_DAYS`, `SALE_AUTH_VALIDITY_SECS` — sale-authorizer overrides (horizon defaults to the routes file's `sale_horizon_days`)
 - `WEATHER_BASE_URL` — Open-Meteo override (keyless; testing only)
 - `CRON_SECRET` — shared secret guarding the cron endpoints (recommended)
+- `GOVERNANCE_DB_URL` — Supabase transaction-pooler Postgres URL (governance DB); `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `ADMIN_EMAILS` — admin-console auth; `GOV_DRY_RUN` — keep `true` until the governance key is an on-chain admin
 
 ### Routes file + whitelist script
 
