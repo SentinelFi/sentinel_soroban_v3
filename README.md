@@ -41,7 +41,7 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
 | [dapp/](dapp/) | The deployable app: Vite + React frontend, [dapp/api/](dapp/api/) — Vercel serverless functions running all eight cron jobs plus the admin/status APIs, [dapp/config/routes.testnet.json](dapp/config/routes.testnet.json) — the human source of truth for insurable routes, [dapp/scripts/](dapp/scripts/) — the governance whitelist script, [dapp/packages/](dapp/packages/) — generated contract bindings. One Vercel project serves UI, crons, and admin together. |
 | [supabase/](supabase/) | Governance database: Supabase config and SQL migrations (route registry, signals, pause/premium state, actions log, cron runs). Consumed by the reconciler cron and the admin console. |
 | [agent/](agent/) | Python premium-pricing service: FastAPI + XGBoost delay-probability model returning expected-loss premiums with hard rails. Deploys to Render via [render.yaml](render.yaml); optional — the route-agent cron degrades to routes-file terms without it. |
-| [executor/](executor/) | [mock-api/](executor/mock-api/) — keyless AeroAPI fixture server for local testing and demos (point `AEROAPI_BASE_URL` at it). The legacy node-cron executor that lived here was superseded by `dapp/api/` and removed. |
+| [tools/](tools/) | [mock-aeroapi/](tools/mock-aeroapi/) — keyless AeroAPI fixture server for local testing and demos (point `AEROAPI_BASE_URL` at it). |
 | [playground/](playground/) | Web playground for poking the testnet deployment ([live](https://sentinel-soroban-v3.vercel.app/)). |
 | [deployments/](deployments/) | Deployed contract addresses, wasm hashes, executor accounts, and constructor parameters per network. |
 | [spec/](spec/) | Architecture and design documents ([architecture.md](spec/architecture.md), chain-agnostic [simple_architecture.md](spec/simple_architecture.md)). |
@@ -159,7 +159,7 @@ What runs where. Four hosted surfaces plus the chain itself:
 | Serverless crons (×8) + admin/status APIs | [`dapp/api/`](dapp/api/) | **Vercel** (same project) | Schedules in [`dapp/vercel.json`](dapp/vercel.json); 5-min crons need Vercel Pro (Hobby: external pinger with the `CRON_SECRET` bearer) |
 | Governance DB | [`supabase/`](supabase/) | **Supabase** (Postgres + Auth) | Migrations in `supabase/migrations/`; serverless functions connect via the transaction pooler |
 | ML pricing service | [`agent/`](agent/) | **Render** (Docker web service) | Via root [`render.yaml`](render.yaml); optional — unset falls back to routes-file terms |
-| Mock AeroAPI | [`executor/mock-api/`](executor/) | **local only** | Keyless test fixture; point `AEROAPI_BASE_URL` at it for demos |
+| Mock AeroAPI | [`tools/mock-aeroapi/`](tools/mock-aeroapi/) | **local only** | Keyless test fixture; point `AEROAPI_BASE_URL` at it for demos |
 
 Secrets live only in host env stores (Vercel / Render / Supabase), never in the repo — full list with defaults in [`dapp/.env.example`](dapp/.env.example).
 

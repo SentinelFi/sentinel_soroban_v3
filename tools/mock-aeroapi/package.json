@@ -1,7 +1,7 @@
 {
   "name": "sentinel-mock-aeroapi",
   "version": "0.1.0",
-  "description": "Mock FlightAware AeroAPI server for Sentinel Protocol executor testing (Phase 3)",
+  "description": "Mock FlightAware AeroAPI server for Sentinel Protocol cron-job testing",
   "private": true,
   "type": "module",
   "scripts": {

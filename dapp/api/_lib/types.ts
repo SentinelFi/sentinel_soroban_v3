@@ -1,6 +1,6 @@
 // ── Run log types ──────────────────────────────────────────────────
-// Ported from executor/centralized_cron/src/types.ts — keep shapes in
-// sync so ops tooling can read either executor's output.
+// Ported from the legacy centralized_cron executor (removed 2026-07-19;
+// shapes preserved so historical run logs stay readable).
 
 export interface FetcherAction {
   flight: string;

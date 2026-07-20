@@ -1,11 +1,11 @@
 # Mock AeroAPI Server
 
-Local Express server that returns FlightAware AeroAPI-shaped responses for executor testing. No real API key needed.
+Local Express server that returns FlightAware AeroAPI-shaped responses for cron-job testing. No real API key needed.
 
 ## Quick start
 
 ```bash
-cd executor/mock-api
+cd tools/mock-aeroapi
 npm install
 npm run dev     # hot-reload
 # or

@@ -3,10 +3,10 @@ import type { Config } from "./types";
 /**
  * Env-driven config for the serverless cron functions.
  *
- * Same env var names as the executor (executor/centralized_cron), so a
- * .env can be moved between the two without renaming. Non-secret values
- * default to the Phase 3 testnet deployment (deployments/testnet.json,
- * deployed 2026-07-11); secrets are always required and never defaulted.
+ * Env var names inherited from the legacy centralized_cron executor, so
+ * an old .env still works without renaming. Non-secret values default
+ * to the Phase 3 testnet deployment (deployments/testnet.json);
+ * secrets are always required and never defaulted.
  *
  * These are SERVER-SIDE vars (Vercel project env) — no PUBLIC_ prefix,
  * never bundled into the browser build.

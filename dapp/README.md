@@ -108,7 +108,7 @@ Without an `AEROAPI_KEY`, everything still runs safely: the four contract-only
 jobs are fully functional, and the fetcher fails soft — API errors are logged,
 each flight is recorded as `skipped: "No AeroAPI data"`, nothing bad is written
 on-chain, and it retries next cycle. For a keyless demo, point
-`AEROAPI_BASE_URL` at a hosted `executor/mock-api` instance instead (scripted
+`AEROAPI_BASE_URL` at a hosted `tools/mock-aeroapi` instance instead (scripted
 scenarios, no key needed).
 
 ### Auth
@@ -138,5 +138,5 @@ npx tsx -e '
 '
 ```
 
-To exercise the fetcher without spending AeroAPI credits, start the fixture server in `executor/mock-api` and set `AEROAPI_BASE_URL=http://localhost:3001`.
+To exercise the fetcher without spending AeroAPI credits, start the fixture server in `tools/mock-aeroapi` and set `AEROAPI_BASE_URL=http://localhost:3001`.
 
