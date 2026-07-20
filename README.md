@@ -150,7 +150,7 @@ All automated writes are boxed in by three nested guardrails: the decision rules
 
 ## Deployment Plan
 
-What runs where. Four hosted surfaces plus the chain itself:
+Step-by-step deploy instructions are in [DEPLOYMENT.md](DEPLOYMENT.md). What runs where — four hosted surfaces plus the chain itself:
 
 | What | Source | Deployed on | Notes |
 |------|--------|-------------|-------|
