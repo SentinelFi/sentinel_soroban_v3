@@ -26,7 +26,7 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
 - [Off-Chain Executors (Oracles and Keepers)](#off-chain-executors-oracles-and-keepers)
 - [Automated Governance (Route Agent)](#automated-governance-route-agent)
 - [Deployment Plan](#deployment-plan)
-- [Local Setup](#local-setup)
+- [Getting Started](#getting-started)
 - [License](#license)
 - [Contributing](#contributing)
 - [Security](#security)
@@ -93,6 +93,18 @@ ToBeSettled* ──▶ Settled           (keeper: execute_settlements)
 
 ## Off-Chain Executors (Oracles and Keepers)
 
+### External systems at a glance
+
+| System | Kind | Used by | Purpose |
+|--------|------|---------|---------|
+| **FlightAware AeroAPI** | third-party API (keyed) | sale authorizer, fetcher | Real flight schedules + outcomes: scheduled arrival (never live estimates), actual landing, cancellations. No key → jobs fail soft (skip + retry) |
+| **Open-Meteo** | third-party API (keyless) | route agent | Origin/destination forecasts → elevated/severe weather rules |
+| **ML pricing service** ([`agent/`](agent/), Render) | our service | route agent | XGBoost `p_delay` → baseline premium; unreachable → falls back to routes-file terms |
+| **Vercel crons** ([`dapp/api/cron/`](dapp/api/cron/)) | our runtime | all 7 jobs | The scheduler + executors; guarded by `CRON_SECRET` |
+| **Routes file** ([`dapp/config/routes.testnet.json`](dapp/config/routes.testnet.json)) | config (human-edited) | whitelist script, sale authorizer, route agent | Single source of human intent: which routes exist, term overrides, price rails, `enabled` flags |
+
+**Governance, end to end:** a human edits the routes file and runs `npm run whitelist:routes` (signs with the governance-admin key) → routes exist on-chain with terms. From then on the **route agent** may reprice or temporarily disable within three nested guardrails — its own decision rules, the routes-file rails (min/max premium/payoff, max daily step), and the on-chain owner-set term bounds — but it can never whitelist a new route, never touch the defaults, and never re-enable a route a human disabled (`enabled: false`). The owner key alone can change defaults, term bounds, and admins.
+
 Four trusted signing identities drive the protocol forward; their addresses are registered on-chain and every entry point checks the caller. Flight *outcomes* are always decided on-chain — the crons only trigger transitions. The route agent is the one exception that writes governance state, and it is boxed in by rails at three layers (its own, the routes file's, and the on-chain owner-set term limits).
 
 | Identity | Authorized for | Env var |
@@ -155,7 +167,7 @@ First-time deploy order:
 3. **Vercel** — import the repo with root directory `dapp/`, set the env vars above, deploy; crons start on their schedules automatically
 4. **One-time on-chain setup** — owner runs `GovernanceModule.add_admin` for the governance-admin key; fill [`dapp/config/routes.testnet.json`](dapp/config/routes.testnet.json) and run `npm run whitelist:routes`
 
-## Local Setup
+## Getting Started
 
 Prerequisites: [Rust](https://www.rust-lang.org/tools/install) (the pinned toolchain installs automatically via `rust-toolchain.toml`), the [Stellar CLI](https://developers.stellar.org/docs/tools/cli), and `make`.
 
