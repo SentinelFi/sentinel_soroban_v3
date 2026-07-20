@@ -21,6 +21,7 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
 - [About](#about)
 - [Project Structure](#project-structure)
 - [Key Contracts](#key-contracts)
+- [Underwriter Calculator](#underwriter-calculator)
 - [How a Flight Moves Through the System](#how-a-flight-moves-through-the-system)
   - [Flight status state machine](#flight-status-state-machine)
 - [Off-Chain Executors and Governance](#off-chain-executors-and-governance)
@@ -62,6 +63,12 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
 | [GovernanceModule](contracts/governance_module/) | The route authority owning canonical terms (premium, payoff, delay threshold) for whitelisted flight routes. |
 
 Deployed addresses are listed in [deployments/](deployments/).
+
+## Underwriter Calculator
+
+Before depositing into the vault, an underwriter can size the risk on the **`/calculator`** page ([Quant.tsx](dapp/src/pages/Quant.tsx)) — an in-browser **Monte Carlo simulator** of a pool's monthly economics. It runs entirely client-side (a seeded `mulberry32` PRNG, no backend and no chain calls), so it recomputes smoothly as you drag a slider.
+
+Seven levers — travelers, on-time %, delay-rate uncertainty, premium, payout, capital, and trial count — feed each simulated month. A trial samples the number of delayed flights from `Binomial(travelers, 1 − onTime%)` (with the month's true delay rate itself drawn within the uncertainty band), then tallies pool net = premiums − payouts. Thousands of trials aggregate into an SVG histogram plus stat cards: **median**, **mean / expected value**, **5% Value-at-Risk** (the bad-month tail), **P(profit)**, and yield — alongside a plain deterministic EV readout and the break-even line, so the point estimate and the spread sit side by side. The spread *is* the risk: it turns "premiums look bigger than expected payouts" into a distribution an underwriter can actually judge.
 
 ## How a Flight Moves Through the System
 
