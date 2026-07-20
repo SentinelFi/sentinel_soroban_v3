@@ -121,8 +121,8 @@ export async function whitelistRoute(
   premium: bigint | null,
   payoff: bigint | null,
   delayHours: number | null
-): Promise<void> {
-  await ctx.client.invokeContract(
+): Promise<any> {
+  return ctx.client.invokeContract(
     ctx.governanceId,
     "whitelist_route",
     [
@@ -143,8 +143,8 @@ export async function disableRoute(
   flightId: string,
   origin: string,
   dest: string
-): Promise<void> {
-  await ctx.client.invokeContract(
+): Promise<any> {
+  return ctx.client.invokeContract(
     ctx.governanceId,
     "disable_route",
     [
@@ -162,8 +162,8 @@ export async function enableRoute(
   flightId: string,
   origin: string,
   dest: string
-): Promise<void> {
-  await ctx.client.invokeContract(
+): Promise<any> {
+  return ctx.client.invokeContract(
     ctx.governanceId,
     "enable_route",
     [
@@ -182,8 +182,21 @@ export async function updateRoutePremium(
   origin: string,
   dest: string,
   newPremium: bigint
-): Promise<void> {
-  await ctx.client.invokeContract(
+): Promise<any> {
+  return updateRouteTerms(ctx, flightId, origin, dest, newPremium, "keep", "keep");
+}
+
+/** Full per-field terms update — each field is Keep | Set(v) | UseDefault. */
+export async function updateRouteTerms(
+  ctx: GovernanceCtx,
+  flightId: string,
+  origin: string,
+  dest: string,
+  premium: bigint | "keep" | "use_default",
+  payoff: bigint | "keep" | "use_default",
+  delayHours: number | "keep" | "use_default"
+): Promise<any> {
+  return ctx.client.invokeContract(
     ctx.governanceId,
     "update_route_terms",
     [
@@ -191,9 +204,28 @@ export async function updateRoutePremium(
       ctx.client.symbolToScVal(flightId),
       ctx.client.symbolToScVal(origin),
       ctx.client.symbolToScVal(dest),
-      i128Update(newPremium),
-      i128Update("keep"),
-      u32Update("keep"),
+      i128Update(premium),
+      i128Update(payoff),
+      u32Update(delayHours),
+    ],
+    ctx.adminSecretKey
+  );
+}
+
+export async function removeRoute(
+  ctx: GovernanceCtx,
+  flightId: string,
+  origin: string,
+  dest: string
+): Promise<any> {
+  return ctx.client.invokeContract(
+    ctx.governanceId,
+    "remove_route",
+    [
+      ctx.client.addressToScVal(ctx.adminPublicKey),
+      ctx.client.symbolToScVal(flightId),
+      ctx.client.symbolToScVal(origin),
+      ctx.client.symbolToScVal(dest),
     ],
     ctx.adminSecretKey
   );

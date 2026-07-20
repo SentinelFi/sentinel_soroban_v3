@@ -1,0 +1,223 @@
+import { loadRoutesConfig, usdcToBaseUnits } from "../routes_config";
+import type { FetcherAction, RunLogEntry } from "../types";
+import type { GovConfig } from "./config";
+import { getDb } from "./db";
+import type { RouteRow, SignalRow } from "./model";
+import {
+  HYSTERESIS_HOURS,
+  decideReconcileAction,
+  isAdjuster,
+  isPause,
+  signalMatchesRoute,
+  type ReconcileAction,
+} from "./rules";
+import { GovSubmitter } from "./submitter";
+
+/**
+ * Gov cron — Reconciler (hourly, :10 — after the signal collectors).
+ *
+ * Layer 2 of the governance architecture: signals are facts in the DB;
+ * this is the only thing that acts on them. For every managed route:
+ *
+ * 1. Gather DB state — active signals matched to the route's scope
+ *    (route | origin | dest expansion), open pause_events, open
+ *    premium_adjustments, hysteresis lookbacks.
+ * 2. Read the actual on-chain route_status.
+ * 3. decideReconcileAction (pure rules — pin wins, pauses expand,
+ *    multipliers stack, hysteresis damps).
+ * 4. Execute the minimal on-chain diff via GovSubmitter (which writes
+ *    actions_log), and mirror it in pause_events / premium_adjustments.
+ *
+ * Idempotent by design: desired state is recomputed from scratch every
+ * run, so a crashed run heals on the next tick. GOV_DRY_RUN=true logs
+ * decisions without submitting or writing.
+ */
+
+const ACTOR = "cron:reconciler";
+
+export async function run(config: GovConfig): Promise<RunLogEntry> {
+  const start = Date.now();
+  const actions: FetcherAction[] = [];
+  const sql = getDb();
+
+  try {
+    const routesConfig = loadRoutesConfig();
+    const defaultPremium = usdcToBaseUnits(routesConfig.defaults.premiumUsdc);
+
+    const submitter = new GovSubmitter({
+      rpcUrl: config.stellarRpcUrl,
+      networkPassphrase: config.networkPassphrase,
+      governanceId: config.governanceId,
+      adminSecretKey: config.govAdminSecretKey,
+      actor: ACTOR,
+    });
+
+    // 1. Gather DB state in bulk (one query each, matched in memory).
+    const routes = (await sql`
+      select * from routes where status in ('active', 'disabled')
+    `) as unknown as RouteRow[];
+
+    const activeSignals = (await sql`
+      select * from signals
+      where cleared_at is null and (expires_at is null or expires_at > now())
+    `) as unknown as SignalRow[];
+
+    // Signals that ENDED inside the hysteresis window — a route touched
+    // by one of these is not yet "clear for N consecutive checks".
+    const recentlyEnded = (await sql`
+      select * from signals
+      where coalesce(cleared_at, expires_at) > now() - make_interval(hours => ${HYSTERESIS_HOURS})
+        and (cleared_at is not null or expires_at <= now())
+    `) as unknown as SignalRow[];
+
+    const openPauses = (await sql`
+      select flight_id, origin, dest from pause_events where ended_at is null
+    `) as unknown as Array<{ flight_id: string; origin: string; dest: string }>;
+
+    const openAdjustments = (await sql`
+      select flight_id, origin, dest from premium_adjustments where reverted_at is null
+    `) as unknown as Array<{ flight_id: string; origin: string; dest: string }>;
+
+    const adjustedToday = (await sql`
+      select distinct flight_id, origin, dest from premium_adjustments
+      where applied_at > now() - interval '24 hours'
+    `) as unknown as Array<{ flight_id: string; origin: string; dest: string }>;
+
+    const keyOf = (r: { flight_id: string; origin: string; dest: string }) =>
+      `${r.flight_id}|${r.origin}|${r.dest}`;
+    const openPauseSet = new Set(openPauses.map(keyOf));
+    const openAdjSet = new Set(openAdjustments.map(keyOf));
+    const adjustedTodaySet = new Set(adjustedToday.map(keyOf));
+
+    console.log(
+      `[gov-reconcile] ${routes.length} route(s), ${activeSignals.length} active signal(s)` +
+        (config.dryRun ? " [DRY RUN]" : "")
+    );
+
+    for (const route of routes) {
+      const label = `${route.flight_id} ${route.origin}→${route.dest}`;
+      const routeKey = { flightId: route.flight_id, origin: route.origin, dest: route.dest };
+      try {
+        // 2. On-chain actual
+        const onChain = await submitter.readStatus(routeKey);
+
+        // 3. Decide
+        const matching = activeSignals.filter((s) => signalMatchesRoute(s, route));
+        const action = decideReconcileAction({
+          route,
+          onChain,
+          pauses: matching.filter(isPause),
+          adjusters: matching.filter(isAdjuster),
+          recentlyCleared: recentlyEnded.some((s) => signalMatchesRoute(s, route)),
+          hasOpenPauseEvent: openPauseSet.has(keyOf(route)),
+          hasOpenAdjustment: openAdjSet.has(keyOf(route)),
+          adjustedToday: adjustedTodaySet.has(keyOf(route)),
+          basePremium: route.base_premium_units
+            ? BigInt(route.base_premium_units)
+            : defaultPremium,
+          rails: routesConfig.rails,
+        });
+
+        console.log(`[gov-reconcile] ${label}: on-chain=${onChain.status} → ${action.kind} (${action.reason})`);
+
+        // 4. Execute
+        if (config.dryRun) {
+          actions.push({ flight: label, skipped: `[dry-run] ${action.kind}: ${action.reason}` });
+          continue;
+        }
+        actions.push(await execute(sql, submitter, route, routeKey, action));
+      } catch (err) {
+        console.error(`[gov-reconcile] ${label}: Error — ${err}. Will retry next run.`);
+        actions.push({ flight: label, error: String(err) });
+      }
+    }
+
+    return {
+      timestamp: new Date().toISOString(),
+      job: "gov_reconcile",
+      duration_ms: Date.now() - start,
+      success: true,
+      actions,
+    };
+  } catch (err) {
+    console.error(`[gov-reconcile] Fatal error: ${err}`);
+    return {
+      timestamp: new Date().toISOString(),
+      job: "gov_reconcile",
+      duration_ms: Date.now() - start,
+      success: false,
+      error: String(err),
+      actions,
+    };
+  }
+}
+
+async function execute(
+  sql: ReturnType<typeof getDb>,
+  submitter: GovSubmitter,
+  route: RouteRow,
+  routeKey: { flightId: string; origin: string; dest: string },
+  action: ReconcileAction
+): Promise<FetcherAction> {
+  const label = `${route.flight_id} ${route.origin}→${route.dest}`;
+
+  switch (action.kind) {
+    case "noop":
+      return { flight: label, skipped: action.reason };
+
+    case "flag":
+      // Surfaced in the admin UI via the run log; deliberately no
+      // on-chain call and no state write.
+      console.warn(`[gov-reconcile] FLAG ${label}: ${action.reason}`);
+      return { flight: label, skipped: `flagged: ${action.reason}` };
+
+    case "disable": {
+      await submitter.disable(routeKey);
+      await sql`
+        insert into pause_events (flight_id, origin, dest, signal_id, reason, actor)
+        values (${route.flight_id}, ${route.origin}, ${route.dest},
+                ${action.signalIds[0] ?? null}, ${action.reason}, ${ACTOR})
+      `;
+      return { flight: label, transition: `disabled (${action.reason})` };
+    }
+
+    case "enable": {
+      await submitter.enable(routeKey);
+      await sql`
+        update pause_events set ended_at = now()
+        where flight_id = ${route.flight_id} and origin = ${route.origin}
+          and dest = ${route.dest} and ended_at is null
+      `;
+      return { flight: label, transition: `re-enabled (${action.reason})` };
+    }
+
+    case "set_premium": {
+      await submitter.updateTerms(routeKey, action.target, "keep", "keep");
+      await sql`
+        insert into premium_adjustments
+          (flight_id, origin, dest, base_premium_units, multipliers, final_premium_units, reason)
+        values
+          (${route.flight_id}, ${route.origin}, ${route.dest},
+           ${(route.base_premium_units ?? action.target.toString()).toString()},
+           ${sql.json(action.multipliers)}, ${action.target.toString()}, ${action.reason})
+      `;
+      return { flight: label, transition: `premium → ${action.target} (${action.reason})` };
+    }
+
+    case "revert_premium": {
+      // Base set on the route row → pin it back explicitly; otherwise
+      // hand the field back to the on-chain defaults chain.
+      if (route.base_premium_units) {
+        await submitter.updateTerms(routeKey, BigInt(route.base_premium_units), "keep", "keep");
+      } else {
+        await submitter.updateTerms(routeKey, "use_default", "keep", "keep");
+      }
+      await sql`
+        update premium_adjustments set reverted_at = now()
+        where flight_id = ${route.flight_id} and origin = ${route.origin}
+          and dest = ${route.dest} and reverted_at is null
+      `;
+      return { flight: label, transition: `premium reverted to base (${action.reason})` };
+    }
+  }
+}

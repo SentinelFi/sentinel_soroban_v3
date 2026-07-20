@@ -26,7 +26,12 @@ export type JobName =
   | "queue_maintainer"
   | "ttl_extender"
   | "sale_authorizer"
-  | "route_agent";
+  | "route_agent"
+  // Governance module (signals + reconciler) — Phase 2+.
+  | "gov_reconcile"
+  | "gov_signals"
+  | "gov_onboard"
+  | "gov_schedule_check";
 
 export interface RunLogEntry {
   timestamp: string;

@@ -13,6 +13,7 @@
     { "path": "/api/cron/settle", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/queue", "schedule": "2-59/5 * * * *" },
     { "path": "/api/cron/agent", "schedule": "0 6 * * *" },
-    { "path": "/api/cron/ttl", "schedule": "0 0 * * *" }
+    { "path": "/api/cron/ttl", "schedule": "0 0 * * *" },
+    { "path": "/api/cron/gov-reconcile", "schedule": "10 * * * *" }
   ]
 }
