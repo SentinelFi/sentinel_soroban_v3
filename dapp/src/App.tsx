@@ -54,7 +54,9 @@ export default function App() {
 	)
 }
 
-/** Privacy · Terms · GitHub — shared by both footer skins. */
+const X_URL = "https://x.com/sentinel_fi/"
+
+/** Privacy · Terms · Status · GitHub · X — shared by both footer skins. */
 function FooterLinks({ className }: { className?: string }) {
 	return (
 		<div className={className}>
@@ -84,6 +86,18 @@ function FooterLinks({ className }: { className?: string }) {
 			>
 				GitHub
 			</a>
+			<span aria-hidden="true" className="text-mute/50">
+				·
+			</span>
+			<a
+				href={X_URL}
+				target="_blank"
+				rel="noopener noreferrer"
+				className="footer-link"
+				aria-label="Sentinel on X"
+			>
+				X
+			</a>
 		</div>
 	)
 }
@@ -91,12 +105,15 @@ function FooterLinks({ className }: { className?: string }) {
 function SiteFooter() {
 	const { theme } = useTheme()
 	const t = useCopy()
+	const year = new Date().getFullYear()
 
 	if (theme === "serious") {
 		return (
 			<footer className="relative z-10 mt-16 border-t border-line/60">
 				<div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-6 text-center sm:flex-row sm:items-center sm:justify-between sm:text-left">
-					<p className="font-body text-[13px] text-mute">{t.footer.left}</p>
+					<p className="font-body text-[13px] text-mute">
+						© {year} {t.brand.name} · {t.footer.left}
+					</p>
 					<FooterLinks className="flex items-center justify-center gap-3 font-body text-[13px]" />
 					<p className="font-body text-[12px] text-mute">{t.footer.right}</p>
 				</div>
@@ -107,7 +124,9 @@ function SiteFooter() {
 	return (
 		<footer className="relative z-10 mt-16 overflow-hidden border-t-2 border-line">
 			<div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 py-4 sm:flex-row">
-				<p className="font-body text-[13px] text-mute">{t.footer.left}</p>
+				<p className="font-body text-[13px] text-mute">
+					© {year} {t.brand.name} · {t.footer.left}
+				</p>
 				<FooterLinks className="flex items-center gap-3 font-display text-[9px] tracking-[0.06em] uppercase" />
 				<p className="font-body text-[11px] tracking-[0.1em] text-mute">
 					{t.footer.right}
