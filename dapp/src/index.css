@@ -1088,7 +1088,6 @@ input.field-px[type="date"] {
 }
 [data-theme="serious"] .btn-px:hover:not(:disabled) {
 	filter: none;
-	background-color: color-mix(in oklab, currentColor 0%, transparent);
 }
 /* clean hover: tonal brighten of the fill, no lift/jump */
 [data-theme="serious"] .btn-gold:hover:not(:disabled),
