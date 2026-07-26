@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { createPortal } from "react-dom"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import type { FlightData } from "oracle_aggregator"
@@ -271,7 +272,7 @@ function BetSlip({
 		}
 	}
 
-	return (
+	return createPortal(
 		<div className="fixed inset-0 z-40 flex justify-end">
 			{/* scrim */}
 			<button
@@ -388,7 +389,8 @@ function BetSlip({
 					{t.slip.fineprint}
 				</p>
 			</aside>
-		</div>
+		</div>,
+		document.body,
 	)
 }
 
