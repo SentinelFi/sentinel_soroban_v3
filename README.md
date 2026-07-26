@@ -31,6 +31,7 @@ Sentinel is decentralized parametric flight delay insurance on Stellar: underwri
   - [Admin console and status](#admin-console-and-status)
 - [Deployment Plan](#deployment-plan)
 - [Getting Started](#getting-started)
+  - [Running the dApp locally](#running-the-dapp-locally)
 - [License](#license)
 - [Contributing](#contributing)
 - [Security](#security)
@@ -236,6 +237,21 @@ make deploy-testnet  # build and deploy all contracts to testnet
 ```
 
 Run `make help` for the complete target list. See also [deploy_order.md](contracts/deploy_order.md) (deploy and wiring order) and [upgrade.md](contracts/upgrade.md) (upgrade authority).
+
+### Running the dApp locally
+
+Prerequisites: Node.js 20.19+ (or 22.12+). From the `dapp/` directory:
+
+```bash
+cd dapp
+
+npm install               # frontend dependencies
+npm run install:contracts # install + build the contract-binding workspaces
+cp .env.example .env      # testnet defaults (RPC, Horizon, contract IDs)
+npm run dev               # serves at http://localhost:5175
+```
+
+Full instructions — including env-var details and cron-function local testing — in the [dapp README](dapp/README.md#run-locally).
 
 ## License
 
