@@ -28,6 +28,8 @@
  * printed as JSON so external schedulers (systemd, GitHub Actions, TEE
  * harnesses) can ingest it.
  */
+import { loadDotEnv } from "./env";
+loadDotEnv(); // dapp/.env for local runs; real env vars always win
 import { loadConfig } from "../api/_lib/config";
 import { loadGovConfig } from "../api/_lib/governance/config";
 import { recordRun } from "../api/_lib/governance/runs";

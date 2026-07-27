@@ -27,6 +27,8 @@
  * `npm run whitelist:routes` to push the whitelist on-chain.
  */
 import { writeFileSync } from "fs";
+import { loadDotEnv } from "./env";
+loadDotEnv(); // dapp/.env for local runs; real env vars always win
 import { AeroApiClient } from "../api/_lib/aeroapi_client";
 import { loadRoutesConfig, type RouteEntry } from "../api/_lib/routes_config";
 
