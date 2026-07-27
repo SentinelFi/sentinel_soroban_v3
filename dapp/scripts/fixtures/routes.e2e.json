@@ -1,0 +1,36 @@
+{
+  "$schema_note": "E2E-test routes fixture — loaded via ROUTES_CONFIG_PATH by scripts/test_oracle_e2e.ts. Flight ids match tools/mock-aeroapi/scenarios.json.",
+  "network": "e2e",
+  "defaults": {
+    "premium_usdc": 50,
+    "payoff_usdc": 500,
+    "delay_hours": 2
+  },
+  "rails": {
+    "premium_usdc": { "min": 10, "max": 100 },
+    "payoff_usdc": { "min": 100, "max": 1000 },
+    "max_daily_premium_change_pct": 50,
+    "elevated_weather_multiplier": 1.25
+  },
+  "sale_horizon_days": 30,
+  "routes": [
+    {
+      "flight_id": "AA100",
+      "carrier": "AA",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "mock outcome: on_time"
+    },
+    {
+      "flight_id": "DL789",
+      "carrier": "DL",
+      "origin": "ATL",
+      "destination": "BOS",
+      "enabled": true,
+      "overrides": null,
+      "notes": "mock outcome: cancelled; unscheduled on day +5"
+    }
+  ]
+}

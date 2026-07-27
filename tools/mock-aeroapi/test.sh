@@ -93,6 +93,45 @@ FLIGHT_COUNT=$(echo "$RESP" | python3 -c "import sys,json; print(len(json.load(s
 assert_eq "flights array empty" "0" "$FLIGHT_COUNT"
 
 echo ""
+echo "=== Test: diverted flight (DIV555) ==="
+RESP=$(curl -s "$BASE/flights/DIV555?start=2026-03-20T00:00:00Z")
+assert_eq "diverted"  "True"     "$(echo "$RESP" | extract diverted)"
+assert_eq "cancelled" "False"    "$(echo "$RESP" | extract cancelled)"
+assert_eq "status"    "Diverted" "$(echo "$RESP" | extract status)"
+ACTUAL_IN=$(echo "$RESP" | extract actual_in)
+assert_eq "actual_in set (the trap)" "true" "$([ "$ACTUAL_IN" != "None" ] && echo true || echo false)"
+
+echo ""
+echo "=== Test: tracking lost (LOST666 — cancelled flag, non-cancelled status) ==="
+RESP=$(curl -s "$BASE/flights/LOST666?start=2026-03-20T00:00:00Z")
+assert_eq "cancelled" "True"           "$(echo "$RESP" | extract cancelled)"
+assert_eq "status"    "result unknown" "$(echo "$RESP" | extract status)"
+
+echo ""
+echo "=== Test: scripted error (ERR500) ==="
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/flights/ERR500?start=2026-03-20T00:00:00Z")
+assert_eq "HTTP status" "500" "$CODE"
+
+echo ""
+echo "=== Test: /schedules window (AA / 100, 3 days) ==="
+RESP=$(curl -s "$BASE/schedules/2026-03-20/2026-03-23?airline=AA&flight_number=100")
+ROWS=$(echo "$RESP" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['scheduled']))")
+assert_eq "one row per day" "3" "$ROWS"
+FIRST_OUT=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['scheduled'][0]['scheduled_out'])")
+assert_eq "scheduled_out day 1" "2026-03-20T08:00:00Z" "$FIRST_OUT"
+
+echo ""
+echo "=== Test: call-counter stats ==="
+STATS=$(curl -s "$BASE/__stats")
+FLIGHTS_N=$(echo "$STATS" | python3 -c "import sys,json; print(json.load(sys.stdin)['flights'])")
+SCHED_N=$(echo "$STATS" | python3 -c "import sys,json; print(json.load(sys.stdin)['schedules'])")
+assert_eq "flights calls counted" "8" "$FLIGHTS_N"
+assert_eq "schedules calls counted" "1" "$SCHED_N"
+curl -s -X POST "$BASE/__reset" > /dev/null
+FLIGHTS_N=$(echo "$(curl -s "$BASE/__stats")" | python3 -c "import sys,json; print(json.load(sys.stdin)['flights'])")
+assert_eq "reset zeroes counters" "0" "$FLIGHTS_N"
+
+echo ""
 echo "=============================="
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && echo "ALL TESTS PASSED" || { echo "SOME TESTS FAILED"; exit 1; }

@@ -16,7 +16,8 @@
     "outcome": "cancelled",
     "origin": "KATL",
     "destination": "KBOS",
-    "aircraft_type": "B739"
+    "aircraft_type": "B739",
+    "unscheduled_days": ["+5"]
   },
   "SW333": {
     "outcome": "en_route",
@@ -30,5 +31,30 @@
     "destination": "KORD",
     "aircraft_type": "B738",
     "duplicate": true
+  },
+  "DIV555": {
+    "outcome": "diverted",
+    "delay_minutes": 45,
+    "origin": "KJFK",
+    "destination": "KMIA",
+    "aircraft_type": "B738"
+  },
+  "LOST666": {
+    "outcome": "tracking_lost",
+    "origin": "KPHX",
+    "destination": "KDFW",
+    "aircraft_type": "A321"
+  },
+  "FUT111": {
+    "outcome": "scheduled",
+    "origin": "KLAX",
+    "destination": "KJFK",
+    "aircraft_type": "B772"
+  },
+  "ERR500": {
+    "outcome": "on_time",
+    "origin": "KJFK",
+    "destination": "KLAX",
+    "error": 500
   }
 }

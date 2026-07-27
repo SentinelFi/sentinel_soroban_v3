@@ -1,0 +1,20 @@
+[
+  {
+    "airport": "KJFK",
+    "category": "weather",
+    "color": "yellow",
+    "delay_secs": 2700
+  },
+  {
+    "airport": "KATL",
+    "category": "weather",
+    "color": "red",
+    "delay_secs": 5400
+  },
+  {
+    "airport": "KORD",
+    "category": "traffic",
+    "color": "yellow",
+    "delay_secs": 1800
+  }
+]

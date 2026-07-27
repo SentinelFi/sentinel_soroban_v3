@@ -8,7 +8,20 @@ import { fileURLToPath } from "url";
 // ---------------------------------------------------------------------------
 
 interface Scenario {
-  outcome: "on_time" | "delayed" | "cancelled" | "en_route";
+  outcome:
+    | "on_time"
+    | "delayed"
+    | "cancelled"
+    | "en_route"
+    // Diverted mid-flight: diverted=true with an actual_in at the DIVERSION
+    // airport — the fetcher must NOT attest a normal landing from it.
+    | "diverted"
+    // AeroAPI's cancelled flag without an airline cancellation: the spec
+    // says `cancelled` means "no longer being tracked ... not always the
+    // case [that the airline cancelled]". status stays non-cancelled text.
+    | "tracking_lost"
+    // Future flight: published schedule only, no actuals yet.
+    | "scheduled";
   delay_minutes?: number;
   origin?: string;
   destination?: string;
@@ -17,6 +30,17 @@ interface Scenario {
   // simulating an ambiguous AeroAPI response (e.g. a flight number operated
   // more than once in the day). The fetcher must refuse to guess.
   duplicate?: boolean;
+  // When set, /flights/{ident} responds with this HTTP status instead of
+  // data — exercises the client's retry (429/5xx) and permanent-error paths.
+  error?: number;
+  // Days MISSING from the /schedules response for this ident — simulates
+  // the airline not publishing the flight for those dates. Entries are
+  // either absolute "YYYY-MM-DD" or relative "+N" (= today + N days, UTC),
+  // so tests with dynamic dates can script schedule gaps.
+  unscheduled_days?: string[];
+  // When true, /schedules returns two instances per day for this ident —
+  // ambiguous published schedule; the authorizer must fail closed.
+  schedules_duplicate?: boolean;
 }
 
 interface Scenarios {
@@ -93,6 +117,18 @@ interface AeroApiResponse {
   num_pages: number;
 }
 
+interface AeroApiScheduledFlight {
+  ident: string;
+  ident_icao: string | null;
+  ident_iata: string | null;
+  actual_ident: string | null;
+  scheduled_out: string;
+  scheduled_in: string;
+  origin: string;
+  destination: string;
+  fa_flight_id: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -117,6 +153,22 @@ function makeAirport(code: string): AeroApiAirport {
   };
 }
 
+/** Match an ICAO-or-IATA airport filter against a scenario airport code. */
+function airportMatches(filter: string, code: string): boolean {
+  return (
+    filter === code ||
+    filter === code.replace(/^K/, "") ||
+    `K${filter}` === code
+  );
+}
+
+/** Split "UA100"/"UAL100" into airline + number; null if not that shape. */
+function parseIdent(ident: string): { airline: string; flightNumber: string } | null {
+  const m = ident.match(/^([A-Z]{2,3})(\d{1,4})$/);
+  if (!m) return null;
+  return { airline: m[1], flightNumber: m[2] };
+}
+
 function buildFlight(ident: string, scenario: Scenario, dateParam: string | undefined): AeroApiFlight {
   const flightDate = dateParam ?? new Date().toISOString().slice(0, 10);
   const origin = scenario.origin ?? "KJFK";
@@ -129,6 +181,7 @@ function buildFlight(ident: string, scenario: Scenario, dateParam: string | unde
 
   let status: string;
   let cancelled = false;
+  let diverted = false;
   let actualIn: string | null = null;
   let actualOut: string | null = null;
   let arrivalDelay: number | null = null;
@@ -173,6 +226,34 @@ function buildFlight(ident: string, scenario: Scenario, dateParam: string | unde
       progressPercent = 55;
       break;
     }
+    case "diverted": {
+      // Landed — but at the diversion airport. actual_in is set (that is
+      // exactly the trap: naive code would attest a normal landing).
+      const delayMinutes = scenario.delay_minutes ?? 45;
+      const actualMs = scheduledMs + delayMinutes * 60 * 1000;
+      actualIn = new Date(actualMs).toISOString();
+      actualOut = `${flightDate}T08:05:00Z`;
+      arrivalDelay = delayMinutes * 60;
+      departureDelay = 300;
+      diverted = true;
+      status = "Diverted";
+      progressPercent = 100;
+      break;
+    }
+    case "tracking_lost": {
+      // The cancelled=true / non-cancelled-status combination from the spec:
+      // "no longer being tracked ... but that will not always be the case".
+      cancelled = true;
+      status = "result unknown";
+      progressPercent = null;
+      break;
+    }
+    case "scheduled": {
+      // Published schedule only — nothing has happened yet.
+      status = "Scheduled";
+      progressPercent = 0;
+      break;
+    }
   }
 
   return {
@@ -190,7 +271,7 @@ function buildFlight(ident: string, scenario: Scenario, dateParam: string | unde
     codeshares: [],
     codeshares_iata: [],
     blocked: false,
-    diverted: false,
+    diverted,
     cancelled,
     position_only: false,
     origin: makeAirport(origin),
@@ -236,13 +317,35 @@ function buildFlight(ident: string, scenario: Scenario, dateParam: string | unde
 const app = express();
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
 
+// Call counters — lets tests assert the executors' API call economy.
+const stats = {
+  flights: 0,
+  schedules: 0,
+  airport_delays: 0,
+  byIdent: {} as Record<string, number>,
+};
+
 app.get("/flights/:ident", (req, res) => {
   const { ident } = req.params;
   const startParam = req.query.start as string | undefined;
   const dateParam = startParam?.slice(0, 10);
 
+  stats.flights++;
+  stats.byIdent[ident] = (stats.byIdent[ident] ?? 0) + 1;
+
   const scenarios = loadScenarios();
   const scenario = scenarios[ident];
+
+  if (scenario?.error) {
+    console.log(`[mock-aeroapi] GET /flights/${ident} → HTTP ${scenario.error} (scripted)`);
+    res.status(scenario.error).json({
+      title: "Mock error",
+      reason: "SCRIPTED",
+      detail: `scenarios.json configured error=${scenario.error} for ${ident}`,
+      status: scenario.error,
+    });
+    return;
+  }
 
   let flights: AeroApiFlight[] = [];
   if (scenario) {
@@ -264,6 +367,102 @@ app.get("/flights/:ident", (req, res) => {
   );
 
   res.json(response);
+});
+
+// Published-schedule window — the far-horizon complement to /flights.
+// Mirrors GET /schedules/{date_start}/{date_end}: date_end is EXCLUSIVE,
+// filters airline + flight_number (+ origin/destination). Every scenario
+// ident is "published" for every requested day unless listed in its
+// unscheduled_days; schedules_duplicate doubles each day's rows.
+app.get("/schedules/:date_start/:date_end", (req, res) => {
+  const { date_start, date_end } = req.params;
+  const airline = req.query.airline as string | undefined;
+  const flightNumber = req.query.flight_number as string | undefined;
+  const originFilter = req.query.origin as string | undefined;
+  const destinationFilter = req.query.destination as string | undefined;
+
+  stats.schedules++;
+
+  const startMs = new Date(`${date_start.slice(0, 10)}T00:00:00Z`).getTime();
+  const endMs = new Date(`${date_end.slice(0, 10)}T00:00:00Z`).getTime();
+
+  const scenarios = loadScenarios();
+  const rows: AeroApiScheduledFlight[] = [];
+
+  for (const [ident, scenario] of Object.entries(scenarios)) {
+    const parsed = parseIdent(ident);
+    if (airline && parsed?.airline !== airline) continue;
+    if (flightNumber && parsed?.flightNumber !== flightNumber) continue;
+
+    const origin = scenario.origin ?? "KJFK";
+    const destination = scenario.destination ?? "KLAX";
+    if (originFilter && !airportMatches(originFilter, origin)) continue;
+    if (destinationFilter && !airportMatches(destinationFilter, destination)) continue;
+
+    const unscheduled = new Set(
+      (scenario.unscheduled_days ?? []).map((d) => {
+        if (!d.startsWith("+")) return d;
+        const todayMs = Date.parse(new Date().toISOString().slice(0, 10));
+        return new Date(todayMs + Number(d.slice(1)) * 86_400_000)
+          .toISOString()
+          .slice(0, 10);
+      })
+    );
+
+    for (let ms = startMs; ms < endMs; ms += 86_400_000) {
+      const day = new Date(ms).toISOString().slice(0, 10);
+      if (unscheduled.has(day)) continue;
+
+      const row: AeroApiScheduledFlight = {
+        ident,
+        ident_icao: ident,
+        ident_iata: ident,
+        actual_ident: null,
+        scheduled_out: `${day}T08:00:00Z`,
+        scheduled_in: `${day}T11:00:00Z`,
+        origin,
+        destination,
+        fa_flight_id: null,
+      };
+      rows.push(row);
+      if (scenario.schedules_duplicate) rows.push({ ...row });
+    }
+  }
+
+  console.log(
+    `[mock-aeroapi] GET /schedules/${date_start}..${date_end}` +
+      `${airline ? ` airline=${airline}` : ""}${flightNumber ? ` fn=${flightNumber}` : ""}` +
+      ` → ${rows.length} row(s)`
+  );
+
+  res.json({ scheduled: rows, links: null, num_pages: 1 });
+});
+
+// Airport-wide delay conditions — feeds the gov_signals collector. Edit
+// airport_delays.json while running to script conditions; missing file =
+// empty feed.
+app.get("/airports/delays", (_req, res) => {
+  stats.airport_delays++;
+  let delays: unknown[] = [];
+  try {
+    delays = JSON.parse(readFileSync(join(__dirname, "..", "airport_delays.json"), "utf-8"));
+  } catch {
+    /* no file → no delays */
+  }
+  console.log(`[mock-aeroapi] GET /airports/delays → ${delays.length} airport(s)`);
+  res.json({ delays, links: null, num_pages: 1 });
+});
+
+// Test instrumentation — call counters for API-economy assertions.
+app.get("/__stats", (_req, res) => {
+  res.json(stats);
+});
+app.post("/__reset", (_req, res) => {
+  stats.flights = 0;
+  stats.schedules = 0;
+  stats.airport_delays = 0;
+  stats.byIdent = {};
+  res.json({ ok: true });
 });
 
 app.listen(PORT, () => {
