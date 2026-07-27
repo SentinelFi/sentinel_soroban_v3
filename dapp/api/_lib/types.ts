@@ -30,6 +30,7 @@ export type JobName =
   // Governance module (signals + reconciler) — Phase 2+.
   | "gov_reconcile"
   | "gov_signals"
+  | "gov_exposure"
   | "gov_onboard"
   | "gov_schedule_check";
 
