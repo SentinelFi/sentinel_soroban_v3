@@ -7,8 +7,14 @@
     "delay_hours": 3
   },
   "rails": {
-    "premium_usdc": { "min": 10, "max": 100 },
-    "payoff_usdc": { "min": 100, "max": 1000 },
+    "premium_usdc": {
+      "min": 10,
+      "max": 100
+    },
+    "payoff_usdc": {
+      "min": 100,
+      "max": 1000
+    },
     "max_daily_premium_change_pct": 50,
     "elevated_weather_multiplier": 1.25
   },
@@ -20,7 +26,11 @@
       "origin": "JFK",
       "destination": "LAX",
       "enabled": true,
-      "overrides": { "premium_usdc": 45, "payoff_usdc": 450, "delay_hours": 3 },
+      "overrides": {
+        "premium_usdc": 45,
+        "payoff_usdc": 450,
+        "delay_hours": 3
+      },
       "notes": "example with per-route term overrides"
     },
     {
@@ -40,6 +50,1806 @@
       "enabled": false,
       "overrides": null,
       "notes": "enabled:false = human-disabled; agents never re-enable"
+    },
+    {
+      "flight_id": "AAL1152",
+      "carrier": "AAL",
+      "origin": "EWR",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA230",
+      "carrier": "ASA",
+      "origin": "EWR",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1227",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL1",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA17",
+      "carrier": "ASA",
+      "origin": "JFK",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL15",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL10",
+      "carrier": "AAL",
+      "origin": "LAX",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL1249",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL1822",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL1478",
+      "carrier": "AAL",
+      "origin": "ORD",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA239",
+      "carrier": "ASA",
+      "origin": "SEA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA16",
+      "carrier": "ASA",
+      "origin": "SEA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1141",
+      "carrier": "UAL",
+      "origin": "SFO",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA287",
+      "carrier": "ASA",
+      "origin": "EWR",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL1705",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "ORD",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL1040",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL1046",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL148",
+      "carrier": "AAL",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL1196",
+      "carrier": "AAL",
+      "origin": "EWR",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA299",
+      "carrier": "ASA",
+      "origin": "EWR",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1340",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL117",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA21",
+      "carrier": "ASA",
+      "origin": "JFK",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL177",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL118",
+      "carrier": "AAL",
+      "origin": "LAX",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL1530",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL1823",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL1724",
+      "carrier": "AAL",
+      "origin": "ORD",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA263",
+      "carrier": "ASA",
+      "origin": "SEA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA22",
+      "carrier": "ASA",
+      "origin": "SEA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1149",
+      "carrier": "UAL",
+      "origin": "SFO",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "JBU1573",
+      "carrier": "JBU",
+      "origin": "EWR",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL2057",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "ORD",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL1051",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL1389",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL16",
+      "carrier": "AAL",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL2981",
+      "carrier": "AAL",
+      "origin": "EWR",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA356",
+      "carrier": "ASA",
+      "origin": "EWR",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1558",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL171",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA23",
+      "carrier": "ASA",
+      "origin": "JFK",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL179",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL2",
+      "carrier": "AAL",
+      "origin": "LAX",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL1576",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL2008",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL2059",
+      "carrier": "AAL",
+      "origin": "ORD",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA314",
+      "carrier": "ASA",
+      "origin": "SEA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA26",
+      "carrier": "ASA",
+      "origin": "SEA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1597",
+      "carrier": "UAL",
+      "origin": "SFO",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "JBU2073",
+      "carrier": "JBU",
+      "origin": "EWR",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL3100",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "ORD",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL1052",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL2054",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL166",
+      "carrier": "AAL",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL3119",
+      "carrier": "AAL",
+      "origin": "EWR",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA462",
+      "carrier": "ASA",
+      "origin": "EWR",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1593",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL255",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA31",
+      "carrier": "ASA",
+      "origin": "JFK",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL76",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL238",
+      "carrier": "AAL",
+      "origin": "LAX",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL1643",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL322",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL2079",
+      "carrier": "AAL",
+      "origin": "ORD",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA477",
+      "carrier": "ASA",
+      "origin": "SEA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA34",
+      "carrier": "ASA",
+      "origin": "SEA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2416",
+      "carrier": "UAL",
+      "origin": "SFO",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL212",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL396",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "ORD",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL1202",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL3128",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL234",
+      "carrier": "AAL",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "UAL1128",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1289",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1777",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL3",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL1719",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA227",
+      "carrier": "ASA",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL274",
+      "carrier": "AAL",
+      "origin": "LAX",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL2945",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1864",
+      "carrier": "UAL",
+      "origin": "MIA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL2086",
+      "carrier": "AAL",
+      "origin": "ORD",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1274",
+      "carrier": "UAL",
+      "origin": "SEA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL415",
+      "carrier": "DAL",
+      "origin": "SEA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2626",
+      "carrier": "UAL",
+      "origin": "SFO",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2191",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL462",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "ORD",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL1357",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL3205",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL276",
+      "carrier": "AAL",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "UAL2213",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1330",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1844",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL300",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL688",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA41",
+      "carrier": "ASA",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL28",
+      "carrier": "AAL",
+      "origin": "LAX",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL3017",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2080",
+      "carrier": "UAL",
+      "origin": "MIA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL2723",
+      "carrier": "AAL",
+      "origin": "ORD",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1708",
+      "carrier": "UAL",
+      "origin": "SEA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL429",
+      "carrier": "DAL",
+      "origin": "SEA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL274",
+      "carrier": "UAL",
+      "origin": "SFO",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2238",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL589",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "ORD",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL1922",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL3229",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "ASA20",
+      "carrier": "ASA",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "UAL2295",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1796",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1960",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL302",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL699",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "ASA59",
+      "carrier": "ASA",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL30",
+      "carrier": "AAL",
+      "origin": "LAX",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL3211",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL408",
+      "carrier": "UAL",
+      "origin": "MIA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL3050",
+      "carrier": "AAL",
+      "origin": "ORD",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL1900",
+      "carrier": "UAL",
+      "origin": "SEA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL452",
+      "carrier": "DAL",
+      "origin": "SEA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL366",
+      "carrier": "UAL",
+      "origin": "SFO",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2434",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL752",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "ORD",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL642",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL3256",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "ASA211",
+      "carrier": "ASA",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "UAL1511",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "UAL2387",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2115",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL306",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL740",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL1732",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL307",
+      "carrier": "AAL",
+      "origin": "LAX",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL605",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2029",
+      "carrier": "UAL",
+      "origin": "MIA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL327",
+      "carrier": "AAL",
+      "origin": "ORD",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2100",
+      "carrier": "UAL",
+      "origin": "SEA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL461",
+      "carrier": "DAL",
+      "origin": "SEA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL419",
+      "carrier": "UAL",
+      "origin": "SFO",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2445",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL1305",
+      "carrier": "DAL",
+      "origin": "LGA",
+      "destination": "ORD",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL944",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL952",
+      "carrier": "AAL",
+      "origin": "MIA",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "ASA42",
+      "carrier": "ASA",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "UAL2785",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "UAL2328",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL33",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "JBU263",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "SEA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL363",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL32",
+      "carrier": "AAL",
+      "origin": "LAX",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL716",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2691",
+      "carrier": "UAL",
+      "origin": "MIA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "AAL679",
+      "carrier": "AAL",
+      "origin": "ORD",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "JBU264",
+      "carrier": "JBU",
+      "origin": "SEA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL435",
+      "carrier": "UAL",
+      "origin": "SFO",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2641",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL2240",
+      "carrier": "DAL",
+      "origin": "LGA",
+      "destination": "ORD",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL1514",
+      "carrier": "DAL",
+      "origin": "MIA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL2339",
+      "carrier": "DAL",
+      "origin": "MIA",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL2112",
+      "carrier": "DAL",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "UAL445",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "UAL648",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL341",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL667",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL4",
+      "carrier": "AAL",
+      "origin": "LAX",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL970",
+      "carrier": "AAL",
+      "origin": "LGA",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL555",
+      "carrier": "UAL",
+      "origin": "MIA",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL1390",
+      "carrier": "DAL",
+      "origin": "ORD",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL698",
+      "carrier": "UAL",
+      "origin": "SFO",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2679",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL2806",
+      "carrier": "DAL",
+      "origin": "LGA",
+      "destination": "ORD",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL1520",
+      "carrier": "DAL",
+      "origin": "MIA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL2346",
+      "carrier": "DAL",
+      "origin": "MIA",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL383",
+      "carrier": "DAL",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "UAL1336",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL707",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL668",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL676",
+      "carrier": "DAL",
+      "origin": "LAX",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL1538",
+      "carrier": "DAL",
+      "origin": "LGA",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL2252",
+      "carrier": "DAL",
+      "origin": "ORD",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL713",
+      "carrier": "UAL",
+      "origin": "SFO",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2692",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "UAL1098",
+      "carrier": "UAL",
+      "origin": "LGA",
+      "destination": "ORD",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL2428",
+      "carrier": "DAL",
+      "origin": "MIA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL2387",
+      "carrier": "DAL",
+      "origin": "MIA",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL396",
+      "carrier": "DAL",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "UAL1343",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL713",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL669",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL915",
+      "carrier": "DAL",
+      "origin": "LAX",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL1620",
+      "carrier": "DAL",
+      "origin": "LGA",
+      "destination": "MIA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL2336",
+      "carrier": "DAL",
+      "origin": "ORD",
+      "destination": "LGA",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "UAL2248",
+      "carrier": "UAL",
+      "origin": "SFO",
+      "destination": "EWR",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "UAL353",
+      "carrier": "UAL",
+      "origin": "EWR",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "UAL1156",
+      "carrier": "UAL",
+      "origin": "LGA",
+      "destination": "ORD",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL2500",
+      "carrier": "DAL",
+      "origin": "MIA",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL405",
+      "carrier": "DAL",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL738",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "JBU115",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL934",
+      "carrier": "DAL",
+      "origin": "LAX",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
     }
   ]
 }
