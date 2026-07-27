@@ -1088,7 +1088,6 @@ input.field-px[type="date"] {
 }
 [data-theme="serious"] .btn-px:hover:not(:disabled) {
 	filter: none;
-	background-color: color-mix(in oklab, currentColor 0%, transparent);
 }
 /* clean hover: tonal brighten of the fill, no lift/jump */
 [data-theme="serious"] .btn-gold:hover:not(:disabled),
@@ -1374,4 +1373,50 @@ input.field-px[type="date"] {
 	/* nothing pixel-animated remains on serious surfaces; the fun
 	   keyframes (blink/floaty/marquee/land) are gated by their classes,
 	   which serious pages no longer render. */
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   SERIOUS — HARD-EDGE PASS
+   Serious drops all rounding (sharp rectangles everywhere) and strips
+   the border stroke from every interactive control, which reads as a
+   flat fill instead. Lives at the very end of the sheet so it has the
+   final word over the serious skin above and the wave2/wave3 page
+   skins. Fun is untouched.
+   ══════════════════════════════════════════════════════════════════ */
+
+[data-theme="serious"] {
+	--radius-card: 0px;
+	--radius-ctl: 0px;
+}
+/* catch-all: also flattens 999px pills, utility classes, the page
+   skins, and the wallet-kit modal (light DOM, so this reaches it) */
+[data-theme="serious"] *,
+[data-theme="serious"] *::before,
+[data-theme="serious"] *::after {
+	border-radius: 0 !important;
+}
+
+/* controls: no border stroke — the fill IS the control. Element
+   selectors catch every button/field; class selectors cover composite
+   controls whose border sits on a wrapper div. !important because the
+   skin rules above set border-color per variant at higher specificity.
+   Focus feedback survives: focus-visible outlines and the .field-px
+   focus ring are outlines/shadows, not borders. */
+[data-theme="serious"] button,
+[data-theme="serious"] input,
+[data-theme="serious"] select,
+[data-theme="serious"] textarea,
+[data-theme="serious"] .btn-px,
+[data-theme="serious"] .page-btn,
+[data-theme="serious"] .theme-toggle,
+[data-theme="serious"] .info-bubble {
+	border-color: transparent !important;
+}
+
+/* border-only controls get a tonal fill so they stay visible */
+[data-theme="serious"] .btn-ghost {
+	background: var(--color-raised);
+}
+[data-theme="serious"] .page-btn:disabled {
+	background: var(--color-inset);
 }

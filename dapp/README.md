@@ -1,35 +1,64 @@
-# React + TypeScript + Vite
+# Sentinel dApp
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+The deployable app: Vite + React frontend (fun/serious dual theme), the
+Vercel serverless cron functions in `api/`, and the generated contract
+bindings in `packages/`.
 
-Currently, two official plugins are available:
+## Run locally
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Prerequisites: Node.js 20.19+ (or 22.12+, required by Vite 7) and npm.
+All commands run from this `dapp/` directory.
 
-## React Compiler
+**1. Install frontend dependencies**
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```sh
+npm install
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+**2. Install and build the contract bindings**
+
+The generated TypeScript bindings for the five Soroban contracts live as
+npm workspaces in `packages/*`. They need their own install + build before
+the app can import them:
+
+```sh
+npm run install:contracts
+```
+
+**3. Create your `.env`**
+
+```sh
+cp .env.example .env
+```
+
+The defaults in `.env.example` point the frontend at **testnet** (public
+RPC/Horizon plus the deployed contract IDs), which is what you want for a
+local run. Don't skip this step: without a `.env` the app falls back to a
+LOCAL network at `http://localhost:8000` and every RPC call fails unless
+you are running a local Stellar quickstart node.
+
+Only the `PUBLIC_`-prefixed vars reach the browser bundle; the rest are
+server-side vars for the cron functions (see
+[Serverless crons](#serverless-crons-vercel) below) and can stay empty for
+frontend work.
+
+**4. Start the dev server**
+
+```sh
+npm run dev
+```
+
+The app serves at [http://localhost:5175](http://localhost:5175) (strict
+port). Connect a testnet wallet (e.g. Freighter set to Testnet) and use the
+top-bar **+MINT** button to fund yourself with mock USDC.
+
+Useful extras:
+
+```sh
+npm run typecheck         # tsc over app + api, no emit
+npm run build             # production build (tsc -b && vite build)
+npm run preview           # serve the production build locally
+```
 
 ## Serverless crons (Vercel)
 

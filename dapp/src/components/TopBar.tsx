@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { NavLink } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { useWallet } from "../hooks/useWallet"
@@ -28,6 +28,84 @@ function splitBrand(name: string): [string, string] {
 
 function shortAddr(addr: string) {
 	return `${addr.slice(0, 4)}…${addr.slice(-4)}`
+}
+
+/** Connected-wallet chip: opens a small menu with copy-address / disconnect. */
+function WalletMenu({ address }: { address: string }) {
+	const [open, setOpen] = useState(false)
+	const rootRef = useRef<HTMLDivElement>(null)
+	const { addNotification } = useNotification()
+	const t = useCopy()
+
+	// close on outside click / Escape
+	useEffect(() => {
+		if (!open) return
+		const onPointer = (e: MouseEvent) => {
+			if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+		}
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") setOpen(false)
+		}
+		document.addEventListener("mousedown", onPointer)
+		document.addEventListener("keydown", onKey)
+		return () => {
+			document.removeEventListener("mousedown", onPointer)
+			document.removeEventListener("keydown", onKey)
+		}
+	}, [open])
+
+	const copyAddress = async () => {
+		setOpen(false)
+		try {
+			await navigator.clipboard.writeText(address)
+			addNotification(t.wallet.copied, "success")
+		} catch {
+			addNotification(t.wallet.copyFailed, "error")
+		}
+	}
+
+	const disconnect = () => {
+		setOpen(false)
+		void disconnectWallet()
+	}
+
+	return (
+		<div ref={rootRef} className="relative">
+			<button
+				type="button"
+				aria-haspopup="menu"
+				aria-expanded={open}
+				aria-label={t.wallet.menuAria}
+				onClick={() => setOpen((o) => !o)}
+				className="btn-px btn-ghost btn-sm"
+			>
+				{shortAddr(address)} ▾
+			</button>
+			{open && (
+				<div
+					role="menu"
+					className="panel-raised absolute right-0 top-full z-30 mt-2 min-w-[11rem] p-1"
+				>
+					<button
+						role="menuitem"
+						type="button"
+						onClick={() => void copyAddress()}
+						className="block w-full px-3 py-2 text-left font-body text-[12px] font-semibold text-dim hover:bg-raised hover:text-ink"
+					>
+						{t.wallet.copyAddress}
+					</button>
+					<button
+						role="menuitem"
+						type="button"
+						onClick={disconnect}
+						className="block w-full px-3 py-2 text-left font-body text-[12px] font-semibold text-dim hover:bg-raised hover:text-loss"
+					>
+						{t.wallet.disconnect}
+					</button>
+				</div>
+			)}
+		</div>
+	)
 }
 
 /** USDC balance chip with inline testnet faucet mint (+10,000 mock USDC). */
@@ -126,14 +204,7 @@ export function TopBar() {
 				<div className="ml-auto flex items-center gap-3">
 					<CoinChip />
 					{address ? (
-						<button
-							type="button"
-							onClick={() => void disconnectWallet()}
-							className="btn-px btn-ghost btn-sm"
-							title="Disconnect"
-						>
-							{shortAddr(address)} ✕
-						</button>
+						<WalletMenu address={address} />
 					) : (
 						<button
 							type="button"

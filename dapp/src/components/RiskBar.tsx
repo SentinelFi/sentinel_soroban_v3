@@ -43,7 +43,7 @@ export function RiskBar({
 						className="riskbar-fill-serious"
 						style={{
 							width: `${delayedPct}%`,
-							background: `linear-gradient(90deg, ${color}bb, ${color})`,
+							background: `linear-gradient(90deg, color-mix(in oklab, ${color} 73%, transparent), ${color})`,
 						}}
 					/>
 				</div>

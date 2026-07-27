@@ -1,55 +1,83 @@
 import {
-	type ISupportedWallet,
+	type Networks,
+	type SwkAppTheme,
 	StellarWalletsKit,
-	type WalletNetwork,
-	sep43Modules,
 } from "@creit.tech/stellar-wallets-kit"
+import { sep43Modules } from "@creit.tech/stellar-wallets-kit/modules/utils"
 import { Horizon } from "@stellar/stellar-sdk"
 import { networkPassphrase, stellarNetwork } from "../contracts/util"
 import storage from "./storage"
 
-const kit: StellarWalletsKit = new StellarWalletsKit({
-	network: networkPassphrase as WalletNetwork,
+/**
+ * Kit modal theme built from the app's own design tokens. The kit writes
+ * these values as `--swk-*` custom properties on <html> — the same element
+ * that carries `data-theme` and the token definitions — so every var()
+ * resolves against the ACTIVE theme and the modal re-skins itself when the
+ * user flips fun/serious, with no setTheme call needed.
+ *
+ * Vars that only exist in serious get fun's value as the fallback:
+ * radius falls back to 0 (hard pixel edges), shadow to the hard step.
+ */
+const modalTheme: SwkAppTheme = {
+	background: "var(--color-surface)",
+	"background-secondary": "var(--color-inset)",
+	"foreground-strong": "var(--color-ink)",
+	foreground: "var(--color-dim)",
+	"foreground-secondary": "var(--color-mute)",
+	primary: "var(--color-gold)",
+	"primary-foreground": "var(--color-page)",
+	transparent: "transparent",
+	lighter: "rgba(255, 255, 255, 0.06)",
+	light: "rgba(255, 255, 255, 0.12)",
+	"light-gray": "var(--color-dim)",
+	gray: "var(--color-mute)",
+	danger: "var(--color-loss)",
+	border: "var(--color-line-mid)",
+	shadow: "var(--shadow-soft-md, var(--shadow-px-md))",
+	"border-radius": "var(--radius-ctl, 0px)",
+	"font-family": "var(--font-body)",
+}
+
+StellarWalletsKit.init({
+	network: networkPassphrase as Networks,
 	modules: sep43Modules(),
+	theme: modalTheme,
 })
 
 export const connectWallet = async () => {
-	await kit.openModal({
-		modalTitle: "Connect to your wallet",
-		onWalletSelected: (option: ISupportedWallet) => {
-			const selectedId = option.id
-			kit.setWallet(selectedId)
+	// `authModal` handles wallet selection and connection in one flow;
+	// it rejects if the user closes the modal without connecting.
+	let address: string
+	try {
+		;({ address } = await StellarWalletsKit.authModal())
+	} catch {
+		return
+	}
 
-			// Now open selected wallet's login flow by calling `getAddress` --
-			// Yes, it's strange that a getter has a side effect of opening a modal
-			void kit.getAddress().then((address) => {
-				// Once `getAddress` returns successfully, we know they actually
-				// connected the selected wallet, and we set our localStorage
-				if (address.address) {
-					storage.setItem("walletId", selectedId)
-					storage.setItem("walletAddress", address.address)
-				} else {
-					storage.setItem("walletId", "")
-					storage.setItem("walletAddress", "")
-				}
-			})
-			if (selectedId == "freighter" || selectedId == "hot-wallet") {
-				void kit.getNetwork().then((network) => {
-					if (network.network && network.networkPassphrase) {
-						storage.setItem("walletNetwork", network.network)
-						storage.setItem("networkPassphrase", network.networkPassphrase)
-					} else {
-						storage.setItem("walletNetwork", "")
-						storage.setItem("networkPassphrase", "")
-					}
-				})
+	const selectedId = StellarWalletsKit.selectedModule.productId
+	if (address) {
+		storage.setItem("walletId", selectedId)
+		storage.setItem("walletAddress", address)
+	} else {
+		storage.setItem("walletId", "")
+		storage.setItem("walletAddress", "")
+	}
+
+	if (selectedId == "freighter" || selectedId == "hot-wallet") {
+		void StellarWalletsKit.getNetwork().then((network) => {
+			if (network.network && network.networkPassphrase) {
+				storage.setItem("walletNetwork", network.network)
+				storage.setItem("networkPassphrase", network.networkPassphrase)
+			} else {
+				storage.setItem("walletNetwork", "")
+				storage.setItem("networkPassphrase", "")
 			}
-		},
-	})
+		})
+	}
 }
 
 export const disconnectWallet = async () => {
-	await kit.disconnect()
+	await StellarWalletsKit.disconnect()
 	storage.removeItem("walletId")
 }
 
@@ -103,4 +131,4 @@ export const fetchBalances = async (address: string) => {
 	}
 }
 
-export const wallet = kit
+export const wallet = StellarWalletsKit

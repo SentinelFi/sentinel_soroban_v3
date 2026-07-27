@@ -16,7 +16,14 @@ const fun = {
 		policies: "MY POLICIES",
 		yield: "EARN YIELD",
 	},
-	wallet: { connect: "INSERT COIN — CONNECT" },
+	wallet: {
+		connect: "INSERT COIN — CONNECT",
+		menuAria: "Wallet menu",
+		copyAddress: "COPY ADDRESS",
+		disconnect: "DISCONNECT",
+		copied: "Address copied to clipboard",
+		copyFailed: "Copy failed — try again",
+	},
 	brand: {
 		name: "FLIGHTS.FUN",
 		tagline: "PARAMETRIC FLIGHT INSURANCE. PLAYED LIKE A MARKET.",
@@ -281,7 +288,14 @@ const serious: Copy = {
 		policies: "My Policies",
 		yield: "Earn Yield",
 	},
-	wallet: { connect: "Connect Wallet" },
+	wallet: {
+		connect: "Connect Wallet",
+		menuAria: "Wallet menu",
+		copyAddress: "Copy address",
+		disconnect: "Disconnect",
+		copied: "Address copied to clipboard",
+		copyFailed: "Copy failed — try again",
+	},
 	brand: {
 		name: "Flights.Fun",
 		tagline: "Parametric flight delay insurance on Stellar.",
