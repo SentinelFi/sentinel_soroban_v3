@@ -19,7 +19,7 @@ blocking · **P2** = when scale demands it.
   env vars (four signer keys, `AEROAPI_KEY`, `GOVERNANCE_DB_URL`,
   `CRON_SECRET`, `ADMIN_EMAILS`, `AGENT_BASE_URL`), deploy. Until then the
   backend runs locally as bots (`npm run bot -- <name>`), which is the
-  current operating mode.
+  current operating mode. **Full ordered bring-up runbook: §H below.**
 - [x] **P0 — Governance unblock (done 2026-07-27).** Owner
   (`GCEODBNV…E6KD`) called `add_admin(sentinel-governor GC2QDXUD…)` on the
   07-18 GovernanceModule (`CANSHOFU…`); `is_admin` now true, `GovAdminAdded`
@@ -164,8 +164,9 @@ The ladder to a fully automated governance:
   cache = zero extra calls) and emits schedule_drift signals (retimed ≥45m
   → elevated, dropped → severe). Fail-safe: failed/partial pair fetches
   are "couldn't verify", never "dropped" (learned live under quota).
-- [ ] **P2 — `signals.type` migration**: add `ops` (non-weather airport
-  delays) and `pricing` (ML anchor) types.
+- [x] **P2 — `signals.type` migration (done 2026-07-27).** `ops` and
+  `pricing` types added in `20260727140000_gov_guardrails.sql`, applied
+  live.
 
 After L2, the ONLY human actions left in governance: appetite changes
 (rails/defaults/term limits — owner), emergencies (pause, pins), and
@@ -281,6 +282,87 @@ schedules). Remaining:
   `Route(f,o,d)` rows (from the DB) + controller `TravelerFlights(buyer)`
   (from the policies mirror). LIVE-verified: 202 route keys extended in 11
   txs. ClaimableBalance keys remain (needs Credited-event ingest).
+
+## H. Total-system testnet bring-up (the "turn it on" runbook)
+
+Goal: the WHOLE system running unattended on testnet — chain state seeded,
+ML service serving, all 12 crons firing on a schedule, UI pointing at live
+APIs. Ordered: each step's output feeds the next. The only hard blocker is
+**Vercel Pro** (step 2); everything else is config + verification.
+
+### Step 0 — already live (no action needed)
+
+- [x] **Contracts deployed + seeded** (07-18 testnet deploy in
+  `deployments/testnet.json`; dapp bindings generated from the same wasm):
+  Controller `CCWDQVAJ…`, GovernanceModule `CANSHOFU…`, OracleAggregator
+  `CBSX3KRT…`, RiskVault, FlightPoolManager `CD6XRCMK…`. Owner ran
+  `add_admin(sentinel-governor)`; **202 routes whitelisted Active** on-chain.
+  No further on-chain deployment is needed for testnet.
+- [x] **Supabase "sentinel" live**: every migration applied
+  (governance_core, cron_runs, gov_guardrails, aeroapi_cache, event
+  mirror); 202 route rows DB-synced; L2 pipeline live-verified against it.
+- [x] **ML model v3 artifacts committed** (`agent/artifacts/`, AUC 0.789).
+- [x] **Interim operating mode**: `npm run bot -- <name>` runs every job
+  locally — the system is fully operable by hand today; the steps below
+  only replace the hand with schedules.
+
+### Step 1 — ML pricing service (Render — free tier is fine)
+
+- [ ] Deploy (or redeploy) the `render.yaml` web service at repo root →
+  serves agent v3 (`GET /healthz` must show version `…-btsM24-arr180m`).
+  Optionally set `AGENT_TOKEN` (bearer auth on /price). Record the service
+  URL — it becomes `AGENT_BASE_URL` in step 2. Consumers: the daily
+  `/api/cron/agent` (pricing signals) and gov_onboard's ML scoring hook.
+
+### Step 2 — backend + UI on Vercel (NEEDS PRO — the blocker)
+
+- [ ] **Flip the config**: `cd dapp && mv vercel.backend.json vercel.json
+  && rm .vercelignore`. One project then serves the vite UI *and* `/api`.
+  The prepped config now carries **12 crons** (gov-schedule-check daily
+  04:45 was added 2026-07-27 — it was missing).
+- [ ] **Set project env vars** (server-side, from gitignored `dapp/.env`):
+  - Chain: `STELLAR_RPC_URL`, `STELLAR_NETWORK_PASSPHRASE` (testnet)
+  - Signers: `ORACLE_SECRET_KEY` (sentinel-oracle), `KEEPER_SECRET_KEY`
+    (sentinel-keeper), `TTL_EXTENDER_SECRET_KEY`,
+    `GOVERNANCE_ADMIN_SECRET_KEY` (sentinel-governor) — the owner key is
+    NEVER deployed
+  - Services: `AEROAPI_KEY`, `GOVERNANCE_DB_URL` (Supavisor pooler :6543 —
+    direct host is IPv6-only), `AGENT_BASE_URL` (+ `AGENT_TOKEN` if set),
+    `SUPABASE_URL` + `SUPABASE_ANON_KEY` (admin console)
+  - Ops: `CRON_SECRET` (generate; Vercel sends it as the Bearer header —
+    without it the cron endpoints fall back to accepting Vercel headers),
+    `ADMIN_EMAILS`
+  - Deliberately UNSET (defaults are the safe mode): `GOV_DRY_RUN`
+    (unset = live submits), `GOV_ONBOARD_AUTO` (unset = propose-only),
+    `SALE_AUTH_DEMAND_MODE` (unset = full near-window)
+- [ ] **Deploy, then verify schedules**: every cron shows a run in the
+  Vercel cron dashboard AND a row in `cron_runs` within its first period
+  (settle/queue ≤5 min, classify/gov-* ≤1 h, fetcher/authorize ≤2 h,
+  agent/ttl/schedule-check ≤24 h).
+
+### Step 3 — end-to-end smoke on the running system
+
+- [ ] `/api/cron/health` and public `/api/status/runs` green — barrier
+  `stalled: false`, no accumulating `pendingOutcomes`.
+- [ ] **One full policy lifecycle through the UI**: buy on a near-term
+  whitelisted flight (sale-auth attestation must be fresh) → fetcher ETA
+  write at T-2d/watch window → outcome recorded → classify → settle →
+  claim pays. This exercises oracle, keeper, and contract tiers together.
+- [ ] **Governance loop observed hands-off**: gov-signals/gov-exposure
+  writing signals, gov-reconcile producing `actions_log` rows (or clean
+  no-ops) for several consecutive hours without intervention.
+- [ ] **Admin brake drill**: `POST /api/admin/freeze` on → next reconcile
+  run takes zero actions → freeze off. Check `/api/admin/diagnostics`.
+- [ ] AeroAPI quota watch: if the billing period hasn't reset, fetcher/
+  authorizer runs are quota-breakered (safe, by design) — sale windows
+  won't open until it resets; everything else runs normally.
+
+### Step 4 — post-bring-up hardening (existing items, now unblocked)
+
+- [ ] External pager on `stalled` (A/P1 remainder — needs a Slack webhook).
+- [ ] Cadence relaxation after observing JIT hit-rate (A/P2).
+- [ ] `GOV_ONBOARD_AUTO=true` once propose-only has built confidence (D).
+- [ ] L3 agents (D — needs `ANTHROPIC_API_KEY`).
 
 ---
 

@@ -20,6 +20,7 @@
     { "path": "/api/cron/gov-signals", "schedule": "5 * * * *" },
     { "path": "/api/cron/gov-exposure", "schedule": "7 * * * *" },
     { "path": "/api/cron/gov-reconcile", "schedule": "10 * * * *" },
-    { "path": "/api/cron/gov-onboard", "schedule": "15 */6 * * *" }
+    { "path": "/api/cron/gov-onboard", "schedule": "15 */6 * * *" },
+    { "path": "/api/cron/gov-schedule-check", "schedule": "45 4 * * *" }
   ]
 }
