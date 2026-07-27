@@ -11,6 +11,7 @@ import { run as runRouteAgent } from "../_lib/jobs/route_agent";
 import { run as runSettler } from "../_lib/jobs/settler";
 import { run as runTtl } from "../_lib/jobs/ttl";
 import { run as runGovReconcile } from "../_lib/governance/reconciler";
+import { run as runGovSignals } from "../_lib/governance/signals_collector";
 import type { JobName, RunLogEntry } from "../_lib/types";
 
 // Manual runs can be slow (fetcher walks every active flight).
@@ -35,8 +36,8 @@ const RUNNERS: Record<JobName, () => Promise<RunLogEntry>> = {
   sale_authorizer: () => runAuthorizer(loadConfig()),
   route_agent: () => runRouteAgent(loadConfig()),
   gov_reconcile: () => runGovReconcile(loadGovConfig()),
+  gov_signals: () => runGovSignals(loadGovConfig()),
   // Phase 3/4 — registered here as they land.
-  gov_signals: () => Promise.reject(new Error("gov_signals not implemented yet")),
   gov_onboard: () => Promise.reject(new Error("gov_onboard not implemented yet")),
   gov_schedule_check: () => Promise.reject(new Error("gov_schedule_check not implemented yet")),
 };

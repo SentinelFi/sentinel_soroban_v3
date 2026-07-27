@@ -34,6 +34,7 @@ export const JOB_REGISTRY: JobInfo[] = [
   { job: "classifier", path: "/api/cron/classify", schedule: "0 * * * *", intervalMinutes: 60, signer: "keeper", manualRunnable: true, description: "Classify flights for settlement" },
   { job: "fetcher", path: "/api/cron/fetcher", schedule: "0 */2 * * *", intervalMinutes: 120, signer: "oracle", manualRunnable: true, description: "AeroAPI flight status → oracle" },
   { job: "sale_authorizer", path: "/api/cron/authorize", schedule: "30 */2 * * *", intervalMinutes: 120, signer: "oracle", manualRunnable: true, description: "Sale-window attestations" },
+  { job: "gov_signals", path: "/api/cron/gov-signals", schedule: "5 * * * *", intervalMinutes: 60, signer: "none", manualRunnable: true, description: "Airport-delay collector — AeroAPI /airports/delays → signals (facts only, no chain writes)" },
   { job: "gov_reconcile", path: "/api/cron/gov-reconcile", schedule: "10 * * * *", intervalMinutes: 60, signer: "gov-admin", manualRunnable: true, description: "Governance reconciler — signals → on-chain" },
   { job: "route_agent", path: "/api/cron/agent", schedule: "0 6 * * *", intervalMinutes: 1440, signer: "gov-admin", manualRunnable: true, description: "Legacy daily route agent (ML + weather)" },
   { job: "ttl_extender", path: "/api/cron/ttl", schedule: "0 0 * * *", intervalMinutes: 1440, signer: "ttl", manualRunnable: true, description: "Extend contract TTLs, prune settled" },
