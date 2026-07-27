@@ -1,3 +1,4 @@
+import { readFileSync } from "fs";
 import rawConfig from "../../config/routes.testnet.json";
 
 /**
@@ -53,7 +54,13 @@ export function baseUnitsToUsdc(units: bigint): number {
 }
 
 export function loadRoutesConfig(): RoutesConfig {
-  const c = rawConfig as {
+  // ROUTES_CONFIG_PATH lets tests (and future networks) point at a different
+  // routes file; the static import stays the bundled default for Vercel.
+  const overridePath = process.env.ROUTES_CONFIG_PATH;
+  const raw = overridePath
+    ? (JSON.parse(readFileSync(overridePath, "utf-8")) as typeof rawConfig)
+    : rawConfig;
+  const c = raw as {
     network: string;
     defaults: { premium_usdc: number; payoff_usdc: number; delay_hours: number };
     rails: {

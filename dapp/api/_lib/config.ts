@@ -12,15 +12,18 @@ import type { Config } from "./types";
  * never bundled into the browser build.
  */
 
-// Defaults mirror deployments/testnet.json — the Phase 3 testnet set.
+// Defaults mirror the 2026-07-18 testnet deployment — the same IDs the
+// frontend hardcodes in dapp/src/contracts/*.ts. (The previous defaults
+// pointed at the retired 07-11 deployment, whose oracle predates
+// open_sale/close_sale — the sale authorizer cannot run against it.)
 const TESTNET_DEFAULTS: Record<string, string> = {
   STELLAR_RPC_URL: "https://soroban-testnet.stellar.org",
   STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
-  ORACLE_AGGREGATOR_ID: "CDOLYXPIV63FGRCIPOFZY5HNRS34QZHZJVEUUVJHSFEFW5H4CHQHJEYZ",
-  CONTROLLER_ID: "CD7KCPQJFYSEUPJ43VXC6RIYCF4WPTVUHH3ANWNPYXTYGE2NBRXGFTXB",
-  RISK_VAULT_ID: "CDW5YUJXGJWPVOQBXYVDZN7P7QQSE3U6VGIHBN24HZKKCS5QQ75OLIJE",
-  GOVERNANCE_ID: "CB4GWBXFQ2TVHJVDYA7OOB7KNNASWCNNPW7BZDPYOCJZOBAXWK3B57VL",
-  FLIGHT_POOL_MANAGER_ID: "CCEOYQREEASJ3F2EMNDJDP35ZXTMRVO3LKH3TGEZ6O2UDBCFVQNGDLWJ",
+  ORACLE_AGGREGATOR_ID: "CBSX3KRT4JI7XAOB33OTGZMZVOFXOS2LWDQCQKR2UAGHRMWYMC2D6QUL",
+  CONTROLLER_ID: "CCWDQVAJCNMU2P35JF5RNGC7PM2LGWBXBSO6QUME2PJFK5LTVFNQZGHB",
+  RISK_VAULT_ID: "CAHUWF7GMAKZK34C3BBQWHA4GLAI2OSXGL25KMLW45INBDJMVQRAL3QW",
+  GOVERNANCE_ID: "CANSHOFUFZPLZPCVUQYL3LBO25FW5BP6AEVAMNN2QS2BINGDIVZVEWYZ",
+  FLIGHT_POOL_MANAGER_ID: "CD6XRCMKALQLB63ZYMA7GCW3Q2BQROGKYASRRRNZEFRPINQ6JFXO6YZT",
   // Real AeroAPI (the executor defaulted to its local mock; that makes no
   // sense in a serverless deployment). Override for mock-api testing.
   AEROAPI_BASE_URL: "https://aeroapi.flightaware.com/aeroapi",
@@ -55,6 +58,9 @@ export function loadConfig(): Config {
     governanceAdminSecretKey: process.env.GOVERNANCE_ADMIN_SECRET_KEY || undefined,
     aeroApiBaseUrl: envOrDefault("AEROAPI_BASE_URL"),
     aeroApiKey: process.env.AEROAPI_KEY ?? "",
+    // Fetcher polling window before the recorded scheduled arrival
+    // (cancellation watch + landing resolution). Default 6h.
+    fetcherWatchSecs: parsePositiveInt(process.env.FETCHER_WATCH_SECS, 21_600),
     // Sale authorization. 0/unset horizon falls back to the routes file's
     // sale_horizon_days at job start.
     saleAuthHorizonDays: parsePositiveInt(process.env.SALE_AUTH_HORIZON_DAYS, 0),

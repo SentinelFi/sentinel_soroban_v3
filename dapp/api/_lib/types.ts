@@ -102,6 +102,11 @@ export interface Config {
   // AeroAPI.
   aeroApiBaseUrl: string;
   aeroApiKey: string;
+  // Fetcher call economy: how long before a flight's recorded scheduled
+  // arrival the fetcher starts polling AeroAPI for that Active flight
+  // (cancellation watch + landing resolution). Outside this window the
+  // fetcher spends ZERO API calls on the flight.
+  fetcherWatchSecs: number;
   // Sale authorization (cron #0). Horizon defaults come from
   // config/routes.testnet.json; env overrides win.
   saleAuthHorizonDays: number;

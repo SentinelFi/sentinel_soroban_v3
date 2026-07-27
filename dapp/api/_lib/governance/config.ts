@@ -20,7 +20,10 @@ import { cronTrigger, recordRun } from "./runs";
 const TESTNET_DEFAULTS: Record<string, string> = {
   STELLAR_RPC_URL: "https://soroban-testnet.stellar.org",
   STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
-  GOVERNANCE_ID: "CB4GWBXFQ2TVHJVDYA7OOB7KNNASWCNNPW7BZDPYOCJZOBAXWK3B57VL",
+  // 2026-07-18 testnet deployment (matches _lib/config.ts + the frontend).
+  // NOTE: the gov-admin add_admin on this module is still pending the owner
+  // key — keep GOV_DRY_RUN=true until it lands.
+  GOVERNANCE_ID: "CANSHOFUFZPLZPCVUQYL3LBO25FW5BP6AEVAMNN2QS2BINGDIVZVEWYZ",
 };
 
 export interface GovConfig {
