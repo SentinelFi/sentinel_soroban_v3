@@ -2,7 +2,8 @@ import { SorobanClient } from "../soroban_client";
 import { AeroApiClient, isConfirmedCancellation } from "../aeroapi_client";
 import { classifyAndSettleFlight } from "../targeted_settlement";
 import { parseFlightStatus } from "../status";
-import { enabledFlightIds, loadRoutesConfig } from "../routes_config";
+import { loadRoutesConfig, type RoutesConfig } from "../routes_config";
+import { getDb } from "../governance/db";
 import {
   FlightStatus,
   type Config,
@@ -21,6 +22,56 @@ const SCHEDULE_CHUNK_DAYS = 20; // stay under the API's 3-week span limit
 export interface AuthorizerDeps {
   soroban?: SorobanClient;
   aero?: AeroApiClient;
+}
+
+interface AttestRoute {
+  flight_id: string;
+  origin: string;
+  destination: string;
+}
+
+/**
+ * Route source: the DB `routes` table is canonical once gov_onboard has
+ * populated it — an admin/reconciler disable then also stops ATTESTATION,
+ * not just purchases. The routes file remains the bootstrap seed and the
+ * fallback, honoring the DB-optional invariant (this is an oracle-tier
+ * job and must run with no database):
+ *   - no GOVERNANCE_DB_URL          → file
+ *   - DB unreachable / query fails  → file (warn)
+ *   - DB reachable but ZERO rows    → file (unseeded bootstrap)
+ *   - DB has rows                   → DB is law ('active' rows only —
+ *     an all-disabled table attests NOTHING, it does not fall back)
+ */
+async function loadAttestRoutes(
+  routesConfig: RoutesConfig
+): Promise<{ routes: AttestRoute[]; source: "db" | "file" }> {
+  if (process.env.GOVERNANCE_DB_URL) {
+    try {
+      const sql = getDb();
+      const all = (await sql`select flight_id, origin, dest, status from routes`) as unknown as Array<{
+        flight_id: string;
+        origin: string;
+        dest: string;
+        status: string;
+      }>;
+      if (all.length > 0) {
+        return {
+          routes: all
+            .filter((r) => r.status === "active")
+            .map((r) => ({ flight_id: r.flight_id, origin: r.origin, destination: r.dest })),
+          source: "db",
+        };
+      }
+    } catch (err) {
+      console.warn(`[authorizer] routes DB unreachable (${err}) — falling back to the routes file.`);
+    }
+  }
+  return {
+    routes: routesConfig.routes
+      .filter((r) => r.enabled)
+      .map((r) => ({ flight_id: r.flight_id, origin: r.origin, destination: r.destination })),
+    source: "file",
+  };
 }
 
 /**
@@ -88,15 +139,17 @@ export async function run(config: Config, deps: AuthorizerDeps = {}): Promise<Ru
 
   try {
     const routesConfig = loadRoutesConfig();
-    const flightIds = enabledFlightIds(routesConfig);
+    const { routes: attestRoutes, source } = await loadAttestRoutes(routesConfig);
+    const flightIds = [...new Set(attestRoutes.map((r) => r.flight_id))];
     const horizonDays =
       config.saleAuthHorizonDays > 0
         ? config.saleAuthHorizonDays
         : routesConfig.saleHorizonDays;
+    console.log(`[authorizer] Route source: ${source} (${flightIds.length} flight number(s)).`);
 
     if (flightIds.length === 0) {
       console.warn(
-        "[authorizer] No enabled routes in the routes config — no sale windows will be opened and all purchases fail closed."
+        "[authorizer] No enabled routes (source: " + source + ") — no sale windows will be opened and all purchases fail closed."
       );
       return {
         timestamp: new Date().toISOString(),
@@ -174,7 +227,7 @@ export async function run(config: Config, deps: AuthorizerDeps = {}): Promise<Ru
     // ── Per-flight attestation ─────────────────────────────────────────
 
     for (const flightId of flightIds) {
-      const route = routesConfig.routes.find((r) => r.enabled && r.flight_id === flightId);
+      const route = attestRoutes.find((r) => r.flight_id === flightId);
 
       // NEAR WINDOW — days 1..2, live tracking data.
       // Day 0 is skipped: the controller's min-lead cutoff already blocks

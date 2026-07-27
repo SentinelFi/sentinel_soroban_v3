@@ -35,6 +35,8 @@ import {
   computeDesiredSignals,
   feedCodeToIata,
 } from "../api/_lib/governance/signals_collector";
+import { computeExposureSignals } from "../api/_lib/governance/exposure_collector";
+import { computeDisableCap } from "../api/_lib/governance/reconciler";
 import type { Config, RunLogEntry } from "../api/_lib/types";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -463,6 +465,35 @@ async function testGovSignals(): Promise<void> {
   check(
     "fixture red airport parses",
     feed?.delays?.some((d) => d.airport === "KATL" && d.color === "red") === true
+  );
+
+  // Exposure projection (pure): route + airport concentration vs capacity.
+  const flights = [
+    { flightId: "AA100", origin: "JFK", dest: "LAX", liabilityUnits: 300n },
+    { flightId: "DL200", origin: "JFK", dest: "SEA", liabilityUnits: 250n },
+  ];
+  const exp = computeExposureSignals(flights, 1000n, { elevatedPct: 0.25, severePct: 0.5 });
+  check("exposure: 2 route specs + 6 airport specs", exp.length === 8, String(exp.length));
+  check(
+    "exposure: AA100 route at 30% → elevated",
+    exp.some((s) => s.scope_kind === "route" && s.flightId === "AA100" && s.severity === "elevated")
+  );
+  check(
+    "exposure: JFK airport at 55% → severe (both scopes)",
+    exp.filter((s) => (s.origin === "JFK" || s.dest === "JFK") && s.scope_kind !== "route" && s.severity === "severe").length === 2
+  );
+  check(
+    "exposure: LAX at 30% → elevated, not severe",
+    exp.some((s) => (s.origin === "LAX" || s.dest === "LAX") && s.severity === "elevated") &&
+      !exp.some((s) => (s.origin === "LAX" || s.dest === "LAX") && s.severity === "severe")
+  );
+  check("exposure: zero capacity → no signals", computeExposureSignals(flights, 0n).length === 0);
+
+  // Mass-disable circuit breaker: max(3, 20% of fleet).
+  check(
+    "breaker cap: small fleets floor at 3, large scale at 20%",
+    computeDisableCap(2) === 3 && computeDisableCap(15) === 3 && computeDisableCap(200) === 40,
+    `${computeDisableCap(2)}/${computeDisableCap(15)}/${computeDisableCap(200)}`
   );
 }
 
