@@ -228,6 +228,28 @@ export async function run(config: Config, deps: AuthorizerDeps = {}): Promise<Ru
       actions.push({ flight: label, transition: `sale open until ${expiresAt}` });
     };
 
+    // ── Demand mode (opt-in, SALE_AUTH_DEMAND_MODE=true) ───────────────
+    // Hot (flight, day) marks written by POST /api/sale-auth/warm on quote
+    // views. null = mode off OR hot set unavailable → attest everything
+    // (availability fails open; insurability still gates on-chain).
+    let demandHot: Set<string> | null = null;
+    if (process.env.SALE_AUTH_DEMAND_MODE === "true" && process.env.GOVERNANCE_DB_URL) {
+      try {
+        const sql = getDb();
+        const hot = (await sql`
+          select flight_id, date from warm_windows
+          where warmed_at > now() - interval '24 hours'
+        `) as unknown as Array<{ flight_id: string; date: string | number }>;
+        demandHot = new Set(hot.map((h) => `${h.flight_id}|${BigInt(h.date)}`));
+        // Housekeeping: drop stale marks (best-effort).
+        await sql`delete from warm_windows where warmed_at < now() - interval '48 hours'`;
+        console.log(`[authorizer] Demand mode: ${demandHot.size} hot (flight, day) mark(s).`);
+      } catch (err) {
+        console.warn(`[authorizer] demand-mode hot set unavailable (${err}) — attesting all near-window days.`);
+        demandHot = null;
+      }
+    }
+
     // ── FAR-WINDOW batch fetch: one /schedules call per DIRECTED PAIR ──
     // per ≤20-day chunk (not per flight — 200 routes share ~30 pairs), and
     // each call is cached ~24h in the governance DB (best-effort,
@@ -292,6 +314,13 @@ export async function run(config: Config, deps: AuthorizerDeps = {}): Promise<Ru
       for (let offset = 1; offset <= nearEnd; offset++) {
         const { dateSecs, dateStr } = dayDate(todayIndex + offset);
         const label = `${flightId}@${dateStr}`;
+
+        // Demand mode (opt-in): only attest near-window days someone has
+        // actually looked at. Hot set unavailable (DB off) → attest all
+        // (fail open on availability, sales still gate on-chain).
+        if (demandHot !== null && !demandHot.has(`${flightId}|${dateSecs}`)) {
+          continue;
+        }
 
         try {
           // Call-economy gate 1: the live on-chain window IS a cached

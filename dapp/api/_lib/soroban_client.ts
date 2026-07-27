@@ -1,6 +1,8 @@
 import {
   Contract,
   Keypair,
+  Operation,
+  SorobanDataBuilder,
   TransactionBuilder,
   xdr,
   nativeToScVal,
@@ -105,15 +107,20 @@ export class SorobanClient {
       .setTimeout(TX_TIMEOUT)
       .build();
 
-    // Simulate to get resource estimates and auth
+    // Simulate to get resource estimates and auth. SIMULATION failures are
+    // tagged distinctly from submission failures: a simulation revert
+    // (paused contract, failed auth, contract panic) would fail IDENTICALLY
+    // on retry — "would never succeed" — while submission/confirmation
+    // problems are usually transient. Monitors and run logs key off the
+    // [simulation]/[submission] prefix.
     const sim = await this.server.simulateTransaction(tx);
 
     if (rpc.Api.isSimulationError(sim)) {
-      throw new Error(`Simulation error for ${method}: ${sim.error}`);
+      throw new Error(`[simulation] ${method}: ${sim.error}`);
     }
 
     if (!rpc.Api.isSimulationSuccess(sim)) {
-      throw new Error(`Simulation failed for ${method}`);
+      throw new Error(`[simulation] ${method}: simulation did not succeed`);
     }
 
     // Assemble with simulation results, then bump resource limits by 40%.
@@ -139,7 +146,7 @@ export class SorobanClient {
     const sendResult = await this.server.sendTransaction(bumped);
 
     if (sendResult.status === "ERROR") {
-      throw new Error(`Send failed for ${method}: ${JSON.stringify(sendResult)}`);
+      throw new Error(`[submission] ${method}: ${JSON.stringify(sendResult)}`);
     }
 
     // Poll for completion
@@ -159,7 +166,7 @@ export class SorobanClient {
       return getResult;
     }
 
-    throw new Error(`Transaction failed for ${method}: status=${getResult.status}`);
+    throw new Error(`[submission] ${method}: final status=${getResult.status}`);
   }
 
   /** Helper: convert a Stellar address string to an ScVal. */
@@ -175,6 +182,73 @@ export class SorobanClient {
   /** Helper: convert a number to a u32 ScVal. */
   u32ToScVal(n: number): xdr.ScVal {
     return xdr.ScVal.scvU32(n);
+  }
+
+  /** Helper: vec ScVal (e.g. a #[contracttype] enum key like Route(a,b,c)). */
+  scvVec(items: xdr.ScVal[]): xdr.ScVal {
+    return xdr.ScVal.scvVec(items);
+  }
+
+  /**
+   * Raw ExtendFootprintTTLOp over specific PERSISTENT contract-data keys —
+   * the deep TTL layer behind the instance-level extend_ttl() calls: idle
+   * entries nothing reads (Route rows of never-traded routes,
+   * TravelerFlights of dormant users) never get their on-access bumps and
+   * would archive without this. Extends every key's liveUntil to
+   * currentLedger + extendToLedgers (no-op for keys already beyond it).
+   * Permissionless in effect: any funded key pays the rent.
+   */
+  async extendPersistentTtl(
+    contractId: string,
+    keys: xdr.ScVal[],
+    extendToLedgers: number,
+    signerSecret: string
+  ): Promise<void> {
+    const signerKeypair = Keypair.fromSecret(signerSecret);
+    const sourceAccount = await this.server.getAccount(signerKeypair.publicKey());
+    const contract = new Address(contractId).toScAddress();
+
+    const ledgerKeys = keys.map((key) =>
+      xdr.LedgerKey.contractData(
+        new xdr.LedgerKeyContractData({
+          contract,
+          key,
+          durability: xdr.ContractDataDurability.persistent(),
+        })
+      )
+    );
+
+    const tx = new TransactionBuilder(sourceAccount, {
+      fee: "10000000",
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(Operation.extendFootprintTtl({ extendTo: extendToLedgers }))
+      .setSorobanData(new SorobanDataBuilder().setReadOnly(ledgerKeys).build())
+      .setTimeout(TX_TIMEOUT)
+      .build();
+
+    const sim = await this.server.simulateTransaction(tx);
+    if (!rpc.Api.isSimulationSuccess(sim)) {
+      throw new Error(
+        `[simulation] extendFootprintTtl(${contractId.slice(0, 8)}…, ${keys.length} key(s)): ` +
+          `${rpc.Api.isSimulationError(sim) ? sim.error : "did not succeed"}`
+      );
+    }
+    const assembled = rpc.assembleTransaction(tx, sim).build();
+    assembled.sign(signerKeypair);
+    const sendResult = await this.server.sendTransaction(assembled);
+    if (sendResult.status === "ERROR") {
+      throw new Error(`[submission] extendFootprintTtl: ${JSON.stringify(sendResult)}`);
+    }
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const getResult = await this.server.getTransaction(sendResult.hash);
+      if (getResult.status === rpc.Api.GetTransactionStatus.SUCCESS) return;
+      if (getResult.status === rpc.Api.GetTransactionStatus.FAILED) {
+        throw new Error(`[submission] extendFootprintTtl: final status=FAILED`);
+      }
+    }
+    throw new Error(`[submission] extendFootprintTtl: confirmation timeout`);
   }
 
   /** Helper: convert a u64 bigint to an ScVal. */

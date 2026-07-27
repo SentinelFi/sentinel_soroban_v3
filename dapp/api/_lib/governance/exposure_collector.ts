@@ -1,4 +1,5 @@
 import { SorobanClient } from "../soroban_client";
+import { ingestChainEvents } from "./event_ingest";
 import { loadRoutesConfig } from "../routes_config";
 import { parseFlightStatus } from "../status";
 import { FlightStatus, type Config, type RunLogEntry, type FetcherAction } from "../types";
@@ -208,6 +209,29 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
       // oracle authority involved).
       oracleSecretKey: config.govAdminSecretKey,
     } as Config);
+
+    // Chain-event mirror first (policies + settlements — the durable
+    // copies the sweeper and analytics need beyond RPC's ~7-day
+    // retention). Never blocks the exposure signals; skipped in dry-run.
+    if (!config.dryRun) {
+      try {
+        const controllerId =
+          process.env.CONTROLLER_ID ?? "CCWDQVAJCNMU2P35JF5RNGC7PM2LGWBXBSO6QUME2PJFK5LTVFNQZGHB";
+        const ingested = await ingestChainEvents(config.stellarRpcUrl, controllerId);
+        if (ingested.policies + ingested.settlements > 0) {
+          actions.push({
+            flight: "-",
+            transition: `ingested ${ingested.policies} policy / ${ingested.settlements} settlement event(s)`,
+          });
+        }
+        console.log(
+          `[gov-exposure] event mirror: +${ingested.policies} policies, +${ingested.settlements} settlements ` +
+            `(ledgers ${ingested.fromLedger}..${ingested.toLedger})`
+        );
+      } catch (err) {
+        console.warn(`[gov-exposure] event ingest failed (signals continue): ${err}`);
+      }
+    }
 
     let flights: FlightExposure[];
     let totalManaged: bigint;

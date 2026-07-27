@@ -24,6 +24,14 @@
  *    (/schedules, chunked) attestation, schedule-gap day stays closed,
  *    ~2 /flights + 2 /schedules calls per flight for a 30-day horizon.
  */
+// The suite's contract is "no database attached" — it doubles as the
+// DB-optional invariant proof, and a leaked GOVERNANCE_DB_URL would flip
+// the authorizer into DB-canonical mode against the LIVE routes table
+// (observed: 202 real routes hijacking the fixture assertions). Enforce it.
+delete process.env.GOVERNANCE_DB_URL;
+delete process.env.SALE_AUTH_DEMAND_MODE;
+delete process.env.SALE_AUTH_HORIZON_DAYS;
+
 import { spawn, type ChildProcess } from "child_process";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";

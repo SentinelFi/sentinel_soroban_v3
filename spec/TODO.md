@@ -86,11 +86,11 @@ outcome-recorded days. Remaining, in value order:
   ~30 cached schedule calls/day at a 7-day horizon vs 2,400/day
   per-flight. Airline-only batching was evaluated and REJECTED: an
   unfiltered airline query returns the carrier's entire global schedule.
-- [ ] **P2 — Demand-driven near windows.** Only attest days with live
-  purchase interest: frontend "warming" ping (e.g. `POST /api/sale-auth/warm`
-  on quote view) marks (flight, day) hot in Supabase; the authorizer near
-  window covers hot days only. Idle system → ~0 attestation calls. (This is
-  the surviving piece of the original 2026-07-20 demand-driven plan.)
+- [x] **P2 — Demand-driven near windows (done 2026-07-27, API side).**
+  `POST /api/sale-auth/warm` marks (flight, day) hot; with
+  `SALE_AUTH_DEMAND_MODE=true` the authorizer's near window attests hot
+  days only (48h prune, garbage-tolerant — marks intersect the route/day
+  grid). Default OFF. Remaining: the one-line frontend quote-view ping.
 - [ ] **P2 — Webhook floor.** With B in place, arrival alerts replace landing
   polls too: ~1–2 REST calls per insured flight lifetime (the T-2d ETA fetch,
   plus reconciliation passes).
@@ -133,6 +133,10 @@ The ladder to a fully automated governance:
   LIVE-verified against testnet. The `policies` event-ingest mirror
   (durable per-policy history via `ingest_cursors`) remains open as a P2
   analytics/audit item — the exposure SIGNAL no longer depends on it.
+  UPDATE later same day: SHIPPED — `event_ingest.ts` mirrors
+  InsuranceBought → policies and FlightSettled → settlements (cursor
+  resume via ingest_cursors), runs inside the hourly gov_exposure job;
+  live-verified over 118k real ledgers.
 - [x] **P1 — Absorb `route_agent` (done 2026-07-27).** route_agent is now a
   facts-only COLLECTOR: daily ML baseline → `pricing` signals (reconciler
   consumes as `anchorPremium`), Open-Meteo verdicts → route-scoped
@@ -155,9 +159,11 @@ The ladder to a fully automated governance:
   unreachable, or the table is EMPTY (unseeded bootstrap) — an all-disabled
   table attests nothing rather than falling back. DB-optional invariant
   preserved (E2E runs the file path).
-- [ ] **P2 — `gov_schedule_check`**: compare `routes.sched_*` (populated by
-  gov_onboard) against live /schedules → `schedule_drift` signals (retimed
-  → re-verify terms; dropped → disable). The last placeholder job.
+- [x] **P2 — `gov_schedule_check` (done 2026-07-27).** Daily 04:45; fills
+  sched_*/distance_mi when NULL (authorizer-aligned cache keys — warm
+  cache = zero extra calls) and emits schedule_drift signals (retimed ≥45m
+  → elevated, dropped → severe). Fail-safe: failed/partial pair fetches
+  are "couldn't verify", never "dropped" (learned live under quota).
 - [ ] **P2 — `signals.type` migration**: add `ops` (non-weather airport
   delays) and `pricing` (ML anchor) types.
 
@@ -249,20 +255,18 @@ barrier is engaged; ttl prune loops until nothing more ages out; and
 `invokeContract` retries once on txBadSeq (shared keeper key + overlapping
 schedules). Remaining:
 
-- [ ] **P2 — Distinguish simulation failure from submission failure** in
-  `soroban_client` errors, so run logs can tell "would never succeed"
-  (paused contract, auth) from "transient" — and jobs/monitors can react
-  differently.
-- [ ] **P2 — Expired-claim sweeper.** `flight_pool_manager.sweep_expired`
-  and `reconcile_settled_active_entry` are permissionless but have NO
-  automated caller: enumerate settled flights past `claim_expiry` (from
-  events or `get_active_flights_page` + `get_flight_config`) and sweep
-  them, so unclaimed payouts actually reach `RecoveredBalance` without a
-  manual run.
-- [ ] **P2 — Diagnostics consumer.** Nothing watches `MissingFlightData` /
-  `FlightConfigMissing` / `page_miss` events — surface them on the /admin
-  board so operators learn a restore/evict runbook is needed before the
-  active-void timeout does it the hard way.
+- [x] **P2 — Sim-vs-submit error split (done 2026-07-27).** invokeContract
+  errors carry [simulation] (would never succeed) vs [submission]
+  (transient) prefixes.
+- [x] **P2 — Expired-claim sweeper (done 2026-07-27).** ttl job sweeps
+  settled Delayed/Cancelled flights past claim_expiry — candidates from
+  the durable `settlements` event mirror (RPC retention ≪ claim window),
+  amounts verified on-chain via get_flight_config, contract-idempotent,
+  DB-optional (no DB → skip).
+- [x] **P2 — Diagnostics consumer (done 2026-07-27).** GET
+  /api/admin/diagnostics live-scans ~24h of oracle/controller/pool events
+  (ttl_miss, cfg_missing, voided, timed_out, page_miss, prune_miss,
+  evict_settled) — admin-gated, no storage needed.
 
 ## G. Contract-level items (only when justified)
 
@@ -272,9 +276,11 @@ schedules). Remaining:
   diverge from cancellation (partial payout, delay-at-final-destination).
   If added: append to `FlightStatus` — variant order is XDR-load-bearing —
   and fold into the next natural contract upgrade, never alone.
-- [ ] **P2 — Key-level `ExtendFootprintTTLOp` job** for idle Persistent
-  entries (`Route`, `ClaimableBalance`, `TravelerFlights`), enumerated from
-  events — the long-planned deeper TTL layer behind the daily `ttl_extender`.
+- [x] **P2 — Key-level `ExtendFootprintTTLOp` (done 2026-07-27).** ttl job
+  extends idle Persistent keys to ~120d in ≤20-key batches: governance
+  `Route(f,o,d)` rows (from the DB) + controller `TravelerFlights(buyer)`
+  (from the policies mirror). LIVE-verified: 202 route keys extended in 11
+  txs. ClaimableBalance keys remain (needs Credited-event ingest).
 
 ---
 
