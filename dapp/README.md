@@ -62,7 +62,13 @@ npm run preview           # serve the production build locally
 
 ## Serverless crons (Vercel)
 
-Eight cron jobs run as Vercel serverless functions inside this app, so a single Vercel deployment serves the frontend **and** keeps the protocol running. All jobs share one transaction pattern: simulate → assemble (with 40% resource-fee bump) → sign → send → poll.
+Eight cron jobs run as Vercel serverless functions inside this app, so a single Vercel deployment can serve the frontend **and** keep the protocol running. All jobs share one transaction pattern: simulate → assemble (with 40% resource-fee bump) → sign → send → poll.
+
+> **Current deploy state:** the checked-in `vercel.json` has the `crons` block
+> **removed** and `.vercelignore` excludes `api/` — the present deployment is
+> frontend-only while the backend rollout is WIP. To enable the backend, delete
+> `.vercelignore` and restore the crons block from the schedule table below
+> (`JOB_REGISTRY` in `api/_lib/governance/runs.ts` is the canonical list).
 
 ### Layout
 
@@ -80,11 +86,11 @@ api/
     authorize.ts  fetcher.ts  classify.ts  settle.ts  queue.ts  agent.ts  ttl.ts  gov-reconcile.ts  health.ts
   admin/              /admin console API (Supabase Auth identity + ADMIN_EMAILS allowlist)
   status/             public cron-run health backing /status
-vercel.json           cron schedules
+vercel.json           deploy config (crons block currently removed — see note above)
 tsconfig.api.json     type-checks api/ with node types (wired into tsc -b)
 ```
 
-### Schedules (vercel.json)
+### Schedules
 
 | Endpoint             | Schedule       | Job                                             |
 | -------------------- | -------------- | ----------------------------------------------- |
@@ -133,12 +139,15 @@ npm run whitelist:routes                 # list missing + enable/disable per fil
 npm run whitelist:routes -- --sync-terms # also force file terms onto active routes
 ```
 
-Without an `AEROAPI_KEY`, everything still runs safely: the four contract-only
+### Running without an AeroAPI key
+
+Without an `AEROAPI_KEY`, everything still runs safely: the contract-only
 jobs are fully functional, and the fetcher fails soft — API errors are logged,
 each flight is recorded as `skipped: "No AeroAPI data"`, nothing bad is written
 on-chain, and it retries next cycle. For a keyless demo, point
-`AEROAPI_BASE_URL` at a hosted `tools/mock-aeroapi` instance instead (scripted
-scenarios, no key needed).
+`AEROAPI_BASE_URL` at a `tools/mock-aeroapi` instance instead (scripted
+scenarios, no key needed) — hosted, or locally at
+`AEROAPI_BASE_URL=http://localhost:3001`.
 
 ### Future improvement: AeroAPI push alerts (webhook)
 
@@ -188,5 +197,6 @@ npx tsx -e '
 '
 ```
 
-To exercise the fetcher without spending AeroAPI credits, start the fixture server in `tools/mock-aeroapi` and set `AEROAPI_BASE_URL=http://localhost:3001`.
+To exercise the fetcher without spending AeroAPI credits, see
+[Running without an AeroAPI key](#running-without-an-aeroapi-key).
 
