@@ -1987,6 +1987,60 @@ ON-CHAIN              GovernanceModule  (+ owner term-limits backstop)
 OVERSIGHT             /admin (declare signals, pin, direct ops) | /status (public)
 ```
 
+### The autonomy ladder (L1 → L3)
+
+Governance is designed to become **fully automated** in staged levels — each
+level keeps the same inversion (facts in, one audited actor out) and adds
+capability, never new trust. The task-level plan lives in
+[TODO.md §D](TODO.md); the architecture-level intent:
+
+**L1 — rules on weather (today).** The reconciler acts on airport-delay
+signals (`gov_signals`) and admin-declared facts. Humans still do route
+onboarding, base terms, non-weather signals, and signal clearing. The
+legacy `route_agent` runs in parallel and is slated for absorption — it is
+the only un-audited actor and must not survive into L2.
+
+**L2 — the complete deterministic pipeline (no LLM).** Four additions close
+every routine human loop:
+- `gov_onboard` — route discovery output flows into the DB as `candidate`
+  rows (populating the canonical schedule columns), gets auto-scored (ML
+  `p_delay` within rails, schedule stability), and is auto-promoted +
+  whitelisted through GovSubmitter under caps (max N routes/day, default
+  terms only). This also closes today's *invisibility gap*: routes
+  whitelisted by script but absent from the DB are invisible to the
+  reconciler.
+- **Exposure collector** — `InsuranceBought` events ingested from RPC into
+  `policies` (resume via `ingest_cursors`), projected as `exposure`
+  signals when a route/airport concentration crosses thresholds.
+- `gov_schedule_check` — published-schedule drift vs the stored canonical
+  schedule → `schedule_drift` signals.
+- **Fleet-level guardrails** — a mass-disable circuit breaker (beyond
+  per-route hysteresis), a runtime freeze flag (kill switch without a
+  redeploy), and disable/enable flap damping.
+After L2 the only human actions left are appetite changes (rails, defaults,
+term limits — owner), emergencies (pause, pins), and — if propose-only mode
+is chosen — approving onboarding candidates.
+
+**L3 — the agentic layer.** An LLM **analyst agent** joins as *just another
+collector*: it reads signals, exposure, run health, and open-web context
+(storms, geopolitics, airline disruptions) and writes ONLY schema-validated
+facts — `signals` rows with rationale in the payload, candidate-route
+annotations. It holds no keys and never calls the chain; the reconciler
+remains the sole actor. A read-only **auditor agent** reviews the actions
+log for anomalies (premium oscillation, over-pausing) and reports to the
+admin console.
+
+**Why full autonomy is safe here — three nested cages:**
+
+```
+on-chain     term limits, payoff ratio, gov key is admin-not-owner, pausable
+  └ rules    rails clamps, hysteresis, 1-change/day, fleet breaker, pins win
+     └ agent facts only, JSON-schema validated, per-run caps, fully logged
+```
+
+The worst outcome of a wrong automated judgment at any level is a bounded
+premium tweak or an unnecessary pause — never a payout, never insolvency.
+
 ---
 
 ## Data Flow
