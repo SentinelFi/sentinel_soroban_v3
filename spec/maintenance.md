@@ -16,10 +16,16 @@ Both are free, no account, no API quota.
 ## Retraining runbook (every ~6 months)
 
 1. **Download** the newest per-flight months (Marketing Carrier On-Time
-   Performance). Required columns (see `usecols` in
-   `agent/training/train.py`): `MONTH`, `DAY_OF_MONTH`, `DAY_OF_WEEK`,
-   `OP_UNIQUE_CARRIER`, `ORIGIN`, `DEST`, `CRS_DEP_TIME`, `DISTANCE`,
-   `ARR_DELAY`, `CANCELLED`, `DIVERTED`. A stratified ~1% sample by
+   Performance). Minimal columns — 11 (or 9 with `FlightDate` replacing
+   the three date parts). The field-picker download uses CamelCase names;
+   older extracts use SNAKE_CASE (what `train.py`'s `usecols` currently
+   expects — add the header mapping if using the CamelCase form):
+   | Role | CamelCase (field picker) | SNAKE_CASE (train.py today) |
+   |---|---|---|
+   | features | `Month`, `DayofMonth`, `DayOfWeek`, `Operating_Airline`, `Origin`, `Dest`, `CRSDepTime`, `Distance` | `MONTH`, `DAY_OF_MONTH`, `DAY_OF_WEEK`, `OP_UNIQUE_CARRIER`, `ORIGIN`, `DEST`, `CRS_DEP_TIME`, `DISTANCE` |
+   | labels | `ArrDelay`, `Cancelled`, `Diverted` | `ARR_DELAY`, `CANCELLED`, `DIVERTED` |
+   Optional hygiene: `Duplicate` (filter `Y` rows). Skip Div1-5, delay-cause
+   minutes, taxi/wheels, IDs — post-outcome leakage or redundant. A stratified ~1% sample by
    (month, carrier) keeps the file manageable while preserving seasonal
    trends and small-carrier share (~150k rows covers 2-3 years).
    Weather enrichment (Meteostat) is optional — the current model does not
