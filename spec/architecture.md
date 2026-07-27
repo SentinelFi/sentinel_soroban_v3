@@ -2155,29 +2155,30 @@ are the ones not covered by that story.
 
 ```
 1. DISCOVER   npm run discover:routes           (dapp/scripts/discover_routes.ts)
-              One origin/destination-filtered /schedules call per directed
+   + ADD      One origin/destination-filtered /schedules call per directed
               city pair per sample day (default: a Tuesday + the following
               Saturday) — ~60 AeroAPI calls cover the NYC <-> SEA/SFO/LAX/
               ORD/MIA matrix and yield 200+ operating-carrier routes.
-              Skips routes already in the routes file; drops multi-leg
-              flight numbers (one flight_id maps to ONE origin/dest on-chain
-              — a second pair would be rejected as FlightIdAlreadyMapped).
-              Writes config/routes.discovered.json.
+              APPENDS the new routes directly into the governance-consumed
+              JSON (config/routes.testnet.json), preserving everything else
+              in the file. Idempotent: routes already in the file are
+              skipped, multi-leg flight numbers are dropped (one flight_id
+              maps to ONE origin/dest on-chain — a second pair would be
+              rejected as FlightIdAlreadyMapped); a re-run writes nothing.
+              Review the append with `git diff` (--dry previews).
 
-2. REVIEW     A human merges the discovered entries into
-              config/routes.testnet.json (the human source of truth:
-              term overrides, rails, enabled flags). Deliberately manual.
-
-3. WHITELIST  npm run whitelist:routes           (gov-admin key)
+2. WHITELIST  npm run whitelist:routes           (gov-admin key — separate step)
               Diffs each file entry against on-chain route_status first:
                 enabled + Unknown   -> whitelist_route(file overrides)
                 enabled + Disabled  -> enable_route
                 enabled + Active    -> noop            <- idempotent
                 disabled + Active   -> disable_route
+              Running it twice = "0 on-chain change(s)".
 
-4. ATTEST     The sale_authorizer picks the new routes up on its next run
-              (the flight list is derived from the routes file) and starts
-              opening sale windows — nothing else to configure.
+3. ATTEST     The sale_authorizer picks the new routes up on its next run
+   + MANAGE   and starts opening sale windows; gov_onboard's sync phase
+              mirrors the file into the DB routes table so the reconciler
+              manages every listed route. Nothing else to configure.
 ```
 
 Re-running any step against already-listed routes is harmless: discovery

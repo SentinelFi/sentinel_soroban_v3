@@ -16,17 +16,28 @@
  *
  * Usage (from dapp/):
  *   npx tsx scripts/discover_routes.ts                 # defaults below
- *   npx tsx scripts/discover_routes.ts --date 2026-08-04 --max 200 \
- *       --out config/routes.discovered.json
+ *   npx tsx scripts/discover_routes.ts --date 2026-08-04 --max 200
+ *   npx tsx scripts/discover_routes.ts --dry           # print, write nothing
  *   AEROAPI_BASE_URL=http://localhost:3001 npx tsx scripts/discover_routes.ts
  *
- * Output: a JSON file with RouteEntry-shaped rows (flight_id, carrier,
- * origin, destination, enabled, overrides:null) ready to merge into
- * config/routes.testnet.json's "routes" array — merging is deliberately a
- * human step (the routes file is the human source of truth), then run
- * `npm run whitelist:routes` to push the whitelist on-chain.
+ * TWO-STEP GOVERNANCE INTAKE — this script is step 1 of 2, and each step
+ * is idempotent (run either twice, nothing double-happens):
+ *
+ *   1. DISCOVER+ADD (this script): appends newly found routes into the
+ *      governance-consumed JSON (config/routes.testnet.json, or
+ *      ROUTES_CONFIG_PATH) as enabled RouteEntry rows. Routes already in
+ *      the file are skipped, multi-leg idents the contract would reject
+ *      are dropped — a re-run finds everything already present and writes
+ *      nothing. The file is in git: review the append with `git diff`
+ *      before step 2.
+ *   2. WHITELIST (`npm run whitelist:routes`): pushes the file on-chain.
+ *      Diffs against on-chain route_status first (Active → noop), and the
+ *      contract treats a same-route re-whitelist as a no-op refresh.
+ *
+ * (gov_onboard's DB sync additionally picks the new file entries up as
+ * reconciler-managed rows — 'candidate' until whitelisted, then 'active'.)
  */
-import { writeFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { loadDotEnv } from "./env";
 loadDotEnv(); // dapp/.env for local runs; real env vars always win
 import { AeroApiClient } from "../api/_lib/aeroapi_client";
@@ -167,7 +178,10 @@ async function main(): Promise<void> {
   };
 
   const max = Number(getArg("max") ?? 200);
-  const outFile = getArg("out") ?? "config/routes.discovered.json";
+  const dry = args.includes("--dry");
+  // The governance-consumed routes JSON — the same file whitelist:routes
+  // and gov_onboard read. ROUTES_CONFIG_PATH overrides (tests/networks).
+  const routesFile = process.env.ROUTES_CONFIG_PATH ?? "config/routes.testnet.json";
   // Sample a Tuesday + the following Saturday (~1-2 weeks out: inside
   // /schedules' 1-year visibility, far enough out to be a normal week).
   const baseDate = getArg("date");
@@ -261,12 +275,29 @@ async function main(): Promise<void> {
     notes: `discovered ${sampleDays.join("+")} (days_seen=${r.days_seen})`,
   }));
 
-  writeFileSync(outFile, JSON.stringify(entries, null, 2) + "\n");
+  if (entries.length === 0) {
+    console.log(`\n[discover] Nothing new to add — ${routesFile} already covers everything found (idempotent re-run).`);
+    return;
+  }
+
+  if (dry) {
+    console.log(`\n[discover] --dry: would append ${entries.length} route(s) to ${routesFile}:`);
+    for (const e of entries) console.log(`  ${e.flight_id} ${e.origin}->${e.destination}`);
+    return;
+  }
+
+  // Step 1 of 2: APPEND into the governance-consumed JSON, preserving
+  // everything else in the file (defaults, rails, horizon, existing
+  // routes, key order). Whitelisting is deliberately the separate step 2.
+  const raw = JSON.parse(readFileSync(routesFile, "utf8")) as { routes: RouteEntry[] };
+  raw.routes = [...raw.routes, ...entries];
+  writeFileSync(routesFile, JSON.stringify(raw, null, 2) + "\n");
   console.log(
-    `\n[discover] Wrote ${entries.length} route entries to ${outFile}.\n` +
-      `Next steps (deliberate human review):\n` +
-      `  1. Review + merge into config/routes.testnet.json "routes" array\n` +
-      `  2. npm run whitelist:routes   # push the whitelist on-chain`
+    `\n[discover] Appended ${entries.length} route entrie(s) to ${routesFile} ` +
+      `(${raw.routes.length} total).\n` +
+      `Next step (separate + idempotent):\n` +
+      `  git diff ${routesFile}        # review the append\n` +
+      `  npm run whitelist:routes      # push on-chain (Active routes no-op)`
   );
 }
 

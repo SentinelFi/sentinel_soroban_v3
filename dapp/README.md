@@ -106,14 +106,25 @@ npm run discover:routes -- --max 200 --date 2026-08-04
 Finds insurable routes with the minimum API spend: one origin/destination-
 filtered `/schedules` call per directed city pair per sample day (default: a
 Tuesday + the following Saturday) — **~60 calls for the whole 30-pair matrix,
-yielding 200+ routes**. Writes `config/routes.discovered.json`; review, merge
-into `routes.testnet.json`, then `npm run whitelist:routes`.
+yielding 200+ routes**.
 
-The whole loop is **idempotent** — re-run it any time: discovery skips routes
-already in the routes file (and drops multi-leg flight numbers the contract
-would reject), the whitelist script diffs on-chain state first (`Active` →
-noop), and the contract itself treats re-whitelisting the same route as a
-no-op refresh. Internal ops tool — deliberately not part of the e2e suite.
+**Two separate, individually idempotent steps** against one governance-consumed
+JSON (`config/routes.testnet.json`):
+
+1. **Discover + add** — the script APPENDS new routes directly into the file
+   (everything else in it is preserved). Already-present routes are skipped and
+   multi-leg flight numbers the contract would reject are dropped, so a re-run
+   finds everything covered and writes nothing. Review the append with
+   `git diff` (use `--dry` to preview without writing).
+2. **Whitelist** — `npm run whitelist:routes` pushes the file on-chain. It
+   diffs against live `route_status` first (`Active` → noop) and the contract
+   treats a same-route re-whitelist as a no-op refresh — running it twice
+   changes nothing.
+
+(`gov_onboard`'s sync phase then mirrors the file into the governance DB so the
+reconciler manages every listed route.) Internal ops tool — deliberately not
+part of the e2e suite; both steps are hand-verified idempotent against the mock
+and live testnet.
 
 ## Serverless crons (Vercel)
 
