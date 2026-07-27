@@ -1549,6 +1549,13 @@ data + FlightPoolManager terms). Settlement is a write-heavy operation (moves mo
 them allows the classification to run less frequently (1 hour) while settlement runs more
 frequently (5 minutes) to process the queue quickly.
 
+Pre-flight skip: when the oracle active set is empty
+(`get_active_flight_count() == 0`) there is nothing to classify, void, or
+diagnose — the run submits no transaction. With any flights listed the
+hourly sweep always runs, because it also carries the 14-day timeout voids
+and `ttl_miss` diagnostics, which need the pass even when nothing is
+Landed/Cancelled yet.
+
 **Targeted "just-in-time" fast path — the primary latency route.** The hourly and
 5-minute sweeps are the *backstop*, not the main path. Whichever job writes an
 outcome doesn't wait for the next sweep: the moment `fetcher`/`sale_authorizer`
@@ -1611,7 +1618,14 @@ The cron drives this in a drain loop, not as a single submission: while
 `oracle.get_pending_outcomes() > 0` it alternates `classify_flights` and
 `execute_settlements` passes (bounded per run, stopping early when passes make no
 progress), because the vault blocks every LP entry/exit until the pending count
-reaches zero. When nothing is pending the run submits no transaction at all.
+reaches zero. When nothing is pending the run submits no transaction at all
+(the pre-flight check is a free simulation read — the on-chain empty path
+still writes TTL extensions, so a blind submit is a real fee). If
+`execute_settlements` fails (a window exceeding per-tx resource budgets),
+the run falls back to `execute_settlements_bounded` with windows 3 then 1 —
+the contract's escape hatch, now automated — and two no-progress passes end
+the run as FAILED so the stall surfaces on the jobs board instead of
+silently burning fees.
 
 ### Cron #3b — QueueMaintainer (Keeper, every 5 minutes)
 
@@ -1628,6 +1642,13 @@ QueueMaintainer -> signs + submits Soroban tx:
 Same authorized_keeper as #3; separate keeper job (or the same one looping both)
 because the two should not share resource budget.
 
+Pre-flight skips (free simulation reads, no tx submitted): while the vault's
+settlement barrier is engaged (`get_pending_outcomes() > 0`) the on-chain
+queue processors early-return anyway, so the run skips — clearing the
+barrier is the settler's job; and when both LP queues are empty AND today's
+share-price snapshot already exists (`get_snapshot_price(today) > 0`) there
+is nothing the call could do, so it skips too.
+
 ### Cron #4 — TTL Extender (instance `extend_ttl` + prune, every 24 hours)
 
 A permissionless cron that keeps the contract instances (and everything in their
@@ -1640,9 +1661,12 @@ TTL Extender
     |       (instance + code TTL; covers Routes, WithdrawalQueue,
     |        active-set count, and all other Instance state)
     |
-    +-> calls OracleAggregator.prune_settled()
-            (removes Settled flights past the 7-day retention window
-             from the active set)
+    +-> calls OracleAggregator.prune_settled() in a drain loop
+            (each call evicts at most MAX_PRUNE_BATCH = 60 slots from a
+             rotating cursor over the whole active set; the job repeats the
+             call while get_active_flight_count keeps dropping, so each
+             daily run fully clears whatever has aged past the 7-day
+             retention window — a backlog spike can't outrun one pass/day)
 ```
 
 Per-flight Persistent entries (`FlightConfig`, `FlightData`) are self-extending: their

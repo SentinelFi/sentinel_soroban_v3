@@ -151,11 +151,11 @@ tsconfig.api.json     type-checks api/ with node types (wired into tsc -b)
 | -------------------- | -------------- | ----------------------------------------------- |
 | `/api/cron/authorize`| `30 */2 * * *` | Sale authorizer (cron #0) — attests sale windows for the enabled flights in `config/routes.testnet.json`. Days 1–2 from live `/flights` data (cancellation tombstones need a corroborating status, not just the `cancelled` flag); days 3+ from published `/schedules` in ≤20-day chunks (~2 + ceil((horizon−2)/20) API calls per flight per run instead of one per day). Fail closed throughout |
 | `/api/cron/fetcher`  | `0 */2 * * *`  | AeroAPI → oracle (ETA / landed / cancelled), phase-gated: ETA fetched at T-2d (AeroAPI's future-visibility limit), then ZERO calls until `FETCHER_WATCH_SECS` (default 6h) before the recorded arrival; corroborated diversions pay as cancellations (policy), uncorroborated cancelled/diverted flags are never attested; outcomes drive targeted classify+settle immediately |
-| `/api/cron/classify` | `0 * * * *`    | `Controller.classify_flights`                   |
-| `/api/cron/settle`   | `*/5 * * * *`  | `Controller.execute_settlements`                |
-| `/api/cron/queue`    | `2-59/5 * * * *` | `Controller.run_queue_maintenance` (off-tempo from settle to avoid keeper sequence-number contention) |
+| `/api/cron/classify` | `0 * * * *`    | `Controller.classify_flights` — skips (no tx) when the active set is empty |
+| `/api/cron/settle`   | `*/5 * * * *`  | Drains pending outcomes: skips (no tx) when `get_pending_outcomes()==0`, else loops classify+settle passes until zero/stall, falling back to `execute_settlements_bounded` (3→1) on resource-budget failures |
+| `/api/cron/queue`    | `2-59/5 * * * *` | `Controller.run_queue_maintenance` — skips (no tx) while the settlement barrier is engaged or when queues are empty + today's snapshot exists; off-tempo from settle (txBadSeq retried once in the client) |
 | `/api/cron/agent`    | `0 6 * * *`    | Route agent — ML baseline premium (Python service) + Open-Meteo weather rules (elevated → premium × multiplier, severe → disable) + 24h re-evaluation of disabled routes; all writes clamped to the routes-file rails and the on-chain term limits |
-| `/api/cron/ttl`      | `0 0 * * *`    | `extend_ttl` on all 5 contracts + `prune_settled` |
+| `/api/cron/ttl`      | `0 0 * * *`    | `extend_ttl` on all 5 contracts + `prune_settled` in a drain loop (repeats while the active count drops) |
 | `/api/cron/gov-signals` | `5 * * * *` | Airport-delay collector — ONE AeroAPI `/airports/delays` call covers the whole network; projects red→`severe` / yellow→`elevated` signals (origin+dest scoped, self-expiring) into the governance DB for the airports enabled routes touch. Facts only, no chain writes; runs 5 min before the reconciler |
 | `/api/cron/gov-reconcile` | `10 * * * *` | Governance reconciler — recomputes each managed route's desired state from DB signals (admin pins win, pauses expand, multipliers stack, hysteresis damps) and submits the minimal on-chain diff; `GOV_DRY_RUN=true` logs decisions without submitting |
 

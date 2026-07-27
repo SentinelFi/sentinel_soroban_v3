@@ -83,33 +83,96 @@ outcome-recorded days. Remaining, in value order:
   polls too: ~1–2 REST calls per insured flight lifetime (the T-2d ETA fetch,
   plus reconciliation passes).
 
-## D. Governance simplification (audit results)
+## D. Governance: full automation (2026-07-27 audit → the autonomy ladder)
 
-- [ ] **P1 — Absorb `route_agent` into the reconciler** (the planned Phase 4).
-  ML pricing becomes a baseline/anchor input to `decideReconcileAction`
-  (e.g. a `pricing` signal or a `routes.base_premium_units` updater with the
-  same rails), weather rules already live in signals. Then DELETE
-  `_lib/jobs/route_agent.ts`, `_lib/route_rules.ts`, and the legacy
-  hand-rolled ScVal helpers in `_lib/governance.ts` — one engine, one audit
-  path (GovSubmitter), one daily→hourly cadence.
-  - [ ] While absorbing: fix the Render service schema drift — `POST /price`
-    on the deployed build requires `dep_time_hhmm` + `distance_mi`, which
-    `agent_client.ts` doesn't send (422 → silent file-terms fallback).
-- [ ] **P1 — Consolidate route truth: DB as canonical.** Today three sources:
-  `config/routes.testnet.json` (authorizer + route_agent + whitelist script),
-  Supabase `routes` (reconciler + admin UI), on-chain whitelist (the actual
-  gate). Not a safety hole — `route_status` wins at purchase — but an
-  admin/reconciler disable today does not stop *attestation*. Action: teach
-  the authorizer to read enabled routes from the DB (routes file remains the
-  bootstrap seed via `whitelist:routes`).
-- [ ] **P2 — `signals.type` enum: add an `ops` type** (migration) so
-  non-weather airport-delay categories (traffic, equipment) stop being stored
-  as `type: "weather"` with the true category in payload. Purely cosmetic
-  today (severity is what actuates).
-- [ ] **P2 — Remaining placeholder jobs**: `gov_onboard` (candidate-route
-  onboarding flow), `gov_schedule_check` (schedule-drift detector — compare
-  `routes.sched_*` columns against /schedules; emits `schedule_drift`
-  signals). Note `gov_signals` shipped 2026-07-27.
+Audit verdict: only **weather** signals have an automated writer today;
+geopolitical/exposure/schedule_drift have none. The exposure subsystem
+(`policies` + `ingest_cursors`) is **100% unimplemented** (DDL + a dead
+`PolicyRow` type, zero collector code). Route onboarding, DB-route insertion,
+ML pricing, signal declaration/clearing, pins, lifecycle, and remove are all
+human-only. The DB `routes` table and `config/routes.testnet.json` are never
+synced by code — **routes whitelisted via the file/script are invisible to
+the reconciler**. And `route_agent` is an UN-AUDITED second automation actor
+(no actions_log, no pause_events, not even gated by GOV_DRY_RUN).
+
+The ladder to a fully automated governance:
+
+### L2 — complete the deterministic pipeline (no LLM needed)
+
+- [ ] **P1 — URGENT mitigation: gate or disable `route_agent`.** It mutates
+  the chain daily with no audit trail and ignores GOV_DRY_RUN (it loads
+  `Config`, not `GovConfig`). Until absorbed: make it honor GOV_DRY_RUN and
+  write actions_log, or drop it from the schedule.
+- [ ] **P1 — `gov_onboard`: automated route onboarding, closing the
+  invisibility gap.** One pipeline: discovery output → INSERT DB `routes`
+  rows as `status='candidate'` (with sched_* columns filled from the same
+  /schedules data — feeding gov_schedule_check for free) → auto-score
+  (ML `p_delay` within rails, schedule stability from days_seen) →
+  auto-promote to `active` + `whitelist_route` via GovSubmitter, capped
+  (max N new routes/day, default terms only, on-chain term limits as
+  backstop). Config flag chooses auto-promote vs propose-only (candidates
+  wait for admin approval). This one job removes BOTH remaining humans-in-
+  the-loop for onboarding AND populates the DB so the reconciler manages
+  every route.
+- [ ] **P1 — Exposure collector (the missing subsystem).** RPC event ingest
+  of `InsuranceBought` → `policies` table (resume via `ingest_cursors`) →
+  per-route/per-airport exposure vs vault free capital → `exposure` signals
+  (elevated → premium multiplier; severe → pause new sales on that route).
+  Schema is already in place; only the code is missing.
+- [ ] **P1 — Absorb `route_agent` into the reconciler** (then DELETE it +
+  `_lib/route_rules.ts` + legacy `_lib/governance.ts` helpers). `rules.ts`
+  needs one new input: an `anchorPremium` (ML baseline) on `ReconcileInput`,
+  fed by `AgentClient` in `reconciler.ts` (or a daily `pricing` signal);
+  multipliers/clamps/hysteresis already exist. Also fix the Render `/price`
+  schema drift (`dep_time_hhmm` + `distance_mi` missing → 422 → silent
+  fallback).
+- [ ] **P1 — Fleet-level guardrails for full autonomy.** Per-route rails are
+  solid (clamps, 1-change/day, 2h hysteresis, pins, terms-validation,
+  dry-run) but: (a) NO cap on mass-disable — one broad severe signal can
+  pause the whole fleet in a tick; add max-pauses-per-run / max-%-of-fleet
+  circuit breaker that flags instead of acting beyond it; (b) GOV_DRY_RUN
+  is the only kill switch and needs a redeploy — add a runtime freeze flag
+  (DB row the reconciler checks, admin-toggleable, absent-DB = frozen);
+  (c) disable/enable flap damping (daily transition cap like premiums have).
+- [ ] **P1 — Consolidate route truth: DB as canonical** once gov_onboard
+  populates it. Authorizer reads enabled routes from the DB (file = seed;
+  DB unreachable → fall back to file, per the DB-optional invariant);
+  admin/reconciler disables then also stop *attestation*, not just purchase.
+- [ ] **P2 — `gov_schedule_check`**: compare `routes.sched_*` (populated by
+  gov_onboard) against live /schedules → `schedule_drift` signals (retimed
+  → re-verify terms; dropped → disable). The last placeholder job.
+- [ ] **P2 — `signals.type` migration**: add `ops` (non-weather airport
+  delays) and `pricing` (ML anchor) types.
+
+After L2, the ONLY human actions left in governance: appetite changes
+(rails/defaults/term limits — owner), emergencies (pause, pins), and
+approving candidates if propose-only mode is chosen. Everything else —
+listing, pricing, pausing, re-enabling, exposure management — is automated
+facts → rules → audited submitter.
+
+### L3 — agentic layer (LLM judgment on top of the rails)
+
+- [ ] **P2 — Analyst agent as "just another collector".** An LLM agent
+  (Claude via API, cron or anomaly-triggered) that reads active signals,
+  exposure metrics, cron-run health, candidate routes, and open-web
+  context (storm forecasts, geopolitical news, airline disruptions) — and
+  WRITES ONLY FACTS: schema-validated `signals` rows (severity + rationale
+  in payload) and candidate-route annotations. It never holds keys, never
+  calls the chain, and cannot exceed the reconciler's rails — the same
+  facts-not-actions inversion the admin console uses, extended to a model.
+  Guardrails: JSON-schema-validated output, per-run caps (max K signals),
+  every proposal logged with reasoning, kill = drop its cron; admin pins
+  still beat everything it does.
+- [ ] **P2 — Auditor agent (read-only).** Daily review of actions_log +
+  premium_adjustments + outcomes: flags anomalies (premium oscillation,
+  routes disabled longer than their signals justify, revenue loss from
+  over-pausing) to the admin console. Never writes anything but reports.
+- Safety framing (why full autonomy is acceptable): three nested cages —
+  on-chain (term limits, payoff ratio, admin-key-not-owner, pausable) →
+  rules layer (rails clamps, hysteresis, daily caps, fleet breaker, pins)
+  → agent layer (facts only, schema-validated, capped, auditable). The
+  blast radius of a wrong agent judgment is a bounded premium tweak or an
+  unnecessary pause — never insolvency, never a payout.
 
 ## E. Keeper bots: open-sourcing + operator incentives
 
@@ -157,7 +220,35 @@ attested — so opening them costs no trust. `npm run bot -- <name>`
     TEE/Acurast backend, unchanged contracts); governance stays the
     admin-keyed reconciler pipeline.
 
-## F. Contract-level items (only when justified)
+## F. Keeper hardening (2026-07-27 audit — mostly fixed same day)
+
+Audit found the keeper tier was a set of blind single-shot triggers. Fixed
+2026-07-27 (see Done): pre-flight reads so settler/queue/classifier submit
+NO transaction when there is nothing to do (the on-chain empty path still
+writes TTL extensions — blind 5-minute submits were pure fee/sequence
+waste); settler drain loop (classify+settle passes until pending outcomes
+hit zero, with `execute_settlements_bounded` 10→3→1 fallback so an
+oversized batch can never stall settlement); queue skips while the vault
+barrier is engaged; ttl prune loops until nothing more ages out; and
+`invokeContract` retries once on txBadSeq (shared keeper key + overlapping
+schedules). Remaining:
+
+- [ ] **P2 — Distinguish simulation failure from submission failure** in
+  `soroban_client` errors, so run logs can tell "would never succeed"
+  (paused contract, auth) from "transient" — and jobs/monitors can react
+  differently.
+- [ ] **P2 — Expired-claim sweeper.** `flight_pool_manager.sweep_expired`
+  and `reconcile_settled_active_entry` are permissionless but have NO
+  automated caller: enumerate settled flights past `claim_expiry` (from
+  events or `get_active_flights_page` + `get_flight_config`) and sweep
+  them, so unclaimed payouts actually reach `RecoveredBalance` without a
+  manual run.
+- [ ] **P2 — Diagnostics consumer.** Nothing watches `MissingFlightData` /
+  `FlightConfigMissing` / `page_miss` events — surface them on the /admin
+  board so operators learn a restore/evict runbook is needed before the
+  active-void timeout does it the hard way.
+
+## G. Contract-level items (only when justified)
 
 - [ ] **P2 — `Diverted` outcome variant.** Policy today: diverted pays as
   cancellation via `set_cancelled` (off-chain mapping, corroborated). A
@@ -188,3 +279,8 @@ section rather than deleting them.*
   the contract would reject; internal tool, not e2e-tested); fixed silent
   /schedules pagination truncation (max_pages) that could close valid
   far-window days.
+- 2026-07-27 — Keeper hardening (§G): pre-flight skip reads in settler /
+  queue / classifier (no tx when nothing to do — was 288 blind fee-bearing
+  submits/day/job), settler drain loop with bounded-window (10→3→1)
+  fallback, barrier-aware queue skip, ttl prune drain loop, txBadSeq retry
+  in soroban_client, u32 helper.
