@@ -19,12 +19,19 @@ blocking · **P2** = when scale demands it.
   the crons block from `JOB_REGISTRY` (`api/_lib/governance/runs.ts`), set the
   server env vars (four signer keys, `AEROAPI_KEY`, `GOVERNANCE_DB_URL`,
   `CRON_SECRET`, `ADMIN_EMAILS`, `AGENT_BASE_URL`).
-- [ ] **P0 — Governance unblock.** `GovernanceModule.add_admin(gov-admin)` on
-  the 07-18 deployment still needs the owner key (held by JS). Until it lands,
-  keep `GOV_DRY_RUN=true`. Then flip dry-run off deliberately.
-- [ ] **P0 — Seed routes on the 07-18 deployment.** `npm run whitelist:routes`
-  (the deployment is live but unseeded; the frontend + crons already point at
-  it).
+- [x] **P0 — Governance unblock (done 2026-07-27).** Owner
+  (`GCEODBNV…E6KD`) called `add_admin(sentinel-governor GC2QDXUD…)` on the
+  07-18 GovernanceModule (`CANSHOFU…`); `is_admin` now true, `GovAdminAdded`
+  emitted. The reconciler can now submit for real — flip `GOV_DRY_RUN=false`
+  in Vercel env once the backend is deployed (A/#1) and route_agent is gated
+  (done) so it can't act ungoverned in prod.
+- [x] **P0 — Seed routes (done 2026-07-27).** `npm run whitelist:routes`
+  whitelisted AA100 (JFK→LAX, 45/450) and UA456 (ORD→SFO, 50/500) on-chain;
+  both report `Active`. DL789 stays disabled (file `enabled:false`).
+  NOTE: these are the 3 file routes — the ~200-route discovery run needs an
+  AeroAPI key (C is not blocking). And they are NOT yet in the DB `routes`
+  table, so the reconciler can't see them yet — the invisibility gap (D:
+  gov_onboard / DB-as-canonical) until closed.
 - [ ] **P1 — Pending-outcome age monitoring.** Partially done 2026-07-27:
   `/api/cron/health` now returns `pendingOutcomes` + `barrierEngaged`
   (best-effort read, null-safe). Remaining: first-seen timestamp / age
