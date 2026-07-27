@@ -15,23 +15,24 @@ Both are free, no account, no API quota.
 
 ## Retraining runbook (every ~6 months)
 
-1. **Download** the newest per-flight months (Marketing Carrier On-Time
-   Performance). Minimal columns — 11 (or 9 with `FlightDate` replacing
-   the three date parts). The field-picker download uses CamelCase names;
-   older extracts use SNAKE_CASE (what `train.py`'s `usecols` currently
-   expects — add the header mapping if using the CamelCase form):
-   | Role | CamelCase (field picker) | SNAKE_CASE (train.py today) |
-   |---|---|---|
-   | features | `Month`, `DayofMonth`, `DayOfWeek`, `Operating_Airline`, `Origin`, `Dest`, `CRSDepTime`, `Distance` | `MONTH`, `DAY_OF_MONTH`, `DAY_OF_WEEK`, `OP_UNIQUE_CARRIER`, `ORIGIN`, `DEST`, `CRS_DEP_TIME`, `DISTANCE` |
-   | labels | `ArrDelay`, `Cancelled`, `Diverted` | `ARR_DELAY`, `CANCELLED`, `DIVERTED` |
-   Optional hygiene: `Duplicate` (filter `Y` rows). Skip Div1-5, delay-cause
-   minutes, taxi/wheels, IDs — post-outcome leakage or redundant. A stratified ~1% sample by
-   (month, carrier) keeps the file manageable while preserving seasonal
-   trends and small-carrier share (~150k rows covers 2-3 years).
-   Weather enrichment (Meteostat) is optional — the current model does not
-   use the weather columns (the `/price` request carries no forecast yet).
-2. **Drop** the CSV at `agent/data/delay_data.csv` (gitignored).
-3. **Smoke-test the pipeline on a small sample FIRST** (the standing rule):
+1. **Fetch + collate — fully automated, no manual downloads.**
+   `agent/training/fetch_and_prepare.py` pulls the free prezipped
+   monthlies straight from transtats PREZIP and writes the collated
+   minimal-schema CSV to `agent/data/delay_data.csv` (gitignored):
+   ```sh
+   cd agent && python -m training.fetch_and_prepare --end 2027-01 --months 24
+   ```
+   Set `--end` to the latest available month (BTS lags ~2 months). Each
+   month prints a coverage line — rows + covered-event rate, normally
+   ~2.5%; a weird rate or a FAILED line means re-run that month (the
+   script continues past failures and lists them at the end). Kept
+   columns (CamelCase): `Month`, `DayofMonth`, `DayOfWeek`,
+   `Operating_Airline`, `Origin`, `Dest`, `CRSDepTime`, `Distance`
+   (features) + `ArrDelay`, `Cancelled`, `Diverted` (labels) +
+   `Duplicate` (hygiene — the trainer drops `Y` rows). Everything else in
+   the BTS table (Div1-5, delay-cause minutes, taxi/wheels, IDs) is
+   post-outcome leakage or redundant and never touches disk.
+2. **Smoke-test the pipeline on a small sample FIRST** (the standing rule):
    cut ~25 stratified rows covering every outcome class (on-time,
    arr≥180, cancelled, diverted, null-ARR_DELAY) and run
    `python -m training.train --data <sample.csv>` — under 1,000 rows the
@@ -42,10 +43,11 @@ Both are free, no account, no API quota.
    event — `ARR_DELAY >= 180 OR CANCELLED OR DIVERTED` (diverted pays as
    cancellation, matching the oracle policy) — with isotonic calibration.
 5. **Verify before shipping**:
-   - held-out metrics printed by the trainer: ROC AUC should stay ≈ 0.70+,
+   - held-out metrics printed by the trainer: ROC AUC should stay ≈ 0.75+,
      and **mean predicted p must track the actual positive rate** (the
-     calibration property expected-loss pricing depends on) — v2 baseline:
-     AUC 0.708, mean p 0.0290 vs actual 0.0289;
+     calibration property expected-loss pricing depends on) — v3 baseline
+     (24 months ending 2026-05, 15.4M flights): test AUC 0.789,
+     Brier 0.0282, mean p 0.0341 vs actual 0.0342;
    - `make test` (the service's pytest suite runs against the artifacts);
    - price sanity spot-checks (a reliable island hop should floor at
      PREMIUM_MIN; evening departures should price above morning ones).

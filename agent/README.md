@@ -1,9 +1,9 @@
 # Sentinel Premium Pricing Agent
 
 A small FastAPI service that wraps an XGBoost delay-probability model
-(trained on weather-enriched BTS "Marketing Carrier On-Time Performance"
-data, 2023-2025, stratified 1% sample — ~148k flights) and returns a USDC
-premium via expected-loss pricing with hard rails:
+(trained on 24 months of per-flight BTS "Marketing Carrier On-Time
+Performance" data, fetched + collated automatically from transtats PREZIP)
+and returns a USDC premium via expected-loss pricing with hard rails:
 
 ```
 expected_loss      = p_delay * payoff_usdc
@@ -30,10 +30,11 @@ the validation split so p × payoff is an honest expected loss. Held-out
 test: ROC AUC 0.708, Brier 0.027, mean predicted p 0.0290 vs actual 0.0289.
 Features remain the serving contract (date/carrier/route/dep-time/distance);
 the dataset's per-airport weather columns are an unused value-add until the
-/price schema carries forecasts (follow-up). Training: drop the CSV at
-`data/delay_data.csv` and `make train` (a 20-30 row fixture at
-`training/fixtures/delay_data.sample.csv` smoke-tests the pipeline via
-`--data`).
+/price schema carries forecasts (follow-up). Training data: `make download-data` (=
+`python -m training.fetch_and_prepare --end <latest> --months 24` — no
+manual downloads, no auth, no quota), then `make train`. A small committed
+fixture at `training/fixtures/delay_data.sample.csv` smoke-tests the
+pipeline via `--data`. Full runbook: `spec/maintenance.md`.
 
 ## Setup
 

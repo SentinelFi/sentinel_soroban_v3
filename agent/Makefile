@@ -13,10 +13,7 @@ test:
 	python -m pytest tests -q
 
 download-data:
-	@echo "Manual download (Kaggle auth required):"
-	@echo "  1. https://www.kaggle.com/competitions/flight-delays-fall-2018/data"
-	@echo "  2. Save flight_delays_train.csv into agent/data/"
-	@echo "  3. make train"
+	python -m training.fetch_and_prepare --end 2026-05 --months 24
 
 clean:
 	rm -rf artifacts __pycache__ .pytest_cache

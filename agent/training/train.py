@@ -1,7 +1,7 @@
-"""Train the flight-risk model on weather-enriched BTS data (2023-2025).
+"""Train the flight-risk model on BTS Marketing Carrier per-flight data.
 
-v2 (2026-07-27) — retargeted to the PROTOCOL'S COVERED EVENT and modern
-data, replacing the 2008 Kaggle departure-delay proxy:
+v3 (2026-07-27) — 24 fresh months fetched straight from BTS (see
+training/fetch_and_prepare.py); label = the PROTOCOL'S COVERED EVENT:
 
     label = 1  iff  ARR_DELAY >= THRESHOLD_MIN (default 180)
                  OR CANCELLED == 1
@@ -10,9 +10,10 @@ data, replacing the 2008 Kaggle departure-delay proxy:
 Rows that never produced an outcome (null ARR_DELAY without a
 cancelled/diverted flag) are dropped: they cannot be labeled.
 
-Data: stratified 1% sample of BTS "Marketing Carrier On-Time Performance"
-2023-2025, weather-enriched (Meteostat) per origin/destination. ~148k rows,
-~2.6% positive — imbalanced, so the classifier is followed by ISOTONIC
+Data: BTS "Marketing Carrier On-Time Performance" per-flight monthlies,
+fetched + collated by `python -m training.fetch_and_prepare` (CamelCase
+minimal schema, ~16M rows for 24 months, ~2.5% positive) — imbalanced, so
+the classifier is followed by ISOTONIC
 CALIBRATION on the validation split: expected-loss pricing multiplies
 p * payoff, and an uncalibrated score is a price error, not just a rank
 error. Serving artifacts stay drop-in (model.joblib exposes
@@ -65,41 +66,45 @@ XGB_PARAMS = {
     "random_state": 42,
     "n_jobs": -1,
     "eval_metric": "logloss",
+    "tree_method": "hist",
 }
 
 RANDOM_STATE = 42
 
 
 def load_and_label(path: Path, threshold_min: int) -> tuple[pd.DataFrame, pd.Series]:
-    """Raw weather-enriched BTS CSV → serving-contract features + covered-event label."""
+    """Collated BTS CSV (fetch_and_prepare schema) → features + covered-event label."""
     usecols = [
-        "MONTH", "DAY_OF_MONTH", "DAY_OF_WEEK", "OP_UNIQUE_CARRIER",
-        "ORIGIN", "DEST", "CRS_DEP_TIME", "DISTANCE",
-        "ARR_DELAY", "CANCELLED", "DIVERTED",
+        "Month", "DayofMonth", "DayOfWeek", "Operating_Airline",
+        "Origin", "Dest", "CRSDepTime", "Distance",
+        "ArrDelay", "Cancelled", "Diverted", "Duplicate",
     ]
     df = pd.read_csv(path, usecols=usecols)
     n_raw = len(df)
 
-    cancelled = df["CANCELLED"].fillna(0).astype(float) >= 1
-    diverted = df["DIVERTED"].fillna(0).astype(float) >= 1
-    delayed = df["ARR_DELAY"].astype(float) >= threshold_min  # NaN compares False
+    # Form-3A swapped flights are marked Duplicate=Y — drop them.
+    df = df[df["Duplicate"].fillna("N").astype(str).str.upper() != "Y"]
+
+    cancelled = df["Cancelled"].fillna(0).astype(float) >= 1
+    diverted = df["Diverted"].fillna(0).astype(float) >= 1
+    delayed = df["ArrDelay"].astype(float) >= threshold_min  # NaN compares False
 
     # Unlabelable: no arrival outcome and neither cancelled nor diverted.
-    unlabelable = df["ARR_DELAY"].isna() & ~cancelled & ~diverted
+    unlabelable = df["ArrDelay"].isna() & ~cancelled & ~diverted
     df = df[~unlabelable]
     y = (delayed | cancelled | diverted)[~unlabelable].astype(int)
 
     X = pd.DataFrame(
         {
             # c-N string encoding — the serving path sends the same shapes.
-            "Month": "c-" + df["MONTH"].astype(int).astype(str),
-            "DayofMonth": "c-" + df["DAY_OF_MONTH"].astype(int).astype(str),
-            "DayOfWeek": "c-" + df["DAY_OF_WEEK"].astype(int).astype(str),
-            "UniqueCarrier": df["OP_UNIQUE_CARRIER"].astype(str),
-            "Origin": df["ORIGIN"].astype(str),
-            "Dest": df["DEST"].astype(str),
-            "DepTime": df["CRS_DEP_TIME"].fillna(0).astype(int),
-            "Distance": df["DISTANCE"].fillna(0).astype(float),
+            "Month": "c-" + df["Month"].astype(int).astype(str),
+            "DayofMonth": "c-" + df["DayofMonth"].astype(int).astype(str),
+            "DayOfWeek": "c-" + df["DayOfWeek"].astype(int).astype(str),
+            "UniqueCarrier": df["Operating_Airline"].astype(str),
+            "Origin": df["Origin"].astype(str),
+            "Dest": df["Dest"].astype(str),
+            "DepTime": df["CRSDepTime"].fillna(0).astype(int),
+            "Distance": df["Distance"].fillna(0).astype(float),
         }
     )
     print(f"[train] Rows: {n_raw:,} raw → {len(X):,} labeled "
@@ -125,7 +130,7 @@ def main() -> None:
         print("[train] <1000 rows — SMOKE MODE: no stratify/calibration, artifacts land in artifacts/smoke/")
 
     preprocessor = ColumnTransformer(
-        [("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), CAT_FEATURES)],
+        [("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=True), CAT_FEATURES)],
         remainder="passthrough",
     )
 
@@ -175,7 +180,7 @@ def main() -> None:
     (out_dir / "feature_names.json").write_text(json.dumps(feature_names, indent=2))
     version = (
         f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}"
-        f"-bts2023_25-arr{args.threshold_min}m"
+        f"-btsM24-arr{args.threshold_min}m"
     )
     (out_dir / "model_version.txt").write_text(version + "\n")
     print(f"[train] Artifacts → {out_dir}  (version={version})")
