@@ -4,6 +4,7 @@ import { classifyAndSettleFlight } from "../targeted_settlement";
 import { parseFlightStatus } from "../status";
 import { loadRoutesConfig, type RoutesConfig } from "../routes_config";
 import { getDb } from "../governance/db";
+import { cachedFetch } from "../aeroapi_cache";
 import {
   FlightStatus,
   type Config,
@@ -17,6 +18,8 @@ const SECONDS_PER_DAY = 86_400;
 // schedules (/schedules, visible up to 1 year out, ≤3-week windows).
 const NEAR_WINDOW_DAYS = 2;
 const SCHEDULE_CHUNK_DAYS = 20; // stay under the API's 3-week span limit
+// Published schedules barely change — cache pair-chunks ~24h (DB-optional).
+const SCHEDULE_CACHE_TTL_SECS = 24 * 3600;
 
 /** Optional dependency injection seam — tests pass fakes, production omits. */
 export interface AuthorizerDeps {
@@ -100,10 +103,11 @@ async function loadAttestRoutes(
  *
  * FAR WINDOW (days 3..horizon) — published schedules via /schedules:
  * /flights cannot see past 2 days of future schedule (the old per-day sweep
- * burned a guaranteed-failing call per flight per day out there). Instead,
- * one /schedules call per ≤20-day chunk (filtered by airline + flight
- * number + route origin/destination) attests which days the airline has
- * published the flight for:
+ * burned a guaranteed-failing call per flight per day out there). Batched:
+ * ONE /schedules call per DIRECTED PAIR per ≤20-day chunk (200 routes share
+ * ~30 pairs; the server-side pair filter also excludes a multi-leg flight
+ * number's other legs), each call cached ~24h in the governance DB
+ * (best-effort, DB-optional). Rows are matched to flights by ident:
  * - exactly one instance on a day  → open/refresh that day's window;
  * - zero instances (verified absent) → close any live window — the airline
  *   no longer publishes the flight for that day;
@@ -120,10 +124,10 @@ async function loadAttestRoutes(
  * Call economy: a near-window /flights call only fires when the live sale
  * window actually needs a refresh (less than half its validity left) — the
  * window itself is the cached attestation — and never again once a (flight,
- * day) has a recorded outcome. Steady state ≈ 2 /flights calls per
- * ~validity/2 (default 3h) per flight + ceil((horizon−2)/20) /schedules
- * calls per run — for a 90-day horizon ~7 calls per refresh cycle instead
- * of the old 90 per run.
+ * day) has a recorded outcome. Far window: pairs × ceil((horizon−2)/20)
+ * /schedules calls per CACHE MISS (~once/day) — e.g. 200 routes over 30
+ * pairs at a 7-day horizon ≈ 30 schedule calls per day total, vs the
+ * original design's 200 per run (2,400/day).
  *
  * If this job stops running, every window lapses within its validity and
  * sales halt protocol-wide — that is the intended fail-safe, not a bug.
@@ -223,6 +227,55 @@ export async function run(config: Config, deps: AuthorizerDeps = {}): Promise<Ru
       );
       actions.push({ flight: label, transition: `sale open until ${expiresAt}` });
     };
+
+    // ── FAR-WINDOW batch fetch: one /schedules call per DIRECTED PAIR ──
+    // per ≤20-day chunk (not per flight — 200 routes share ~30 pairs), and
+    // each call is cached ~24h in the governance DB (best-effort,
+    // DB-optional: no DB → direct calls, nothing gated). The pair filter
+    // also excludes a multi-leg flight number's other legs server-side.
+    // counts key: `${flightId}|${dateStr}`.
+    const farCounts = new Map<string, number>();
+    const farUnknown = new Set<string>(); // `${origin}|${dest}|${dateStr}`
+    if (horizonDays > NEAR_WINDOW_DAYS) {
+      const pairs = new Map<string, Set<string>>(); // "O|D" -> flightIds
+      for (const r of attestRoutes) {
+        const key = `${r.origin}|${r.destination}`;
+        const set = pairs.get(key) ?? new Set();
+        set.add(r.flight_id);
+        pairs.set(key, set);
+      }
+      for (const [pairKey, fids] of pairs) {
+        const [origin, destination] = pairKey.split("|");
+        let chunkStart = todayIndex + NEAR_WINDOW_DAYS + 1;
+        const lastDay = todayIndex + horizonDays;
+        while (chunkStart <= lastDay) {
+          const chunkEnd = Math.min(chunkStart + SCHEDULE_CHUNK_DAYS - 1, lastDay);
+          const startStr = dayDate(chunkStart).dateStr;
+          // date_end is exclusive — pass the day AFTER the last wanted day.
+          const endStr = dayDate(chunkEnd + 1).dateStr;
+          const schedules = await cachedFetch(
+            `sched|${origin}|${destination}|${startStr}|${endStr}`,
+            SCHEDULE_CACHE_TTL_SECS,
+            () => aeroApi.getSchedules(startStr, endStr, { origin, destination, maxPages: 20 })
+          );
+          if (!schedules) {
+            for (let d = chunkStart; d <= chunkEnd; d++) {
+              farUnknown.add(`${pairKey}|${dayDate(d).dateStr}`);
+            }
+          } else {
+            for (const entry of schedules.scheduled ?? []) {
+              const ident = entry.actual_ident ?? entry.ident;
+              if (!fids.has(ident)) continue;
+              const day = (entry.scheduled_out ?? "").slice(0, 10);
+              if (!day) continue;
+              const k = `${ident}|${day}`;
+              farCounts.set(k, (farCounts.get(k) ?? 0) + 1);
+            }
+          }
+          chunkStart = chunkEnd + 1;
+        }
+      }
+    }
 
     // ── Per-flight attestation ─────────────────────────────────────────
 
@@ -343,68 +396,22 @@ export async function run(config: Config, deps: AuthorizerDeps = {}): Promise<Ru
         }
       }
 
-      // FAR WINDOW — days 3..horizon, published schedules.
+      // FAR WINDOW — days 3..horizon, from the batched pair fetch above.
       if (horizonDays <= NEAR_WINDOW_DAYS) continue;
-
-      const parsed = parseFlightIdent(flightId);
-      if (!parsed) {
-        // Without airline + flight number the schedules filter can't be
-        // built. The near window still attests days 1..2; far days simply
-        // stay closed (fail closed) until the ident is fixed in the routes
-        // file.
-        console.warn(
-          `[authorizer] ${flightId}: cannot derive airline/flight number from ident — ` +
-            `far-horizon attestation skipped (days 3..${horizonDays} stay closed).`
-        );
-        actions.push({ flight: flightId, skipped: "Unparsable ident — far horizon closed" });
-        continue;
-      }
-
-      // One /schedules call per ≤20-day chunk. Map: dateStr → instance count.
-      // A chunk whose call failed contributes NO entries and its days are
-      // marked unknown (no action taken on them this run).
-      const scheduledCount = new Map<string, number>();
-      const unknownDays = new Set<string>();
-
-      let chunkStart = todayIndex + NEAR_WINDOW_DAYS + 1;
-      const lastDay = todayIndex + horizonDays;
-      while (chunkStart <= lastDay) {
-        const chunkEnd = Math.min(chunkStart + SCHEDULE_CHUNK_DAYS - 1, lastDay);
-        const startStr = dayDate(chunkStart).dateStr;
-        // date_end is exclusive — pass the day AFTER the last wanted day.
-        const endStr = dayDate(chunkEnd + 1).dateStr;
-
-        const schedules = await aeroApi.getSchedules(startStr, endStr, {
-          airline: parsed.airline,
-          flightNumber: parsed.flightNumber,
-          origin: route?.origin,
-          destination: route?.destination,
-        });
-
-        if (!schedules) {
-          for (let d = chunkStart; d <= chunkEnd; d++) {
-            unknownDays.add(dayDate(d).dateStr);
-          }
-        } else {
-          for (const entry of schedules.scheduled ?? []) {
-            const day = (entry.scheduled_out ?? "").slice(0, 10);
-            if (day) scheduledCount.set(day, (scheduledCount.get(day) ?? 0) + 1);
-          }
-        }
-        chunkStart = chunkEnd + 1;
-      }
+      if (!route) continue; // no pair to look up (shouldn't happen)
+      const pairKey = `${route.origin}|${route.destination}`;
 
       for (let offset = NEAR_WINDOW_DAYS + 1; offset <= horizonDays; offset++) {
         const { dateSecs, dateStr } = dayDate(todayIndex + offset);
         const label = `${flightId}@${dateStr}`;
 
         try {
-          if (unknownDays.has(dateStr)) {
+          if (farUnknown.has(`${pairKey}|${dateStr}`)) {
             // Schedules call failed — no action; live windows lapse on
             // their own within the ≤6h validity.
             continue;
           }
-          const count = scheduledCount.get(dateStr) ?? 0;
+          const count = farCounts.get(`${flightId}|${dateStr}`) ?? 0;
           if (count === 1) {
             await openOrRefresh(flightId, dateSecs, label);
           } else if (count === 0) {
