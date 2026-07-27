@@ -94,13 +94,14 @@ tsconfig.api.json     type-checks api/ with node types (wired into tsc -b)
 
 | Endpoint             | Schedule       | Job                                             |
 | -------------------- | -------------- | ----------------------------------------------- |
-| `/api/cron/authorize`| `30 */2 * * *` | Sale authorizer (cron #0) — attests sale windows for the enabled flights in `config/routes.testnet.json` over the sale horizon; closes windows / tombstones cancellations (fail closed) |
-| `/api/cron/fetcher`  | `0 */2 * * *`  | AeroAPI → oracle (ETA / landed / cancelled)     |
+| `/api/cron/authorize`| `30 */2 * * *` | Sale authorizer (cron #0) — attests sale windows for the enabled flights in `config/routes.testnet.json`. Days 1–2 from live `/flights` data (cancellation tombstones need a corroborating status, not just the `cancelled` flag); days 3+ from published `/schedules` in ≤20-day chunks (~2 + ceil((horizon−2)/20) API calls per flight per run instead of one per day). Fail closed throughout |
+| `/api/cron/fetcher`  | `0 */2 * * *`  | AeroAPI → oracle (ETA / landed / cancelled), phase-gated: ETA fetched at T-2d (AeroAPI's future-visibility limit), then ZERO calls until `FETCHER_WATCH_SECS` (default 6h) before the recorded arrival; corroborated diversions pay as cancellations (policy), uncorroborated cancelled/diverted flags are never attested; outcomes drive targeted classify+settle immediately |
 | `/api/cron/classify` | `0 * * * *`    | `Controller.classify_flights`                   |
 | `/api/cron/settle`   | `*/5 * * * *`  | `Controller.execute_settlements`                |
 | `/api/cron/queue`    | `2-59/5 * * * *` | `Controller.run_queue_maintenance` (off-tempo from settle to avoid keeper sequence-number contention) |
 | `/api/cron/agent`    | `0 6 * * *`    | Route agent — ML baseline premium (Python service) + Open-Meteo weather rules (elevated → premium × multiplier, severe → disable) + 24h re-evaluation of disabled routes; all writes clamped to the routes-file rails and the on-chain term limits |
 | `/api/cron/ttl`      | `0 0 * * *`    | `extend_ttl` on all 5 contracts + `prune_settled` |
+| `/api/cron/gov-signals` | `5 * * * *` | Airport-delay collector — ONE AeroAPI `/airports/delays` call covers the whole network; projects red→`severe` / yellow→`elevated` signals (origin+dest scoped, self-expiring) into the governance DB for the airports enabled routes touch. Facts only, no chain writes; runs 5 min before the reconciler |
 | `/api/cron/gov-reconcile` | `10 * * * *` | Governance reconciler — recomputes each managed route's desired state from DB signals (admin pins win, pauses expand, multipliers stack, hysteresis damps) and submits the minimal on-chain diff; `GOV_DRY_RUN=true` logs decisions without submitting |
 
 `/api/cron/health` is an unauthenticated GET that returns the network, contract IDs, and `hasKeys` booleans (secrets are never echoed).
@@ -116,6 +117,8 @@ Server-side (no `PUBLIC_` prefix — set in Vercel project settings, never bundl
 - `GOVERNANCE_ADMIN_SECRET_KEY` — 4th identity for the route agent + whitelist script; must be a `GovernanceModule` admin (owner runs `add_admin` once), never the owner key
 - `AGENT_BASE_URL`, `AGENT_TOKEN` — the Python pricing service (`agent/` on Render); unset = route agent prices from the routes file
 - `SALE_AUTH_HORIZON_DAYS`, `SALE_AUTH_VALIDITY_SECS` — sale-authorizer overrides (horizon defaults to the routes file's `sale_horizon_days`)
+- `FETCHER_WATCH_SECS` — how long before a flight's recorded scheduled arrival the fetcher starts polling AeroAPI (default 21600 = 6h; outside the window a flight costs zero API calls)
+- `ROUTES_CONFIG_PATH` — alternate routes file (tests / other networks); defaults to the bundled `config/routes.testnet.json`
 - `WEATHER_BASE_URL` — Open-Meteo override (keyless; testing only)
 - `CRON_SECRET` — shared secret guarding the cron endpoints (recommended)
 - `GOVERNANCE_DB_URL` — Supabase transaction-pooler Postgres URL (governance DB); `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `ADMIN_EMAILS` — admin-console auth; `GOV_DRY_RUN` — keep `true` until the governance key is an on-chain admin
@@ -199,4 +202,19 @@ npx tsx -e '
 
 To exercise the fetcher without spending AeroAPI credits, see
 [Running without an AeroAPI key](#running-without-an-aeroapi-key).
+
+### End-to-end pipeline tests (no real API, no real chain)
+
+```sh
+npm run test:e2e
+```
+
+`scripts/test_oracle_e2e.ts` spawns `tools/mock-aeroapi` on an ephemeral port
+and runs the REAL fetcher + sale-authorizer job code (real `AeroApiClient`
+over HTTP) against an in-memory fake of the OracleAggregator + Controller
+(forward-only state machine, classify/settle semantics). It covers the full
+on-time / delayed / cancelled lifecycles end to end, the refusal paths
+(diverted, tracking-lost, ambiguous), and asserts the exact per-flight
+AeroAPI call counts — including that flights outside their fetch windows cost
+zero calls. The mock server's own smoke test is `tools/mock-aeroapi/test.sh`.
 

@@ -1355,14 +1355,17 @@ data, **keeper** drives classification/settlement, **ttl** extends storage,
 | `settler` | `/api/cron/settle` | `*/5 * * * *` (every 5 min) | `Controller.execute_settlements` | keeper |
 | `queue_maintainer` | `/api/cron/queue` | `2-59/5 * * * *` (every 5 min, +2) | `Controller.run_queue_maintenance` | keeper |
 | `ttl_extender` | `/api/cron/ttl` | `0 0 * * *` (daily) | `extend_ttl` ×5 + `OracleAggregator.prune_settled` | ttl |
+| `gov_signals` | `/api/cron/gov-signals` | `5 * * * *` (hourly, :05) | — (facts only: AeroAPI `/airports/delays` → Supabase `signals`) | none |
 | `gov_reconcile` | `/api/cron/gov-reconcile` | `10 * * * *` (hourly, :10) | `GovernanceModule.disable_route` / `enable_route` / `update_route_terms` | gov-admin |
 | `route_agent` (legacy) | `/api/cron/agent` | `0 6 * * *` (daily 06:00 UTC) | `GovernanceModule` route writes (ML + weather) | gov-admin |
 | `health` | `/api/cron/health` | liveness probe | — | — |
 
 The `:30` and `+2` offsets keep the two oracle jobs (and the two keeper jobs) off
-the same minute to avoid Stellar sequence-number contention. Three further
-registry names (`gov_signals`, `gov_onboard`, `gov_schedule_check`) are declared
-placeholders that currently reject as "not implemented".
+the same minute to avoid Stellar sequence-number contention; `gov_signals` runs
+five minutes before `gov_reconcile` so every reconcile tick acts on a fresh
+airport-delay picture. Two further registry names (`gov_onboard`,
+`gov_schedule_check`) are declared placeholders that currently reject as "not
+implemented".
 
 ### Cron #0 — SaleAuthorizer (Oracle, every 2 hours at :30)
 
@@ -1373,29 +1376,55 @@ identical to a valid unreported one until the cancellation write lands), so
 the oracle attests insurability affirmatively and purchases fail closed
 without it.
 
-For every flight number in `SALE_AUTH_FLIGHT_IDS` and every day within
-`SALE_AUTH_HORIZON_DAYS` (default 90, matching the booking horizon), each run:
+The flight list is derived from the enabled routes in
+`config/routes.testnet.json` (env `SALE_AUTH_HORIZON_DAYS` overrides the
+file's `sale_horizon_days`). Each run attests every (flight, day) in the
+horizon, **split by AeroAPI visibility** (`/flights/{ident}` only accepts
+queries within 10 days past → 2 days future):
 
-1. queries AeroAPI for the (flight, day) schedule;
-2. pushes `set_cancelled` the moment a cancellation is visible — the
-   tombstone closes sales instantly (and deletes the live authorization)
-   without waiting for it to lapse;
+**Near window (days 1–2) — live tracking data via `GET /flights/{ident}`:**
+
+1. queries AeroAPI for the (flight, day) instance;
+2. on a cancellation signal, revokes any live window with the pause-exempt
+   `close_sale` FIRST (safe on the bare `cancelled` flag — fail closed), then
+   pushes the `set_cancelled` tombstone **only when corroborated**: AeroAPI's
+   `cancelled` flag alone means "no longer tracked", which the spec says "will
+   not always" be an airline cancellation — and the tombstone pays every
+   buyer, so it additionally requires a cancelled status text. A bare flag is
+   logged for ops and retried;
 3. `close_sale`s a window whose instance became unverifiable (no data /
    ambiguous candidates) — fail closed, never guess;
 4. otherwise opens/refreshes the window with expiry
    `min(flight date, now + SALE_AUTH_VALIDITY_SECS)` (default 6h; the
    contract caps validity at 24h).
 
+**Far window (days 3..horizon) — published schedules via `GET /schedules`:**
+one call per ≤20-day chunk (the endpoint sees up to 1 year out, ≤3-week
+windows, filtered by airline + flight number + route origin/destination)
+attests which days the airline has published the flight for. Exactly one
+instance on a day → open/refresh; verified absent → close; more than one →
+ambiguous, fail closed; the schedules *call itself* failed → no action (live
+windows lapse within their ≤6h validity rather than being mass-revoked by a
+transient API error). Published-schedule existence deliberately does NOT
+attest "not cancelled" — cancellation detection lives on live tracking data
+in the near window and the fetcher's watch window.
+
+Call economy: per flight per run ≈ 2 `/flights` calls + `ceil((horizon−2)/20)`
+`/schedules` calls — ~7 calls for a 90-day horizon instead of 90 (the old
+per-day sweep also queried `/flights` for days it structurally cannot see,
+so days 3+ never opened at all).
+
 Ops invariants:
 
-- **The flight-id list must track the governance route whitelist.** A
-  whitelisted route missing from the list is never sellable.
+- **The routes file must track the governance route whitelist.** A
+  whitelisted route missing/disabled in the file is never sellable.
 - **Cadence must stay well inside the validity window**, or every sale
   window lapses between runs and sales halt protocol-wide. That halt is the
   intended fail-safe when the authorizer is down — availability degrades,
   never safety.
-- Days beyond the provider's schedule visibility return no data and stay
-  closed; the effective sale horizon is `min(horizon, provider visibility)`.
+- Far-window attestation needs a parsable ident (airline + flight number,
+  e.g. `UA100`/`UAL100`); unparsable idents keep near-window attestation and
+  their far days stay closed.
 - Runs on the oracle key, off-tempo from the fetcher (:30 vs :00) to avoid
   sequence-number contention.
 
@@ -1423,36 +1452,55 @@ only off-chain process that talks to external APIs.
 ```
 FlightDataFetcher
     |
-    +-> reads OracleAggregator.get_active_flight_count() +
-    |   get_active_flights_page(offset, limit) via Stellar RPC (paged)
+    +-> reads the oracle active set + get_flight_data per flight
     |
     +-> Step A: For flights in NotInitiated status:
-    |       calls AeroAPI for estimated arrival time
-    |       signs + submits: OracleAggregator.set_estimated_arrival(flight_id, date, eta)
-    |       (NotInitiated -> Active)
+    |       PHASE GATE (no API call): skip if flight date > now + 2d
+    |         (/flights/{ident} cannot see further future schedule — the call
+    |          could never succeed) or if now > date + 10d (past the API's
+    |          history window; the stale-void timeout reclaims the row)
+    |       calls AeroAPI for the day's instance
+    |       +- confirmed cancellation (cancelled flag AND cancelled status)
+    |       |    -> set_cancelled (NotInitiated -> Cancelled)
+    |       |    -> targeted classify_flight + settle_flight
+    |       +- cancelled flag WITHOUT corroborating status -> log + retry
+    |       |    (tracking gap, not proof — the tombstone pays every buyer)
+    |       +- otherwise signs + submits:
+    |            OracleAggregator.set_estimated_arrival(flight_id, date,
+    |                                                   scheduled_in)
+    |            (NotInitiated -> Active)
     |
     +-> Step B: For flights in Active status:
-    |       reads estimated_arrival_time from OracleAggregator
-    |       if estimated_arrival_time + 1 hour < now:
-    |           calls AeroAPI for actual flight status
+    |       PHASE GATE (no API call): skip until
+    |         now >= estimated_arrival − FETCHER_WATCH_SECS (default 6h);
+    |         skip after estimated_arrival + 10d (history window passed —
+    |         the active-void timeout reclaims the row)
+    |       inside the watch window, calls AeroAPI every cycle:
     |           |
-    |           +- Landed -> signs + submits:
-    |           |    OracleAggregator.set_landed(flight_id, date, actual_arrival_time)
-    |           |    (Active -> Landed)
-    |           |
-    |           +- Cancelled -> signs + submits:
-    |           |    OracleAggregator.set_cancelled(flight_id, date)
-    |           |    (Active -> Cancelled)
-    |           |
-    |           +- Still in flight -> skip, retry next cycle
-    |           +- HTTP error -> skip, retry next cycle
-    |
-    +-> flights whose estimated arrival hasn't passed yet: skip entirely
+    |           +- confirmed cancellation -> set_cancelled
+    |           |    (Active -> Cancelled) + targeted classify + settle
+    |           +- cancelled flag, uncorroborated -> log + retry
+    |           +- confirmed diversion -> set_cancelled  (POLICY: diverted
+    |           |    pays as cancellation; actual_in is the DIVERSION
+    |           |    airport's arrival and is never attested as a landing)
+    |           +- diverted flag, uncorroborated -> log + retry
+    |           +- before estimated_arrival + 1h -> cancellation watch only
+    |           +- actual_in present -> set_landed(actual_in)
+    |           |    (Active -> Landed) + targeted classify + settle
+    |           +- still in flight / HTTP error -> skip, retry next cycle
 ```
 
-**Why 1 hour buffer?** The oracle only calls AeroAPI for flights that should have landed
-at least 1 hour ago. This avoids unnecessary API calls for flights still in the air and
-gives AeroAPI time to receive final landing data.
+**Why the watch window?** Nothing between the ETA write (T-2d) and shortly
+before arrival can produce an attestable outcome except a cancellation, and
+the pre-departure cancellation check lives inside the window (sale windows
+never extend past the departure-day boundary, so the gap adds no purchase
+exposure). A flight therefore costs ~1 call at T-2d plus ~3–6 calls around
+arrival — and **zero** calls the rest of its life, regardless of how far
+ahead it was bought.
+
+**Why the extra 1-hour buffer?** Landing resolution only starts 1 hour after
+the scheduled arrival — flights still in the air need no landing query, and
+AeroAPI gets time to record final gate-arrival data.
 
 ### Cron #2 — FlightClassifier (Keeper, every 1 hour)
 
@@ -1617,13 +1665,17 @@ own scheduler.
 ```
 fetcher (signer: oracle)
   1. Read OracleAggregator active set (paged) + get_flight_data per flight
-  2. NotInitiated       -> AeroAPI schedule -> set_estimated_arrival   (-> Active)
-  3. Active, past ETA+1h -> AeroAPI status  -> set_landed / set_cancelled
-  4. Cancellation seen at any stage -> set_cancelled (also closes any sale window)
+  2. NotInitiated, within T-2d -> AeroAPI schedule -> set_estimated_arrival
+     (-> Active; earlier flights cost ZERO calls — outside API visibility)
+  3. Active, inside the watch window (ETA - 6h .. ETA + 10d) -> AeroAPI
+     status -> set_landed / set_cancelled (+ targeted classify + settle)
+  4. Corroborated cancellation OR diversion seen in a watched phase ->
+     set_cancelled (diverted pays as cancellation, by policy); flag-only
+     signals are never attested
 
 sale_authorizer (signer: oracle)
-  For each enabled route x each day in the sale horizon:
-    AeroAPI schedule check -> open_sale / close_sale / set_cancelled
+  Days 1-2: live /flights check  -> open_sale / close_sale / set_cancelled
+  Days 3+:  published /schedules -> open_sale / close_sale (chunked, ~5 calls/90d)
     (affirmative "this flight is insurable" attestation;
      buy_insurance fails closed without a live window)
 
@@ -1874,6 +1926,10 @@ deny-all pooler).
 
 ```
 SIGNAL INGESTION      collectors + admins  --INSERT-->  signals (facts)
+                        gov_signals (hourly :05): ONE AeroAPI /airports/delays
+                        call covers the whole network — red airport -> severe
+                        (pause), yellow -> elevated (premium multiplier), two
+                        scoped rows per airport (origin + dest), self-expiring
         |
         v
 RULES (hourly :10)    reconciler: readStatus(on-chain) + decideReconcileAction(pure)
@@ -2321,6 +2377,25 @@ defense against inflation attacks:
    above. The contracts enforce this only indirectly (the arrival-timestamp floor
    rejects the writes a local-date key would produce), so keying by UTC is part of
    the executor/frontend contract and must survive backend migrations.
+9. **Cancellations are corroborated, never inferred from the bare flag.**
+   AeroAPI's `cancelled` boolean means "no longer being tracked", which the
+   provider documents as *not always* an airline cancellation. Because
+   `set_cancelled` is forward-only and settles every buyer at full payoff, the
+   executor writes it only when the status text also reports a cancellation;
+   a flag-only signal closes the sale window (safe) and is surfaced for ops.
+   Every executor backend must preserve this two-signal rule.
+10. **Diverted flights pay as cancellations (product policy).** A diverted
+   leg's `actual_in` is the gate arrival at the *diversion* airport, so it is
+   never attested as a normal landing — instead, once the diversion is
+   corroborated (flag + diverted status text or a concluded leg), the
+   executor writes `set_cancelled`: the insured journey to the filed
+   destination did not happen as sold, and the Cancelled outcome already
+   moves exactly the right money (full payoff per buyer) with no contract
+   change. On-chain, diversions are therefore indistinguishable from airline
+   cancellations (the run logs record which was which); if diversion
+   economics ever diverge from cancellation, a contract-level `Diverted`
+   outcome (appended to `FlightStatus` — variant order is XDR-load-bearing)
+   becomes necessary.
 
 **Trust assumption depends on the backend.** Today the jobs run as Vercel serverless
 functions signing with server-held keys, so you trust that operator. With a TEE
