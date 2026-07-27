@@ -111,7 +111,53 @@ outcome-recorded days. Remaining, in value order:
   `routes.sched_*` columns against /schedules; emits `schedule_drift`
   signals). Note `gov_signals` shipped 2026-07-27.
 
-## E. Contract-level items (only when justified)
+## E. Keeper bots: open-sourcing + operator incentives
+
+Direction (2026-07-27, refined): the crons are **three tiers** —
+**governance** (gov_signals, gov_reconcile, route_agent) and **oracle**
+(fetcher, sale_authorizer — the AeroAPI callers, the trust root) stay
+**centralized with us, by design**; only the **keeper/liquidator tier**
+(classifier, settler, queue_maintainer, ttl_extender + the permissionless
+housekeeping entry points) is the decentralization target. Keepers move no
+new information on-chain — they only execute what the oracle already
+attested — so opening them costs no trust. `npm run bot -- <name>`
+(`dapp/scripts/run_bot.ts`) is the standalone runner for all tiers.
+
+- [ ] **P1 — Package the KEEPER bots for third parties.** Extract/publish
+  the keeper job code (classifier, settler, queue_maintainer, ttl_extender)
+  with a README: no AeroAPI key needed, no DB needed, just RPC + a funded
+  key (+ the keeper authorization until bounties land). Docker/one-liner
+  examples (systemd, GitHub Actions, Acurast harness). The oracle and
+  governance bots stay in-repo, ours.
+- [ ] **P1 — DB-optional invariant (design rule, enforce forever).** Oracle
+  and keeper tiers must run with NO database: history recording is
+  best-effort (already true — `recordRun` no-ops without `GOVERNANCE_DB_URL`
+  and swallows DB errors; the e2e suite runs DB-less). Any future DB feature
+  must degrade, not gate: e.g. the `aeroapi_cache` (C) must fall back to
+  direct API calls when the DB is unreachable. Only the governance tier may
+  REQUIRE the DB — that tier is the DB.
+- [ ] **P2 — Paid keeper-running (trustless): bounties.** Contract-level
+  design sketch, for the next natural upgrade window:
+  - `classify_flights` / `execute_settlements` / `run_queue_maintenance` /
+    the targeted per-flight pair go **permissionless**: the keeper gate is
+    spam control, not integrity (classification is deterministic from
+    attested on-chain data). Add a per-flight bounty paid to the caller
+    (e.g. fixed USDC per settled flight), funded by a small protocol fee on
+    premiums (today 100% flows to underwriters; carve 1–3% ops fee) or the
+    owner's `RecoveredBalance`.
+  - `sweep_expired` / `prune_settled` / `extend_ttl`: already permissionless
+    — add a caller tip (e.g. % of swept value, small fixed tip) so
+    housekeeping self-funds.
+  - Bounty griefing is benign: racing keepers fight over the same tx,
+    losers pay their own failed-tx fees; the bounty just needs to exceed
+    Soroban fees (tiny). Interim, non-contract option: pay keeper operators
+    off-chain (grants/revenue share) against `cron_runs`-style attribution.
+  - Explicitly OUT of scope: decentralizing the oracle or governance tiers.
+    The oracle stays our keyed trust root (its future trust upgrade is the
+    TEE/Acurast backend, unchanged contracts); governance stays the
+    admin-keyed reconciler pipeline.
+
+## F. Contract-level items (only when justified)
 
 - [ ] **P2 — `Diverted` outcome variant.** Policy today: diverted pays as
   cancellation via `set_cancelled` (off-chain mapping, corroborated). A
@@ -133,5 +179,12 @@ section rather than deleting them.*
 - 2026-07-27 — AeroAPI call economy v1: fetcher phase gates, authorizer
   /schedules far window + cached-attestation skip, outcome corroboration
   (cancelled/diverted), diverted-pays-as-cancellation policy, `gov_signals`
-  airport-delay collector, mock-aeroapi expansion, 55-check E2E suite
+  airport-delay collector, mock-aeroapi expansion, E2E suite
   (`npm run test:e2e`).
+- 2026-07-27 — Bots CLI (`npm run bot -- <name>`: every job single-shot
+  runnable, DB-optional); route discovery (`npm run discover:routes`: NYC ×
+  SEA/SFO/LAX/ORD/MIA matrix via origin/dest-filtered /schedules, ~60 calls
+  for 200+ routes; idempotent — skips known routes, drops multi-leg idents
+  the contract would reject; internal tool, not e2e-tested); fixed silent
+  /schedules pagination truncation (max_pages) that could close valid
+  far-window days.

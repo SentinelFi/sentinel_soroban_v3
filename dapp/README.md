@@ -60,6 +60,61 @@ npm run build             # production build (tsc -b && vite build)
 npm run preview           # serve the production build locally
 ```
 
+## Bots (the jobs behind the crons)
+
+Every scheduled job is a plain, standalone **bot** — a `run(config)` function
+with no Vercel dependency. The crons below are just *our* schedule for them:
+
+```sh
+npm run bot -- fetcher          # single-shot run, prints the RunLogEntry JSON
+npm run bot -- settler          # exit 0 = success, 1 = failure
+npm run bot -- gov_signals
+```
+
+The bots fall into **three tiers with different decentralization stories**:
+
+| Tier | Bots | Who runs them |
+|---|---|---|
+| **Governance** | `gov_signals`, `gov_reconcile`, `route_agent` | **Centralized (us), by design** — writes route policy with the gov-admin key, backed by the governance DB |
+| **Oracle** | `fetcher`, `sale_authorizer` | **Centralized (us), by design** — the trust root: they spend AeroAPI calls and attest real-world facts with the `authorized_oracle` key |
+| **Keepers / liquidators** | `classifier`, `settler`, `queue_maintainer`, `ttl_extender` | **The decentralization target** — they move no new information on-chain, only execute what the oracle already attested |
+
+- **Keepers are the open-source, anyone-can-run tier.** `ttl_extender` (and
+  the on-chain `sweep_expired` / `prune_settled` it drives) is permissionless
+  today — any funded key works. `classifier` / `settler` / `queue_maintainer`
+  currently require the `authorized_keeper` key (spam control, not
+  integrity — classification is deterministic from attested oracle data);
+  the planned contract upgrade makes them permissionless with per-flight
+  bounties so third-party keeper bots earn for running them (spec/TODO.md §E).
+- **Keys decide authority, not the runner.** A third-party bot run only lands
+  writes if its signing address is authorized on-chain — publishing the code
+  gives away no power.
+- **DB-optional invariant.** The oracle + keeper bots NEVER require the
+  governance DB: with `GOVERNANCE_DB_URL` unset they run fully (history
+  recording is skipped); with the DB down, recording fails silently and the
+  bot still reports its on-chain result. The e2e suite runs the entire
+  pipeline with no DB attached. Only the governance tier needs the DB — that
+  tier *is* the DB.
+
+### Route discovery
+
+```sh
+npm run discover:routes                     # NYC (JFK/EWR/LGA) <-> SEA/SFO/LAX/ORD/MIA
+npm run discover:routes -- --max 200 --date 2026-08-04
+```
+
+Finds insurable routes with the minimum API spend: one origin/destination-
+filtered `/schedules` call per directed city pair per sample day (default: a
+Tuesday + the following Saturday) — **~60 calls for the whole 30-pair matrix,
+yielding 200+ routes**. Writes `config/routes.discovered.json`; review, merge
+into `routes.testnet.json`, then `npm run whitelist:routes`.
+
+The whole loop is **idempotent** — re-run it any time: discovery skips routes
+already in the routes file (and drops multi-leg flight numbers the contract
+would reject), the whitelist script diffs on-chain state first (`Active` →
+noop), and the contract itself treats re-whitelisting the same route as a
+no-op refresh. Internal ops tool — deliberately not part of the e2e suite.
+
 ## Serverless crons (Vercel)
 
 Eight cron jobs run as Vercel serverless functions inside this app, so a single Vercel deployment can serve the frontend **and** keep the protocol running. All jobs share one transaction pattern: simulate → assemble (with 40% resource-fee bump) → sign → send → poll.

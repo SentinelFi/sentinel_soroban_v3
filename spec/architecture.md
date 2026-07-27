@@ -1367,6 +1367,19 @@ airport-delay picture. Two further registry names (`gov_onboard`,
 `gov_schedule_check`) are declared placeholders that currently reject as "not
 implemented".
 
+**Three tiers, one decentralization target.** The jobs split into
+**governance** (gov_signals/gov_reconcile/route_agent — centralized, ours by
+design), **oracle** (fetcher/sale_authorizer — the centralized trust root:
+they spend AeroAPI calls and attest real-world facts), and
+**keepers/liquidators** (classifier/settler/queue_maintainer/ttl_extender —
+they move no new information on-chain, only execute what the oracle already
+attested). Only the keeper tier is meant to decentralize: every job runs
+standalone via `npm run bot -- <name>`, `ttl_extender` is permissionless
+today, and the planned bounty upgrade (spec/TODO.md §E) makes the remaining
+keeper entry points permissionless-and-paid. The oracle's future trust
+upgrade is a TEE backend (address rotation, unchanged contracts) — not
+permissionless operation.
+
 ### Cron #0 — SaleAuthorizer (Oracle, every 2 hours at :30)
 
 Keeps the purchase gate's sale windows attested. `buy_insurance` requires a
@@ -1838,7 +1851,9 @@ priority order (returning one of `noop | disable | enable | set_premium |
 revert_premium | flag`):
 
 1. **Admin pin wins** — a pinned, unexpired route is never overridden (`noop`).
-2. **Not on-chain yet** → `noop` (whitelisting new routes is manual / onboarding).
+2. **Not on-chain yet** → `noop` — whitelisting new routes is deliberately
+   manual: the discover → review → `whitelist:routes` pipeline (see
+   [Whitelisting a Route](#whitelisting-a-route)), never the reconciler.
 3. **Severe signal → `disable`** — any active `severe` signal matching the route's
    scope disables an Active route.
 4. **Admin lifecycle** — a route the admin set `disabled` is never auto-re-enabled.
@@ -2024,6 +2039,41 @@ money movements per outcome are in the
 are the ones not covered by that story.
 
 ### Whitelisting a Route
+
+**Where routes come from (ops pipeline, idempotent end to end):**
+
+```
+1. DISCOVER   npm run discover:routes           (dapp/scripts/discover_routes.ts)
+              One origin/destination-filtered /schedules call per directed
+              city pair per sample day (default: a Tuesday + the following
+              Saturday) — ~60 AeroAPI calls cover the NYC <-> SEA/SFO/LAX/
+              ORD/MIA matrix and yield 200+ operating-carrier routes.
+              Skips routes already in the routes file; drops multi-leg
+              flight numbers (one flight_id maps to ONE origin/dest on-chain
+              — a second pair would be rejected as FlightIdAlreadyMapped).
+              Writes config/routes.discovered.json.
+
+2. REVIEW     A human merges the discovered entries into
+              config/routes.testnet.json (the human source of truth:
+              term overrides, rails, enabled flags). Deliberately manual.
+
+3. WHITELIST  npm run whitelist:routes           (gov-admin key)
+              Diffs each file entry against on-chain route_status first:
+                enabled + Unknown   -> whitelist_route(file overrides)
+                enabled + Disabled  -> enable_route
+                enabled + Active    -> noop            <- idempotent
+                disabled + Active   -> disable_route
+
+4. ATTEST     The sale_authorizer picks the new routes up on its next run
+              (the flight list is derived from the routes file) and starts
+              opening sale windows — nothing else to configure.
+```
+
+Re-running any step against already-listed routes is harmless: discovery
+skips them, the whitelist script no-ops on `Active`, and the contract itself
+treats a same-route `whitelist_route` as an idempotent refresh (only a
+*conflicting* origin/dest for an existing flight_id panics — deliberate
+protection, not breakage). The on-chain call underneath:
 
 ```
 Owner or Admin -> GovernanceModule.whitelist_route(flight_id, origin, dest,
@@ -2777,8 +2827,15 @@ against `route_status`.
         GovernanceModule.set_defaults(premium, payoff, delay_hours)
 
 5. Whitelist initial routes:
-        GovernanceModule.whitelist_route(...)                      <- one per route
-        (custom terms optional — omit to use defaults)
+        cd dapp && npm run discover:routes      <- optional: find candidates via
+                                                   /schedules (~60 API calls for
+                                                   a 30-pair matrix); review +
+                                                   merge into routes.testnet.json
+        npm run whitelist:routes                <- diffs on-chain state, then
+                                                   GovernanceModule.whitelist_route
+                                                   per missing route (idempotent;
+                                                   custom terms optional — omit
+                                                   to use defaults)
 
 6. Provision off-chain signer keys (one per role, blast-radius separated):
         stellar keys generate oracle-executor    # flight data + sale windows
