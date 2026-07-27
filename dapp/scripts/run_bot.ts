@@ -41,6 +41,8 @@ import { run as runTtl } from "../api/_lib/jobs/ttl";
 import { run as runRouteAgent } from "../api/_lib/jobs/route_agent";
 import { run as runGovReconcile } from "../api/_lib/governance/reconciler";
 import { run as runGovSignals } from "../api/_lib/governance/signals_collector";
+import { run as runGovExposure } from "../api/_lib/governance/exposure_collector";
+import { run as runGovOnboard } from "../api/_lib/governance/onboard";
 
 const BOTS: Partial<Record<JobName, () => Promise<RunLogEntry>>> = {
   fetcher: () => runFetcher(loadConfig()),
@@ -52,6 +54,8 @@ const BOTS: Partial<Record<JobName, () => Promise<RunLogEntry>>> = {
   route_agent: () => runRouteAgent(loadConfig()),
   gov_reconcile: () => runGovReconcile(loadGovConfig()),
   gov_signals: () => runGovSignals(loadGovConfig()),
+  gov_exposure: () => runGovExposure(loadGovConfig()),
+  gov_onboard: () => runGovOnboard(loadGovConfig()),
 };
 
 async function main(): Promise<void> {
