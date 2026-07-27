@@ -19,9 +19,28 @@ export async function run(config: Config): Promise<RunLogEntry> {
   const keeperPublicKey = client.publicKeyFromSecret(config.keeperSecretKey);
 
   console.log("[classifier] Starting flight classification...");
-  console.log(`[classifier] Calling Controller.classify_flights(${keeperPublicKey.slice(0, 8)}...)`);
 
   try {
+    // Pre-flight read (free simulation): an empty active set means there is
+    // nothing to classify, void, or diagnose — skip the tx entirely. When
+    // ANY flights exist the hourly sweep still runs (it also handles the
+    // 14-day timeout voids and ttl_miss diagnostics, which need the pass
+    // even when no flight is Landed/Cancelled yet).
+    const activeCount = Number(
+      (await client.readContract(config.oracleAggregatorId, "get_active_flight_count")) ?? 0
+    );
+    if (activeCount === 0) {
+      console.log("[classifier] Active set empty — skipping (no transaction).");
+      return {
+        timestamp: new Date().toISOString(),
+        job: "classifier",
+        duration_ms: Date.now() - start,
+        success: true,
+        actions: [{ flight: "-", skipped: "active set empty — no tx submitted" }],
+      };
+    }
+
+    console.log(`[classifier] Calling Controller.classify_flights(${keeperPublicKey.slice(0, 8)}...)`);
     await client.invokeContract(
       config.controllerId,
       "classify_flights",

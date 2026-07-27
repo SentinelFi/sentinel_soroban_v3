@@ -62,8 +62,32 @@ export class SorobanClient {
   /**
    * Write contract call — simulates, assembles auth, signs, and submits.
    * Returns the transaction result.
+   *
+   * Retries ONCE on a sequence-number collision (txBadSeq): the keeper jobs
+   * share one signing key on offset schedules, and a slow run can overlap
+   * the next job's submission window. The retry re-fetches the account (and
+   * with it the fresh sequence number) — anything else still throws.
    */
   async invokeContract(
+    contractId: string,
+    method: string,
+    args: xdr.ScVal[],
+    signerSecret: string
+  ): Promise<any> {
+    try {
+      return await this.invokeContractOnce(contractId, method, args, signerSecret);
+    } catch (err) {
+      const msg = String(err);
+      if (/badseq/i.test(msg)) {
+        console.warn(`[soroban] ${method}: sequence collision (txBadSeq) — retrying once with a fresh sequence...`);
+        await new Promise((r) => setTimeout(r, 2000));
+        return await this.invokeContractOnce(contractId, method, args, signerSecret);
+      }
+      throw err;
+    }
+  }
+
+  private async invokeContractOnce(
     contractId: string,
     method: string,
     args: xdr.ScVal[],
@@ -146,6 +170,11 @@ export class SorobanClient {
   /** Helper: convert a Symbol string to an ScVal. */
   symbolToScVal(sym: string): xdr.ScVal {
     return xdr.ScVal.scvSymbol(sym);
+  }
+
+  /** Helper: convert a number to a u32 ScVal. */
+  u32ToScVal(n: number): xdr.ScVal {
+    return xdr.ScVal.scvU32(n);
   }
 
   /** Helper: convert a u64 bigint to an ScVal. */

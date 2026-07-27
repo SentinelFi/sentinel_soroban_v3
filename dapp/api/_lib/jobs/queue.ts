@@ -20,9 +20,51 @@ export async function run(config: Config): Promise<RunLogEntry> {
   const keeperPublicKey = client.publicKeyFromSecret(config.keeperSecretKey);
 
   console.log("[queue] Starting queue maintenance...");
-  console.log(`[queue] Calling Controller.run_queue_maintenance(${keeperPublicKey.slice(0, 8)}...)`);
 
   try {
+    // Pre-flight reads (free simulations) — submit a transaction ONLY when
+    // it can actually do something:
+    // 1. Barrier engaged (pending public outcomes): the vault's queue
+    //    processors early-return on-chain, so the tx would be a paid no-op.
+    //    The settler is responsible for clearing the barrier.
+    const pending = BigInt(
+      (await client.readContract(config.oracleAggregatorId, "get_pending_outcomes")) ?? 0
+    );
+    if (pending > 0n) {
+      console.log(`[queue] Settlement barrier engaged (${pending} pending) — vault would no-op; skipping tx.`);
+      return {
+        timestamp: new Date().toISOString(),
+        job: "queue_maintainer",
+        duration_ms: Date.now() - start,
+        success: true,
+        actions: [{ flight: "-", skipped: `barrier engaged (${pending} pending) — no tx submitted` }],
+      };
+    }
+    // 2. Nothing queued AND today's snapshot already recorded: nothing the
+    //    call could do. (Snapshot is keyed by unix day — get_snapshot_price
+    //    returns 0 for a missing day, so >0 means already snapshotted.)
+    const [wdLen, depLen] = await Promise.all([
+      client.readContract(config.riskVaultId, "get_withdrawal_queue_len"),
+      client.readContract(config.riskVaultId, "get_deposit_queue_len"),
+    ]);
+    const today = BigInt(Math.floor(Date.now() / 1000 / 86_400));
+    const snapshotToday = BigInt(
+      (await client.readContract(config.riskVaultId, "get_snapshot_price", [
+        client.u64ToScVal(today),
+      ])) ?? 0
+    );
+    if (Number(wdLen ?? 0) === 0 && Number(depLen ?? 0) === 0 && snapshotToday > 0n) {
+      console.log("[queue] Queues empty + snapshot done — skipping (no transaction).");
+      return {
+        timestamp: new Date().toISOString(),
+        job: "queue_maintainer",
+        duration_ms: Date.now() - start,
+        success: true,
+        actions: [{ flight: "-", skipped: "queues empty + snapshot done — no tx submitted" }],
+      };
+    }
+
+    console.log(`[queue] Calling Controller.run_queue_maintenance(${keeperPublicKey.slice(0, 8)}...)`);
     await client.invokeContract(
       config.controllerId,
       "run_queue_maintenance",

@@ -1,48 +1,131 @@
 import { SorobanClient } from "../soroban_client";
-import type { Config, RunLogEntry } from "../types";
+import type { Config, FetcherAction, RunLogEntry } from "../types";
+
+// Bounded drain: each pass is one classify_flights (window 25) + one
+// execute_settlements (window 10). 8 passes ≈ 80 settlements per run —
+// far beyond any realistic backlog, well inside the 300s maxDuration.
+const MAX_DRAIN_PASSES = 8;
 
 /**
  * Cron #3 — SettlementExecutor (every 5 minutes)
  *
- * Calls Controller.execute_settlements(keeper) which processes all
- * ToBeSettled* flights (moves money between FlightPoolManager and RiskVault,
- * marks flights Settled).
+ * The vault blocks EVERY LP entry/exit from the moment an outcome is
+ * written until it settles (`PendingOutcomes > 0`), so this job's mission
+ * is: get pending outcomes to zero, fast, and spend nothing when there is
+ * nothing to do.
  *
- * Note: queue drain + share-price snapshot are NO LONGER part of this
- * call. Audit M-03 split them out into Controller.run_queue_maintenance so
- * settlement gas pressure can't block underwriter payouts. The
- * `queue.ts` cron handles that on its own cadence.
+ * 1. Pre-flight read (free simulation): `oracle.get_pending_outcomes()`.
+ *    Zero pending → NO transaction at all. (The empty-path on-chain call
+ *    still writes TTL extensions — a real fee — so blind 5-minute submits
+ *    were pure waste.)
+ * 2. Drain loop: alternate `classify_flights` (promotes Landed/Cancelled →
+ *    ToBeSettled*, window 25) and `execute_settlements` (moves money,
+ *    window 10) until pending hits zero, progress stalls, or
+ *    MAX_DRAIN_PASSES. A backlog larger than one window drains in ONE run
+ *    instead of dribbling out across 5-minute ticks.
+ * 3. Resource-budget fallback: if `execute_settlements` fails, retry the
+ *    pass with `execute_settlements_bounded(keeper, 3)` then `(keeper, 1)`
+ *    — the contract's escape hatch for windows that exceed per-tx budgets;
+ *    without this a consistently-oversized batch would stall settlement
+ *    forever.
+ *
+ * Note: queue drain + share-price snapshot live in run_queue_maintenance
+ * (audit M-03 split) on their own cadence — see queue.ts.
  */
 export async function run(config: Config): Promise<RunLogEntry> {
   const start = Date.now();
+  const actions: FetcherAction[] = [];
   const client = new SorobanClient(config);
   const keeperPublicKey = client.publicKeyFromSecret(config.keeperSecretKey);
+  const keeperArg = [client.addressToScVal(keeperPublicKey)];
 
-  console.log("[settler] Starting settlement execution...");
-  console.log(`[settler] Calling Controller.execute_settlements(${keeperPublicKey.slice(0, 8)}...)`);
+  const entry = (success: boolean, error?: string): RunLogEntry => ({
+    timestamp: new Date().toISOString(),
+    job: "settler",
+    duration_ms: Date.now() - start,
+    success,
+    ...(error ? { error } : {}),
+    actions,
+  });
 
   try {
-    await client.invokeContract(
-      config.controllerId,
-      "execute_settlements",
-      [client.addressToScVal(keeperPublicKey)],
-      config.keeperSecretKey
-    );
-    console.log("[settler] execute_settlements() completed ✓");
-    return {
-      timestamp: new Date().toISOString(),
-      job: "settler",
-      duration_ms: Date.now() - start,
-      success: true,
-    };
+    const readPending = async (): Promise<bigint> =>
+      BigInt((await client.readContract(config.oracleAggregatorId, "get_pending_outcomes")) ?? 0);
+
+    let pending = await readPending();
+    if (pending === 0n) {
+      console.log("[settler] No pending outcomes — skipping (no transaction).");
+      actions.push({ flight: "-", skipped: "no pending outcomes — no tx submitted" });
+      return entry(true);
+    }
+
+    console.log(`[settler] ${pending} pending outcome(s) — draining...`);
+
+    let stalls = 0;
+    for (let pass = 1; pass <= MAX_DRAIN_PASSES && pending > 0n; pass++) {
+      // Classify first: an outcome written since the last hourly classifier
+      // tick is pending but not yet ToBeSettled — execute_settlements alone
+      // could never release it.
+      try {
+        await client.invokeContract(config.controllerId, "classify_flights", keeperArg, config.keeperSecretKey);
+      } catch (err) {
+        console.error(`[settler] pass ${pass}: classify_flights failed: ${err}`);
+        actions.push({ flight: `pass ${pass}`, error: `classify_flights: ${err}` });
+      }
+
+      try {
+        await client.invokeContract(config.controllerId, "execute_settlements", keeperArg, config.keeperSecretKey);
+      } catch (err) {
+        // Escape hatch: shrink the window (10 → 3 → 1) so an oversized
+        // batch still makes progress instead of retry-failing forever.
+        console.warn(`[settler] pass ${pass}: execute_settlements failed (${err}) — trying bounded windows...`);
+        let bounded = false;
+        for (const limit of [3, 1]) {
+          try {
+            await client.invokeContract(
+              config.controllerId,
+              "execute_settlements_bounded",
+              [client.addressToScVal(keeperPublicKey), client.u32ToScVal(limit)],
+              config.keeperSecretKey
+            );
+            actions.push({ flight: `pass ${pass}`, transition: `settled with bounded window ${limit}` });
+            bounded = true;
+            break;
+          } catch (err2) {
+            console.error(`[settler] pass ${pass}: bounded(${limit}) also failed: ${err2}`);
+          }
+        }
+        if (!bounded) {
+          actions.push({ flight: `pass ${pass}`, error: `execute_settlements + bounded fallbacks failed: ${err}` });
+        }
+      }
+
+      const next = await readPending();
+      if (next >= pending) {
+        stalls++;
+        if (stalls >= 2) {
+          // Two passes with no progress: a flight the sweeps cannot settle
+          // (missing config, paused contract, stalled restore). Stop burning
+          // fees — this needs the ops runbook, and the pending-age monitor
+          // is the alarm.
+          console.error(
+            `[settler] No progress after ${pass} pass(es), ${next} outcome(s) still pending — ` +
+              `needs operator attention (see evict_missing_flight / restore runbook).`
+          );
+          actions.push({ flight: "-", error: `stalled with ${next} pending outcome(s)` });
+          return entry(false, `stalled with ${next} pending outcome(s)`);
+        }
+      } else {
+        stalls = 0;
+      }
+      pending = next;
+    }
+
+    console.log(`[settler] Done — ${pending} pending outcome(s) remaining.`);
+    actions.push({ flight: "-", transition: `drained to ${pending} pending` });
+    return entry(true);
   } catch (err) {
     console.error(`[settler] Error: ${err}`);
-    return {
-      timestamp: new Date().toISOString(),
-      job: "settler",
-      duration_ms: Date.now() - start,
-      success: false,
-      error: String(err),
-    };
+    return entry(false, String(err));
   }
 }

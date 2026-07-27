@@ -55,14 +55,32 @@ export async function run(config: Config): Promise<RunLogEntry> {
 
   // Phase 6 — permissionless prune of aged-settled flights from
   // OracleAggregator.ActiveFlightList. Idempotent; safe to run daily.
+  //
+  // Drain loop: prune_settled evicts at most MAX_PRUNE_BATCH=60 slots per
+  // call from a rotating cursor over the WHOLE active set (live + retained),
+  // so one call/day can fall behind after a backlog spike. Loop while the
+  // active count keeps dropping (bounded), so each daily run fully clears
+  // whatever has aged past the 7-day retention.
   try {
-    await client.invokeContract(
-      config.oracleAggregatorId,
-      "prune_settled",
-      [],
-      config.ttlExtenderSecretKey
-    );
-    console.log("[ttl-extender] OracleAggregator.prune_settled() done");
+    const readCount = async (): Promise<number> =>
+      Number((await client.readContract(config.oracleAggregatorId, "get_active_flight_count")) ?? 0);
+
+    let count = await readCount();
+    let passes = 0;
+    const maxPasses = Math.min(10, Math.ceil(count / 60) + 1);
+    while (passes < maxPasses) {
+      passes++;
+      await client.invokeContract(
+        config.oracleAggregatorId,
+        "prune_settled",
+        [],
+        config.ttlExtenderSecretKey
+      );
+      const next = await readCount();
+      if (next >= count) break; // nothing (more) aged out — done
+      count = next;
+    }
+    console.log(`[ttl-extender] OracleAggregator.prune_settled() done (${passes} pass(es), ${count} still listed)`);
     results.push({ contract: "OracleAggregator.prune_settled", success: true });
   } catch (err) {
     console.error(`[ttl-extender] prune_settled FAILED: ${err}`);
