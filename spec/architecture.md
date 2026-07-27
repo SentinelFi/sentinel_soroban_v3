@@ -1373,12 +1373,32 @@ design), **oracle** (fetcher/sale_authorizer — the centralized trust root:
 they spend AeroAPI calls and attest real-world facts), and
 **keepers/liquidators** (classifier/settler/queue_maintainer/ttl_extender —
 they move no new information on-chain, only execute what the oracle already
-attested). Only the keeper tier is meant to decentralize: every job runs
-standalone via `npm run bot -- <name>`, `ttl_extender` is permissionless
-today, and the planned bounty upgrade (spec/TODO.md §E) makes the remaining
-keeper entry points permissionless-and-paid. The oracle's future trust
-upgrade is a TEE backend (address rotation, unchanged contracts) — not
-permissionless operation.
+attested). **Only the keeper tier is open-source-and-anyone-can-run**: every
+job runs standalone via `npm run bot -- <name>`, `ttl_extender` is
+permissionless today, and the planned bounty upgrade (spec/TODO.md §E) makes
+the remaining keeper entry points permissionless-and-paid. **Governance and
+oracle stay centralized** — the oracle's future trust upgrade is a TEE
+backend (address rotation, unchanged contracts), not permissionless
+operation.
+
+**Optional by design — the system runs without them:**
+
+- **The database is optional (DB-optional invariant).** The oracle and
+  keeper tiers never require the governance DB: with `GOVERNANCE_DB_URL`
+  unset they run fully (run-history recording is skipped), and with the DB
+  down, recording fails silently while the job still completes its on-chain
+  work — the e2e suite runs the entire settlement pipeline with no database
+  attached. Only the governance tier requires the DB, because that tier *is*
+  the DB (signals, audit log, route registry). A dead Supabase degrades
+  governance to manual admin ops; purchases, attestation, settlement,
+  claims, and TTL are untouched. Any future DB feature (e.g. the planned
+  AeroAPI response cache) must degrade to direct calls, never gate.
+- **The webhook is optional.** The planned AeroAPI push-alert webhook
+  (spec/TODO.md §B) only improves cancellation/arrival *latency* from hours
+  to seconds — polling remains the guaranteed base layer and the
+  reconciliation path for missed alerts. If both webhook and polling die,
+  sale windows self-expire (≤6h on-chain cap) and sales fail closed. The
+  webhook must never become a single point of failure.
 
 ### Cron #0 — SaleAuthorizer (Oracle, every 2 hours at :30)
 
@@ -1766,7 +1786,9 @@ tools/mock-aeroapi/               # keyless AeroAPI mock for local demos
 Every job — cron-triggered or hand-run — funnels through one wrapper
 (`makeCronHandler` / `makeGovCronHandler`, `dapp/api/_lib/handler.ts` +
 `governance/config.ts`) that authorizes the request (a shared `CRON_SECRET`), runs
-the job, and appends a row to the Supabase `cron_runs` table via `recordRun` (job
+the job, and — **best-effort only** (`recordRun` no-ops without
+`GOVERNANCE_DB_URL` and swallows DB errors; a history blip never fails a job
+that did its on-chain work) — appends a row to the Supabase `cron_runs` table (job
 name, trigger = `schedule | external | manual:<email>`, duration, success/error,
 actions). Two surfaces read that history:
 
@@ -1840,6 +1862,11 @@ pending the owner key, so the reconciler runs with `GOV_DRY_RUN=true`: it comput
 and logs every decision but submits nothing. See below.)
 
 ### What data is held (Supabase, `supabase/migrations/`)
+
+The database serves the **governance tier only** — the oracle and keeper
+jobs run fully without it (see the DB-optional invariant in the keeper
+layer). It is never on the purchase/settlement money path: a dead database
+degrades governance automation to manual admin operations and nothing else.
 
 All tables have RLS enabled with **zero policies (deny-all)** — only the server-side
 Vercel functions reach them, over the Supavisor transaction pooler. Row types are
