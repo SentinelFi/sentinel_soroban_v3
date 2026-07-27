@@ -37,6 +37,7 @@ import {
 } from "../api/_lib/governance/signals_collector";
 import { computeExposureSignals } from "../api/_lib/governance/exposure_collector";
 import { computeDisableCap } from "../api/_lib/governance/reconciler";
+import { modal, clockDeltaMinutes, distanceMiles } from "../api/_lib/governance/schedule_check";
 import type { Config, RunLogEntry } from "../api/_lib/types";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -494,6 +495,18 @@ async function testGovSignals(): Promise<void> {
     "breaker cap: small fleets floor at 3, large scale at 20%",
     computeDisableCap(2) === 3 && computeDisableCap(15) === 3 && computeDisableCap(200) === 40,
     `${computeDisableCap(2)}/${computeDisableCap(15)}/${computeDisableCap(200)}`
+  );
+
+  // Schedule-drift math (gov_schedule_check).
+  check("modal picks most frequent (ties → earliest)", modal(["08:00", "08:00", "09:30"]) === "08:00" && modal(["10:00", "08:00"]) === "08:00" && modal([]) === null);
+  check(
+    "clock delta wraps midnight",
+    clockDeltaMinutes("08:00", "08:45") === 45 && clockDeltaMinutes("23:30", "00:15") === 45
+  );
+  check(
+    "JFK-LAX great-circle ≈ 2475 mi",
+    Math.abs(distanceMiles({ lat: 40.64, lon: -73.78 }, { lat: 33.94, lon: -118.41 }) - 2475) < 30,
+    String(distanceMiles({ lat: 40.64, lon: -73.78 }, { lat: 33.94, lon: -118.41 }))
   );
 }
 

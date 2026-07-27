@@ -45,6 +45,7 @@ import { run as runGovReconcile } from "../api/_lib/governance/reconciler";
 import { run as runGovSignals } from "../api/_lib/governance/signals_collector";
 import { run as runGovExposure } from "../api/_lib/governance/exposure_collector";
 import { run as runGovOnboard } from "../api/_lib/governance/onboard";
+import { run as runGovScheduleCheck } from "../api/_lib/governance/schedule_check";
 
 const BOTS: Partial<Record<JobName, () => Promise<RunLogEntry>>> = {
   fetcher: () => runFetcher(loadConfig()),
@@ -58,6 +59,7 @@ const BOTS: Partial<Record<JobName, () => Promise<RunLogEntry>>> = {
   gov_signals: () => runGovSignals(loadGovConfig()),
   gov_exposure: () => runGovExposure(loadGovConfig()),
   gov_onboard: () => runGovOnboard(loadGovConfig()),
+  gov_schedule_check: () => runGovScheduleCheck(loadGovConfig()),
 };
 
 async function main(): Promise<void> {

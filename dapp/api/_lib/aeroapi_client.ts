@@ -95,10 +95,24 @@ export function isConfirmedDiversion(flight: AeroApiFlight): boolean {
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
+// Every request gets a hard timeout — a hanging response must never hang a
+// job (found the hard way: schedule_check stalled a full cron slot).
+const FETCH_TIMEOUT_MS = 45_000;
+// /schedules max_pages above ~5 has been observed returning quota errors
+// aggressively on lower tiers; stay conservative and cursor-paginate.
+const MAX_PAGES_CLAMP = 5;
 
 export class AeroApiClient {
   private baseUrl: string;
   private apiKey: string;
+  /**
+   * Run-level quota breaker: once the API answers "quota limit reached"
+   * (429 with a quota detail — a PERMANENT condition until the billing
+   * period resets, unlike a transient rate spike), every further request
+   * in this process short-circuits to null instead of burning retry
+   * cycles. Callers already fail safe on null.
+   */
+  private quotaExhausted = false;
 
   constructor(config: Pick<Config, "aeroApiBaseUrl" | "aeroApiKey">) {
     this.baseUrl = config.aeroApiBaseUrl;
@@ -178,24 +192,51 @@ export class AeroApiClient {
       maxPages?: number;
     }
   ): Promise<AeroApiSchedulesResponse | null> {
+    // max_pages is clamped: values above ~5 have been observed answering
+    // with quota errors / empty sets on lower tiers. Busy windows beyond
+    // the first response are collected by FOLLOWING links.next cursors,
+    // bounded to a few round-trips.
+    const perRequestPages = Math.min(filters.maxPages ?? MAX_PAGES_CLAMP, MAX_PAGES_CLAMP);
     const params = new URLSearchParams({
       // One row per physical instance — marketing codeshares of the same
       // leg would otherwise show up as extra rows and trip ambiguity checks.
       include_codeshares: "false",
       include_regional: "false",
-      max_pages: String(filters.maxPages ?? 3),
+      max_pages: String(perRequestPages),
     });
     if (filters.airline) params.set("airline", filters.airline);
     if (filters.flightNumber) params.set("flight_number", filters.flightNumber);
     if (filters.origin) params.set("origin", filters.origin);
     if (filters.destination) params.set("destination", filters.destination);
 
-    const url = `${this.baseUrl}/schedules/${dateStartStr}/${dateEndStr}?${params}`;
-    return this.requestJson<AeroApiSchedulesResponse>(
-      url,
+    const label =
       `schedules ${filters.airline ?? ""}${filters.flightNumber ?? ""} ` +
-        `${filters.origin ?? "*"}->${filters.destination ?? "*"} ${dateStartStr}..${dateEndStr}`
-    );
+      `${filters.origin ?? "*"}->${filters.destination ?? "*"} ${dateStartStr}..${dateEndStr}`;
+
+    const MAX_CURSOR_FOLLOWS = 4;
+    let url = `${this.baseUrl}/schedules/${dateStartStr}/${dateEndStr}?${params}`;
+    let merged: AeroApiSchedulesResponse | null = null;
+    for (let hop = 0; hop <= MAX_CURSOR_FOLLOWS; hop++) {
+      const page = await this.requestJson<AeroApiSchedulesResponse>(url, `${label} [p${hop}]`);
+      if (!page) {
+        // First page failing = whole call failed (callers fail safe on
+        // null). A LATER page failing returns what we have — partial data
+        // under-counts, and every consumer treats missing days as
+        // unverifiable/absent-fail-closed rather than harmful.
+        return merged;
+      }
+      if (!merged) {
+        merged = page;
+      } else {
+        merged.scheduled = [...(merged.scheduled ?? []), ...(page.scheduled ?? [])];
+        merged.links = page.links;
+      }
+      const next = page.links?.next;
+      if (!next) return merged;
+      url = `${this.baseUrl}${next.startsWith("/") ? next.replace(/^\/aeroapi/, "") : `/${next}`}`;
+    }
+    console.warn(`[aeroapi] ${label}: cursor limit reached (${MAX_CURSOR_FOLLOWS} follows) — returning partial set.`);
+    return merged;
   }
 
   /**
@@ -217,6 +258,9 @@ export class AeroApiClient {
    * permanent (logged, null).
    */
   private async requestJson<T>(url: string, label: string): Promise<T | null> {
+    if (this.quotaExhausted) {
+      return null; // breaker tripped — no point burning more calls this run
+    }
     const headers: Record<string, string> = {};
     if (this.apiKey) {
       headers["x-apikey"] = this.apiKey;
@@ -224,7 +268,7 @@ export class AeroApiClient {
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const resp = await fetch(url, { headers });
+        const resp = await fetch(url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
 
         if (resp.ok) {
           // Node's fetch types resp.json() as unknown — the executor's DOM
@@ -242,7 +286,20 @@ export class AeroApiClient {
           return null;
         }
 
-        // Retryable errors — 429 and 5xx
+        // 429 quota exhaustion is PERMANENT for the billing period — do not
+        // retry, and trip the run-level breaker so the rest of the run
+        // stops spending immediately. (A transient rate spike lacks the
+        // quota wording and still gets the backoff below.)
+        if (resp.status === 429) {
+          const body = await resp.text().catch(() => "");
+          if (/quota/i.test(body)) {
+            console.error(`[aeroapi] QUOTA EXHAUSTED (${label}) — halting API calls for this run.`);
+            this.quotaExhausted = true;
+            return null;
+          }
+        }
+
+        // Retryable errors — 429 (transient rate) and 5xx
         if (resp.status === 429 || resp.status >= 500) {
           if (attempt < MAX_RETRIES) {
             const delay = BASE_DELAY_MS * Math.pow(2, attempt);

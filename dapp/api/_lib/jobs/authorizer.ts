@@ -256,9 +256,12 @@ export async function run(config: Config, deps: AuthorizerDeps = {}): Promise<Ru
           const schedules = await cachedFetch(
             `sched|${origin}|${destination}|${startStr}|${endStr}`,
             SCHEDULE_CACHE_TTL_SECS,
-            () => aeroApi.getSchedules(startStr, endStr, { origin, destination, maxPages: 20 })
+            () => aeroApi.getSchedules(startStr, endStr, { origin, destination })
           );
-          if (!schedules) {
+          if (!schedules || schedules.links?.next) {
+            // Failed OR incomplete pagination: an under-counted row set
+            // must not close windows as "verified absent" — mark the whole
+            // chunk unknown (windows lapse naturally within validity).
             for (let d = chunkStart; d <= chunkEnd; d++) {
               farUnknown.add(`${pairKey}|${dayDate(d).dateStr}`);
             }

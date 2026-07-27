@@ -14,6 +14,7 @@ import { run as runGovReconcile } from "../_lib/governance/reconciler";
 import { run as runGovSignals } from "../_lib/governance/signals_collector";
 import { run as runGovExposure } from "../_lib/governance/exposure_collector";
 import { run as runGovOnboard } from "../_lib/governance/onboard";
+import { run as runGovScheduleCheck } from "../_lib/governance/schedule_check";
 import type { JobName, RunLogEntry } from "../_lib/types";
 
 // Manual runs can be slow (fetcher walks every active flight).
@@ -41,8 +42,7 @@ const RUNNERS: Record<JobName, () => Promise<RunLogEntry>> = {
   gov_signals: () => runGovSignals(loadGovConfig()),
   gov_exposure: () => runGovExposure(loadGovConfig()),
   gov_onboard: () => runGovOnboard(loadGovConfig()),
-  // Phase 3/4 — registered here as they land.
-  gov_schedule_check: () => Promise.reject(new Error("gov_schedule_check not implemented yet")),
+  gov_schedule_check: () => runGovScheduleCheck(loadGovConfig()),
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
