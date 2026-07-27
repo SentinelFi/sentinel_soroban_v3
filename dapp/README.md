@@ -111,6 +111,27 @@ on-chain, and it retries next cycle. For a keyless demo, point
 `AEROAPI_BASE_URL` at a hosted `tools/mock-aeroapi` instance instead (scripted
 scenarios, no key needed).
 
+### Future improvement: AeroAPI push alerts (webhook)
+
+Cancellation detection is currently poll-only, so worst-case reaction time
+equals the poll interval. AeroAPI supports configured push alerts (cancellation
+/ departure / arrival events POSTed to an HTTPS endpoint), which would make
+cancellations near-instant instead:
+
+- a webhook function (e.g. `api/aeroapi/alert`) verifies a shared secret,
+  writes the raw alert to the governance DB first (ack fast), then runs the
+  same on-chain sequence the crons use today: `close_sale` → `set_cancelled` →
+  targeted classify/settle;
+- alerts are created when a flight first gets a policy and deleted after
+  settlement, so the alert count tracks insured flights, not the whitelist;
+- polling stays in place as the reconciliation/backup layer — a missed alert
+  is caught at the next scheduled poll, and if both die, sale windows expire
+  on their own (≤24h on-chain cap) and sales fail closed.
+
+Not built yet: it needs an AeroAPI plan tier with alerts, and the poll-only
+economics are acceptable at current scale (API cost tracks insured flights,
+not whitelisted routes).
+
 ### Auth
 
 - If `CRON_SECRET` is set, every cron request must carry `Authorization: Bearer $CRON_SECRET`. Vercel's scheduler sends this header automatically when the `CRON_SECRET` env var exists, so no extra config is needed for scheduled runs.
