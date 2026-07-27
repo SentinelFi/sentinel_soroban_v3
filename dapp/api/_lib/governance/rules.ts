@@ -1,6 +1,6 @@
 import { clampPremium, applyMultiplier } from "../route_rules";
 import type { RouteRails } from "../routes_config";
-import type { OnChainRoute } from "../governance";
+import type { OnChainRoute } from "./submitter";
 import type { RouteRow, SignalRow } from "./model";
 
 /**
@@ -81,6 +81,13 @@ export interface ReconcileInput {
   adjustedToday: boolean;
   /** Base premium after the fallback chain (route row → file defaults). */
   basePremium: bigint;
+  /**
+   * ML pricing anchor from an active `pricing` signal (route_agent's
+   * daily XGBoost baseline, already rails-clamped by the reconciler).
+   * When present it REPLACES basePremium as the multiplier base; absent
+   * or expired → admin/file base applies (model outage degrades safely).
+   */
+  anchorPremium?: bigint | null;
   rails: RouteRails;
 }
 
@@ -148,11 +155,12 @@ export function decideReconcileAction(input: ReconcileInput): ReconcileAction {
   // ── 3. Premium multipliers stack over base, clamp, validate ────────
   const current = onChain.terms?.premium ?? null;
   const payoff = onChain.terms?.payoff ?? null;
+  const base = input.anchorPremium ?? input.basePremium;
 
   if (adjusters.length === 0) {
     // No live adjusters: if the engine previously moved the premium,
     // walk it back to base (hysteresis-gated — lowering).
-    if (input.hasOpenAdjustment && current !== null && current !== input.basePremium) {
+    if (input.hasOpenAdjustment && current !== null && current !== base) {
       if (input.recentlyCleared) {
         return { kind: "noop", reason: "adjusters cleared; hysteresis before revert" };
       }
@@ -167,7 +175,7 @@ export function decideReconcileAction(input: ReconcileInput): ReconcileAction {
     signal_id: Number(s.id),
   }));
 
-  let target = input.basePremium;
+  let target = base;
   for (const m of multipliers) target = applyMultiplier(target, m.factor);
   target = clampPremium(target, current, rails);
 

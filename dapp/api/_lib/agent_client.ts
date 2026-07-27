@@ -19,6 +19,11 @@ export interface AgentPriceRequest {
   month: number;
   day_of_month: number;
   day_of_week: number; // Mon=1 … Sun=7
+  // Required by the deployed Render model build ("phase 22") — omitting
+  // them 422s and the caller falls back. Sent when the DB route row has
+  // the data (gov_onboard/admin fill sched_dep_local + distance_mi).
+  dep_time_hhmm?: string;
+  distance_mi?: number;
 }
 
 export interface AgentPriceResponse {

@@ -1,8 +1,9 @@
-import { makeCronHandler } from "../_lib/handler";
+import { makeGovCronHandler } from "../_lib/governance/config";
 import { run } from "../_lib/jobs/route_agent";
 
-// Daily governance agent: ML pricing + weather rules + 24h re-evaluation
-// of disabled routes.
+// Daily ML pricing + forecast COLLECTOR (absorbed into the reconciler
+// 2026-07-27): writes pricing/weather signals — facts only, no chain
+// writes. The reconciler (hourly) applies them within its rails.
 export const config = { maxDuration: 300 };
 
-export default makeCronHandler(run);
+export default makeGovCronHandler(run);

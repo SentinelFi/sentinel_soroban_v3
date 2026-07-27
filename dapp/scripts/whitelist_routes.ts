@@ -16,75 +16,58 @@
  *
  * Signs with GOVERNANCE_ADMIN_SECRET_KEY — an address the owner has added
  * via GovernanceModule.add_admin (or the owner itself). Whitelisting NEW
- * routes is deliberately script-only: the daily route agent never lists
- * routes, it only manages ones a human already listed.
+ * routes stays script/gov_onboard-driven; the route agent never lists.
+ *
+ * 2026-07-27: ported onto GovSubmitter (generated bindings + before/after
+ * snapshots + best-effort actions_log) — the same audited choke point the
+ * reconciler and admin console use. The legacy hand-rolled ScVal helpers
+ * are gone.
  */
-import { readFileSync, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { loadDotEnv } from "./env";
+loadDotEnv();
 
-import { loadConfig } from "../api/_lib/config";
-import { SorobanClient } from "../api/_lib/soroban_client";
-import {
-  readRouteStatus,
-  whitelistRoute,
-  enableRoute,
-  disableRoute,
-  i128Update,
-  u32Update,
-  type GovernanceCtx,
-} from "../api/_lib/governance";
+import { GovSubmitter } from "../api/_lib/governance/submitter";
 import {
   loadRoutesConfig,
   fileTerms,
   usdcToBaseUnits,
   baseUnitsToUsdc,
+  type RouteEntry,
 } from "../api/_lib/routes_config";
 
-// ── minimal .env loader (script-only; the Vercel functions use real env) ──
-function loadDotEnv(): void {
-  const envPath = resolve(dirname(fileURLToPath(import.meta.url)), "../.env");
-  if (!existsSync(envPath)) return;
-  for (const line of readFileSync(envPath, "utf8").split("\n")) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*"?([^"\n]*)"?\s*$/);
-    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2];
-  }
-}
-
 async function main(): Promise<void> {
-  loadDotEnv();
   const syncTerms = process.argv.includes("--sync-terms");
 
-  const config = loadConfig();
-  if (!config.governanceAdminSecretKey) {
+  const adminSecretKey = process.env.GOVERNANCE_ADMIN_SECRET_KEY;
+  if (!adminSecretKey) {
     throw new Error("GOVERNANCE_ADMIN_SECRET_KEY is not set");
   }
 
   const routesConfig = loadRoutesConfig();
-  const client = new SorobanClient(config);
-  const ctx: GovernanceCtx = {
-    client,
-    governanceId: config.governanceId,
-    adminPublicKey: client.publicKeyFromSecret(config.governanceAdminSecretKey),
-    adminSecretKey: config.governanceAdminSecretKey,
-  };
+  const submitter = new GovSubmitter({
+    rpcUrl: process.env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org",
+    networkPassphrase:
+      process.env.STELLAR_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
+    governanceId:
+      process.env.GOVERNANCE_ID ?? "CANSHOFUFZPLZPCVUQYL3LBO25FW5BP6AEVAMNN2QS2BINGDIVZVEWYZ",
+    adminSecretKey,
+    actor: "script:whitelist",
+  });
 
-  console.log(`Syncing ${routesConfig.routes.length} route(s) as admin ${ctx.adminPublicKey.slice(0, 8)}...`);
+  console.log(`Syncing ${routesConfig.routes.length} route(s)...`);
   let changed = 0;
 
   for (const route of routesConfig.routes) {
     const label = `${route.flight_id} ${route.origin}→${route.destination}`;
-    const onChain = await readRouteStatus(ctx, route.flight_id, route.origin, route.destination);
+    const key = { flightId: route.flight_id, origin: route.origin, dest: route.destination };
+    const onChain = await submitter.readStatus(key);
     const terms = fileTerms(routesConfig, route);
 
     if (route.enabled) {
       if (onChain.status === "Unknown") {
         console.log(`  ${label}: whitelisting (premium=$${baseUnitsToUsdc(terms.premium)}, payoff=$${baseUnitsToUsdc(terms.payoff)}, delay=${terms.delayHours}h)`);
-        await whitelistRoute(
-          ctx,
-          route.flight_id,
-          route.origin,
-          route.destination,
+        await submitter.whitelist(
+          key,
           route.overrides?.premium_usdc != null ? usdcToBaseUnits(route.overrides.premium_usdc) : null,
           route.overrides?.payoff_usdc != null ? usdcToBaseUnits(route.overrides.payoff_usdc) : null,
           route.overrides?.delay_hours ?? null
@@ -92,18 +75,18 @@ async function main(): Promise<void> {
         changed++;
       } else if (onChain.status === "Disabled") {
         console.log(`  ${label}: re-enabling`);
-        await enableRoute(ctx, route.flight_id, route.origin, route.destination);
+        await submitter.enable(key);
         changed++;
-        if (syncTerms) await pushTerms(ctx, route, terms, label);
+        if (syncTerms) await pushTerms(submitter, route, terms, label);
       } else if (syncTerms) {
-        await pushTerms(ctx, route, terms, label);
+        await pushTerms(submitter, route, terms, label);
       } else {
-        console.log(`  ${label}: active — noop (terms managed by the route agent; use --sync-terms to force)`);
+        console.log(`  ${label}: active — noop (terms managed by governance; use --sync-terms to force)`);
       }
     } else {
       if (onChain.status === "Active") {
         console.log(`  ${label}: disabling (enabled=false in routes file)`);
-        await disableRoute(ctx, route.flight_id, route.origin, route.destination);
+        await submitter.disable(key);
         changed++;
       } else {
         console.log(`  ${label}: enabled=false — noop (${onChain.status} on-chain)`);
@@ -112,30 +95,23 @@ async function main(): Promise<void> {
   }
 
   console.log(`Done. ${changed} on-chain change(s).`);
+  process.exit(0); // GovSubmitter's DB pool would otherwise hold the process open
 }
 
 async function pushTerms(
-  ctx: GovernanceCtx,
-  route: { flight_id: string; origin: string; destination: string; overrides: { premium_usdc?: number | null; payoff_usdc?: number | null; delay_hours?: number | null } | null },
+  submitter: GovSubmitter,
+  route: RouteEntry,
   terms: { premium: bigint; payoff: bigint; delayHours: number },
   label: string
 ): Promise<void> {
   // Full three-field sync: Set() for file overrides, UseDefault for null
   // (so the on-chain fallback tracks the protocol defaults, same as the file).
   console.log(`  ${label}: syncing terms → premium=$${baseUnitsToUsdc(terms.premium)}, payoff=$${baseUnitsToUsdc(terms.payoff)}, delay=${terms.delayHours}h`);
-  await ctx.client.invokeContract(
-    ctx.governanceId,
-    "update_route_terms",
-    [
-      ctx.client.addressToScVal(ctx.adminPublicKey),
-      ctx.client.symbolToScVal(route.flight_id),
-      ctx.client.symbolToScVal(route.origin),
-      ctx.client.symbolToScVal(route.destination),
-      i128Update(route.overrides?.premium_usdc != null ? usdcToBaseUnits(route.overrides.premium_usdc) : "use_default"),
-      i128Update(route.overrides?.payoff_usdc != null ? usdcToBaseUnits(route.overrides.payoff_usdc) : "use_default"),
-      u32Update(route.overrides?.delay_hours ?? "use_default"),
-    ],
-    ctx.adminSecretKey
+  await submitter.updateTerms(
+    { flightId: route.flight_id, origin: route.origin, dest: route.destination },
+    route.overrides?.premium_usdc != null ? usdcToBaseUnits(route.overrides.premium_usdc) : "use_default",
+    route.overrides?.payoff_usdc != null ? usdcToBaseUnits(route.overrides.payoff_usdc) : "use_default",
+    route.overrides?.delay_hours ?? "use_default"
   );
 }
 

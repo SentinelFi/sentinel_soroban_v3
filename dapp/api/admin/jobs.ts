@@ -36,7 +36,7 @@ const RUNNERS: Record<JobName, () => Promise<RunLogEntry>> = {
   queue_maintainer: () => runQueue(loadConfig()),
   ttl_extender: () => runTtl(loadConfig()),
   sale_authorizer: () => runAuthorizer(loadConfig()),
-  route_agent: () => runRouteAgent(loadConfig()),
+  route_agent: () => runRouteAgent(loadGovConfig()),
   gov_reconcile: () => runGovReconcile(loadGovConfig()),
   gov_signals: () => runGovSignals(loadGovConfig()),
   gov_exposure: () => runGovExposure(loadGovConfig()),

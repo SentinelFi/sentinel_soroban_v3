@@ -6,7 +6,15 @@ import {
   type PremiumUpdate,
   type RouteStatus,
 } from "governance_module";
-import type { OnChainRoute } from "../governance";
+/**
+ * The shared on-chain route shape used across _lib (moved here from the
+ * deleted legacy `_lib/governance.ts` when route_agent was absorbed).
+ */
+export interface OnChainRoute {
+  status: "Active" | "Disabled" | "Unknown";
+  /** Resolved terms (defaults folded on-chain) — only when Active. */
+  terms: { premium: bigint; payoff: bigint; delayHours: number } | null;
+}
 import { logAction } from "./action_log";
 import type { RouteKey } from "./model";
 

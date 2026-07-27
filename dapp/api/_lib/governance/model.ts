@@ -44,7 +44,10 @@ export type SignalType =
   | "geopolitical"
   | "exposure"
   | "schedule_drift"
-  | "manual";
+  | "manual"
+  // Added by migration 20260727140000_gov_guardrails:
+  | "ops" // non-weather airport delay categories (traffic, equipment)
+  | "pricing"; // ML baseline-premium anchors (route_agent collector)
 export type SignalScope = "route" | "origin" | "dest";
 export type SignalSeverity = "info" | "elevated" | "severe";
 

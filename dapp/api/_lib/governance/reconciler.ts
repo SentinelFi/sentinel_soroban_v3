@@ -1,3 +1,4 @@
+import { clampPremium } from "../route_rules";
 import { loadRoutesConfig, usdcToBaseUnits } from "../routes_config";
 import type { FetcherAction, RunLogEntry } from "../types";
 import type { GovConfig } from "./config";
@@ -153,9 +154,21 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
 
         // 3. Decide
         const matching = activeSignals.filter((s) => signalMatchesRoute(s, route));
+        // ML pricing anchor (route_agent's daily `pricing` signal, severity
+        // info — never a pause or adjuster). Latest wins; rails-clamped.
+        const pricingSignals = matching.filter((s) => s.type === "pricing");
+        let anchorPremium: bigint | null = null;
+        if (pricingSignals.length > 0) {
+          const latest = pricingSignals.reduce((a, b) => (a.created_at > b.created_at ? a : b));
+          const raw = (latest.payload as { anchor_units?: unknown }).anchor_units;
+          if (typeof raw === "string" && /^\d+$/.test(raw)) {
+            anchorPremium = clampPremium(BigInt(raw), null, routesConfig.rails);
+          }
+        }
         const action = decideReconcileAction({
           route,
           onChain,
+          anchorPremium,
           pauses: matching.filter(isPause),
           adjusters: matching.filter(isAdjuster),
           recentlyCleared: recentlyEnded.some((s) => signalMatchesRoute(s, route)),

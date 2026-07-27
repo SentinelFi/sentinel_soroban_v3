@@ -53,7 +53,7 @@ const BOTS: Partial<Record<JobName, () => Promise<RunLogEntry>>> = {
   settler: () => runSettler(loadConfig()),
   queue_maintainer: () => runQueue(loadConfig()),
   ttl_extender: () => runTtl(loadConfig()),
-  route_agent: () => runRouteAgent(loadConfig()),
+  route_agent: () => runRouteAgent(loadGovConfig()),
   gov_reconcile: () => runGovReconcile(loadGovConfig()),
   gov_signals: () => runGovSignals(loadGovConfig()),
   gov_exposure: () => runGovExposure(loadGovConfig()),

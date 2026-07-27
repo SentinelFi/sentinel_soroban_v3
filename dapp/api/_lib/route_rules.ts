@@ -1,31 +1,13 @@
 import type { DailyForecast } from "./weather_client";
-import type { OnChainRoute } from "./governance";
-import type { RouteEntry, RouteRails } from "./routes_config";
+import type { RouteRails } from "./routes_config";
 
 /**
- * PURE decision module for the daily route agent (no I/O — mirrors the
- * Solana Phase 23 `decide_route_actions` pattern so every branch is
- * unit-testable without a chain, a model, or a forecast API).
- *
- * Inputs per route:
- *  - the human intent from config/routes.testnet.json (`enabled`)
- *  - the current on-chain RouteStatus (Active / Disabled / Unknown)
- *  - the ML baseline premium (or the file terms when the agent is down)
- *  - the weather severity for origin + destination
- *  - the rails (hard min/max premium, max daily step, weather multiplier)
- *
- * Action set (closed):
- *   noop                — nothing to change / missing data / human said no
- *   update_premium      — reprice within rails + daily step cap
- *   disable             — severe weather OR file says enabled:false
- *   reenable_with_terms — file says enabled:true, weather cleared, route
- *                          currently disabled on-chain
- *
- * The re-enable rule is deliberately governed by the FILE, not by memory
- * of who disabled what: `enabled:false` in the file is permanent human
- * intent that the agent never overrides, and a human who wants a route
- * back simply leaves/sets `enabled:true`. This keeps the agent stateless
- * (nothing to persist between serverless invocations).
+ * PURE weather + premium math shared by the governance layer (no I/O):
+ * forecast severity classification (route_agent's Open-Meteo verdicts),
+ * rails clamping and multiplier arithmetic (the reconciler's rules).
+ * The old direct-action decider was removed when route_agent became a
+ * facts-only collector — decideReconcileAction (governance/rules.ts) is
+ * the single decision engine.
  */
 
 // ── weather severity ───────────────────────────────────────────────
@@ -107,68 +89,6 @@ export function applyMultiplier(premium: bigint, multiplier: number): bigint {
 /** Skip premium writes smaller than this (1 USDC) — no churn txs. */
 export const DRIFT_THRESHOLD_BASE_UNITS = 10_000_000n;
 
-export type RouteAction =
-  | { kind: "noop"; reason: string }
-  | { kind: "update_premium"; newPremium: bigint; reason: string }
-  | { kind: "disable"; reason: string }
-  | { kind: "reenable_with_terms"; newPremium: bigint; reason: string };
-
-export function decideRouteAction(
-  fileRoute: Pick<RouteEntry, "enabled">,
-  onChain: OnChainRoute,
-  baselinePremium: bigint,
-  severity: WeatherSeverity,
-  rails: RouteRails
-): RouteAction {
-  // ── Branch 1: human said no — enforce, never re-enable ─────────────
-  if (!fileRoute.enabled) {
-    if (onChain.status === "Active") {
-      return { kind: "disable", reason: "routes file: enabled=false" };
-    }
-    return { kind: "noop", reason: "routes file: enabled=false (already off-chain-disabled or unknown)" };
-  }
-
-  // ── Branch 2: severe weather — close the route ─────────────────────
-  if (severity === "severe") {
-    if (onChain.status === "Active") {
-      return { kind: "disable", reason: "severe weather at origin/destination" };
-    }
-    return { kind: "noop", reason: "severe weather; route already not active" };
-  }
-
-  // ── Branch 3: not yet whitelisted — the script's job, not the agent's ─
-  if (onChain.status === "Unknown") {
-    return { kind: "noop", reason: "route not whitelisted on-chain (run whitelist script)" };
-  }
-
-  const target = clampPremium(
-    severity === "elevated"
-      ? applyMultiplier(baselinePremium, rails.elevatedWeatherMultiplier)
-      : baselinePremium,
-    onChain.terms?.premium ?? null,
-    rails
-  );
-
-  // ── Branch 4: disabled on-chain, human wants it on, weather clear ──
-  if (onChain.status === "Disabled") {
-    return {
-      kind: "reenable_with_terms",
-      newPremium: target,
-      reason: `weather ${severity === "elevated" ? "elevated (repriced)" : "clear"}; routes file enabled=true`,
-    };
-  }
-
-  // ── Branch 5: active — reprice if drift exceeds the threshold ──────
-  const current = onChain.terms?.premium ?? null;
-  if (current !== null) {
-    const drift = target > current ? target - current : current - target;
-    if (drift < DRIFT_THRESHOLD_BASE_UNITS) {
-      return { kind: "noop", reason: "within drift threshold" };
-    }
-  }
-  return {
-    kind: "update_premium",
-    newPremium: target,
-    reason: severity === "elevated" ? "elevated weather multiplier" : "ML baseline reprice",
-  };
-}
+// (decideRouteAction/RouteAction removed 2026-07-27: route_agent no longer
+// acts directly — it writes pricing/weather SIGNALS and the reconciler's
+// decideReconcileAction is the single decision engine.)
