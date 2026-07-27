@@ -165,27 +165,36 @@ export class AeroApiClient {
     dateStartStr: string,
     dateEndStr: string,
     filters: {
-      airline: string;
-      flightNumber: string;
+      airline?: string;
+      flightNumber?: string;
       origin?: string;
       destination?: string;
+      /**
+       * Server-side page aggregation. AeroAPI pages /schedules at ~15 rows;
+       * without this a 20-day single-flight window (or any busy city pair)
+       * silently truncates. Default 3 covers a full authorizer chunk; route
+       * discovery passes more.
+       */
+      maxPages?: number;
     }
   ): Promise<AeroApiSchedulesResponse | null> {
     const params = new URLSearchParams({
-      airline: filters.airline,
-      flight_number: filters.flightNumber,
       // One row per physical instance — marketing codeshares of the same
       // leg would otherwise show up as extra rows and trip ambiguity checks.
       include_codeshares: "false",
       include_regional: "false",
+      max_pages: String(filters.maxPages ?? 3),
     });
+    if (filters.airline) params.set("airline", filters.airline);
+    if (filters.flightNumber) params.set("flight_number", filters.flightNumber);
     if (filters.origin) params.set("origin", filters.origin);
     if (filters.destination) params.set("destination", filters.destination);
 
     const url = `${this.baseUrl}/schedules/${dateStartStr}/${dateEndStr}?${params}`;
     return this.requestJson<AeroApiSchedulesResponse>(
       url,
-      `schedules ${filters.airline}${filters.flightNumber} ${dateStartStr}..${dateEndStr}`
+      `schedules ${filters.airline ?? ""}${filters.flightNumber ?? ""} ` +
+        `${filters.origin ?? "*"}->${filters.destination ?? "*"} ${dateStartStr}..${dateEndStr}`
     );
   }
 
