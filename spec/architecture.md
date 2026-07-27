@@ -1356,16 +1356,18 @@ data, **keeper** drives classification/settlement, **ttl** extends storage,
 | `queue_maintainer` | `/api/cron/queue` | `2-59/5 * * * *` (every 5 min, +2) | `Controller.run_queue_maintenance` | keeper |
 | `ttl_extender` | `/api/cron/ttl` | `0 0 * * *` (daily) | `extend_ttl` ×5 + `OracleAggregator.prune_settled` | ttl |
 | `gov_signals` | `/api/cron/gov-signals` | `5 * * * *` (hourly, :05) | — (facts only: AeroAPI `/airports/delays` → Supabase `signals`) | none |
-| `gov_reconcile` | `/api/cron/gov-reconcile` | `10 * * * *` (hourly, :10) | `GovernanceModule.disable_route` / `enable_route` / `update_route_terms` | gov-admin |
+| `gov_exposure` | `/api/cron/gov-exposure` | `7 * * * *` (hourly, :07) | — (facts only: on-chain liability concentration → `exposure` signals) | none |
+| `gov_reconcile` | `/api/cron/gov-reconcile` | `10 * * * *` (hourly, :10) | `GovernanceModule.disable_route` / `enable_route` / `update_route_terms` (fleet guardrails: `ops_flags.gov_frozen` runtime brake, mass-disable circuit breaker, flap damping) | gov-admin |
+| `gov_onboard` | `/api/cron/gov-onboard` | `15 */6 * * *` (6-hourly, :15) | `GovernanceModule.whitelist_route` (capped; only with `GOV_ONBOARD_AUTO=true` — default is propose-only) + file/chain→DB route sync | gov-admin |
 | `route_agent` (legacy) | `/api/cron/agent` | `0 6 * * *` (daily 06:00 UTC) | `GovernanceModule` route writes (ML + weather) | gov-admin |
 | `health` | `/api/cron/health` | liveness probe | — | — |
 
 The `:30` and `+2` offsets keep the two oracle jobs (and the two keeper jobs) off
-the same minute to avoid Stellar sequence-number contention; `gov_signals` runs
-five minutes before `gov_reconcile` so every reconcile tick acts on a fresh
-airport-delay picture. Two further registry names (`gov_onboard`,
-`gov_schedule_check`) are declared placeholders that currently reject as "not
-implemented".
+the same minute to avoid Stellar sequence-number contention; `gov_signals` (:05)
+and `gov_exposure` (:07) run just before `gov_reconcile` (:10) so every
+reconcile tick acts on a fresh airport-delay AND exposure picture. One registry
+name (`gov_schedule_check`) remains a placeholder that rejects as "not
+implemented" (it needs AeroAPI schedule comparison).
 
 **Three tiers, one decentralization target.** The jobs split into
 **governance** (gov_signals/gov_reconcile/route_agent — centralized, ours by
@@ -2027,8 +2029,12 @@ onboarding, base terms, non-weather signals, and signal clearing. The
 legacy `route_agent` runs in parallel and is slated for absorption — it is
 the only un-audited actor and must not survive into L2.
 
-**L2 — the complete deterministic pipeline (no LLM).** Four additions close
-every routine human loop:
+**L2 — the complete deterministic pipeline (no LLM).** *Status 2026-07-27:
+three of the four additions below are IMPLEMENTED (`gov_onboard`, the
+exposure collector as `gov_exposure`, and the fleet guardrails — runtime
+freeze flag `ops_flags.gov_frozen` + admin endpoint, mass-disable circuit
+breaker, flap damping). Remaining: `gov_schedule_check` (needs AeroAPI) and
+the route_agent absorption.* Four additions close every routine human loop:
 - `gov_onboard` — route discovery output flows into the DB as `candidate`
   rows (populating the canonical schedule columns), gets auto-scored (ML
   `p_delay` within rails, schedule stability), and is auto-promoted +
@@ -2956,17 +2962,37 @@ against `route_status`.
 
 8. Fund the signer accounts with XLM (oracle, keeper, ttl, gov-admin) for tx fees.
 
-9. Deploy the backend + frontend (one Vercel project, dapp/):
-        - Set env: AERO_API_KEY (or AEROAPI_BASE_URL -> tools/mock-aeroapi),
-          STELLAR_RPC_URL, the four signer secret keys, contract IDs
-          (default from deployments/testnet.json), GOVERNANCE_DB_URL (Supabase),
-          CRON_SECRET, ADMIN_EMAILS, AGENT_BASE_URL (the Render ML service).
+9. Run the backend LOCALLY first (no Vercel needed — every job is a
+   standalone bot; this is the current mode until a Vercel Pro plan exists):
         - Apply supabase/migrations/ to the governance database.
-        - Deploy dapp/ to Vercel — the build runs `npm run install:contracts` to
-          build the generated bindings; JOB_REGISTRY defines the cron schedules.
-        - The pricing agent (agent/) deploys separately to Render (render.yaml).
-   Local dev: `cd dapp && npm run dev` serves the SPA on :5175; run any job
-   on-demand from the /admin JOBS board (or hit its /api/cron/<job> endpoint).
+        - Env per run (or a local .env): the signer secret keys,
+          GOVERNANCE_DB_URL, and AEROAPI_KEY when real flight data is
+          wanted (without it the oracle bots fail soft: no data, no
+          wrong writes; point AEROAPI_BASE_URL at tools/mock-aeroapi for
+          scripted local data).
+        - cd dapp && npm run bot -- <name>   # settler, fetcher, gov_onboard, ...
+          npm run test:e2e                   # full pipeline against mocks
+        - Governance safety during local runs: GOV_DRY_RUN=true computes
+          without submitting; the ops_flags.gov_frozen DB flag is the
+          runtime brake; GOV_ONBOARD_AUTO stays unset for propose-only
+          onboarding.
+        - `npm run dev` serves the SPA on :5175 against testnet.
+
+10. Deploy to Vercel LATER (one project serves SPA + backend; 5-minute
+    crons and maxDuration 300 require Vercel Pro):
+        - mv dapp/vercel.backend.json dapp/vercel.json   <- ready-made config
+          (adds the full crons block for all 11 scheduled jobs — kept out of
+          the live vercel.json so the current frontend-only deploy and the
+          Hobby plan aren't broken by failing crons)
+        - rm dapp/.vercelignore                          <- stop excluding api/
+        - Set the Vercel env: four signer secret keys, AEROAPI_KEY,
+          GOVERNANCE_DB_URL, CRON_SECRET, ADMIN_EMAILS, AGENT_BASE_URL,
+          GOV_DRY_RUN/GOV_ONBOARD_AUTO as desired; contract IDs default to
+          the 07-18 testnet set.
+        - Deploy; verify /api/cron/health (hasKeys + pendingOutcomes) and
+          the /admin JOBS board.
+        - The pricing agent (agent/) deploys separately to Render
+          (render.yaml).
 ```
 
 **Wiring notes (step 3):**

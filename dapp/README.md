@@ -121,9 +121,12 @@ Eight cron jobs run as Vercel serverless functions inside this app, so a single 
 
 > **Current deploy state:** the checked-in `vercel.json` has the `crons` block
 > **removed** and `.vercelignore` excludes `api/` — the present deployment is
-> frontend-only while the backend rollout is WIP. To enable the backend, delete
-> `.vercelignore` and restore the crons block from the schedule table below
-> (`JOB_REGISTRY` in `api/_lib/governance/runs.ts` is the canonical list).
+> frontend-only while the backend runs LOCALLY as bots (`npm run bot -- <name>`;
+> 5-minute Vercel crons need a Pro plan). To flip the backend on later:
+> `mv vercel.backend.json vercel.json && rm .vercelignore` — the ready-made
+> config carries all 11 cron schedules (`JOB_REGISTRY` in
+> `api/_lib/governance/runs.ts` is the canonical list) — then set the server
+> env vars and deploy.
 
 ### Layout
 
@@ -157,6 +160,8 @@ tsconfig.api.json     type-checks api/ with node types (wired into tsc -b)
 | `/api/cron/agent`    | `0 6 * * *`    | Route agent — ML baseline premium (Python service) + Open-Meteo weather rules (elevated → premium × multiplier, severe → disable) + 24h re-evaluation of disabled routes; all writes clamped to the routes-file rails and the on-chain term limits |
 | `/api/cron/ttl`      | `0 0 * * *`    | `extend_ttl` on all 5 contracts + `prune_settled` in a drain loop (repeats while the active count drops) |
 | `/api/cron/gov-signals` | `5 * * * *` | Airport-delay collector — ONE AeroAPI `/airports/delays` call covers the whole network; projects red→`severe` / yellow→`elevated` signals (origin+dest scoped, self-expiring) into the governance DB for the airports enabled routes touch. Facts only, no chain writes; runs 5 min before the reconciler |
+| `/api/cron/gov-exposure` | `7 * * * *` | Exposure collector — reads on-chain liability (payoff × buyers per active flight vs vault capacity, no AeroAPI) and projects route/airport concentration `exposure` signals (≥25% elevated, ≥50% severe; env-tunable). Facts only, no chain writes |
+| `/api/cron/gov-onboard` | `15 */6 * * *` | Route onboarding — syncs file/on-chain routes into the DB (so the reconciler manages every real route), ingests `routes.discovered.json` as candidates, and auto-promotes on-chain ONLY with `GOV_ONBOARD_AUTO=true` (default propose-only), capped by `GOV_ONBOARD_MAX_PER_RUN` |
 | `/api/cron/gov-reconcile` | `10 * * * *` | Governance reconciler — recomputes each managed route's desired state from DB signals (admin pins win, pauses expand, multipliers stack, hysteresis damps) and submits the minimal on-chain diff; `GOV_DRY_RUN=true` logs decisions without submitting |
 
 `/api/cron/health` is an unauthenticated GET that returns the network, contract IDs, and `hasKeys` booleans (secrets are never echoed).
@@ -176,7 +181,9 @@ Server-side (no `PUBLIC_` prefix — set in Vercel project settings, never bundl
 - `ROUTES_CONFIG_PATH` — alternate routes file (tests / other networks); defaults to the bundled `config/routes.testnet.json`
 - `WEATHER_BASE_URL` — Open-Meteo override (keyless; testing only)
 - `CRON_SECRET` — shared secret guarding the cron endpoints (recommended)
-- `GOVERNANCE_DB_URL` — Supabase transaction-pooler Postgres URL (governance DB); `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `ADMIN_EMAILS` — admin-console auth; `GOV_DRY_RUN` — keep `true` until the governance key is an on-chain admin
+- `GOVERNANCE_DB_URL` — Supabase transaction-pooler Postgres URL (governance DB); `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `ADMIN_EMAILS` — admin-console auth; `GOV_DRY_RUN` — compute-only mode for all governance jobs (the gov-admin IS an on-chain admin since 2026-07-27; the runtime brake is the `ops_flags.gov_frozen` DB flag via `POST /api/admin/freeze`)
+- `GOV_ONBOARD_AUTO` (`true` = auto-promote candidates on-chain; unset = propose-only), `GOV_ONBOARD_MAX_PER_RUN` (default 10), `GOV_ONBOARD_DISCOVERED` (path override for the discovery file)
+- `EXPOSURE_ELEVATED_PCT` / `EXPOSURE_SEVERE_PCT` — exposure-signal thresholds as fractions of vault capacity (defaults 0.25 / 0.5)
 
 ### Routes file + whitelist script
 

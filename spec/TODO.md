@@ -12,13 +12,14 @@ blocking · **P2** = when scale demands it.
 
 ## A. Deployment & operational gaps (audit results — highest value)
 
-- [ ] **P0 — Actually schedule the backend.** The checked-in `dapp/vercel.json`
-  has the `crons` block removed and `.vercelignore` excludes `api/` (the
-  current Vercel deploy is frontend-only). Every robustness property assumes
-  the jobs run. Action: Vercel Pro project → delete `.vercelignore`, restore
-  the crons block from `JOB_REGISTRY` (`api/_lib/governance/runs.ts`), set the
-  server env vars (four signer keys, `AEROAPI_KEY`, `GOVERNANCE_DB_URL`,
-  `CRON_SECRET`, `ADMIN_EMAILS`, `AGENT_BASE_URL`).
+- [ ] **P0 — Actually schedule the backend (prepped 2026-07-27; blocked on
+  Vercel Pro).** Ready-made config exists: `dapp/vercel.backend.json` carries
+  all 11 cron schedules — flip with
+  `mv vercel.backend.json vercel.json && rm .vercelignore`, set the server
+  env vars (four signer keys, `AEROAPI_KEY`, `GOVERNANCE_DB_URL`,
+  `CRON_SECRET`, `ADMIN_EMAILS`, `AGENT_BASE_URL`), deploy. Until then the
+  backend runs locally as bots (`npm run bot -- <name>`), which is the
+  current operating mode.
 - [x] **P0 — Governance unblock (done 2026-07-27).** Owner
   (`GCEODBNV…E6KD`) called `add_admin(sentinel-governor GC2QDXUD…)` on the
   07-18 GovernanceModule (`CANSHOFU…`); `is_admin` now true, `GovAdminAdded`
@@ -109,22 +110,24 @@ The ladder to a fully automated governance:
   now honors GOV_DRY_RUN on every mutation (was the one actor ignoring the
   kill switch). Remaining half — actions_log parity — lands with the
   absorption below (its writes still bypass GovSubmitter until then).
-- [ ] **P1 — `gov_onboard`: automated route onboarding, closing the
-  invisibility gap.** One pipeline: discovery output → INSERT DB `routes`
-  rows as `status='candidate'` (with sched_* columns filled from the same
-  /schedules data — feeding gov_schedule_check for free) → auto-score
-  (ML `p_delay` within rails, schedule stability from days_seen) →
-  auto-promote to `active` + `whitelist_route` via GovSubmitter, capped
-  (max N new routes/day, default terms only, on-chain term limits as
-  backstop). Config flag chooses auto-promote vs propose-only (candidates
-  wait for admin approval). This one job removes BOTH remaining humans-in-
-  the-loop for onboarding AND populates the DB so the reconciler manages
-  every route.
-- [ ] **P1 — Exposure collector (the missing subsystem).** RPC event ingest
-  of `InsuranceBought` → `policies` table (resume via `ingest_cursors`) →
-  per-route/per-airport exposure vs vault free capital → `exposure` signals
-  (elevated → premium multiplier; severe → pause new sales on that route).
-  Schema is already in place; only the code is missing.
+- [x] **P1 — `gov_onboard` (done 2026-07-27).** Shipped as
+  `_lib/governance/onboard.ts` + `/api/cron/gov-onboard` (6-hourly): file/
+  chain→DB sync (LIVE-verified: AA100+UA456 synced as `active`, reconciler
+  now evaluates them — invisibility gap closed), discovery-file candidate
+  ingest (unattestable/conflicting idents skipped), capped promote via
+  GovSubmitter — `GOV_ONBOARD_AUTO=true` opt-in, default propose-only,
+  `GOV_ONBOARD_MAX_PER_RUN` cap, pins respected, GOV_DRY_RUN honored.
+  Deferred bits: sched_* column fill + ML scoring hook (need AeroAPI /
+  agent service).
+- [x] **P1 — Exposure collector (done 2026-07-27, simpler design).**
+  Shipped as `_lib/governance/exposure_collector.ts` + `/api/cron/
+  gov-exposure` (hourly :07): reads AUTHORITATIVE on-chain state (payoff ×
+  buyer_count per active flight vs vault TMA — no events mirror needed) and
+  projects route/airport `exposure` signals (≥25% elevated / ≥50% severe,
+  env-tunable), same self-expiring source-owned lifecycle as gov_signals;
+  LIVE-verified against testnet. The `policies` event-ingest mirror
+  (durable per-policy history via `ingest_cursors`) remains open as a P2
+  analytics/audit item — the exposure SIGNAL no longer depends on it.
 - [ ] **P1 — Absorb `route_agent` into the reconciler** (then DELETE it +
   `_lib/route_rules.ts` + legacy `_lib/governance.ts` helpers). `rules.ts`
   needs one new input: an `anchorPremium` (ML baseline) on `ReconcileInput`,
@@ -132,18 +135,19 @@ The ladder to a fully automated governance:
   multipliers/clamps/hysteresis already exist. Also fix the Render `/price`
   schema drift (`dep_time_hhmm` + `distance_mi` missing → 422 → silent
   fallback).
-- [ ] **P1 — Fleet-level guardrails for full autonomy.** Per-route rails are
-  solid (clamps, 1-change/day, 2h hysteresis, pins, terms-validation,
-  dry-run) but: (a) NO cap on mass-disable — one broad severe signal can
-  pause the whole fleet in a tick; add max-pauses-per-run / max-%-of-fleet
-  circuit breaker that flags instead of acting beyond it; (b) GOV_DRY_RUN
-  is the only kill switch and needs a redeploy — add a runtime freeze flag
-  (DB row the reconciler checks, admin-toggleable, absent-DB = frozen);
-  (c) disable/enable flap damping (daily transition cap like premiums have).
-- [ ] **P1 — Consolidate route truth: DB as canonical** once gov_onboard
-  populates it. Authorizer reads enabled routes from the DB (file = seed;
-  DB unreachable → fall back to file, per the DB-optional invariant);
-  admin/reconciler disables then also stop *attestation*, not just purchase.
+- [x] **P1 — Fleet-level guardrails (done 2026-07-27).** (a) mass-disable
+  circuit breaker: per-run cap `max(3, 20% of fleet)`, beyond → flag;
+  (b) runtime freeze: `ops_flags.gov_frozen` DB flag (migration
+  `20260727140000_gov_guardrails.sql`, applied live) checked at the top of
+  every reconciler run, admin-toggleable via `POST /api/admin/freeze` —
+  LIVE-verified (frozen run takes zero actions); (c) flap damping: ≥2
+  pause-state transitions per route per 24h → flag instead of transition.
+- [x] **P1 — Consolidate route truth: DB as canonical (done 2026-07-27).**
+  Authorizer reads `routes` where `status='active'` when the DB has rows;
+  falls back to the file when `GOVERNANCE_DB_URL` is unset, the DB is
+  unreachable, or the table is EMPTY (unseeded bootstrap) — an all-disabled
+  table attests nothing rather than falling back. DB-optional invariant
+  preserved (E2E runs the file path).
 - [ ] **P2 — `gov_schedule_check`**: compare `routes.sched_*` (populated by
   gov_onboard) against live /schedules → `schedule_drift` signals (retimed
   → re-verify terms; dropped → disable). The last placeholder job.
@@ -293,3 +297,11 @@ section rather than deleting them.*
 - 2026-07-27 — route_agent gated behind GOV_DRY_RUN (closes the ungoverned-
   actor hole until absorption); /api/cron/health exposes `pendingOutcomes`
   + `barrierEngaged` (the settlement-barrier gauge, best-effort read).
+- 2026-07-27 — Governance L2 core shipped + LIVE-verified on testnet/
+  Supabase: `gov_exposure` (on-chain concentration → exposure signals),
+  `gov_onboard` (file/chain→DB sync — invisibility gap CLOSED for
+  AA100/UA456, reconciler now evaluates them; candidate ingest; capped
+  opt-in promote), fleet guardrails (`ops_flags.gov_frozen` runtime brake
+  + `/api/admin/freeze` + circuit breaker + flap damping; migration
+  applied live), authorizer routes now DB-canonical with file fallback,
+  `vercel.backend.json` deploy-later config. E2E 61 checks.
