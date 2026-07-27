@@ -41,6 +41,12 @@ interface Scenario {
   // When true, /schedules returns two instances per day for this ident —
   // ambiguous published schedule; the authorizer must fail closed.
   schedules_duplicate?: boolean;
+  // When set, /flights builds scheduled_in as (now + offset) instead of the
+  // requested date's 11:00Z — lets real-chain E2E tests place a flight's
+  // schedule in the past so the fetcher's watch window (ETA − 6h) and
+  // landed gate (ETA + 1h) open immediately, regardless of wall clock.
+  // scheduled_out tracks 3h earlier; actual_* derive from these as usual.
+  sched_in_offset_secs?: number;
 }
 
 interface Scenarios {
@@ -135,9 +141,15 @@ interface AeroApiScheduledFlight {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// Runtime scenario overrides (POST /__scenarios) — merged over the file on
+// every request, cleared by /__reset. Lets a test register fresh idents and
+// flip an ident's outcome mid-test (e.g. healthy at purchase time, cancelled
+// by the time the fetcher looks) without touching the committed fixture.
+let scenarioOverrides: Scenarios = {};
+
 function loadScenarios(): Scenarios {
   const raw = readFileSync(join(__dirname, "..", "scenarios.json"), "utf-8");
-  return JSON.parse(raw);
+  return { ...JSON.parse(raw), ...scenarioOverrides };
 }
 
 function makeAirport(code: string): AeroApiAirport {
@@ -174,9 +186,15 @@ function buildFlight(ident: string, scenario: Scenario, dateParam: string | unde
   const origin = scenario.origin ?? "KJFK";
   const destination = scenario.destination ?? "KLAX";
 
-  // Base times: departure 08:00 UTC, scheduled arrival 11:00 UTC
-  const scheduledOut = `${flightDate}T08:00:00Z`;
-  const scheduledIn = `${flightDate}T11:00:00Z`;
+  // Base times: departure 08:00 UTC, scheduled arrival 11:00 UTC — unless
+  // the scenario pins the schedule relative to NOW (sched_in_offset_secs).
+  let scheduledOut = `${flightDate}T08:00:00Z`;
+  let scheduledIn = `${flightDate}T11:00:00Z`;
+  if (scenario.sched_in_offset_secs !== undefined) {
+    const inMs = Date.now() + scenario.sched_in_offset_secs * 1000;
+    scheduledIn = new Date(inMs).toISOString();
+    scheduledOut = new Date(inMs - 3 * 3600 * 1000).toISOString();
+  }
   const scheduledMs = new Date(scheduledIn).getTime();
 
   let status: string;
@@ -462,7 +480,15 @@ app.post("/__reset", (_req, res) => {
   stats.schedules = 0;
   stats.airport_delays = 0;
   stats.byIdent = {};
+  scenarioOverrides = {};
   res.json({ ok: true });
+});
+// Runtime scenario registration/override — body is a Scenarios map, merged
+// over any previous overrides (which are merged over the file).
+app.post("/__scenarios", express.json(), (req, res) => {
+  scenarioOverrides = { ...scenarioOverrides, ...(req.body as Scenarios) };
+  console.log(`[mock-aeroapi] scenario overrides: ${Object.keys(scenarioOverrides).join(", ")}`);
+  res.json({ ok: true, overrides: Object.keys(scenarioOverrides) });
 });
 
 app.listen(PORT, () => {

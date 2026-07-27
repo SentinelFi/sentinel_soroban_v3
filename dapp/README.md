@@ -319,3 +319,25 @@ on-time / delayed / cancelled lifecycles end to end, the refusal paths
 AeroAPI call counts — including that flights outside their fetch windows cost
 zero calls. The mock server's own smoke test is `tools/mock-aeroapi/test.sh`.
 
+### Real-chain end-to-end tests (real contracts on testnet, mocked API)
+
+```sh
+npm run test:e2e:testnet:bootstrap   # once: deploy a dedicated e2e contract
+                                     # set on testnet (throwaway — never the
+                                     # live deployment), fund, capitalize.
+                                     # The vault deposit then ripens for ~6h
+                                     # (on-chain LP pricing delay).
+npm run test:e2e:testnet             # each run: the same pipeline, real chain
+```
+
+`scripts/test_testnet_e2e.ts` is the depth complement to the hermetic suite:
+same job code, same mock AeroAPI (runtime-scripted scenarios), but the chain
+is REAL — it proves everything `FakeSoroban` cannot: the purchase flow
+(sale-auth gate, premium transfer, vault payoff locking), the real Rust
+state machine, the batch keeper jobs (classifier / settler / queue / ttl),
+settlement money movement, and claims (delayed + cancelled pay the full
+payoff; the on-time claim is rejected on-chain). Each run whitelists fresh
+flight idents on fresh routes (state never collides across runs); shared
+harness bits live in `scripts/e2e/harness.ts`. Redeploy with
+`--fresh` after a quarterly testnet reset.
+

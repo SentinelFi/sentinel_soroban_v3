@@ -32,9 +32,9 @@ delete process.env.GOVERNANCE_DB_URL;
 delete process.env.SALE_AUTH_DEMAND_MODE;
 delete process.env.SALE_AUTH_HORIZON_DAYS;
 
-import { spawn, type ChildProcess } from "child_process";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { check, startMock, summarize, type MockHandle } from "./e2e/harness";
 import type { SorobanClient } from "../api/_lib/soroban_client";
 import { run as fetcherRun } from "../api/_lib/jobs/fetcher";
 import { run as authorizerRun } from "../api/_lib/jobs/authorizer";
@@ -49,10 +49,13 @@ import { modal, clockDeltaMinutes, distanceMiles } from "../api/_lib/governance/
 import type { Config, RunLogEntry } from "../api/_lib/types";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = join(__dirname, "..", "..");
-const MOCK_DIR = join(REPO_ROOT, "tools", "mock-aeroapi");
 const PORT = 3111;
 const BASE = `http://localhost:${PORT}`;
+
+// Bound in main(); the thin aliases keep the call sites below unchanged.
+let mock: MockHandle;
+const mockReset = () => mock.reset();
+const mockStats = () => mock.stats();
 
 const DAY = 86_400;
 
@@ -199,12 +202,6 @@ class FakeSoroban {
 // Harness
 // ---------------------------------------------------------------------------
 
-const results: { name: string; ok: boolean; detail?: string }[] = [];
-function check(name: string, ok: boolean, detail?: string): void {
-  results.push({ name, ok, detail });
-  console.log(`${ok ? "  ✓" : "  ✗"} ${name}${!ok && detail ? ` — ${detail}` : ""}`);
-}
-
 function makeConfig(): Config {
   return {
     stellarRpcUrl: "http://fake-rpc.invalid",
@@ -224,29 +221,6 @@ function makeConfig(): Config {
     saleAuthValiditySecs: 21_600,
     weatherBaseUrl: "http://fake-weather.invalid",
   };
-}
-
-async function mockStats(): Promise<{ flights: number; schedules: number; byIdent: Record<string, number> }> {
-  const r = await fetch(`${BASE}/__stats`);
-  return (await r.json()) as { flights: number; schedules: number; byIdent: Record<string, number> };
-}
-
-async function mockReset(): Promise<void> {
-  await fetch(`${BASE}/__reset`, { method: "POST" });
-}
-
-async function waitForMock(timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`${BASE}/__stats`);
-      if (r.ok) return;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  throw new Error("mock-aeroapi did not come up in time");
 }
 
 // ---------------------------------------------------------------------------
@@ -524,30 +498,18 @@ async function testGovSignals(): Promise<void> {
 
 async function main(): Promise<void> {
   console.log("Starting mock-aeroapi...");
-  const mock: ChildProcess = spawn("npx", ["tsx", join(MOCK_DIR, "src", "server.ts")], {
-    cwd: join(REPO_ROOT, "dapp"),
-    env: { ...process.env, PORT: String(PORT) },
-    stdio: "ignore",
-  });
+  mock = await startMock(PORT);
+  console.log(`mock-aeroapi up on :${PORT}`);
 
   try {
-    await waitForMock(15_000);
-    console.log(`mock-aeroapi up on :${PORT}`);
-
     await testFetcher();
     await testAuthorizer();
     await testGovSignals();
   } finally {
-    mock.kill();
+    mock.stop();
   }
 
-  const failed = results.filter((r) => !r.ok);
-  console.log(`\n${results.length - failed.length}/${results.length} checks passed.`);
-  if (failed.length > 0) {
-    console.error("FAILED:");
-    for (const f of failed) console.error(`  ✗ ${f.name}${f.detail ? ` — ${f.detail}` : ""}`);
-    process.exit(1);
-  }
+  process.exit(summarize());
 }
 
 main().catch((err) => {

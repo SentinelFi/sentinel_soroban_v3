@@ -340,6 +340,17 @@ APIs. Ordered: each step's output feeds the next. The only hard blocker is
   (settle/queue ≤5 min, classify/gov-* ≤1 h, fetcher/authorize ≤2 h,
   agent/ttl/schedule-check ≤24 h).
 
+### Step 2b — real-chain E2E suite (shipped 2026-07-27; no Vercel needed)
+
+- [x] `npm run test:e2e:testnet` — the hermetic suite's depth complement:
+  real fetcher/authorizer/classifier/settler/queue/ttl jobs + mock AeroAPI
+  against a DEDICATED throwaway contract deployment on testnet (bootstrap:
+  `npm run test:e2e:testnet:bootstrap`, then a ~6h vault-deposit ripening —
+  an on-chain LP-pricing-delay constant). Proves what FakeSoroban cannot:
+  purchase flow, real state machine, batch keeper jobs, payout movement,
+  claims. Closes audit gaps #1 (batch keepers untested) and #2 (FakeSoroban
+  drift) from the 2026-07-27 E2E audit.
+
 ### Step 3 — end-to-end smoke on the running system
 
 - [ ] `/api/cron/health` and public `/api/status/runs` green — barrier
