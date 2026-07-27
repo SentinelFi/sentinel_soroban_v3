@@ -3,28 +3,31 @@
 ## Table of Contents
 
 - [System Overview](#system-overview)
+- [How It Works — In Plain Language](#how-it-works--in-plain-language)
 - [Contracts (all Soroban / Rust)](#contracts-all-soroban--rust)
   - [GovernanceModule](#governancemodule)
   - [RiskVault](#riskvault)
   - [FlightPoolManager](#flightpoolmanager)
   - [Controller](#controller)
   - [OracleAggregator](#oracleaggregator)
-- [Off-Chain Executor Layer (Modular)](#off-chain-executor-layer-modular)
-  - [Cron Job Summary](#cron-job-summary)
+- [Off-Chain Keeper & Oracle Layer](#off-chain-keeper--oracle-layer)
+  - [Job Summary](#job-summary)
+  - [Cron #0 — SaleAuthorizer (Oracle, every 2 hours at :30)](#cron-0--saleauthorizer-oracle-every-2-hours-at-30)
   - [Cron #1 — FlightDataFetcher (Oracle, every 2 hours)](#cron-1--flightdatafetcher-oracle-every-2-hours)
   - [Cron #2 — FlightClassifier (Keeper, every 1 hour)](#cron-2--flightclassifier-keeper-every-1-hour)
   - [Cron #3 — SettlementExecutor (Keeper, every 5 minutes)](#cron-3--settlementexecutor-keeper-every-5-minutes)
+  - [Cron #3b — QueueMaintainer (Keeper, every 5 minutes)](#cron-3b--queuemaintainer-keeper-every-5-minutes)
   - [Cron #4 — TTL Extender (instance `extend_ttl` + prune, every 24 hours)](#cron-4--ttl-extender-instance-extend_ttl--prune-every-24-hours)
   - [Why separate crons?](#why-separate-crons)
-  - [The Executor Interface](#the-executor-interface)
-  - [Executor project structure](#executor-project-structure)
+  - [The keeper/oracle interface](#the-keeperoracle-interface)
+  - [Backend structure](#backend-structure)
+  - [Job-Ops Layer](#job-ops-layer)
   - [Backend migration](#backend-migration)
+- [Off-Chain Governance Automation](#off-chain-governance-automation)
 - [Data Flow](#data-flow)
+  - [The Life of One Insured Flight](#the-life-of-one-insured-flight)
   - [Whitelisting a Route](#whitelisting-a-route)
   - [Buying Insurance](#buying-insurance)
-  - [Flight Data Collection (FlightDataFetcher, every 2 hours)](#flight-data-collection-flightdatafetcher-every-2-hours)
-  - [Flight Classification (FlightClassifier via Controller, every 1 hour)](#flight-classification-flightclassifier-via-controller-every-1-hour)
-  - [Settlement Execution (SettlementExecutor via Controller, every 5 minutes)](#settlement-execution-settlementexecutor-via-controller-every-5-minutes)
   - [Traveler Claiming a Payout](#traveler-claiming-a-payout)
   - [Sweeping Expired Claims](#sweeping-expired-claims)
   - [Owner Withdrawing Recovered Funds](#owner-withdrawing-recovered-funds)
@@ -42,10 +45,10 @@
   - [Traveler](#traveler)
   - [Underwriter](#underwriter)
   - [Function Reference](#function-reference)
-- [dApp Frontend — Sentinel Playground](#dapp-frontend--sentinel-playground)
+- [dApp Frontend — FLIGHTS.FUN](#dapp-frontend--flightsfun)
   - [Project Structure](#project-structure)
-  - [Function Registry (no generated bindings)](#function-registry-no-generated-bindings)
-  - [Multi-Environment Configuration](#multi-environment-configuration)
+  - [Generated contract bindings](#generated-contract-bindings)
+  - [Pages](#pages-dappsrcpages)
 - [Deployment Order](#deployment-order)
 
 ---
@@ -57,22 +60,19 @@ claims; **travelers** pay a premium to receive a fixed payoff if their flight is
 beyond a configurable threshold (per-route `delay_hours`). All contracts are written in
 **Rust** and compiled to **Soroban WASM**.
 
-The system requires six off-chain cron jobs to keep ticking (the SaleAuthorizer
-and the TTL Extender are covered in the Executor Backend section); the four on
-the settlement path are:
-
-| Cron | Name | Frequency | Purpose |
-|------|------|-----------|---------|
-| #1 | **FlightDataFetcher** | Every 2 hours | Fetches flight data from AeroAPI, writes estimated/actual arrival times to OracleAggregator |
-| #2 | **FlightClassifier** | Every 1 hour | Reads oracle data + FlightPoolManager terms, classifies landed flights as on_time / delayed / cancelled |
-| #3 | **SettlementExecutor** | Every 5 minutes | Executes money movement for classified flights |
-| #3b | **QueueMaintainer** | Every 5 minutes | Prices matured LP deposit + withdrawal requests + share-price snapshot (split out from #3 per audit M-03 so settlement gas pressure can't block underwriter entries/exits) |
-
-These run inside a modular **Executor Backend** that is fully swappable. The contracts
-enforce authorization via `require_auth()` on owner-updatable addresses — they don't know
-or care what backend is calling them. The oracle and keeper can share a single authorized
-address or use separate ones. Swapping from a centralized cron to Acurast TEE, Phala TEE,
-or any future keeper is a single owner transaction per contract. No redeployment needed.
+Nothing on-chain self-triggers, so scheduled off-chain jobs keep the protocol
+ticking: `fetcher` writes real flight data on-chain, `sale_authorizer` attests
+flights insurable, `classifier` / `settler` / `queue_maintainer` drive
+classification, settlement, and the LP queues, `ttl_extender` keeps storage alive,
+and two governance jobs (`gov_reconcile`, `route_agent`) manage the route rulebook.
+All run today as **Vercel serverless functions** in `dapp/api/cron/`, but the
+contracts don't know or care what backend calls them — each write is gated by
+`require_auth()` on an **owner-updatable address** (`authorized_oracle`,
+`authorized_keeper`, gov-admin), so swapping the whole backend for a TEE keeper
+(Acurast, Phala) or anything else is a single owner transaction per contract, no
+redeployment. Full schedule table in [Off-Chain Keeper & Oracle
+Layer](#off-chain-keeper--oracle-layer); the rulebook automation in [Off-Chain
+Governance Automation](#off-chain-governance-automation).
 
 All payouts and withdrawals are **pull-based**: funds are credited on-chain and actors
 claim them explicitly. Insurance is never sold unless the system has enough capital to
@@ -81,14 +81,93 @@ cover the payout — the protocol is **always solvent**.
 The **Controller never holds any money** — it orchestrates everything by calling functions
 on other contracts that change state and move funds.
 
-The frontend is the **Sentinel Playground**, a hand-scaffolded Next.js dApp
-(`playground/`) that drives every contract through a curated function registry.
+The frontend is **FLIGHTS.FUN** (`dapp/`), a Vite + React single-page app that drives
+every contract through generated TypeScript bindings and cohabits one Vercel project
+with the serverless backend above. See [dApp Frontend](#dapp-frontend--flightsfun).
+
+---
+
+## How It Works — In Plain Language
+
+*A newcomer's map of the whole system. Every claim here is spelled out precisely in
+the sections that follow — this is the on-ramp, not the fine print.*
+
+Sentinel is an **automated betting house for flight delays**, run entirely by smart
+contracts. No company holds the money; the code does.
+
+**The two kinds of people:**
+
+- **Travelers** buy a policy on one specific flight. They pay a small **premium** up
+  front. If that flight is delayed past a set threshold (or cancelled), they collect a
+  fixed **payout**. If it lands on time, they get nothing back — like an insurance
+  premium.
+- **Underwriters** are "the house." They put money into a shared pot that backs those
+  payouts. When flights land on time they keep the premiums as profit; when flights
+  are delayed, their pot pays the claims. They earn yield for taking that risk.
+
+**The five contracts (the on-chain machinery):**
+
+1. **GovernanceModule — the rulebook.** Lists which flights can be insured and on what
+   terms (premium, payout, and how many hours late counts as "delayed").
+2. **RiskVault — the shared pot.** Holds all the underwriters' money and tracks each
+   one's share. It refuses to let the system promise more than the pot can cover.
+3. **FlightPoolManager — the policy cashier.** Holds each traveler's premium, remembers
+   who is insured on which flight, and pays out valid claims.
+4. **OracleAggregator — the scoreboard.** The single record of every flight's status:
+   scheduled → landed → on-time-or-late → settled. Only a trusted data-writer can
+   update it.
+5. **Controller — the referee.** The only contract that gives orders. It checks the
+   rulebook before a sale, moves money between the pot and the cashier, and marks
+   flights settled. Crucially, **it never holds money itself** — it only directs the
+   others.
+
+**The off-chain helpers (keepers & oracle).** Smart contracts can't wake themselves
+up — there is no on-chain timer. Small programs on a schedule (today, serverless
+functions) do the waking:
+
+- The **oracle** job fetches real flight data from a flight API and writes it to the
+  scoreboard.
+- The **keeper** jobs read the scoreboard and tell the referee to classify each
+  outcome and move the money.
+- A **TTL** job periodically touches storage so it doesn't expire.
+
+Each helper proves it's allowed by **signing with a registered key**. Want to swap a
+helper (say, move to tamper-proof hardware later)? You just point the contract at the
+new key — the contracts themselves never change.
+
+**"Just-in-time" (JIT) settlement — the fast path.** The scheduled helpers are the
+safety net, but waiting for the next timed run adds lag — and there's a catch: from
+the instant a flight's result is *public but not yet settled on-chain*, the vault
+**freezes everyone's deposits and withdrawals** (so nobody can trade on a result the
+pot hasn't absorbed yet). So instead of waiting for the next sweep, the moment the
+oracle writes a flight's result it **immediately** pushes that one exact flight through
+classification and settlement. Flights settle in seconds, and the freeze lifts fast.
+The timed sweeps only mop up anything the instant path missed.
+
+**Automated governance — a rulebook that manages itself.** Nobody hand-edits the
+rulebook mid-crisis. Instead, real-world **signals** (a storm at an airport, a
+geopolitical event, too much exposure on one route) are recorded as plain **facts** in
+a database. Once an hour, a **reconciler** program reads those facts, decides what the
+rulebook *should* say — pause a dangerous route, raise a premium, re-open it once the
+storm clears — and makes exactly those changes on-chain through one audited path. A
+machine-learning model can suggest baseline prices. Human admins oversee it all from a
+dashboard, but they too only **write facts**; the reconciler is the only thing that
+touches the chain.
+
+That's the entire system: travelers and underwriters on one side, five contracts
+holding the state and money, timed + just-in-time helpers keeping it moving, and a
+self-managing rulebook on top. Everything below is the exact, audited detail.
 
 ---
 
 ## Contracts (all Soroban / Rust)
 
 ### GovernanceModule
+
+> **In plain terms — the rulebook.** It answers one question the referee asks before
+> every sale: "Is this flight allowed, and on what terms?" It stores the list of
+> insurable routes and their premium / payout / delay-threshold, plus global defaults.
+> Owner and admins edit it; everyone else only reads it.
 
 The route authority. Owns the canonical terms for whitelisted flight routes — premium, payoff,
 and delay threshold. The Controller reads route status from this contract before every
@@ -280,6 +359,12 @@ indexer's enumeration) is planned future work.
 ---
 
 ### RiskVault
+
+> **In plain terms — the shared pot.** This is where every underwriter's money lives.
+> Put money in, you get **shares** (like fund units) that track your slice of the pot;
+> take money out, you burn shares. It always keeps back enough to cover the payouts it
+> has promised, and — to stop anyone trading on a flight result the pot hasn't absorbed
+> yet — entering and exiting are **queued and priced on a delay**, not instant.
 
 The capital backing layer. All underwriter USDC sits here. Built on the **OpenZeppelin
 Stellar `FungibleVault`** contract — shares are a standard Soroban fungible token and the
@@ -517,6 +602,13 @@ fn increase_locked(env: Env, controller: Address, amount: i128) {
 
 ### FlightPoolManager
 
+> **In plain terms — the policy cashier.** One contract for every flight. It takes in
+> each traveler's premium and holds it, remembers who bought a policy on which flight,
+> and — after a flight is settled as delayed or cancelled — lets those travelers come
+> **claim** their payout. Money the referee tells it to; travelers pull their own
+> payouts (nobody pushes money at them). Unclaimed payouts eventually expire and become
+> protocol revenue.
+
 A single contract that manages all flight insurance pools. Stores all flight data internally,
 keyed by `(flight_id, date)`. Replaces the previous design of deploying a separate FlightPool
 contract per flight. Also handles recovery accounting internally — unclaimed expired payouts
@@ -632,6 +724,10 @@ fn claim(env: Env, traveler: Address,
 // Called by anyone after claim expiry — credits RecoveredBalance internally
 fn sweep_expired(env: Env, flight_id: Symbol, date: u64);
 
+// Permissionless housekeeping: trims a fully-settled flight left in the active
+// set (returns true if it removed one). Tolerant of archived active-set pages.
+fn reconcile_settled_active_entry(env: Env, flight_id: Symbol, date: u64) -> bool;
+
 // Owner withdraws recovered (swept) funds. Owner is implicit
 // (`#[only_owner]` reads from OZ ownable storage); no `owner` arg.
 fn withdraw_recovered(env: Env, amount: i128);
@@ -695,6 +791,12 @@ If on time:
 ---
 
 ### Controller
+
+> **In plain terms — the referee.** The only contract that gives orders, and the one a
+> traveler actually calls to buy. On a purchase it checks the rulebook, confirms the pot
+> can cover the payout, and sends the premium straight to the cashier. On settlement it
+> reads the scoreboard and moves money between the pot and the cashier. It **touches
+> every other contract but never keeps a cent itself.**
 
 The system orchestrator. **Never holds USDC** — routes premiums directly from the traveler
 to FlightPoolManager via the Soroban token `transfer()` interface. The Controller orchestrates
@@ -928,6 +1030,14 @@ The owner address is not a `CtrlKey` variant — it lives in the OpenZeppelin
 ---
 
 ### OracleAggregator
+
+> **In plain terms — the scoreboard.** It records where every flight is in its life:
+> *registered → flying → landed (or cancelled) → classified on-time/late → settled*. The
+> status only ever moves **forward**, never backward. The trusted oracle job writes the
+> raw facts (scheduled time, actual landing time); the referee writes the outcome and
+> marks it settled. It also holds short-lived "this flight is insurable right now"
+> stamps (**sale windows**) that a purchase requires, and a counter of results that are
+> public-but-not-yet-settled — the signal that freezes the vault.
 
 On-chain registry of flight data and settlement pipeline status. The **single source of
 truth** for all flight lifecycle state — from registration through settlement.
@@ -1182,31 +1292,77 @@ of truth, no byte-layout drift hazard between contracts. Same applies to
 
 ---
 
-## Off-Chain Executor Layer (Modular)
+## Off-Chain Keeper & Oracle Layer
 
-The protocol needs six off-chain cron jobs to keep ticking. All of them are
-**backend-agnostic** — the contracts enforce authorization via `require_auth()` on
-updatable addresses.
+> **In plain terms — the helpers on a timer.** The contracts are patient machines that
+> only act when someone calls them; nothing on-chain can start itself. These jobs are
+> the callers. The **oracle** job goes out to a flight API and writes what really
+> happened onto the scoreboard. The **keeper** jobs then nudge the referee to classify
+> and settle. A **TTL** job keeps storage from expiring. Each one signs with its own
+> key, so if you ever replace a job you just register the new key — the contracts are
+> none the wiser.
 
-**Implementation status (Phase 12, 2026-05-25):** the centralized cron backend
-lives at `executor/centralized_cron/`. Stack: TypeScript + Node + tsx +
-`@stellar/stellar-sdk` v14 + `node-cron` + `express` + `dotenv`. Six cron
-jobs (SaleAuthorizer, FlightDataFetcher, FlightClassifier, SettlementExecutor,
-QueueMaintainer, TTLExtender), one HTTP API for health / logs / manual
-triggers, and a single-shot CLI (`npm run
-{authorize,fetch,classify,settle,queue,ttl}`) for ops + tests.
-Acurast TEE backend planned as a sibling under `executor/acurast/` in a
-later phase — same core logic, different deployment manifest.
+Nothing on-chain self-triggers — Soroban has no scheduler. A set of off-chain jobs
+must poll flight data, drive the settlement pipeline, keep storage alive, and
+automate governance. All of them are **backend-agnostic**: every contract gates
+its writes with `require_auth()` on an owner-updatable address
+(`authorized_oracle`, `authorized_keeper`), so the jobs prove identity by signing,
+and the whole backend can be swapped with a single owner transaction per contract —
+no redeployment, no contract knowledge of *which* backend is calling.
 
-### Cron Job Summary
+**Current backend: Vercel serverless functions.** The jobs run as scheduled
+serverless handlers under [`dapp/api/cron/`](../dapp/api/) — one file per job, each
+a thin wrapper around a runtime-agnostic implementation in `dapp/api/_lib/jobs/`
+(settlement path) or `dapp/api/_lib/governance/` (governance automation). Stack:
+TypeScript + `@stellar/stellar-sdk` talking to Stellar RPC, backed by a Supabase
+Postgres for off-chain state (governance signals, run history, exposure mirror).
+The frontend and this backend cohabit the **same Vercel project** (`dapp/`): the
+SPA is served from `dist/`, the jobs from `/api/*` (see the SPA-vs-API rewrite in
+`dapp/vercel.json`).
 
-| Cron | Name | Frequency | On-chain target | Authorization |
-|------|------|-----------|-----------------|---------------|
-| #0 | **SaleAuthorizer** | Every 2 hours (offset :30) | `OracleAggregator.open_sale()` / `close_sale()` / `set_cancelled()` | `authorized_oracle` |
-| #1 | **FlightDataFetcher** | Every 2 hours | `OracleAggregator` | `authorized_oracle` |
-| #2 | **FlightClassifier** | Every 1 hour | `Controller.classify_flights()` | `authorized_keeper` |
-| #3 | **SettlementExecutor** | Every 5 minutes | `Controller.execute_settlements()` | `authorized_keeper` |
-| #3b | **QueueMaintainer** | Every 5 minutes | `Controller.run_queue_maintenance()` | `authorized_keeper` |
+> **History.** An earlier `executor/centralized_cron/` service (node-cron +
+> Express) was **deleted 2026-07-19** — it covered only the settlement-path jobs
+> and was superseded by these Vercel crons, which additionally carry the
+> governance automation. The old AeroAPI fixture moved to
+> [`tools/mock-aeroapi/`](../tools/mock-aeroapi/) (keyless mock, port 3001) for
+> local demos via `AEROAPI_BASE_URL`. A decentralized TEE backend (Acurast/Phala)
+> remains a future option — it would wrap the same `_lib/jobs` modules in its own
+> harness and take over the authorized addresses.
+
+**The canonical job list lives in code, not config.** `JOB_REGISTRY` in
+[`dapp/api/_lib/governance/runs.ts`](../dapp/api/_lib/governance/runs.ts) is the
+single source of truth for every job's name, schedule, and signer key.
+`dapp/vercel.json`'s `crons` block mirrors it when the backend is deployed — but is
+**currently removed on purpose**: the present Vercel deploy is frontend-only
+(`dapp/.vercelignore` excludes `api/` while the backend is WIP; restore the crons
+block and delete `.vercelignore` to re-enable). Every run, scheduled or manual, is
+recorded to the Supabase `cron_runs` table (see [Job-Ops Layer](#job-ops-layer)).
+
+### Job Summary
+
+The registry defines nine jobs. Six drive the settlement path and storage (this
+section); two automate governance (`gov_reconcile`, `route_agent` — see [Off-Chain
+Governance Automation](#off-chain-governance-automation)); `health` is a liveness
+probe. Four signer roles keep blast radius separated: **oracle** writes flight
+data, **keeper** drives classification/settlement, **ttl** extends storage,
+**gov-admin** writes governance. Each address is owner-updatable on-chain.
+
+| Job (registry name) | Endpoint | Schedule | On-chain target | Signer |
+|------|------|-----------|-----------------|--------|
+| `fetcher` | `/api/cron/fetcher` | `0 */2 * * *` (every 2h) | `OracleAggregator.set_estimated_arrival` / `set_landed` / `set_cancelled` | oracle |
+| `sale_authorizer` | `/api/cron/authorize` | `30 */2 * * *` (every 2h, :30) | `OracleAggregator.open_sale` / `close_sale` / `set_cancelled` | oracle |
+| `classifier` | `/api/cron/classify` | `0 * * * *` (hourly) | `Controller.classify_flights` | keeper |
+| `settler` | `/api/cron/settle` | `*/5 * * * *` (every 5 min) | `Controller.execute_settlements` | keeper |
+| `queue_maintainer` | `/api/cron/queue` | `2-59/5 * * * *` (every 5 min, +2) | `Controller.run_queue_maintenance` | keeper |
+| `ttl_extender` | `/api/cron/ttl` | `0 0 * * *` (daily) | `extend_ttl` ×5 + `OracleAggregator.prune_settled` | ttl |
+| `gov_reconcile` | `/api/cron/gov-reconcile` | `10 * * * *` (hourly, :10) | `GovernanceModule.disable_route` / `enable_route` / `update_route_terms` | gov-admin |
+| `route_agent` (legacy) | `/api/cron/agent` | `0 6 * * *` (daily 06:00 UTC) | `GovernanceModule` route writes (ML + weather) | gov-admin |
+| `health` | `/api/cron/health` | liveness probe | — | — |
+
+The `:30` and `+2` offsets keep the two oracle jobs (and the two keeper jobs) off
+the same minute to avoid Stellar sequence-number contention. Three further
+registry names (`gov_signals`, `gov_onboard`, `gov_schedule_check`) are declared
+placeholders that currently reject as "not implemented".
 
 ### Cron #0 — SaleAuthorizer (Oracle, every 2 hours at :30)
 
@@ -1332,11 +1488,22 @@ data + FlightPoolManager terms). Settlement is a write-heavy operation (moves mo
 them allows the classification to run less frequently (1 hour) while settlement runs more
 frequently (5 minutes) to process the queue quickly.
 
-**Targeted fast path.** The hourly sweep is the backstop, not the primary latency path:
-whichever executor job writes an outcome (`set_landed` / `set_cancelled`) immediately
-calls `controller.classify_flight(keeper, flight_id, date)` followed by
-`controller.settle_flight(...)` for that exact tuple, so a fresh outcome normally
-classifies and settles within seconds regardless of active-set size.
+**Targeted "just-in-time" fast path — the primary latency route.** The hourly and
+5-minute sweeps are the *backstop*, not the main path. Whichever job writes an
+outcome doesn't wait for the next sweep: the moment `fetcher`/`sale_authorizer`
+lands a `set_landed` / `set_cancelled`, the off-chain `classifyAndSettleFlight`
+helper (`dapp/api/_lib/targeted_settlement.ts`) immediately drives that *exact*
+`(flight_id, date)` tuple through two dedicated on-chain entry points —
+`controller.classify_flight(keeper, flight_id, date)` then
+`controller.settle_flight(keeper, flight_id, date)`. Both are keeper-gated, take an
+exact tuple (no cursor scan), require the flight to be active-listed, and are
+idempotent (each returns a `bool` reporting whether a transition actually ran). So a
+fresh outcome normally classifies and settles within seconds, **independent of
+active-set size** — which matters because the vault's settlement barrier (see
+`PendingOutcomes`) freezes every LP entry/exit protocol-wide from the instant an
+outcome is written until it settles. The sweeps (`MAX_CLASSIFY_BATCH = 25` /
+`MAX_SETTLE_BATCH = 10` per call, rotating cursors) exist only to repair anything
+the targeted call missed (paused controller, RPC glitch).
 
 ### Cron #3 — SettlementExecutor (Keeper, every 5 minutes)
 
@@ -1438,88 +1605,111 @@ Persistent entries remain restorable via `RestoreFootprintOp` in the meantime.
   A broken classifier doesn't prevent the oracle from writing data. A broken settler
   doesn't prevent classification from queueing up work.
 
-### The Executor Interface
+### The keeper/oracle interface
 
-Every backend must implement three logical functions:
-
-```
-FlightDataFetcher:
-  1. Read OracleAggregator.get_active_flight_count() +
-     get_active_flights_page(offset, limit) via Stellar RPC (paged)
-  2. For NotInitiated flights:
-       - Call AeroAPI for estimated arrival time
-       - Sign and submit: OracleAggregator.set_estimated_arrival(...)
-  3. For Active flights where estimated_arrival + 1 hour < now:
-       - Call AeroAPI for actual flight status
-       - Landed -> sign and submit: OracleAggregator.set_landed(...)
-       - Cancelled -> sign and submit: OracleAggregator.set_cancelled(...)
-       - Still in flight / HTTP error -> skip, retry next cycle
-
-FlightClassifier:
-  1. Build Soroban tx: Controller.classify_flights(keeper_address)
-  2. Sign with executor's Stellar keypair
-  3. Submit via Stellar RPC
-
-SettlementExecutor:
-  1. Build Soroban tx: Controller.execute_settlements(keeper_address)
-  2. Sign with executor's Stellar keypair
-  3. Submit via Stellar RPC
-```
-
-All three jobs use `@stellar/stellar-sdk` to build, sign, and submit Soroban transactions.
-The core logic is **shared TypeScript** — each backend wraps the same code in its own
-scheduling and runtime harness.
-
-### Executor project structure
+Every job is the same shape — read on-chain + external state, sign, submit over
+Stellar RPC. The logic is **runtime-agnostic TypeScript** in `dapp/api/_lib/jobs/`;
+the Vercel handlers in `dapp/api/cron/` are ~10-line wrappers
+(`export default makeCronHandler(run)` + `config = { maxDuration: 300 }`). A
+different backend (TEE workers, a long-running node) wraps the same modules in its
+own scheduler.
 
 ```
-executor/
-├── centralized_cron/              # Current backend: node-cron + Express
-│   ├── src/
-│   │   ├── index.ts               # node-cron scheduler entry point (all job schedules)
-│   │   ├── config.ts              # Loads .env, RPC URLs, keypairs
-│   │   ├── server.ts              # Express ops API: /api/health, /api/logs, /api/trigger/<job>
-│   │   ├── run_once.ts            # CLI single-run entry (npm run authorize/fetch/classify/settle/queue/ttl)
-│   │   ├── run_log.ts             # In-memory run history backing /api/logs
-│   │   ├── sale_authorizer.ts     # open_sale / close_sale / set_cancelled attestations
-│   │   ├── flight_data_fetcher.ts # AeroAPI fetch + oracle data writes
-│   │   ├── flight_classifier.ts   # classify_flights tx
-│   │   ├── settlement_executor.ts # execute_settlements tx
-│   │   ├── queue_maintainer.ts    # run_queue_maintenance tx
-│   │   ├── ttl_extender.ts        # extend_ttl on all contracts + prune_settled
-│   │   ├── soroban_client.ts      # Stellar SDK wrapper (build, sign, submit)
-│   │   ├── aeroapi_client.ts      # AeroAPI HTTP client
-│   │   └── types.ts               # FlightStatus, FlightData, etc.
-│   ├── package.json
-│   └── tsconfig.json
-│
-└── mock-api/                      # Local AeroAPI stand-in (scenarios.json per flight)
+fetcher (signer: oracle)
+  1. Read OracleAggregator active set (paged) + get_flight_data per flight
+  2. NotInitiated       -> AeroAPI schedule -> set_estimated_arrival   (-> Active)
+  3. Active, past ETA+1h -> AeroAPI status  -> set_landed / set_cancelled
+  4. Cancellation seen at any stage -> set_cancelled (also closes any sale window)
+
+sale_authorizer (signer: oracle)
+  For each enabled route x each day in the sale horizon:
+    AeroAPI schedule check -> open_sale / close_sale / set_cancelled
+    (affirmative "this flight is insurable" attestation;
+     buy_insurance fails closed without a live window)
+
+classifier / settler / queue_maintainer (signer: keeper)
+  Build + sign + submit one Controller call:
+    classify_flights | execute_settlements | run_queue_maintenance
+
+ttl_extender (signer: ttl)
+  extend_ttl() on all five contracts, then OracleAggregator.prune_settled()
 ```
 
-The job modules contain the business logic and are runtime-agnostic; `index.ts`
-(scheduling), `run_once.ts` (CLI), and `server.ts` (on-demand trigger) are thin harnesses
-around them. A future decentralized backend (e.g. Acurast/Phala TEE workers) would wrap
-the same modules in its own harness — typically under 20 lines of glue code.
+Shared plumbing lives in `dapp/api/_lib/`: `soroban_client.ts` (build/sign/submit
+via `@stellar/stellar-sdk`; contract IDs from env, defaulting to
+`deployments/testnet.json`), `aeroapi_client.ts` (FlightAware AeroAPI, or the
+keyless `tools/mock-aeroapi` via `AEROAPI_BASE_URL`), `weather_client.ts`
+(Open-Meteo), `agent_client.ts` (the ML pricing service), and the `governance/`
+subsystem.
+
+### Backend structure
+
+```
+dapp/
+├── api/                          # Vercel serverless backend (same project as the SPA)
+│   ├── cron/                     # one thin handler per scheduled job
+│   │   ├── fetcher.ts  authorize.ts  classify.ts  settle.ts  queue.ts  ttl.ts
+│   │   ├── gov-reconcile.ts  agent.ts        # governance automation
+│   │   └── health.ts                         # liveness probe
+│   ├── admin/                    # authenticated ops API (Supabase JWT + email allowlist)
+│   │   └── actions.ts  jobs.ts  routes.ts  signals.ts
+│   ├── status/runs.ts            # PUBLIC sanitized job-health feed
+│   └── _lib/
+│       ├── jobs/                 # runtime-agnostic settlement-path job logic
+│       │   ├── fetcher.ts  authorizer.ts  classifier.ts  settler.ts
+│       │   └── queue.ts  ttl.ts  route_agent.ts
+│       ├── governance/           # governance automation subsystem (see next section)
+│       │   ├── reconciler.ts  rules.ts  submitter.ts  model.ts
+│       │   └── db.ts  config.ts  action_log.ts  admin_auth.ts  runs.ts
+│       ├── soroban_client.ts  aeroapi_client.ts  weather_client.ts
+│       └── agent_client.ts  targeted_settlement.ts  config.ts  handler.ts
+├── packages/                     # generated TS contract bindings, one per contract
+├── src/                          # the React SPA (see "dApp Frontend")
+└── vercel.json                   # framework: vite; /api/* -> functions, everything else -> SPA
+
+supabase/migrations/              # governance_core.sql + cron_runs.sql
+agent/                            # Python XGBoost pricing service (Render-hosted)
+tools/mock-aeroapi/               # keyless AeroAPI mock for local demos
+```
+
+### Job-Ops Layer
+
+Every job — cron-triggered or hand-run — funnels through one wrapper
+(`makeCronHandler` / `makeGovCronHandler`, `dapp/api/_lib/handler.ts` +
+`governance/config.ts`) that authorizes the request (a shared `CRON_SECRET`), runs
+the job, and appends a row to the Supabase `cron_runs` table via `recordRun` (job
+name, trigger = `schedule | external | manual:<email>`, duration, success/error,
+actions). Two surfaces read that history:
+
+- **`/admin` JOBS board** (`api/admin/jobs.ts`, authenticated) — lists the
+  `JOB_REGISTRY` with each job's latest + recent runs, plus a POST that runs any job
+  **now**, on the same code path as its cron, recorded as `manual:<email>`.
+- **`/status` page** (`api/status/runs.ts`, public) — a **sanitized** feed: job
+  identity, schedule, last-run time, duration, pass/fail only. No error text, action
+  payloads, or actor attribution — those stay behind auth.
 
 ### Backend migration
 
-Migrating between executor backends is a **zero-downtime, no-redeployment operation**:
+Because every write is gated on an owner-updatable address, migrating the backend
+(e.g. Vercel -> TEE workers) is **zero-downtime, no-redeployment**:
 
 ```
-1. Deploy new executor backend
-2. Read new executor's Stellar public key(s)
-3. Fund new executor account(s) with XLM
-4. Start new executor jobs (both old and new running — only old is authorized)
-5. Execute migration transactions:
+1. Stand up the new backend (new Vercel project, TEE workers, etc.)
+2. Read its Stellar public key(s) — oracle, keeper, ttl, gov-admin
+3. Fund the new account(s) with XLM
+4. Run both backends in parallel (only the currently-authorized keys succeed)
+5. Rotate the authorized addresses:
      owner -> OracleAggregator.set_oracle(new_oracle_address)
      owner -> Controller.set_keeper(new_keeper_address)
-6. Verify new executor's txs are succeeding on-chain
-7. Shut down old executor backend
+     owner -> GovernanceModule.add_admin(new_gov_admin) / remove_admin(old)
+     (the ttl signer needs no rotation — extend_ttl is permissionless)
+6. Verify the new backend's txs land on-chain
+7. Retire the old backend
 ```
 
-During the dual-running window, both backends submit transactions, but only the authorized
-one succeeds. Unauthorized transactions simply fail auth checks — no side effects, no
-double execution. Rollback = set addresses back to old backend.
+During the dual-running window both backends submit, but only the authorized keys
+succeed — unauthorized transactions fail the auth check with no side effects and no
+double execution. Rollback = point the addresses back.
 
 **Rotation as a compromise response needs one extra step.** Sale authorizations the
 outgoing oracle opened live in temporary storage (not enumerable on-chain) and survive
@@ -1534,11 +1724,248 @@ recorded) stay purchasable after the key swap.
 
 ---
 
+## Off-Chain Governance Automation
+
+> **In plain terms — the rulebook manages itself.** The GovernanceModule *stores* the
+> rules, but something has to *decide* them: raise a premium when a storm is brewing,
+> pause a route that's gotten too risky, re-open it when things calm down. That
+> decision-making is this off-chain system. It works like a newsroom with one editor:
+> anyone can file a **fact** ("storm at DEN", "too many policies on this route"), but
+> only one careful **editor** (the reconciler) decides what to actually publish to the
+> chain — and it double-checks against the live on-chain state every time, so a hiccup
+> never leaves things half-done.
+
+The `GovernanceModule` contract is the on-chain route authority (terms, whitelist,
+lifecycle), but the *decisions* — which routes to disable in a storm, how much to
+raise a premium when risk spikes — are made off-chain and pushed on-chain by
+automated jobs. The design has one governing principle:
+
+> **Humans and collectors never call the chain directly. They write *facts* into
+> Supabase; one idempotent reconciler is the sole actor; every mutation flows
+> through a single audited choke point.**
+
+The whole subsystem signs with a dedicated **gov-admin key** — a fourth identity,
+distinct from the contract owner and from the oracle/keeper — registered on the
+module via `GovernanceModule.add_admin`. (On testnet this `add_admin` is still
+pending the owner key, so the reconciler runs with `GOV_DRY_RUN=true`: it computes
+and logs every decision but submits nothing. See below.)
+
+### What data is held (Supabase, `supabase/migrations/`)
+
+All tables have RLS enabled with **zero policies (deny-all)** — only the server-side
+Vercel functions reach them, over the Supavisor transaction pooler. Row types are
+mirrored in `dapp/api/_lib/governance/model.ts`.
+
+| Table | Role |
+|---|---|
+| `routes` | One row per insurable route (`flight_id+origin+dest` = the on-chain key). Holds admin-set **base/anchor terms**, canonical schedule (for drift detection), the `status` lifecycle (`candidate/active/disabled/removed`), and the **admin pin** (`pinned`, `pin_until`). The reconciler treats pin + lifecycle as law. |
+| `signals` | **Layer-1 facts.** Collectors and admins write here; only the reconciler acts on them. `type` (weather / geopolitical / exposure / schedule_drift / manual), `scope_kind` (route / origin / dest), `severity` (`info` / `elevated` / `severe`), `payload` jsonb (e.g. `{factor}`), `expires_at`, `cleared_at`. Active = uncleared and unexpired. |
+| `pause_events` | History of every pause enacted on-chain, with the causing `signal_id`; `ended_at` on re-enable. The reconciler only auto-re-enables a route whose *own* pause_event is still open. |
+| `premium_adjustments` | Every premium change (base, multiplier stack, clamped result). Doubles as the **hysteresis / one-change-per-day** record. |
+| `actions_log` | **Append-only audit** of every on-chain governance call (actor, action, tx hash, before/after `route_status` snapshots, success/error). No update or delete path exists. |
+| `policies` | Durable mirror of `InsuranceBought` events (ingested from RPC) for exposure counting. |
+| `ingest_cursors` | Per-collector resume points (last-seen ledger). |
+| `cron_runs` | One row per job execution — feeds the admin JOBS board and public `/status` (see Job-Ops Layer). |
+
+### The reconciler (`dapp/api/_lib/governance/reconciler.ts`, hourly at `:10`)
+
+Runs after the signal collectors. It is **idempotent** — desired state is recomputed
+from scratch every tick, so a crashed run self-heals next hour:
+
+```
+1. Bulk-load DB state: routes, active signals, recently-ended signals (hysteresis
+   window), open pause_events, open + last-24h premium_adjustments.
+2. Per route: read the ACTUAL on-chain status via submitter.readStatus(),
+   filter matching signals by scope, then call the PURE decideReconcileAction(...).
+3. Execute the returned action through GovSubmitter, and mirror the result into
+   pause_events / premium_adjustments.
+```
+
+The decision function in `rules.ts` is **pure — no I/O** — and applies a fixed
+priority order (returning one of `noop | disable | enable | set_premium |
+revert_premium | flag`):
+
+1. **Admin pin wins** — a pinned, unexpired route is never overridden (`noop`).
+2. **Not on-chain yet** → `noop` (whitelisting new routes is manual / onboarding).
+3. **Severe signal → `disable`** — any active `severe` signal matching the route's
+   scope disables an Active route.
+4. **Admin lifecycle** — a route the admin set `disabled` is never auto-re-enabled.
+5. **Reactivation** — a Disabled route re-`enable`s only if the engine's *own*
+   pause_event is open (else it `flag`s for review — someone acted outside the
+   engine) **and** all pause signals have been clear for `HYSTERESIS_HOURS = 2`.
+6. **Premium multipliers** — each active `elevated` signal contributes a factor
+   (`payload.factor`), factors **stack multiplicatively** over the route's base
+   premium, then clamp to the configured rails. Guards: a `terms_valid` mirror
+   check (`premium < payoff`, `payoff/premium ≤ 100`, else `flag`), a
+   `DRIFT_THRESHOLD` no-churn skip (≈1 USDC), and **max one change per route per
+   day**. When the adjusters clear, `revert_premium` walks terms back to base.
+
+### GovSubmitter — the single on-chain choke point (`submitter.ts`)
+
+Both the reconciler and the admin API mutate the chain **only** through
+`GovSubmitter`, so every write is identically audited. Each `submit()`:
+
+1. Snapshots `route_status` **before**;
+2. simulates / signs / submits the contract call with the gov-admin key (captures
+   the tx hash);
+3. snapshots `route_status` **after**;
+4. appends the whole thing to `actions_log` (a failed submit is logged too).
+
+It wraps the **generated TypeScript bindings** (the `governance_module` package) for
+compiler-checked `Keep | Set | UseDefault` term-update unions, and exposes methods
+that map 1:1 to contract entry points: `disable` → `disable_route`, `enable` →
+`enable_route`, `updateTerms` → `update_route_terms`, plus `whitelist` / `remove` /
+`revertTerms`. An off-chain signal therefore becomes, literally, a `disable_route` /
+`update_route_terms` call — with the contract's owner-set **term limits as the final
+backstop** no automated write can exceed.
+
+### The ML pricing agent (Render-hosted)
+
+Baseline premiums can come from a machine-learning model rather than a hand-set
+number. `agent/` is a Python **FastAPI + XGBoost** service deployed on Render
+(`render.yaml` → `sentinel-pricing-agent`; it lives off-Vercel because
+xgboost/sklearn/pandas exceed the serverless size limit). `POST /price` takes a
+flight tuple, predicts a delay probability `p_delay`, and returns an expected-loss
+premium:
+
+```
+premium_usdc = clamp(p_delay * payoff_usdc * MARGIN, PREMIUM_MIN, PREMIUM_MAX)
+```
+
+`dapp/api/_lib/agent_client.ts` calls it with a 15 s timeout and bearer token;
+**any failure returns `null`**, so a down or unset model degrades gracefully to
+human-set terms — never a broken cron. (The current model is an XGBoost delay
+classifier trained on the 2008 Kaggle/BTS dataset — a documented POC limitation.)
+
+### Two engines today (legacy + current)
+
+There are, deliberately, **two governance engines** during the transition:
+
+- **`route_agent` (legacy, daily 06:00)** — file-config driven. Reads
+  `config/routes.*.json`, gets the ML baseline from the pricing agent, fetches
+  Open-Meteo weather, decides per `route_rules.ts` (severe weather → disable,
+  elevated → premium × multiplier), and applies via the older hand-rolled ScVal
+  helpers in `_lib/governance.ts`. **This is the only engine that currently calls
+  the ML agent directly.**
+- **`gov_reconcile` (current, hourly)** — the DB/signals architecture above. It
+  consumes `elevated` **signals** (whose `payload.factor` sets the multiplier)
+  layered over admin-set base terms, and writes through `GovSubmitter`.
+
+`route_agent` is slated to be absorbed by the reconciler (a later phase); until
+then, treat the reconciler as the intended design and `route_agent` as the daily
+ML+weather pass that still uses the legacy path.
+
+### Human oversight
+
+Admins never touch the chain by hand either — they write facts and let the pipeline
+act. All admin APIs (`dapp/api/admin/*`) are gated by `verifyAdmin`: a Supabase Auth
+JWT verified live via `auth.getUser`, then checked against an `ADMIN_EMAILS`
+allowlist (Supabase Auth is used for **identity only**; data access stays on the
+deny-all pooler).
+
+- **`/admin`** (`src/pages/Admin.tsx`, hidden "Route Control" board) — declare/clear
+  **signals** (facts, picked up next reconciler tick — *not* direct chain calls),
+  pin/unpin routes, set lifecycle, run direct ops (which still go through
+  `GovSubmitter`, actor `admin:<email>`), and watch the job board + `actions_log`.
+- **`/status`** (`src/pages/Status.tsx`, public) — the sanitized job-health board.
+- **`GOV_DRY_RUN=true`** — while set (current testnet state, pending the on-chain
+  `add_admin`), the reconciler decides and logs every action but submits nothing and
+  writes no mirror rows — a safe rollout switch.
+
+```
+SIGNAL INGESTION      collectors + admins  --INSERT-->  signals (facts)
+        |
+        v
+RULES (hourly :10)    reconciler: readStatus(on-chain) + decideReconcileAction(pure)
+        |                 pin? noop | severe? disable | cleared+hysteresis? enable
+        |                 elevated? base x Pi(factors), clamp, guards
+        v
+ML PRICING            base anchor: admin-set, or (legacy daily) Render XGBoost /price
+        |
+        v
+SUBMITTER             GovSubmitter: before-snap -> disable/enable/update_route_terms
+        |                          -> after-snap -> actions_log   (gov-admin key)
+        v
+ON-CHAIN              GovernanceModule  (+ owner term-limits backstop)
+        |             + DB mirror: pause_events / premium_adjustments
+        v
+OVERSIGHT             /admin (declare signals, pin, direct ops) | /status (public)
+```
+
+---
+
 ## Data Flow
 
 > For visual, editable Mermaid sequence diagrams of these flows (deployment,
 > purchase, underwriter, settlement, claim), see
 > [sequence_diagrams.md](../sequence_diagrams.md).
+
+### The Life of One Insured Flight
+
+Every mechanism in this document exists to serve this one story. Flight `UA100`
+DEN→SFO on March 3, premium $10, payoff $50, delay threshold 2h:
+
+```
+ 1. LISTED     Governance admin (or the reconciler, via GovSubmitter) calls
+               governance.whitelist_route(UA100, DEN, SFO, $10, $50, 2h).
+               Nothing else happens — no flight entry exists yet.
+
+ 2. ATTESTED   sale_authorizer (oracle key, every 2h) verifies with AeroAPI that
+               March 3's UA100 is scheduled and not cancelled, then stamps a
+               sale window: oracle.open_sale(UA100, Mar3, expires_at = now+6h).
+               No live window -> no sale, ever. Fail closed.
+
+ 3. BOUGHT     Traveler signs controller.buy_insurance(UA100, DEN, SFO, Mar3):
+                 governance.route_status()        -> Active($10/$50/2h)
+                 lead time >= 1h, horizon <= 90d  -> OK
+                 oracle.get_flight_data().status  -> NotInitiated/Active only
+                 oracle.is_sale_open()            -> must be true
+                 FIRST buyer -> pool.register_flight(terms snapshot)
+                             +  oracle.register_flight()  (-> NotInitiated)
+                 solvency: TMA >= ceil((locked + $50) x ratio/100)
+                 usdc.transfer(traveler -> pool, $10)      premium locked
+                 vault.increase_locked(controller, $50)    collateral reserved
+                 pool.add_buyer(UA100, Mar3, traveler)
+               (Each later buyer repeats from the solvency check down.)
+
+ 4. TRACKED    fetcher (oracle key, every 2h) writes the published schedule:
+               oracle.set_estimated_arrival(scheduled_in). NotInitiated -> Active.
+               Then silence until landing time.
+
+ 5. LANDED     March 3, UA100 lands 3h07m late. On its next pass (ETA+1h buffer)
+               the fetcher writes oracle.set_landed(actual). Active -> Landed.
+               >>> BARRIER ON: oracle PendingOutcomes > 0 — the vault refuses to
+               price ANY LP deposit/withdrawal until this outcome settles. <<<
+
+ 6. SETTLED    JIT — same job run, seconds later, no waiting for the sweeps
+     (JIT)     (classifyAndSettleFlight in targeted_settlement.ts):
+                 controller.classify_flight(keeper, UA100, Mar3):
+                   delay 3h07m >= 2h -> oracle.set_to_be_settled(Delayed)
+                 controller.settle_flight(keeper, UA100, Mar3):
+                   vault.send_payout(pool, ($50-$10) x buyers)
+                   vault.decrease_locked($50 x buyers)
+                   pool.settle_delayed(UA100, Mar3, claim_expiry = now+60d)
+                   oracle.set_settled(UA100, Mar3)
+               >>> BARRIER OFF. <<<  (If this instant path fails — paused
+               contract, RPC glitch — the hourly classify_flights and 5-min
+               execute_settlements sweeps repair it.)
+
+ 7. CLAIMED    Traveler calls pool.claim(traveler, UA100, Mar3) within 60 days:
+               Claimed(...) flag set, usdc.transfer(pool -> traveler, $50).
+               Unclaimed after 60d -> anyone calls pool.sweep_expired ->
+               RecoveredBalance (owner pulls via withdraw_recovered).
+
+ (On-time instead: step 6 becomes oracle.set_to_be_settled(OnTime) ->
+  pool.settle_on_time transfers all premiums pool -> vault +
+  vault.record_premium_income (underwriter yield), vault.decrease_locked,
+  oracle.set_settled. No step 7 — travelers get nothing back.)
+```
+
+The keeper internals of steps 4–6 are specified in [Cron #1](#cron-1--flightdatafetcher-oracle-every-2-hours)
+– [Cron #3b](#cron-3b--queuemaintainer-keeper-every-5-minutes) above; the exact
+money movements per outcome are in the
+[FlightPoolManager payout example](#flightpoolmanager). The remaining flows below
+are the ones not covered by that story.
 
 ### Whitelisting a Route
 
@@ -1606,99 +2033,6 @@ Traveler -> Controller.buy_insurance(flight_id, origin, dest, date)
 `usdc_client.transfer()` call — Soroban's auth framework handles sub-invocation authorization
 automatically. The traveler signs one transaction that authorizes both the Controller call
 and the USDC transfer within it.
-
-### Flight Data Collection (FlightDataFetcher, every 2 hours)
-
-```
-FlightDataFetcher (off-chain)
-    |
-    +-> reads OracleAggregator.get_active_flight_count() +
-    |   get_active_flights_page(offset, limit) via Stellar RPC (paged)
-    |
-    +-> for each flight in NotInitiated status:
-    |       calls AeroAPI -> gets estimated arrival time
-    |       signs + submits:
-    |       OracleAggregator.set_estimated_arrival(flight_id, date, eta)
-    |           +-> NotInitiated -> Active
-    |
-    +-> for each flight in Active status
-        where estimated_arrival_time + 1 hour < now:
-            calls AeroAPI -> gets actual flight status
-            |
-            +- Landed -> signs + submits:
-            |    OracleAggregator.set_landed(flight_id, date, actual_arrival_time)
-            |        +-> Active -> Landed
-            |
-            +- Cancelled -> signs + submits:
-            |    OracleAggregator.set_cancelled(flight_id, date)
-            |        +-> Active -> Cancelled
-            |
-            +- Still in flight / HTTP error -> skip, retry next cycle
-```
-
-### Flight Classification (FlightClassifier via Controller, every 1 hour)
-
-```
-FlightClassifier (off-chain) -> signs + submits:
-    Controller.classify_flights(keeper_address)
-        |
-        +-> keeper.require_auth()
-        |
-        +-> for each flight in OracleAggregator with Landed or Cancelled status:
-                |
-                +- Cancelled
-                |       oracle.set_to_be_settled(flight_id, date, ToBeSettledCancelled)
-                |
-                +- Landed
-                        read pool_client.get_flight_config(flight_id, date).delay_hours
-                        read oracle.get_flight_data() -> estimated_arrival, actual_arrival
-                        delay = actual_arrival - estimated_arrival
-                        |
-                        +- delay >= delay_hours
-                        |       oracle.set_to_be_settled(flight_id, date, ToBeSettledDelayed)
-                        |
-                        +- delay < delay_hours
-                                oracle.set_to_be_settled(flight_id, date, ToBeSettledOnTime)
-
-        +-> plus the timeout voids in the same pass:
-                NotInitiated >= 14d past departure, or Active >= 14d past
-                recorded scheduled arrival
-                        oracle.set_to_be_settled(flight_id, date, ToBeSettledOnTime)
-                        (voided — premiums to the vault, no payout)
-```
-
-### Settlement Execution (SettlementExecutor via Controller, every 5 minutes)
-
-```
-SettlementExecutor (off-chain) -> signs + submits:
-    Controller.execute_settlements(keeper_address)
-        |
-        +-> keeper.require_auth()
-        |
-        +-> for each flight in OracleAggregator with ToBeSettled* status:
-                |
-                +- ToBeSettledOnTime
-                |       pool_client.settle_on_time(flight_id, date)
-                |           premiums (premium * buyer_count) -> vault.record_premium_income()
-                |       vault.decrease_locked(payoff * buyer_count)
-                |       oracle.set_settled(flight_id, date)
-                |
-                +- ToBeSettledDelayed
-                |       payout = (payoff - premium) * buyer_count
-                |       vault.send_payout(flight_pool_manager, payout)
-                |       vault.decrease_locked(payoff * buyer_count)
-                |       pool_client.settle_delayed(flight_id, date, claim_expiry_window)
-                |       oracle.set_settled(flight_id, date)
-                |       update total_payouts_distributed
-                |
-                +- ToBeSettledCancelled
-                        (same flow as ToBeSettledDelayed — same payout amount)
-
-(Cron #3b — Controller.run_queue_maintenance — runs separately:)
-        +-> vault.process_deposit_queue()      (FIFO — mints matured LP entries)
-        +-> vault.process_withdrawal_queue()   (FIFO — unlocks underwriter funds)
-        +-> vault.snapshot()                   (no-op if already snapshotted today)
-```
 
 ### Traveler Claiming a Payout
 
@@ -1835,27 +2169,29 @@ withdrawable_capital = max(total_managed_assets - ceil(locked_capital * solvency
 ## Contract Relationships
 
 ```
-         Owner / Admins
-               |
-               v
-      GovernanceModule --- default terms + per-route overrides
-               |  resolved terms (cross-contract client)
-               v
-          Controller  <---- Cron #2: FlightClassifier (authorized_keeper, every 1 hr)
-          |    |    |  <---- Cron #3: SettlementExecutor (authorized_keeper, every 5 min)
+         Owner  (owner txns: set defaults / term limits / add_admin / rotate signer keys)
+           |
+           v
+      GovernanceModule <---- gov_reconcile / route_agent  (gov-admin key, off-chain:
+           |                    signals -> rules -> GovSubmitter -> disable/enable/update_route_terms)
+           |  resolved terms (cross-contract client)
+           v
+          Controller  <---- classifier       (keeper, hourly)
+          |    |    |  <---- settler          (keeper, every 5 min)
+          |    |    |  <---- queue_maintainer (keeper, every 5 min)
     +-----+    |    +------------+
     v          v                 v
-RiskVault  FlightPoolManager   OracleAggregator
-(OZ Vault)                          ^
-                             Cron #1: FlightDataFetcher (authorized_oracle, every 2 hr)
-                                     |
-                              +------+--------+
-                              | Executor Backend|
-                              |  (swappable)    |
-                              +----------------+
+RiskVault  FlightPoolManager   OracleAggregator  <---- fetcher + sale_authorizer
+(OZ Vault)                          ^                    (oracle key, every 2 hr)
+                                    |
+                             ttl_extender: extend_ttl x5 + prune_settled (daily, ttl key)
 
-Underwriters --deposit--> RiskVault
-                               +-- collect() <-- Underwriters (FIFO queue)
+  All off-chain jobs run as Vercel serverless crons (dapp/api) — a swappable backend,
+  each gated on an owner-updatable address. See Off-Chain Keeper & Oracle Layer +
+  Off-Chain Governance Automation.
+
+Underwriters --request_deposit / request_withdrawal--> RiskVault
+                               +-- collect() <-- Underwriters (two-phase FIFO queues)
 
 Travelers --buy_insurance--> Controller --> FlightPoolManager
                                                +-- claim(flight_id, date) <-- Travelers (after settlement)
@@ -1986,10 +2322,11 @@ defense against inflation attacks:
    rejects the writes a local-date key would produce), so keying by UTC is part of
    the executor/frontend contract and must survive backend migrations.
 
-**Trust assumption depends on executor backend.** With a centralized cron, trust the
-server operator. With a TEE backend (Acurast, Phala), trust the hardware attestation chain.
-The architecture is designed so that the trust model **improves over time** without touching
-the contracts — only the authorized address changes.
+**Trust assumption depends on the backend.** Today the jobs run as Vercel serverless
+functions signing with server-held keys, so you trust that operator. With a TEE
+backend (Acurast, Phala) you would instead trust the hardware attestation chain. The
+architecture is designed so that the trust model **improves over time** without
+touching the contracts — only the authorized address changes.
 
 ### Soroban Storage Rent & Archival
 
@@ -2008,9 +2345,9 @@ All contracts must manage TTL (time-to-live) to prevent data archival:
 - **Temporary storage** (SnapshotPrice): Used for disposable data with natural timeout.
   Permanent deletion after TTL — no archival rent.
 
-A future `ExtendFootprintTTLOp` executor job (enumerating idle Persistent entries
-off-chain and extending them in bulk) is planned but not part of the current
-centralized-cron backend; Cron #4 today performs instance-level `extend_ttl()` plus
+A future `ExtendFootprintTTLOp` job (enumerating idle Persistent entries off-chain
+and extending them in bulk) is planned but not yet built; the `ttl_extender` cron
+today performs instance-level `extend_ttl()` on all five contracts plus
 `prune_settled()` only.
 
 **`RestoreFootprintOp` safety net:** Instance and Persistent entries are never permanently
@@ -2228,62 +2565,77 @@ stable id returned from `request_withdrawal`, NOT the current queue index (audit
 
 ---
 
-## dApp Frontend — Sentinel Playground
+## dApp Frontend — FLIGHTS.FUN
 
-The frontend is the **Sentinel Playground**, a hand-scaffolded Next.js (App Router,
-TypeScript) dApp in [`playground/`](../playground/) using `@stellar/stellar-sdk` and
-`@creit.tech/stellar-wallets-kit` for multi-wallet connect + signing. Contract addresses
-come from [`deployments/testnet.json`](../deployments/testnet.json).
+The frontend is **FLIGHTS.FUN** (`dapp/`, package `sentinel-arcade`), a **Vite 7 +
+React 19** single-page app (TypeScript, Tailwind v4). It ships two switchable looks
+via a `data-theme` attribute — `fun` (the default pixel-arcade "FLIGHTS.FUN" CRT
+aesthetic) and `serious` (a clean professional insurance UI) — toggled from a theme
+dock and persisted to local storage. Wallet connect + signing use
+`@creit.tech/stellar-wallets-kit` (SEP-43 modules, so Freighter and others); balances
+come from Horizon. The SPA and the serverless backend (`dapp/api/`, above) are the
+**same Vercel project**.
 
 ### Project Structure
 
 ```
-sentinel_soroban_v3/
+sentinel_soroban_phase_3/
 ├── contracts/                      # Soroban smart contracts (Rust workspace)
 │   ├── sentinel_types/             # Shared cross-contract types, TTL consts, active_set, test_support
-│   ├── governance_module/
-│   ├── risk_vault/
-│   ├── flight_pool_manager/
-│   ├── controller/
-│   ├── oracle_aggregator/
+│   ├── governance_module/  risk_vault/  flight_pool_manager/
+│   ├── controller/  oracle_aggregator/
 │   ├── mock_usdc/                  # Testnet-only settlement token
 │   └── integration_tests/          # Cross-contract test suite
-├── executor/
-│   ├── centralized_cron/           # Off-chain cron executor (see structure above)
-│   └── mock-api/                   # Local AeroAPI stand-in
-├── playground/                     # Next.js dApp
-│   ├── app/                        # Pages: / (global state), /account, /interact
-│   ├── components/                 # Header, WalletButton, FunctionForm, AddressLine
-│   └── lib/                        # soroban.ts, walletKit.ts, queries.ts, registry.ts, scval.ts, config.ts
+├── dapp/                           # FLIGHTS.FUN SPA + Vercel serverless backend (one project)
+│   ├── src/                        # React app: pages/, contracts/, hooks/, providers/, config/
+│   ├── api/                        # serverless backend: cron/, admin/, status/, _lib/ (see Backend structure)
+│   ├── packages/                   # generated TS contract bindings, one per contract
+│   └── vercel.json
+├── supabase/                       # migrations: governance_core.sql, cron_runs.sql (governance DB)
+├── agent/                          # Python XGBoost pricing service (Render-hosted)
+├── tools/mock-aeroapi/             # keyless AeroAPI mock for local demos
 ├── deployments/                    # testnet.json — addresses, wasm hashes, constructor params
+├── playground/                     # legacy Next.js dApp (superseded by dapp/)
 ├── docs/                           # Docusaurus documentation site
 ├── audits/                         # Audit reports + remediations
 └── spec/                           # architecture.md, sequence diagrams, phase plans
 ```
 
-### Function Registry (no generated bindings)
+### Generated contract bindings
 
-Instead of generated per-contract clients, the playground drives every contract
-through a curated function registry (`lib/registry.ts` — every public entrypoint
-with arg specs and auth badges) plus generic RPC helpers (`lib/soroban.ts` —
-read-only calls via `simulateTransaction`, writes via simulate → assemble →
-wallet-sign → send → poll). Everything runs client-side; the app never touches a
-secret key:
+The app calls contracts through **generated TypeScript bindings** — one npm workspace
+package per contract under `dapp/packages/*` (`controller`, `risk_vault`,
+`flight_pool_manager`, `governance_module`, `oracle_aggregator`, `mock_usdc`), each
+produced by `stellar contract bindings typescript` from the deployed spec and rebuilt
+via `dapp/rebuild-bindings.sh` (`npm run install:contracts`, also run during the
+Vercel build). `dapp/src/contracts/*.ts` instantiates one typed client per contract;
+`dapp/src/hooks/useContracts.ts` wraps them in React-Query read hooks and pushes the
+connected wallet onto each client for signing. Everything runs client-side; the app
+never holds a secret key.
 
-```typescript
-// Read — free simulation, decoded to native JS values
-const myFlights = await simulateRead(
-  CONTRACTS.controller.address, 'get_flights_for_traveler', [addressToScVal(wallet)]);
+**Deployment target.** Contract IDs are **hardcoded in `dapp/src/contracts/*.ts`**,
+matching `deployments/testnet.json` (the 2026-07-18 testnet deployment — e.g.
+controller `CCWDQVAJ…QZGHB`); only network/RPC come from `PUBLIC_*` env
+(`dapp/.env.example` defaults to testnet). Because governance keeps no on-chain route
+enumeration, the app resolves a candidate route list (`dapp/src/config/routes.ts`)
+against `route_status`.
 
-// Write — single wallet signature covers the Controller call + USDC transfer
-await invokeWrite(CONTRACTS.controller.address, 'buy_insurance', [
-  addressToScVal(wallet), symbolToScVal('AA123'),
-  symbolToScVal('DEN'), symbolToScVal('SEA'), u64ToScVal(1785542400n),
-]);
-```
+### Pages (`dapp/src/pages/`)
 
-Network configuration (testnet RPC URL, passphrase, contract addresses) lives in
-`lib/config.ts`, sourced from `deployments/testnet.json`.
+| Route | Page | Purpose |
+|---|---|---|
+| `/` | `Markets.tsx` | Main insurance-market board — browse routes, buy delay policies |
+| `/markets` | `MarketsGlobe.tsx` | Globe visualization of routes |
+| `/bets` | `MyBets.tsx` | The connected traveler's policies — claim state, expiry countdowns |
+| `/house` | `House.tsx` | The "House" / underwriter (LP) page — vault deposit/withdraw, share price, free/locked capital |
+| `/calculator` (`/quant`) | `Quant.tsx` | Monte-Carlo underwriting / pricing simulator |
+| `/status` | `Status.tsx` | Public automation/ops health board (reads `api/status`) |
+| `/admin` | `Admin.tsx` | Hidden "Route Control" ops console (not in nav; governance signals, pins, jobs, action log) |
+| `/privacy`, `/terms` | `Legal.tsx` | Legal pages |
+
+> **Legacy note.** `playground/` — a hand-scaffolded Next.js app that drove contracts
+> through a curated function registry (no generated bindings) — still exists in the
+> repo but is **superseded** by `dapp/` and is no longer the shipped frontend.
 
 ---
 
@@ -2343,73 +2695,8 @@ Network configuration (testnet RPC URL, passphrase, contract addresses) lives in
         OracleAggregator.set_controller(CONTRACT_ID_CONTROLLER)   <- one-time, immutable
         RiskVault.set_controller(CONTRACT_ID_CONTROLLER)           <- one-time, immutable
         FlightPoolManager.set_controller(CONTRACT_ID_CONTROLLER)   <- one-time, immutable
-        (RiskVault's settlement-barrier oracle is wired in the constructor,
-         step 2c — no post-deploy call needed. RiskVault.set_oracle exists
-         only to rotate it if the oracle contract is ever redeployed; it
-         refuses while the CURRENT oracle still reports pending public
-         outcomes, because a fresh oracle starts at zero pending and the
-         swap would open the barrier at a stale share price mid-incident.
-         It also refuses while any policy collateral is still locked —
-         outstanding policies will settle on the old oracle's pipeline, and
-         rotating away from it would blind the barrier to their future
-         public-but-unsettled windows. Together the two checks span the
-         whole policy lifetime from purchase to settlement.
-         If the old oracle is unreachable, pause the vault and use
-         RiskVault.force_set_oracle — the vault then stays paused until the
-         old oracle's pending PnL is reconciled and the owner deliberately
-         unpauses. Both paths and set_min_withdrawal_request emit
-         `oracle_set` (with a `forced` flag) / `min_wd_req_set` audit
-         events. Note set_oracle points at the oracle CONTRACT — distinct
-         from OracleAggregator.set_oracle, which sets the off-chain oracle
-         executor address.)
-        RiskVault.set_min_withdrawal_request(MIN_ASSETS)           <- OPTIONAL tightening: configured
-                                                                      component of the request-value
-                                                                      floor for both LP queues. Ships
-                                                                      at 0, which disables only this
-                                                                      component — the occupancy-scaled
-                                                                      protocol floor (max(TMA/2500, one
-                                                                      whole token), scaled by queue
-                                                                      occupancy) is always active, so
-                                                                      dust squatting is priced even
-                                                                      when left unset. Choose per
-                                                                      underlying asset: meaningfully
-                                                                      above dust, well below typical LP
-                                                                      position sizes (e.g. ~100_0000000
-                                                                      = 100 USDC at 7 decimals).
-                                                                      Owner-updatable at any time —
-                                                                      also the response lever if queue
-                                                                      saturation is observed. Bounded:
-                                                                      enforcement is clamped at request
-                                                                      time to max(TMA/2500, one whole
-                                                                      token), so no configured value can
-                                                                      lock positions above 0.04% of the
-                                                                      vault (or one token, whichever is
-                                                                      larger) out of the queue; the
-                                                                      absolute term keeps the clamp — and
-                                                                      the occupancy-scaled protocol
-                                                                      floor — from vanishing while TMA
-                                                                      is near zero at bootstrap.
-        RiskVault.request_deposit(owner_lp, SEED_ASSETS)           <- RECOMMENDED: seed the vault with a
-                                                                      genesis deposit (processed through
-                                                                      the normal two-phase queue) BEFORE
-                                                                      announcing public LP entry. While
-                                                                      TMA is near zero every request-
-                                                                      floor term degenerates to the
-                                                                      one-token absolute minimum — and
-                                                                      the anti-lockout clamp caps any
-                                                                      configured minimum at the same one
-                                                                      token — so pinning the bounded
-                                                                      queues full costs only ~50-75
-                                                                      tokens of refundable escrow.
-                                                                      Seeding TMA first makes the
-                                                                      TMA/2500 term dominate, restoring
-                                                                      value-relative slot pricing (and
-                                                                      the owner's configuration lever)
-                                                                      from the first public request.
-                                                                      Size the seed so TMA/2500 clearly
-                                                                      exceeds one token — the relative
-                                                                      term only binds above 2,500
-                                                                      tokens of TMA.
+        RiskVault.set_min_withdrawal_request(MIN_ASSETS)           <- optional dust floor  (wiring note 2)
+        RiskVault.request_deposit(owner_lp, SEED_ASSETS)           <- recommended genesis seed (wiring note 3)
 
 4. Set global defaults:
         GovernanceModule.set_defaults(premium, payoff, delay_hours)
@@ -2418,29 +2705,59 @@ Network configuration (testnet RPC URL, passphrase, contract addresses) lives in
         GovernanceModule.whitelist_route(...)                      <- one per route
         (custom terms optional — omit to use defaults)
 
-6. Deploy executor backend:
+6. Provision off-chain signer keys (one per role, blast-radius separated):
+        stellar keys generate oracle-executor    # flight data + sale windows
+        stellar keys generate keeper-executor    # classify + settle + queue maintenance
+        stellar keys generate ttl-extender       # extend_ttl (permissionless; any funded key)
+        stellar keys generate gov-admin          # governance automation writes
 
-   a. Generate Stellar keypairs for oracle and keeper:
-        stellar keys generate oracle-executor
-        stellar keys generate keeper-executor
-
-   b. Configure and start executor (e.g. centralized cron):
-        cd executor/centralized_cron && cp .env.example .env
-        # Set: AERO_API_KEY, STELLAR_RPC_URL, SECRET_KEYS, contract IDs
-        npm run start
-
-7. Register executor addresses on-chain:
+7. Register signer addresses on-chain:
         OracleAggregator.set_oracle(ORACLE_EXECUTOR_ADDRESS)
         Controller.set_keeper(KEEPER_EXECUTOR_ADDRESS)
+        GovernanceModule.add_admin(GOV_ADMIN_ADDRESS)   <- gates gov-reconcile / route_agent
+        (until add_admin lands, run the governance jobs with GOV_DRY_RUN=true)
 
-8. Fund executor accounts:
-        Send XLM to ORACLE_EXECUTOR_ADDRESS (for Soroban tx fees)
-        Send XLM to KEEPER_EXECUTOR_ADDRESS (for Soroban tx fees)
+8. Fund the signer accounts with XLM (oracle, keeper, ttl, gov-admin) for tx fees.
 
-9. Launch the frontend (Sentinel Playground):
-        cd playground && npm run dev    (Next.js dev server; contract addresses
-                                         come from deployments/testnet.json)
+9. Deploy the backend + frontend (one Vercel project, dapp/):
+        - Set env: AERO_API_KEY (or AEROAPI_BASE_URL -> tools/mock-aeroapi),
+          STELLAR_RPC_URL, the four signer secret keys, contract IDs
+          (default from deployments/testnet.json), GOVERNANCE_DB_URL (Supabase),
+          CRON_SECRET, ADMIN_EMAILS, AGENT_BASE_URL (the Render ML service).
+        - Apply supabase/migrations/ to the governance database.
+        - Deploy dapp/ to Vercel — the build runs `npm run install:contracts` to
+          build the generated bindings; JOB_REGISTRY defines the cron schedules.
+        - The pricing agent (agent/) deploys separately to Render (render.yaml).
+   Local dev: `cd dapp && npm run dev` serves the SPA on :5175; run any job
+   on-demand from the /admin JOBS board (or hit its /api/cron/<job> endpoint).
 ```
+
+**Wiring notes (step 3):**
+
+1. **Barrier-oracle rotation.** The vault's settlement-barrier oracle is wired in its
+   constructor (step 2c) — no post-deploy call. `RiskVault.set_oracle` exists only to
+   rotate to a *redeployed oracle contract*, and refuses while the current oracle
+   reports pending public outcomes **or** any policy collateral is still locked
+   (together spanning the whole policy lifetime — a fresh oracle starts at zero
+   pending, so an early swap would open the barrier at a stale share price). If the
+   old oracle is unreachable: pause the vault, `force_set_oracle`, reconcile the
+   pending PnL, deliberately unpause. Both paths emit `oracle_set` (with a `forced`
+   flag). Not to be confused with `OracleAggregator.set_oracle`, which sets the
+   *off-chain executor address*.
+2. **Request floor.** `set_min_withdrawal_request` configures the optional component
+   of the request-value floor for both LP queues (ships at 0). The occupancy-scaled
+   protocol floor — `max(TMA/2500, one whole token)` — is always active regardless,
+   so dust squatting is priced even when unset. Pick a value above dust and below
+   typical LP sizes (e.g. 100 USDC); owner-updatable anytime, and the response lever
+   if the queues saturate. Anti-lockout: enforcement is clamped to the same
+   `max(TMA/2500, one token)`, so no configured value can lock positions above
+   ~0.04% of the vault out of the queue.
+3. **Genesis seed.** Push a seed deposit through the normal two-phase queue **before**
+   announcing public LP entry. Near zero TMA, every floor term degenerates to the
+   one-token minimum, so pinning the bounded queues full would cost only ~50–75
+   tokens of refundable escrow; seeding first makes the `TMA/2500` term dominate from
+   the first public request. Size it so `TMA/2500` clearly exceeds one token (the
+   relative term only binds above 2,500 tokens of TMA).
 
 **RiskVault / Controller circular dependency:** Deploy RiskVault first, deploy Controller
 with vault address, then call `vault.set_controller()`.
