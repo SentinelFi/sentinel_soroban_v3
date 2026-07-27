@@ -57,5 +57,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     // settled; null = unreadable (no oracle key / RPC failure).
     pendingOutcomes,
     barrierEngaged: pendingOutcomes === null ? null : pendingOutcomes > 0,
+    // Age tracking (ops_flags 'barrier', settler-written, best-effort):
+    // the alert condition is the AGE, not the existence — see
+    // /api/status/runs for the public stalled flag.
+    barrierSince: await readBarrierSince(),
   });
+}
+
+async function readBarrierSince(): Promise<string | null> {
+  if (!process.env.GOVERNANCE_DB_URL) return null;
+  try {
+    const { getDb } = await import("../_lib/governance/db");
+    const rows = (await getDb()`
+      select value, data from ops_flags where key = 'barrier'
+    `) as unknown as Array<{ value: boolean; data: { since?: string } | null }>;
+    return rows[0]?.value ? (rows[0].data?.since ?? null) : null;
+  } catch {
+    return null;
+  }
 }

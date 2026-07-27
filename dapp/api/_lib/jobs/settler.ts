@@ -1,5 +1,42 @@
 import { SorobanClient } from "../soroban_client";
+import { getDb } from "../governance/db";
 import type { Config, FetcherAction, RunLogEntry } from "../types";
+
+/**
+ * Best-effort barrier-age bookkeeping (ops_flags key 'barrier'): records
+ * WHEN the settlement barrier first engaged so health/status can alert on
+ * its AGE, not just its existence. Strictly DB-optional — no DB, no rows,
+ * no failures (the settler is a keeper-tier bot).
+ */
+async function recordBarrierState(pending: bigint): Promise<void> {
+  if (!process.env.GOVERNANCE_DB_URL) return;
+  try {
+    const sql = getDb();
+    if (pending === 0n) {
+      await sql`
+        insert into ops_flags (key, value, data, updated_at)
+        values ('barrier', false, null, now())
+        on conflict (key) do update set value = false, data = null, updated_at = now()
+      `;
+      return;
+    }
+    // Preserve the original first-seen timestamp while the barrier stays up.
+    await sql`
+      insert into ops_flags (key, value, data, updated_at)
+      values ('barrier', true,
+              ${sql.json({ since: new Date().toISOString(), pending: Number(pending) })}, now())
+      on conflict (key) do update
+        set value = true,
+            data = case
+              when ops_flags.value then jsonb_set(coalesce(ops_flags.data, '{}'::jsonb), '{pending}', to_jsonb(${Number(pending)}::int))
+              else excluded.data
+            end,
+            updated_at = now()
+    `;
+  } catch (err) {
+    console.warn(`[settler] barrier-state record failed (ignored): ${err}`);
+  }
+}
 
 // Bounded drain: each pass is one classify_flights (window 25) + one
 // execute_settlements (window 10). 8 passes ≈ 80 settlements per run —
@@ -53,6 +90,7 @@ export async function run(config: Config): Promise<RunLogEntry> {
       BigInt((await client.readContract(config.oracleAggregatorId, "get_pending_outcomes")) ?? 0);
 
     let pending = await readPending();
+    await recordBarrierState(pending);
     if (pending === 0n) {
       console.log("[settler] No pending outcomes — skipping (no transaction).");
       actions.push({ flight: "-", skipped: "no pending outcomes — no tx submitted" });
@@ -122,6 +160,7 @@ export async function run(config: Config): Promise<RunLogEntry> {
     }
 
     console.log(`[settler] Done — ${pending} pending outcome(s) remaining.`);
+    await recordBarrierState(pending);
     actions.push({ flight: "-", transition: `drained to ${pending} pending` });
     return entry(true);
   } catch (err) {
