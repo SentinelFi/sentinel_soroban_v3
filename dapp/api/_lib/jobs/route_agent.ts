@@ -132,16 +132,31 @@ export async function run(config: Config): Promise<RunLogEntry> {
           `[route-agent] ${label}: on-chain=${onChain.status} weather=${severity} baseline=${baselineSource} → ${action.kind} (${action.reason})`
         );
 
-        // 5. Apply
+        // 5. Apply. GOV_DRY_RUN gates every mutation — the same kill switch
+        // the reconciler honors (2026-07-27 audit: this job previously
+        // ignored it, making it an ungoverned second actor). Full audit-trail
+        // parity (actions_log via GovSubmitter) lands with the Phase 4
+        // absorption into the reconciler.
+        const dryRun = process.env.GOV_DRY_RUN === "true";
         switch (action.kind) {
           case "noop":
             actions.push({ flight: label, skipped: action.reason });
             break;
           case "disable":
+            if (dryRun) {
+              console.log(`[route-agent] [dry-run] ${label}: would disable (${action.reason})`);
+              actions.push({ flight: label, skipped: `[dry-run] would disable (${action.reason})` });
+              break;
+            }
             await disableRoute(ctx, route.flight_id, route.origin, route.destination);
             actions.push({ flight: label, transition: `disabled (${action.reason})` });
             break;
           case "reenable_with_terms":
+            if (dryRun) {
+              console.log(`[route-agent] [dry-run] ${label}: would re-enable at $${baseUnitsToUsdc(action.newPremium)} (${action.reason})`);
+              actions.push({ flight: label, skipped: `[dry-run] would re-enable (${action.reason})` });
+              break;
+            }
             await enableRoute(ctx, route.flight_id, route.origin, route.destination);
             await updateRoutePremium(ctx, route.flight_id, route.origin, route.destination, action.newPremium);
             actions.push({
@@ -150,6 +165,11 @@ export async function run(config: Config): Promise<RunLogEntry> {
             });
             break;
           case "update_premium":
+            if (dryRun) {
+              console.log(`[route-agent] [dry-run] ${label}: would set premium → $${baseUnitsToUsdc(action.newPremium)} (${action.reason})`);
+              actions.push({ flight: label, skipped: `[dry-run] would set premium (${action.reason})` });
+              break;
+            }
             await updateRoutePremium(ctx, route.flight_id, route.origin, route.destination, action.newPremium);
             actions.push({
               flight: label,

@@ -25,12 +25,11 @@ blocking · **P2** = when scale demands it.
 - [ ] **P0 — Seed routes on the 07-18 deployment.** `npm run whitelist:routes`
   (the deployment is live but unseeded; the frontend + crons already point at
   it).
-- [ ] **P1 — Pending-outcome age monitoring.** The architecture's stated
-  alerting invariant — age of the oldest pending outcome, which freezes every
-  LP entry/exit — is not surfaced anywhere. Add
-  `oracle.get_pending_outcomes()` (+ a first-seen timestamp) to
-  `/api/cron/health` and the public `/status` page; alert when nonzero for
-  more than ~2 sweep cycles.
+- [ ] **P1 — Pending-outcome age monitoring.** Partially done 2026-07-27:
+  `/api/cron/health` now returns `pendingOutcomes` + `barrierEngaged`
+  (best-effort read, null-safe). Remaining: first-seen timestamp / age
+  tracking, surfacing on the public `/status` page, and an actual alert
+  when nonzero for more than ~2 settler cycles.
 - [ ] **P2 — Relax backstop cadences once JIT is trusted.** The targeted
   classify+settle path (fetcher/authorizer) is now the primary latency route;
   the classifier (hourly) and settler (5 min) sweeps are repair backstops and
@@ -99,10 +98,10 @@ The ladder to a fully automated governance:
 
 ### L2 — complete the deterministic pipeline (no LLM needed)
 
-- [ ] **P1 — URGENT mitigation: gate or disable `route_agent`.** It mutates
-  the chain daily with no audit trail and ignores GOV_DRY_RUN (it loads
-  `Config`, not `GovConfig`). Until absorbed: make it honor GOV_DRY_RUN and
-  write actions_log, or drop it from the schedule.
+- [x] **P1 — URGENT mitigation: gate `route_agent` (done 2026-07-27).** It
+  now honors GOV_DRY_RUN on every mutation (was the one actor ignoring the
+  kill switch). Remaining half — actions_log parity — lands with the
+  absorption below (its writes still bypass GovSubmitter until then).
 - [ ] **P1 — `gov_onboard`: automated route onboarding, closing the
   invisibility gap.** One pipeline: discovery output → INSERT DB `routes`
   rows as `status='candidate'` (with sched_* columns filled from the same
@@ -279,8 +278,11 @@ section rather than deleting them.*
   the contract would reject; internal tool, not e2e-tested); fixed silent
   /schedules pagination truncation (max_pages) that could close valid
   far-window days.
-- 2026-07-27 — Keeper hardening (§G): pre-flight skip reads in settler /
+- 2026-07-27 — Keeper hardening (§F): pre-flight skip reads in settler /
   queue / classifier (no tx when nothing to do — was 288 blind fee-bearing
   submits/day/job), settler drain loop with bounded-window (10→3→1)
   fallback, barrier-aware queue skip, ttl prune drain loop, txBadSeq retry
   in soroban_client, u32 helper.
+- 2026-07-27 — route_agent gated behind GOV_DRY_RUN (closes the ungoverned-
+  actor hole until absorption); /api/cron/health exposes `pendingOutcomes`
+  + `barrierEngaged` (the settlement-barrier gauge, best-effort read).
