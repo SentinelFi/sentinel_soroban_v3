@@ -1,9 +1,9 @@
 # Sentinel Premium Pricing Agent
 
 A small FastAPI service that wraps an XGBoost delay-probability model
-(trained on the Kaggle 2008 flight-delay dataset, which derives from US BTS
-on-time data) and returns a USDC premium via expected-loss pricing with
-hard rails:
+(trained on weather-enriched BTS "Marketing Carrier On-Time Performance"
+data, 2023-2025, stratified 1% sample — ~148k flights) and returns a USDC
+premium via expected-loss pricing with hard rails:
 
 ```
 expected_loss      = p_delay * payoff_usdc
@@ -23,10 +23,17 @@ repo root). Trained artifacts are committed in `artifacts/` so the service
 runs out of the box; retrain with `make train` after dropping the Kaggle
 CSV into `data/`.
 
-POC pricing — **not actuarially sound**: the model target is
-`dep_delayed_15min` (departure delay), a proxy for the protocol's covered
-event (arrival delay ≥ threshold / cancellation), on 2008 data. Retraining
-on current BTS data with an arrival-delay target is the planned follow-up.
+Model v2 (2026-07-27): the target IS the protocol's covered event —
+`ARR_DELAY >= 180min OR CANCELLED OR DIVERTED` (diverted pays as
+cancellation, matching the oracle policy) — with isotonic calibration on
+the validation split so p × payoff is an honest expected loss. Held-out
+test: ROC AUC 0.708, Brier 0.027, mean predicted p 0.0290 vs actual 0.0289.
+Features remain the serving contract (date/carrier/route/dep-time/distance);
+the dataset's per-airport weather columns are an unused value-add until the
+/price schema carries forecasts (follow-up). Training: drop the CSV at
+`data/delay_data.csv` and `make train` (a 20-30 row fixture at
+`training/fixtures/delay_data.sample.csv` smoke-tests the pipeline via
+`--data`).
 
 ## Setup
 
