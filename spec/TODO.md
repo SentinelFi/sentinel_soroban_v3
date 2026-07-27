@@ -33,11 +33,14 @@ blocking · **P2** = when scale demands it.
   AeroAPI key (C is not blocking). And they are NOT yet in the DB `routes`
   table, so the reconciler can't see them yet — the invisibility gap (D:
   gov_onboard / DB-as-canonical) until closed.
-- [ ] **P1 — Pending-outcome age monitoring.** Partially done 2026-07-27:
-  `/api/cron/health` now returns `pendingOutcomes` + `barrierEngaged`
-  (best-effort read, null-safe). Remaining: first-seen timestamp / age
-  tracking, surfacing on the public `/status` page, and an actual alert
-  when nonzero for more than ~2 settler cycles.
+- [x] **P1 — Pending-outcome age monitoring (done 2026-07-27).**
+  `/api/cron/health`: `pendingOutcomes` + `barrierEngaged` + `barrierSince`;
+  the settler records first-seen in `ops_flags('barrier')` (best-effort,
+  DB-optional); the public `/api/status/runs` feed carries
+  `barrier: { engaged, since, age_secs, pending, stalled }` with
+  `stalled: true` past 2 settler cycles (600s) — the alert condition.
+  Remaining (needs a credential): wiring `stalled` to an external pager
+  (email/Slack) — until then it is surfaced, not pushed.
 - [ ] **P2 — Relax backstop cadences once JIT is trusted.** The targeted
   classify+settle path (fetcher/authorizer) is now the primary latency route;
   the classifier (hourly) and settler (5 min) sweeps are repair backstops and
@@ -73,14 +76,16 @@ cutoffs — zero calls outside), authorizer near(/flights)+far(/schedules)
 split, live-sale-window-as-cached-attestation skip, never re-verify
 outcome-recorded days. Remaining, in value order:
 
-- [ ] **P1 — `aeroapi_cache` table (Supabase) for /schedules chunks.**
-  Published schedules barely change; cache per (airline, flight_number,
-  chunk) with ~24h TTL. Cuts far-window calls ~12× (5/run → 5/day per
-  flight). Shared helper so any future AeroAPI caller reuses it.
-- [ ] **P1 — Airline-batched /schedules.** One call per airline per ≤20-day
-  chunk (drop the flight_number filter, match client-side against all of
-  that carrier's enabled routes). N routes on one carrier → ~N× fewer
-  schedule calls. Combines multiplicatively with the cache.
+- [x] **P1 — `aeroapi_cache` (done 2026-07-27).** Table + `cachedFetch`
+  helper (~24h TTL for /schedules chunks), strictly DB-optional: no DB /
+  DB error → direct call, failures never cached, stores best-effort.
+  Migration applied live.
+- [x] **P1 — Batched /schedules (done 2026-07-27, PAIR-batched).** One
+  call per DIRECTED PAIR per ≤20-day chunk (200 routes share ~30 pairs;
+  the pair filter also excludes multi-leg flight numbers server-side) —
+  ~30 cached schedule calls/day at a 7-day horizon vs 2,400/day
+  per-flight. Airline-only batching was evaluated and REJECTED: an
+  unfiltered airline query returns the carrier's entire global schedule.
 - [ ] **P2 — Demand-driven near windows.** Only attest days with live
   purchase interest: frontend "warming" ping (e.g. `POST /api/sale-auth/warm`
   on quote view) marks (flight, day) hot in Supabase; the authorizer near
@@ -128,13 +133,15 @@ The ladder to a fully automated governance:
   LIVE-verified against testnet. The `policies` event-ingest mirror
   (durable per-policy history via `ingest_cursors`) remains open as a P2
   analytics/audit item — the exposure SIGNAL no longer depends on it.
-- [ ] **P1 — Absorb `route_agent` into the reconciler** (then DELETE it +
-  `_lib/route_rules.ts` + legacy `_lib/governance.ts` helpers). `rules.ts`
-  needs one new input: an `anchorPremium` (ML baseline) on `ReconcileInput`,
-  fed by `AgentClient` in `reconciler.ts` (or a daily `pricing` signal);
-  multipliers/clamps/hysteresis already exist. Also fix the Render `/price`
-  schema drift (`dep_time_hhmm` + `distance_mi` missing → 422 → silent
-  fallback).
+- [x] **P1 — Absorb `route_agent` (done 2026-07-27).** route_agent is now a
+  facts-only COLLECTOR: daily ML baseline → `pricing` signals (reconciler
+  consumes as `anchorPremium`), Open-Meteo verdicts → route-scoped
+  `weather` signals; zero chain writes. Legacy `_lib/governance.ts` DELETED
+  (whitelist script ported onto GovSubmitter; `OnChainRoute` moved into
+  submitter.ts; route_rules keeps only pure weather/math). Render schema
+  drift fixed (dep_time_hhmm + distance_mi sent when the DB row has them —
+  columns fill via gov_onboard/admin). LIVE-verified across 200 routes
+  against real Open-Meteo.
 - [x] **P1 — Fleet-level guardrails (done 2026-07-27).** (a) mass-disable
   circuit breaker: per-run cap `max(3, 20% of fleet)`, beyond → flag;
   (b) runtime freeze: `ops_flags.gov_frozen` DB flag (migration
@@ -196,12 +203,11 @@ new information on-chain — they only execute what the oracle already
 attested — so opening them costs no trust. `npm run bot -- <name>`
 (`dapp/scripts/run_bot.ts`) is the standalone runner for all tiers.
 
-- [ ] **P1 — Package the KEEPER bots for third parties.** Extract/publish
-  the keeper job code (classifier, settler, queue_maintainer, ttl_extender)
-  with a README: no AeroAPI key needed, no DB needed, just RPC + a funded
-  key (+ the keeper authorization until bounties land). Docker/one-liner
-  examples (systemd, GitHub Actions, Acurast harness). The oracle and
-  governance bots stay in-repo, ours.
+- [x] **P1 — Keeper bots runnable by third parties (done 2026-07-27,
+  scoped per owner).** dapp/README "Run a keeper bot yourself": code links
+  (run_bot.ts → jobs/ → soroban_client.ts) + copy-paste env/run example —
+  RPC + funded key only, no AeroAPI, no DB. Deliberately NO npm package,
+  NO docker (owner decision: where the TS runs is the operator's business).
 - [ ] **P1 — DB-optional invariant (design rule, enforce forever).** Oracle
   and keeper tiers must run with NO database: history recording is
   best-effort (already true — `recordRun` no-ops without `GOVERNANCE_DB_URL`
@@ -305,3 +311,11 @@ section rather than deleting them.*
   + `/api/admin/freeze` + circuit breaker + flap damping; migration
   applied live), authorizer routes now DB-canonical with file fallback,
   `vercel.backend.json` deploy-later config. E2E 61 checks.
+- 2026-07-27 — AeroAPI key live: real route intake ran end-to-end — 297
+  routes found in 60 calls, 200 appended to the governance JSON,
+  whitelisted on-chain, DB-synced via gov_onboard. route_agent absorbed
+  (facts-only collector; legacy chain helpers deleted; whitelist script
+  on GovSubmitter). aeroapi_cache + PAIR-batched /schedules (~30 cached
+  calls/day vs 2,400). Barrier age tracking end-to-end (settler →
+  ops_flags → health + public /status `stalled` flag). Keeper-bot
+  run-it-yourself README section.

@@ -89,6 +89,34 @@ The bots fall into **three tiers with different decentralization stories**:
 - **Keys decide authority, not the runner.** A third-party bot run only lands
   writes if its signing address is authorized on-chain — publishing the code
   gives away no power.
+
+### Run a keeper bot yourself
+
+The keeper bots are plain TypeScript — where you run them is up to you
+(laptop, server, CI, anything with Node 20+). The code:
+[`scripts/run_bot.ts`](scripts/run_bot.ts) (entry point) →
+[`api/_lib/jobs/`](api/_lib/jobs/) (the job logic) →
+[`api/_lib/soroban_client.ts`](api/_lib/soroban_client.ts) (sign + submit).
+
+```sh
+git clone <this repo> && cd dapp
+npm install && npm run install:contracts
+
+# keeper bots need ONLY a Stellar RPC + a funded key — no AeroAPI, no DB
+export STELLAR_RPC_URL="https://soroban-testnet.stellar.org"
+export KEEPER_SECRET_KEY="S..."       # must be the on-chain authorized_keeper
+export ORACLE_SECRET_KEY="S..."       # any funded key (read-source only for keepers)
+export TTL_EXTENDER_SECRET_KEY="S..." # any funded key — extend_ttl is permissionless
+
+npm run bot -- settler          # drain pending settlements (exit 0/1, JSON log)
+npm run bot -- queue_maintainer # LP queue maintenance
+npm run bot -- classifier       # classification sweep
+npm run bot -- ttl_extender     # TTL upkeep + prune — runnable by ANYONE today
+```
+
+Until the bounty upgrade opens `classifier`/`settler`/`queue_maintainer` to
+any key, their writes only land for the registered `authorized_keeper`; an
+unauthorized run fails the on-chain auth check with no side effects.
 - **DB-optional invariant.** The oracle + keeper bots NEVER require the
   governance DB: with `GOVERNANCE_DB_URL` unset they run fully (history
   recording is skipped); with the DB down, recording fails silently and the
