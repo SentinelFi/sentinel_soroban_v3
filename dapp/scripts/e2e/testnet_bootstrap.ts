@@ -56,12 +56,15 @@ const LP_PRICING_DELAY_SECS = 6 * 3600; // mirrors risk_vault constant
 
 /** In-flight two-phase run state (see test_testnet_e2e.ts). */
 export interface PendingRun {
-  onTime: string;
-  delayed: string;
-  cancelled: string;
+  /** ident → scenario role (onTime/delayed210/delayed120/lost/govStorm/govPrice/govMl). */
+  flights: Record<string, string>;
   date: string; // u64 secs as string
   schedEpoch: number; // unix secs — mock sched_in pinned here in BOTH phases
   resumeAt: number; // unix secs — flight-day phase runnable from here
+  /** Running expected net USDC delta for the buyer across the whole run. */
+  buyerExpectedDelta: string; // i128 base units as string
+  buyerStartBalance: string; // i128 base units as string
+  lockedAtStart: string; // vault locked capital before this run's purchases
 }
 
 export interface E2eDeployment {

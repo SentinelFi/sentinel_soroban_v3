@@ -51,6 +51,7 @@
   - [Generated contract bindings](#generated-contract-bindings)
   - [Pages](#pages-dappsrcpages)
 - [Deployment Order](#deployment-order)
+- [End-to-End Testing](#end-to-end-testing)
 
 ---
 
@@ -3203,3 +3204,75 @@ with vault address, then call `vault.set_controller()`.
 
 **FlightPoolManager / Controller circular dependency:** Same pattern — deploy FlightPoolManager
 first, deploy Controller with its address, then call `flight_pool_manager.set_controller()`.
+
+## End-to-End Testing
+
+Three test layers, from fast to real:
+
+| Suite | Chain | AeroAPI | ML API | DB | Run |
+|---|---|---|---|---|---|
+| Agent unit tests | — | — | local model | — | `cd agent && make test` |
+| Hermetic E2E (64 checks) | in-memory fake | mock | — | **none (enforced)** | `cd dapp && npm run test:e2e` |
+| **Real-chain E2E** | **real contracts, testnet** | mock (runtime-scripted) | **live Render service** | **none (enforced)** | `cd dapp && npm run test:e2e:testnet` |
+
+### The real-chain suite (`dapp/scripts/test_testnet_e2e.ts`)
+
+Runs the REAL job code (authorizer, fetcher, classifier, settler, queue,
+ttl) and REAL `GovSubmitter` against a **dedicated throwaway contract
+deployment on testnet** (bootstrap: `npm run test:e2e:testnet:bootstrap`;
+the live deployment is never touched), with `tools/mock-aeroapi` scripting
+the flight world and the **deployed
+`flight-delay-predictions.onrender.com`** service supplying real
+predictions. **Deliberately DB-less**: `GOVERNANCE_DB_URL` is deleted at
+startup, so every run also proves the DB-optional invariant — governance
+here is exercised the way manual-mode governance actually works (admin
+calls through the same audited `GovSubmitter` choke point the reconciler
+uses). Two phases, because the real oracle enforces `date ≤ ETA` /
+`date ≤ actual_arrival`: **buy day** (sales, purchases, governance,
+cancellations) and **flight day** (landings, remaining claims, final
+ledger), resumed automatically from cached state.
+
+**Scenarios covered (terms: $15 base premium, $100 payoff, 3h threshold):**
+
+- **A. Flight outcomes** — A1 lands 5 min early → `SettledOnTime`, claim
+  rejected · A2 lands 3h30 late (>3h) → `SettledDelayed`, claim pays $100 ·
+  A3 lands 2h00 late (<3h, the boundary) → `SettledOnTime`, claim
+  rejected · A4 corroborated cancellation → `SettledCancelled` same day,
+  claim pays · A5 diverted → pays as cancellation, never attested as
+  landed · A6 tracking-lost (bare `cancelled` flag) → **no tombstone
+  written**, then tracking recovers and the flight settles normally.
+- **B. Sales coupling** — real authorizer opens every window before
+  purchase; each purchase pays **exactly** the current on-chain premium
+  and locks exactly the payoff; purchase on a disabled route is rejected
+  by the contract gate.
+- **C. Governance (manual mode, no DB)** — storm: `disable_route` → buy
+  fails → recovery: `enable_route` → the same buy succeeds · elevated:
+  premium ×1.25 on-chain → a purchase opening a **fresh** flight bucket
+  pays $18.75 while a buyer joining an **already-open** bucket pays its
+  snapshotted $15 → revert → terms read back at base.
+- **E. ML pricing** — the live `/predict` API prices a route; the anchor
+  is computed with the real protocol functions
+  (`expectedLossPremiumUnits` + `clampPremium`), pushed on-chain, and a
+  purchase pays exactly the model-derived premium · a dead ML endpoint
+  degrades to `null` (never a broken run).
+- **G. Keepers + accounting** — batch classifier/settler/queue/ttl all
+  succeed on the real chain; the settler's pre-flight skip sends no
+  transaction when nothing is pending; `has_pending_outcomes` is false at
+  the end; **money conservation**: the buyer's net balance change equals
+  payoffs minus premiums exactly, and vault `locked` returns to its
+  pre-run level.
+
+**What real-chain testing caught that fakes could not** (the suite's
+justification, all found on its first runs): the oracle's timestamp
+plausibility bounds (`date ≤ ETA ≤ date+3d` — forced the two-phase
+design), and the pool's **term-snapshot rule** — a governance repricing
+applies to newly opened flight-date buckets, while buyers joining an
+already-open bucket pay its original premium (every buyer of one
+flight-date pays the same price).
+
+**Deferred to a with-DB suite:** the signals lifecycle (collectors
+writing, expiry, source-owned clearing), reconciler decisions,
+`gov_frozen` freeze brake, mass-disable circuit breaker, and
+hysteresis/step-clamp behavior — i.e., everything whose substrate IS the
+database. Those run against an isolated Postgres, never the live
+Supabase.
