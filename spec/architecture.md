@@ -2065,11 +2065,16 @@ storm-season routes, which weather multipliers can also push to the cap).
   route_agent's anchor and the reconciler's final clamp re-read the file).
 - `defaults.payoff_usdc` — the payoff ($100 today) and
   `defaults.premium_usdc` — the admin base premium used when no ML anchor
-  is live ($15 today). Base-term changes must also be **pushed on-chain**:
-  `npm run whitelist:routes -- --sync-terms` (idempotent; one
-  `update_route_terms` per route, signed by `GOVERNANCE_ADMIN_SECRET_KEY`),
-  then the hourly `gov_onboard` sync updates the DB rows the reconciler
-  reads.
+  is live ($15 today). On-chain, every route (all file overrides are null)
+  stores `UseDefault` and resolves against the module's global defaults —
+  so the whole fleet reprices with **one owner transaction**:
+  `GovernanceModule.set_defaults(premium, payoff, delay_hours)` (verified
+  2026-07-28: one call moved all 202 routes from $50/$500 to $15/$100).
+  Also update the DB `routes` base-term columns the reconciler prefers
+  (manual today — see TODO §D on teaching `gov_onboard` to sync terms).
+  Per-route *overrides* in the file are the exception: those need
+  `npm run whitelist:routes -- --sync-terms` (one `update_route_terms`
+  per changed route, gov-admin signed).
 - The margin (×1.3) is `EXPECTED_LOSS_MARGIN` in
   `dapp/api/_lib/route_rules.ts`.
 
