@@ -2034,6 +2034,49 @@ actor — uses it as the premium anchor. **Any failure returns `null`**, so a
 down or unset model degrades gracefully to admin-set terms — never a broken
 cron, never a blocked route.
 
+### How the premium is clamped (formula + where to change the limits)
+
+Current terms (2026-07-28): **premium clamped to $10–$30, payoff $100** per
+policy, delay threshold 3h. The full pipeline from probability to on-chain
+premium, in order:
+
+```
+p_covered                       ← POST /predict (the ML service)
+raw      = p_covered × payoff × 1.3        expectedLossPremiumUnits()   route_rules.ts
+anchor   = clamp(raw, MIN, MAX)            clampPremium() rails         route_rules.ts
+target   = anchor × Π(active elevated multipliers, default ×1.25)       governance/rules.ts
+final    = clamp(target, MIN, MAX, ±50%/day vs current premium)         governance/rules.ts
+on-chain: update_route_terms(final) — rejected if it exceeds the
+          owner-set term limits (the backstop no automation can pass)
+```
+
+Any `severe` signal skips pricing entirely and pauses the route.
+
+Worked example at today's terms: a typical route (p ≈ 0.034) prices at
+0.034 × $100 × 1.3 ≈ $4.40 → **floors at $10**; premiums rise above the
+floor from p ≈ 0.077 and **cap at $30** from p ≈ 0.23 (rare — multi-x
+storm-season routes, which weather multipliers can also push to the cap).
+
+**Where to change MIN/MAX (or the payoff)** — one file, three knobs, all in
+[`dapp/config/routes.testnet.json`](../dapp/config/routes.testnet.json):
+
+- `rails.premium_usdc.min` / `.max` — the clamp bounds ($10/$30 today).
+  Rails changes take effect on the **next cron pass automatically** (both
+  route_agent's anchor and the reconciler's final clamp re-read the file).
+- `defaults.payoff_usdc` — the payoff ($100 today) and
+  `defaults.premium_usdc` — the admin base premium used when no ML anchor
+  is live ($15 today). Base-term changes must also be **pushed on-chain**:
+  `npm run whitelist:routes -- --sync-terms` (idempotent; one
+  `update_route_terms` per route, signed by `GOVERNANCE_ADMIN_SECRET_KEY`),
+  then the hourly `gov_onboard` sync updates the DB rows the reconciler
+  reads.
+- The margin (×1.3) is `EXPECTED_LOSS_MARGIN` in
+  `dapp/api/_lib/route_rules.ts`.
+
+The final backstop lives on-chain: `GovernanceModule.set_term_limits`
+(owner-only) caps `max_payoff` and `max_payoff_ratio` — no file edit or
+automated write can price past those.
+
 ### Human oversight
 
 Admins never touch the chain by hand either — they write facts and let the pipeline
