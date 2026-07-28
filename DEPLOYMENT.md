@@ -63,7 +63,7 @@ AEROAPI_KEY=...
 CRON_SECRET=<random-string>
 
 # ML prediction service (Render service "flight-delay-predictions").
-AGENT_BASE_URL=<the Render service URL>
+AGENT_BASE_URL=https://flight-delay-predictions.onrender.com
 AGENT_TOKEN=<must match the Render service's AGENT_TOKEN, if it sets one>
 
 # Governance DB — Supabase TRANSACTION pooler (port 6543), not the direct host.
