@@ -336,8 +336,21 @@ is REAL — it proves everything `FakeSoroban` cannot: the purchase flow
 (sale-auth gate, premium transfer, vault payoff locking), the real Rust
 state machine, the batch keeper jobs (classifier / settler / queue / ttl),
 settlement money movement, and claims (delayed + cancelled pay the full
-payoff; the on-time claim is rejected on-chain). Each run whitelists fresh
-flight idents on fresh routes (state never collides across runs); shared
-harness bits live in `scripts/e2e/harness.ts`. Redeploy with
-`--fresh` after a quarterly testnet reset.
+payoff; the on-time claim is rejected on-chain).
+
+Each run is TWO phases, because the real oracle enforces
+`date ≤ ETA ≤ date+3d` and `date ≤ actual_arrival` — a purchasable flight's
+date is always in the future, so its landing physically cannot be attested
+until the flight day arrives (the suite caught FakeSoroban not modeling
+this on its first real run). The **buy-day** phase does routes → sale-auth
+→ 3 purchases → ETA writes, and fully settles + claims the CANCELLED
+flight (no timestamps involved). Rerunning the same command from ~12:00
+UTC on the flight day runs the **flight-day** phase: landings, targeted
+settlement, keeper sweeps, the delayed claim, and the on-time claim
+rejection. The suite tracks the pending run in its cache and tells you
+when the second phase is runnable (`--abandon` drops a stuck run).
+
+Each run whitelists fresh flight idents on fresh routes (state never
+collides across runs); shared harness bits live in `scripts/e2e/harness.ts`.
+Redeploy with `--fresh` after a quarterly testnet reset.
 

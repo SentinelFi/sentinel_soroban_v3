@@ -47,6 +47,12 @@ interface Scenario {
   // landed gate (ETA + 1h) open immediately, regardless of wall clock.
   // scheduled_out tracks 3h earlier; actual_* derive from these as usual.
   sched_in_offset_secs?: number;
+  // Absolute variant (unix seconds) — takes precedence over the offset.
+  // Real-chain tests pin this to a value the on-chain oracle accepts
+  // (date ≤ eta ≤ date+3d) and reuse the SAME value across the buy-day
+  // and flight-day phases so the mock's actual_in stays consistent with
+  // the ETA already written on-chain.
+  sched_in_epoch_secs?: number;
 }
 
 interface Scenarios {
@@ -190,7 +196,11 @@ function buildFlight(ident: string, scenario: Scenario, dateParam: string | unde
   // the scenario pins the schedule relative to NOW (sched_in_offset_secs).
   let scheduledOut = `${flightDate}T08:00:00Z`;
   let scheduledIn = `${flightDate}T11:00:00Z`;
-  if (scenario.sched_in_offset_secs !== undefined) {
+  if (scenario.sched_in_epoch_secs !== undefined) {
+    const inMs = scenario.sched_in_epoch_secs * 1000;
+    scheduledIn = new Date(inMs).toISOString();
+    scheduledOut = new Date(inMs - 3 * 3600 * 1000).toISOString();
+  } else if (scenario.sched_in_offset_secs !== undefined) {
     const inMs = Date.now() + scenario.sched_in_offset_secs * 1000;
     scheduledIn = new Date(inMs).toISOString();
     scheduledOut = new Date(inMs - 3 * 3600 * 1000).toISOString();
@@ -472,8 +482,10 @@ app.get("/airports/delays", (_req, res) => {
 });
 
 // Test instrumentation — call counters for API-economy assertions.
+// `instance` echoes MOCK_INSTANCE so a harness can verify it is talking to
+// the process IT spawned, not a stale survivor squatting on the port.
 app.get("/__stats", (_req, res) => {
-  res.json(stats);
+  res.json({ ...stats, instance: process.env.MOCK_INSTANCE ?? null });
 });
 app.post("/__reset", (_req, res) => {
   stats.flights = 0;

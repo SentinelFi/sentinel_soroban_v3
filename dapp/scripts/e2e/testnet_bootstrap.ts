@@ -54,6 +54,16 @@ const MINT = 100_000n * UNIT; // buyer + owner balance
 const DEPOSIT = 10_000n * UNIT; // vault capital — covers many concurrent runs
 const LP_PRICING_DELAY_SECS = 6 * 3600; // mirrors risk_vault constant
 
+/** In-flight two-phase run state (see test_testnet_e2e.ts). */
+export interface PendingRun {
+  onTime: string;
+  delayed: string;
+  cancelled: string;
+  date: string; // u64 secs as string
+  schedEpoch: number; // unix secs — mock sched_in pinned here in BOTH phases
+  resumeAt: number; // unix secs — flight-day phase runnable from here
+}
+
 export interface E2eDeployment {
   rpcUrl: string;
   passphrase: string;
@@ -72,6 +82,7 @@ export interface E2eDeployment {
   depositReadyAt: number; // unix secs — vault deposit mintable after this
   runCounter: number; // consumed by the suite for unique per-run idents
   deployedAt: string;
+  pending?: PendingRun | null;
 }
 
 export function loadDeployment(): E2eDeployment | null {
