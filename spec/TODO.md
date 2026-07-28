@@ -167,6 +167,13 @@ The ladder to a fully automated governance:
 - [x] **P2 — `signals.type` migration (done 2026-07-27).** `ops` and
   `pricing` types added in `20260727140000_gov_guardrails.sql`, applied
   live.
+- [ ] **P2 — `gov_onboard` base-term sync.** Discovered 2026-07-28 during
+  the $15/$100 repricing: onboard syncs route existence/status but NOT
+  base terms — after `whitelist:routes --sync-terms`, the DB `routes`
+  rows kept the old base_premium/payoff_units (which the reconciler
+  prefers over file defaults) and needed a manual SQL update. Teach
+  onboard to diff file terms vs DB columns and update them, so a terms
+  change is: edit routes file → --sync-terms → done.
 
 After L2, the ONLY human actions left in governance: appetite changes
 (rails/defaults/term limits — owner), emergencies (pause, pins), and
