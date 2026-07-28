@@ -10,6 +10,7 @@
   - [FlightPoolManager](#flightpoolmanager)
   - [Controller](#controller)
   - [OracleAggregator](#oracleaggregator)
+- [The Off-Chain Layer: Three Systems + a Frontend](#the-off-chain-layer-three-systems--a-frontend)
 - [Off-Chain Keeper & Oracle Layer](#off-chain-keeper--oracle-layer)
   - [Job Summary](#job-summary)
   - [Cron #0 — SaleAuthorizer (Oracle, every 2 hours at :30)](#cron-0--saleauthorizer-oracle-every-2-hours-at-30)
@@ -1291,6 +1292,73 @@ of truth, no byte-layout drift hazard between contracts. Same applies to
 (governance).
 
 ---
+
+## The Off-Chain Layer: Three Systems + a Frontend
+
+Everything off-chain is **three systems with deliberately different trust
+postures**, plus the user-facing frontend. The detailed sections follow; this
+is the map.
+
+### 1. Keepers — open-source, anyone can run one
+
+The settlement muscle: `classifier`, `settler`, `queue_maintainer`,
+`ttl_extender`. Keepers move **no new information on-chain** — they only
+execute what the oracle already attested (classify → settle → queue/TTL
+housekeeping), and the contracts re-verify everything. That is why this is
+the **decentralization target**: running a keeper needs only a Stellar RPC
+URL and a funded key — no AeroAPI, no database, no permission from us
+(see "Run a keeper bot yourself" in [dapp/README](../dapp/README.md)). A
+stalled keeper costs latency, never correctness.
+
+### 2. Oracle — centralized trust root, ours by design
+
+The two jobs that put facts on-chain: the **sale authorizer** (attests
+which flight-days are insurable — sales fail closed without it) and the
+**flight data fetcher** (writes ETAs, landings, corroborated cancellations
+via AeroAPI). This is the protocol's trust root; its key is the
+`authorized_oracle` address, and its future trust upgrade is a TEE backend
+(Acurast/Phala) taking over the same address — not multi-party operation.
+The oracle **must run with no database** (the DB-optional invariant below);
+it may *opportunistically* use the DB as a `/schedules` response cache and
+for run telemetry, but degrades to direct API calls without it.
+
+### 3. Governance — centralized automation with two subsystems
+
+The rulebook manager: collectors write **facts** (weather forecasts, live
+airport delays, exposure concentration, ML pricing anchors, schedule
+drift) as self-expiring `signals`; the hourly **reconciler** decides within
+rails; the **GovSubmitter** — the single audited actor — writes on-chain.
+Humans set appetite (rails, defaults, term limits) and keep emergency
+controls (freeze, pins). Two subsystems:
+
+- **The ML prediction service** (`agent/`, Render service
+  `flight-delay-predictions`) — a pure, insurance-blind FastAPI:
+  route + date + time in, calibrated covered-event probability out. The
+  premium math lives protocol-side. Details:
+  [The ML prediction service](#the-ml-prediction-service-render-hosted).
+- **The Supabase DB** — the governance system's memory, audit trail, and
+  coordination point: the route registry the reconciler evaluates,
+  self-expiring `signals`, the `actions_log`/`pause_events` audit trail,
+  runtime brakes (`ops_flags.gov_frozen`), the policies/settlements event
+  mirror (durable history past RPC retention), `cron_runs` telemetry, and
+  the AeroAPI response cache. **It is NOT strictly needed**: only the
+  governance tier requires it — without the DB, automated governance
+  simply stops *safely* (no signals → no actions; on-chain terms and
+  statuses persist unchanged) while sales, settlement, claims, and manual
+  governance (owner/admin calls and scripts) continue untouched. Signals
+  self-expire (~26h), so a DB outage leaves no stale automation state to
+  clean up on recovery. In short: without the DB the protocol *works*;
+  with it, the protocol *governs itself*.
+
+### 4. Frontend
+
+The FLIGHTS.FUN SPA plus the hidden `/admin` console — same Vercel project
+as the crons. Details: [dApp Frontend](#dapp-frontend--flightsfun).
+
+**The invariant tying it together:** keepers and oracle must run DB-less
+(the hermetic E2E suite enforces this every run); only governance may
+require the DB — because the governance tier essentially *is* the DB plus
+one signer.
 
 ## Off-Chain Keeper & Oracle Layer
 
