@@ -317,7 +317,7 @@ async function buyDayPhase(ctx: Ctx): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function flightDayPhase(ctx: Ctx): Promise<void> {
-  const { d, config, client, mock, payoff } = ctx;
+  const { d, config, mock, payoff } = ctx;
   const h = helpers(ctx);
   const p = d.pending!;
   const date = BigInt(p.date);
