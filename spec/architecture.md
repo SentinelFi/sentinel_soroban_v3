@@ -1947,6 +1947,11 @@ xgboost/sklearn/pandas exceed the serverless size limit). It is deliberately a
 **pure prediction API — it knows nothing about premiums, payoffs, or
 insurance**; the protocol turns its probability into a price on the dapp side.
 
+**Live:** <https://flight-delay-predictions.onrender.com> (free plan — spins
+down when idle, so the first request after a quiet spell cold-starts in
+~1 min; interactive Swagger docs at `/docs`). Deployed 2026-07-28 via the
+Render REST API; auto-deploys on every push to the linked branch.
+
 **What the endpoint does.** `POST /predict` takes a route-level flight
 description — carrier, origin, dest, month, day-of-month, day-of-week,
 scheduled departure `HHMM` (optional, default noon), distance in miles
@@ -1963,6 +1968,40 @@ Flight numbers are never a feature — a route+calendar+time tuple IS the
 model's entire input, so "UA, ORD→SFO, a December Tuesday around 9am" is a
 complete query. `GET /healthz` reports the loaded model version. An optional
 `AGENT_TOKEN` bearer-gates `/predict`.
+
+**How to call it** (copy-paste runnable):
+
+```sh
+curl -s -X POST https://flight-delay-predictions.onrender.com/predict \
+  -H "Content-Type: application/json" \
+  -d '{"carrier": "B6", "origin": "JFK", "dest": "BOS",
+       "month": 1, "day_of_month": 28, "day_of_week": 7,
+       "dep_time_hhmm": 2100, "distance_mi": 187}'
+```
+
+| Field | Meaning |
+|---|---|
+| `carrier`, `origin`, `dest` | IATA codes — the route |
+| `month`, `day_of_month`, `day_of_week` | the date (`day_of_week`: Mon=1 … Sun=7) |
+| `dep_time_hhmm` | 24-hour HHMM (`900` = 9am, `2100` = 9pm). Optional, default noon; minute precision is irrelevant — the model learned time-of-day bands |
+| `distance_mi` | optional, default 1000 |
+
+Response — `p_covered` is the answer ("11.5% of flights like this get
+disrupted"), `vs_baseline` the multiple of the network average:
+
+```json
+{
+  "p_covered": 0.1150,
+  "risk": "high",
+  "baseline": 0.0342,
+  "vs_baseline": 3.36,
+  "model_version": "2026-07-27T18:01:47Z-btsM24-arr180m"
+}
+```
+
+Unknown carriers/airports never error (the encoder ignores them and predicts
+from the remaining features). If `AGENT_TOKEN` is set on the service, add
+`-H "Authorization: Bearer <token>"`.
 
 **What the model is.** XGBoost (300 gradient-boosted trees) over one-hot
 route/calendar features + numeric departure-time/distance, followed by
