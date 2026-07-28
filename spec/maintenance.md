@@ -8,7 +8,7 @@ so the model must be retrained on fresh data **every 6 months**.
 
 | Dataset | What it is | Use here |
 |---|---|---|
-| **Marketing/Reporting Carrier On-Time Performance** | PER-FLIGHT rows: date, carrier, origin→dest, CRS dep time, ARR_DELAY minutes, CANCELLED, DIVERTED, DISTANCE | **The training source.** Download: <https://www.transtats.bts.gov/DL_SelectFields.aspx?gnoyr_VQ=FGJ> (pick fields, month by month) or the prezipped monthlies at <https://transtats.bts.gov/PREZIP/> |
+| **Marketing Carrier On-Time Performance (Beginning January 2018)** | PER-FLIGHT rows: date, carrier, origin→dest, CRS dep time, ARR_DELAY minutes, CANCELLED, DIVERTED, DISTANCE | **The training source.** Field picker / latest-month check: <https://transtats.bts.gov/DL_SelectFields.aspx?gnoyr_VQ=FGK&QO_fu146_anzr=b0-gvzr> ; the automated fetch uses the prezipped monthlies at <https://transtats.bts.gov/PREZIP/> |
 | **On-Time Delay Cause** (<https://transtats.bts.gov/OT_Delay/OT_DelayCause1.asp>) | AGGREGATE rows per (month, carrier, arrival airport): flight counts, ≥15-min delay counts, cause buckets, cancellations | **Monitoring only** — it has no per-flight rows, no 180-min threshold information, and no routes, so it CANNOT train the covered-event model. Use it to sanity-check the model's monthly/carrier delay rates against official numbers |
 
 Both are free, no account, no API quota.
@@ -66,13 +66,13 @@ The whole refresh is automatable — paste these into Claude Code from the
 repo root, in order. (Data source behind them: BTS prezipped Marketing
 Carrier monthlies at <https://transtats.bts.gov/PREZIP/> — free, no
 account; the field-picker UI for reference is
-<https://www.transtats.bts.gov/DL_SelectFields.aspx?gnoyr_VQ=FGJ>. BTS
+<https://transtats.bts.gov/DL_SelectFields.aspx?gnoyr_VQ=FGK&QO_fu146_anzr=b0-gvzr>. BTS
 lags ~2 months behind the calendar.)
 
 **Prompt 1 — fetch fresh data:**
 
 > Fetch the latest 24 months of BTS flight data for the pricing model:
-> check <https://www.transtats.bts.gov/DL_SelectFields.aspx?gnoyr_VQ=FGJ>
+> check <https://transtats.bts.gov/DL_SelectFields.aspx?gnoyr_VQ=FGK&QO_fu146_anzr=b0-gvzr>
 > for the latest available month, then run
 > `cd agent && python -m training.fetch_and_prepare --end <YYYY-MM> --months 24`
 > (transtats needs curl -k-style unverified TLS — the script handles it).

@@ -2006,13 +2006,20 @@ from the remaining features). If `AGENT_TOKEN` is set on the service, add
 **What the model is.** XGBoost (300 gradient-boosted trees) over one-hot
 route/calendar features + numeric departure-time/distance, followed by
 **isotonic calibration** — when it says 5%, ~5% of such flights actually miss.
-Trained on **15.4M BTS Marketing Carrier flights (24 months)**; v3 baseline:
-test AUC 0.789, mean-p 0.0341 vs actual 0.0342. It answers "what fraction of
-flights like this get disrupted?", not "will this specific flight be late" —
-it carries no forecast or live operational data. **Retraining every 6 months
-on fresh BTS data is a maintenance requirement — the full runbook, including
-the BTS download source and copy-paste Claude prompts that execute the whole
-refresh, is [maintenance.md](maintenance.md).**
+Trained on **15.4M flights** from the BTS **[Marketing Carrier On-Time
+Performance (Beginning January
+2018)](https://transtats.bts.gov/DL_SelectFields.aspx?gnoyr_VQ=FGK&QO_fu146_anzr=b0-gvzr)**
+table — the official US DOT per-flight record (every scheduled domestic
+flight: carrier, route, scheduled/actual times, delay minutes, cancellations,
+diversions; published monthly, ~2 months behind the calendar, free with no
+account). The current window is the 24 months ending 2026-05, fetched
+automatically from the prezipped monthlies (`make download-data`); v3
+baseline: test AUC 0.789, mean-p 0.0341 vs actual 0.0342. It answers "what
+fraction of flights like this get disrupted?", not "will this specific
+flight be late" — it carries no forecast or live operational data.
+**Retraining every 6 months on fresh BTS data is a maintenance requirement —
+the full runbook, including the BTS links and copy-paste Claude prompts that
+execute the whole refresh, is [maintenance.md](maintenance.md).**
 
 **How the protocol consumes it.** The daily `route_agent` collector calls it
 via `dapp/api/_lib/agent_client.ts` (15 s timeout, bearer token) and computes
