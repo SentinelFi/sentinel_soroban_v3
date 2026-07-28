@@ -49,14 +49,56 @@ Both are free, no account, no API quota.
      (24 months ending 2026-05, 15.4M flights): test AUC 0.789,
      Brier 0.0282, mean p 0.0341 vs actual 0.0342;
    - `make test` (the service's pytest suite runs against the artifacts);
-   - price sanity spot-checks (a reliable island hop should floor at
-     PREMIUM_MIN; evening departures should price above morning ones).
+   - /predict sanity spot-checks (a reliable island hop → low risk;
+     evening departures should out-risk morning ones on congested routes);
+   - update `BASELINE_COVERED_RATE` in `agent/app/main.py` to the new
+     window's actual positive rate (printed by the trainer).
 6. **Commit** the new `agent/artifacts/` (model, encoder, feature names,
    version stamp) — Render serves the new model on its next redeploy
    (`render.yaml`, rootDir `agent`).
 7. **Optional monitoring**: refresh the delay-cause aggregate from the
    OT_DelayCause page and compare official monthly delay/cancel rates per
    carrier against the model's predictions for drift.
+
+## Copy-paste Claude prompts for the 6-month refresh
+
+The whole refresh is automatable — paste these into Claude Code from the
+repo root, in order. (Data source behind them: BTS prezipped Marketing
+Carrier monthlies at <https://transtats.bts.gov/PREZIP/> — free, no
+account; the field-picker UI for reference is
+<https://www.transtats.bts.gov/DL_SelectFields.aspx?gnoyr_VQ=FGJ>. BTS
+lags ~2 months behind the calendar.)
+
+**Prompt 1 — fetch fresh data:**
+
+> Fetch the latest 24 months of BTS flight data for the pricing model:
+> check <https://www.transtats.bts.gov/DL_SelectFields.aspx?gnoyr_VQ=FGJ>
+> for the latest available month, then run
+> `cd agent && python -m training.fetch_and_prepare --end <YYYY-MM> --months 24`
+> (transtats needs curl -k-style unverified TLS — the script handles it).
+> Watch the per-month coverage lines: covered-event rates are normally
+> 2-7%; rerun any month that prints FAILED
+> (`--months 1 --end <that-month>`). Confirm the row total at the end.
+
+**Prompt 2 — smoke-test the pipeline on a sample FIRST (standing rule):**
+
+> Cut a ~25-row stratified fixture from agent/data/delay_data.csv covering
+> every outcome class (on-time, arr≥180, cancelled, diverted), refresh
+> agent/training/fixtures/delay_data.sample.csv, and run
+> `python -m training.train --data training/fixtures/delay_data.sample.csv`
+> — it must complete in smoke mode with no schema errors before any full
+> training run.
+
+**Prompt 3 — retrain, verify, ship:**
+
+> Run `cd agent && make train`, then verify against the acceptance
+> baselines in spec/maintenance.md: test ROC AUC ≈ 0.75+, and mean
+> predicted p must track the actual positive rate (calibration). Update
+> BASELINE_COVERED_RATE in agent/app/main.py to the new actual rate, run
+> `make test`, spot-check /predict (a Hawaiian island hop should be low
+> risk; a winter-evening JFK short-hop should be elevated/high), then
+> commit the new agent/artifacts/ + fixture and push. Render redeploys
+> the service on push.
 
 ## Other periodic maintenance (same cadence checkpoint)
 

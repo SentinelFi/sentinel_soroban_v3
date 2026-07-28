@@ -1,6 +1,6 @@
 # Deployment
 
-How to deploy Sentinel end to end. The frontend and all eight cron jobs ship as **one Vercel project** rooted at `dapp/`; the ML pricing service runs on Render; the governance database is Supabase; the contracts live on Stellar testnet.
+How to deploy Sentinel end to end. The frontend and all eight cron jobs ship as **one Vercel project** rooted at `dapp/`; the ML prediction service runs on Render; the governance database is Supabase; the contracts live on Stellar testnet.
 
 ## Surfaces
 
@@ -8,7 +8,7 @@ How to deploy Sentinel end to end. The frontend and all eight cron jobs ship as 
 |---------|--------|------|--------|
 | Smart contracts (×6) | `contracts/` | Stellar testnet | Live — addresses in [`deployments/testnet.json`](deployments/testnet.json) |
 | Frontend + `/admin` + crons (×8) | `dapp/` | Vercel | This guide |
-| ML pricing service | `agent/` | Render | Live — https://sentinel-agent-f7u4.onrender.com |
+| ML prediction service | `agent/` | Render | Service `flight-delay-predictions` (see render.yaml) |
 | Governance DB | `supabase/` | Supabase | Live — project `murcgnleczppbooifkya` |
 
 The contracts, agent, and database are already deployed. The remaining work is the **Vercel** deploy plus the one-time on-chain wiring at the end.
@@ -62,8 +62,8 @@ AEROAPI_KEY=...
 # Cron auth — shared bearer secret; strongly recommended.
 CRON_SECRET=<random-string>
 
-# ML pricing service — already deployed on Render.
-AGENT_BASE_URL=https://sentinel-agent-f7u4.onrender.com
+# ML prediction service (Render service "flight-delay-predictions").
+AGENT_BASE_URL=<the Render service URL>
 AGENT_TOKEN=<must match the Render service's AGENT_TOKEN, if it sets one>
 
 # Governance DB — Supabase TRANSACTION pooler (port 6543), not the direct host.

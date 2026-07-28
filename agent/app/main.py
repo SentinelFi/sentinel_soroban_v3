@@ -1,31 +1,24 @@
-"""Sentinel Premium Pricing Agent — FastAPI service.
+"""Flight Delay Predictions — FastAPI service (pure prediction API).
 
-Maps a flight tuple to a USDC premium using an XGBoost delay-probability
-model (trained on the Kaggle 2008 flight-delay dataset, BTS-derived) and
-an expected-loss formula with hard rails:
+Serves exactly what the model was trained on, nothing else: given a
+route-level flight description (carrier, origin, dest, month, day of
+month, day of week, scheduled departure HHMM, distance), `POST /predict`
+returns the calibrated probability of the COVERED EVENT —
 
-    expected_loss   = p_delay * payoff_usdc
-    premium_usdc    = clamp(expected_loss * AGENT_MARGIN,
-                            AGENT_PREMIUM_MIN, AGENT_PREMIUM_MAX)
-    premium_base_units = round(premium_usdc * 10_000_000)  # Stellar: 7 decimals
+    p_covered = P(arrival >= 180 min late  OR  cancelled  OR  diverted)
 
-The only consumer is the dapp's daily route-agent cron
-(dapp/api/cron/agent.ts), which re-clamps against the routes-file rails and
-the on-chain owner-set term limits — the service's own rails are a first
-line, not the last.
+— graded against the network-average rate (risk: low/moderate/high).
+Model: XGBoost (300 trees) + isotonic calibration, trained on 15.4M BTS
+Marketing Carrier flights (24 months); see spec/maintenance.md for the
+6-month retraining runbook and spec/architecture.md for the system view.
 
-Known limitations (POC): the model's target is `dep_delayed_15min`
-(departure delay), a proxy for Sentinel's covered event (arrival delay >=
-threshold / cancellation), and the training data is the 2008 Kaggle
-extract. Retraining on current BTS on-time data with an arrival-delay
-target is the planned follow-up.
+This service knows NOTHING about premiums, payoffs, or insurance — the
+protocol's expected-loss pricing lives in the dapp cron
+(dapp/api/_lib/route_rules.ts expectedLossPremiumUnits + rails).
 
 Env:
-    AGENT_TOKEN        — optional bearer token; when set, /price requires
-                         `Authorization: Bearer <token>`
-    AGENT_MARGIN       — loading factor on expected loss (default 1.3)
-    AGENT_PREMIUM_MIN  — floor in USDC (default 10)
-    AGENT_PREMIUM_MAX  — cap in USDC (default 100)
+    AGENT_TOKEN         — optional bearer token; when set, /predict
+                          requires `Authorization: Bearer <token>`
     AGENT_ARTIFACTS_DIR — override artifacts path (tests)
 
 Run:
@@ -55,11 +48,10 @@ ARTIFACTS_DIR = Path(
 CAT_FEATURES = ["Month", "DayofMonth", "DayOfWeek", "UniqueCarrier", "Origin", "Dest"]
 NUM_FEATURES = ["DepTime", "Distance"]
 
-USDC_BASE_UNITS_PER_USDC = 10_000_000  # Stellar assets use 7 decimals
-
-MARGIN = float(os.environ.get("AGENT_MARGIN", "1.3"))
-PREMIUM_MIN = float(os.environ.get("AGENT_PREMIUM_MIN", "10"))
-PREMIUM_MAX = float(os.environ.get("AGENT_PREMIUM_MAX", "100"))
+# Network-average covered-event rate over the v3 training window (24 BTS
+# months ending 2026-05; see spec/maintenance.md). /predict grades a
+# route's probability against this baseline. Refresh alongside the model.
+BASELINE_COVERED_RATE = 0.0342
 
 # Module-level state, populated in lifespan startup.
 _state: dict[str, Any] = {}
@@ -88,11 +80,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Sentinel Premium Pricing Agent",
-    version="0.2.0",
+    title="Flight Delay Predictions",
+    version="0.3.0",
     description=(
-        "Maps a flight tuple to a USDC premium via XGBoost p(delay) x "
-        "expected-loss pricing with hard rails. Stellar port."
+        "Route-level disruption model: carrier + route + date + time of day "
+        "-> calibrated P(arrival >=180min late OR cancelled OR diverted). "
+        "Pure prediction; no pricing."
     ),
     lifespan=lifespan,
 )
@@ -110,31 +103,9 @@ def require_token(request: Request) -> None:
 # ─── Schemas ──────────────────────────────────────────────────────────────
 
 
-class PriceRequest(BaseModel):
-    flight_id: str = Field(..., description="Informational only; not a model feature (e.g. 'AA100').")
-    carrier: str = Field(..., description="IATA carrier code (e.g. 'AA').")
-    origin: str = Field(..., description="IATA origin airport code (e.g. 'JFK').")
-    dest: str = Field(..., description="IATA destination airport code (e.g. 'LAX').")
-    payoff_usdc: float = Field(..., gt=0, description="Route payoff in USDC — the expected-loss base.")
-    month: int = Field(..., ge=1, le=12)
-    day_of_month: int = Field(..., ge=1, le=31)
-    day_of_week: int = Field(..., ge=1, le=7, description="Mon=1, Sun=7.")
-    dep_time_hhmm: int = Field(1200, ge=0, le=2359, description="Scheduled departure HHMM (default noon).")
-    distance_mi: int = Field(1000, ge=0, description="Route distance in miles (default 1000).")
-
-
-class PriceResponse(BaseModel):
+class HealthResponse(BaseModel):
     # Pydantic 2 reserves the `model_` prefix; opt out so `model_version`
     # passes validation without a warning.
-    model_config = ConfigDict(protected_namespaces=())
-
-    p_delay: float
-    premium_usdc: float
-    premium_base_units: int
-    model_version: str
-
-
-class HealthResponse(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
     status: str
@@ -142,11 +113,38 @@ class HealthResponse(BaseModel):
     loaded_at: str
 
 
+class PredictRequest(BaseModel):
+    """Route-level flight description — no flight number, no payoff.
+
+    The model never sees flight numbers: a route+calendar+time tuple IS
+    the entire feature set.
+    """
+
+    carrier: str = Field(..., description="IATA carrier code (e.g. 'UA').")
+    origin: str = Field(..., description="IATA origin airport code (e.g. 'ORD').")
+    dest: str = Field(..., description="IATA destination airport code (e.g. 'SFO').")
+    month: int = Field(..., ge=1, le=12)
+    day_of_month: int = Field(..., ge=1, le=31)
+    day_of_week: int = Field(..., ge=1, le=7, description="Mon=1, Sun=7.")
+    dep_time_hhmm: int = Field(1200, ge=0, le=2359, description="Scheduled departure HHMM (default noon).")
+    distance_mi: int = Field(1000, ge=0, description="Route distance in miles (default 1000).")
+
+
+class PredictResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    p_covered: float = Field(description="P(arrival ≥180min late OR cancelled OR diverted) — calibrated.")
+    risk: str = Field(description="'low' | 'moderate' | 'high' relative to the network baseline.")
+    baseline: float = Field(description="Network-average covered-event rate the risk grade compares against.")
+    vs_baseline: float = Field(description="p_covered / baseline — e.g. 2.0 = twice the average risk.")
+    model_version: str
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────
 
 
-def to_notebook_format(req: PriceRequest) -> pd.DataFrame:
-    """Translate a PriceRequest into the model's expected DataFrame format.
+def to_notebook_format(req: PredictRequest) -> pd.DataFrame:
+    """Translate a request into the model's expected DataFrame format.
 
     The training pipeline represents Month/DayofMonth/DayOfWeek as `c-{n}`
     strings (e.g. `c-7`, `c-21`); the fitted ColumnTransformer expects the
@@ -166,16 +164,14 @@ def to_notebook_format(req: PriceRequest) -> pd.DataFrame:
     return pd.DataFrame([row], columns=CAT_FEATURES + NUM_FEATURES)
 
 
-def price_from_probability(p_delay: float, payoff_usdc: float) -> tuple[float, int]:
-    """Expected-loss premium with rails.
-
-    premium = clamp(p_delay * payoff * margin, PREMIUM_MIN, PREMIUM_MAX).
-    Base units use Stellar's 7 decimals.
-    """
-    raw = float(p_delay) * float(payoff_usdc) * MARGIN
-    premium_usdc = max(PREMIUM_MIN, min(PREMIUM_MAX, raw))
-    premium_base_units = round(premium_usdc * USDC_BASE_UNITS_PER_USDC)
-    return premium_usdc, premium_base_units
+def predict_p_covered(req: PredictRequest) -> float:
+    """Run the calibrated model on one route/calendar/time tuple."""
+    encoder = _state.get("encoder")
+    model = _state.get("model")
+    if encoder is None or model is None:
+        raise HTTPException(status_code=503, detail="Model artifacts not loaded.")
+    X = encoder.transform(to_notebook_format(req))
+    return float(model.predict_proba(X)[0, 1])
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────
@@ -184,9 +180,8 @@ def price_from_probability(p_delay: float, payoff_usdc: float) -> tuple[float, i
 @app.get("/")
 def banner() -> dict[str, str]:
     return {
-        "service": "sentinel-premium-pricing-agent",
-        "chain": "stellar",
-        "see": "POST /price, GET /healthz",
+        "service": "flight-delay-predictions",
+        "see": "POST /predict, GET /healthz",
     }
 
 
@@ -201,21 +196,22 @@ def healthz() -> HealthResponse:
     )
 
 
-@app.post("/price", response_model=PriceResponse, dependencies=[Depends(require_token)])
-def price(req: PriceRequest) -> PriceResponse:
-    encoder = _state.get("encoder")
-    model = _state.get("model")
-    if encoder is None or model is None:
-        raise HTTPException(status_code=503, detail="Model artifacts not loaded.")
+@app.post("/predict", response_model=PredictResponse, dependencies=[Depends(require_token)])
+def predict(req: PredictRequest) -> PredictResponse:
+    """Route-level delay outlook: route + date + time → calibrated probability.
 
-    df = to_notebook_format(req)
-    X = encoder.transform(df)
-    p_delay = float(model.predict_proba(X)[0, 1])
-    premium_usdc, premium_base_units = price_from_probability(p_delay, req.payoff_usdc)
-
-    return PriceResponse(
-        p_delay=p_delay,
-        premium_usdc=premium_usdc,
-        premium_base_units=premium_base_units,
+    A single flight's disruption is never a certainty, so the honest answer
+    is a probability graded against the network baseline — 'high' means
+    this route/day/time historically misses several times more often than
+    average, not that THIS flight will.
+    """
+    p = predict_p_covered(req)
+    vs = p / BASELINE_COVERED_RATE
+    risk = "low" if vs < 0.75 else "moderate" if vs < 2.0 else "high"
+    return PredictResponse(
+        p_covered=p,
+        risk=risk,
+        baseline=BASELINE_COVERED_RATE,
+        vs_baseline=round(vs, 2),
         model_version=str(_state["model_version"]),
     )

@@ -1,10 +1,11 @@
 services:
-  # Python ML pricing service — the one piece that cannot live in Vercel
+  # Python ML prediction service — the one piece that cannot live in Vercel
   # (xgboost + sklearn + pandas exceed serverless size limits). Everything
   # else (frontend + all crons) deploys as the single Vercel project in
-  # dapp/.
+  # dapp/. Pure prediction API (POST /predict) — all premium/payout math
+  # lives in the dapp (route_rules.ts).
   - type: web
-    name: sentinel-pricing-agent
+    name: flight-delay-predictions
     runtime: python
     rootDir: agent
     buildCommand: pip install -r requirements.txt
@@ -13,11 +14,5 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.9"
-      - key: AGENT_MARGIN
-        value: "1.3"
-      - key: AGENT_PREMIUM_MIN
-        value: "10"
-      - key: AGENT_PREMIUM_MAX
-        value: "100"
       - key: AGENT_TOKEN
         sync: false

@@ -1,7 +1,13 @@
 import { AgentClient } from "../agent_client";
 import { WeatherClient } from "../weather_client";
-import { classifyForecast, combineSeverity, clampPremium, type WeatherSeverity } from "../route_rules";
-import { loadRoutesConfig, fileTerms, baseUnitsToUsdc } from "../routes_config";
+import {
+  classifyForecast,
+  combineSeverity,
+  clampPremium,
+  expectedLossPremiumUnits,
+  type WeatherSeverity,
+} from "../route_rules";
+import { loadRoutesConfig, fileTerms } from "../routes_config";
 import type { RunLogEntry, FetcherAction } from "../types";
 import type { GovConfig } from "../governance/config";
 import { getDb } from "../governance/db";
@@ -32,10 +38,12 @@ import type { RouteRow, SignalRow } from "../governance/model";
  * when conditions end) and self-expire, so a dead agent cannot pin
  * prices or pauses. GOV_DRY_RUN logs decisions and writes nothing.
  *
- * Render `/price` schema: `dep_time_hhmm` and `distance_mi` are sent
+ * Prediction service `/predict` schema: `dep_time_hhmm` and
+ * `distance_mi` are optional (service defaults noon / 1000 mi) and sent
  * when the DB route row carries them (filled by gov_onboard/admin) —
- * the deployed model build requires them; without them it 422s and we
- * simply have no ML anchor for that route (fallback as above).
+ * departure time especially moves the prediction. The service returns
+ * only p_covered; premium = expectedLossPremiumUnits(p, payoff) clamped
+ * to the rails, all computed here.
  */
 
 const ACTOR_ML = "agent:ml";
@@ -108,28 +116,30 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
         const dbRow = dbByKey.get(`${route.flight_id}|${route.origin}|${route.destination}`);
 
         // ── 1. ML pricing anchor → `pricing` signal ────────────────────
+        // The prediction service is insurance-blind (returns only the
+        // calibrated covered-event probability); the expected-loss math
+        // and rails clamping happen HERE, protocol-side.
         let anchor: bigint | null = null;
         let pDelay: number | null = null;
         if (agent) {
-          const priced = await agent.price({
-            flight_id: route.flight_id,
-            carrier: route.carrier,
-            origin: route.origin,
-            dest: route.destination,
-            payoff_usdc: baseUnitsToUsdc(terms.payoff),
-            month,
-            day_of_month: dayOfMonth,
-            day_of_week: dayOfWeek,
-            // Render schema (422 without them on the deployed build):
-            // sent when the DB row carries the data.
-            ...(dbRow?.sched_dep_local
-              ? { dep_time_hhmm: dbRow.sched_dep_local.slice(0, 5).replace(":", "") }
-              : {}),
-            ...(dbRow?.distance_mi != null ? { distance_mi: Number(dbRow.distance_mi) } : {}),
-          });
-          if (priced) {
-            anchor = clampPremium(priced.premiumBaseUnits, null, routesConfig.rails);
-            pDelay = priced.pDelay;
+          const p = await agent.predict(
+            {
+              carrier: route.carrier,
+              origin: route.origin,
+              dest: route.destination,
+              month,
+              day_of_month: dayOfMonth,
+              day_of_week: dayOfWeek,
+              ...(dbRow?.sched_dep_local
+                ? { dep_time_hhmm: Number(dbRow.sched_dep_local.slice(0, 5).replace(":", "")) }
+                : {}),
+              ...(dbRow?.distance_mi != null ? { distance_mi: Number(dbRow.distance_mi) } : {}),
+            },
+            label
+          );
+          if (p !== null) {
+            anchor = clampPremium(expectedLossPremiumUnits(p, terms.payoff), null, routesConfig.rails);
+            pDelay = p;
           }
         }
 

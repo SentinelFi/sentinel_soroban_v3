@@ -52,6 +52,28 @@ export function combineSeverity(a: WeatherSeverity, b: WeatherSeverity): Weather
   return "ok";
 }
 
+// ── expected-loss pricing ──────────────────────────────────────────
+
+/**
+ * Loading factor on expected loss. Lives HERE, not in the ML service:
+ * the prediction API (agent/) is deliberately insurance-blind — it
+ * returns only the calibrated covered-event probability, and the
+ * protocol turns probability into price.
+ */
+export const EXPECTED_LOSS_MARGIN = 1.3;
+
+/**
+ * premium = p_covered × payoff × margin, in 7-decimal base units.
+ * Callers clamp the result to the rails via clampPremium — this is the
+ * raw expected-loss figure only.
+ */
+export function expectedLossPremiumUnits(pCovered: number, payoffUnits: bigint): bigint {
+  // Scale the float side to integer basis points to keep the arithmetic
+  // exact in bigint space (p and margin both carry ≤4 meaningful digits).
+  const pBps = BigInt(Math.round(pCovered * EXPECTED_LOSS_MARGIN * 10_000));
+  return (payoffUnits * pBps) / 10_000n;
+}
+
 // ── premium clamping ───────────────────────────────────────────────
 
 /**

@@ -1359,7 +1359,7 @@ data, **keeper** drives classification/settlement, **ttl** extends storage,
 | `gov_exposure` | `/api/cron/gov-exposure` | `7 * * * *` (hourly, :07) | — (facts only: on-chain liability concentration → `exposure` signals) | none |
 | `gov_reconcile` | `/api/cron/gov-reconcile` | `10 * * * *` (hourly, :10) | `GovernanceModule.disable_route` / `enable_route` / `update_route_terms` (fleet guardrails: `ops_flags.gov_frozen` runtime brake, mass-disable circuit breaker, flap damping) | gov-admin |
 | `gov_onboard` | `/api/cron/gov-onboard` | `15 */6 * * *` (6-hourly, :15) | `GovernanceModule.whitelist_route` (capped; only with `GOV_ONBOARD_AUTO=true` — default is propose-only) + file/chain→DB route sync | gov-admin |
-| `route_agent` (legacy) | `/api/cron/agent` | `0 6 * * *` (daily 06:00 UTC) | `GovernanceModule` route writes (ML + weather) | gov-admin |
+| `route_agent` | `/api/cron/agent` | `0 6 * * *` (daily 06:00 UTC) | facts only: `pricing` + `weather` signals (no chain writes) | — |
 | `health` | `/api/cron/health` | liveness probe | — | — |
 
 The `:30` and `+2` offsets keep the two oracle jobs (and the two keeper jobs) off
@@ -1750,7 +1750,7 @@ Shared plumbing lives in `dapp/api/_lib/`: `soroban_client.ts` (build/sign/submi
 via `@stellar/stellar-sdk`; contract IDs from env, defaulting to
 `deployments/testnet.json`), `aeroapi_client.ts` (FlightAware AeroAPI, or the
 keyless `tools/mock-aeroapi` via `AEROAPI_BASE_URL`), `weather_client.ts`
-(Open-Meteo), `agent_client.ts` (the ML pricing service), and the `governance/`
+(Open-Meteo), `agent_client.ts` (the ML prediction service), and the `governance/`
 subsystem.
 
 ### Backend structure
@@ -1779,7 +1779,7 @@ dapp/
 └── vercel.json                   # framework: vite; /api/* -> functions, everything else -> SPA
 
 supabase/migrations/              # governance_core.sql + cron_runs.sql
-agent/                            # Python XGBoost pricing service (Render-hosted)
+agent/                            # Python XGBoost prediction service (Render-hosted)
 tools/mock-aeroapi/               # keyless AeroAPI mock for local demos
 ```
 
@@ -1939,41 +1939,54 @@ that map 1:1 to contract entry points: `disable` → `disable_route`, `enable` �
 `update_route_terms` call — with the contract's owner-set **term limits as the final
 backstop** no automated write can exceed.
 
-### The ML pricing agent (Render-hosted)
+### The ML prediction service (Render-hosted)
 
-Baseline premiums can come from a machine-learning model rather than a hand-set
-number. `agent/` is a Python **FastAPI + XGBoost** service deployed on Render
-(`render.yaml` → `sentinel-pricing-agent`; it lives off-Vercel because
-xgboost/sklearn/pandas exceed the serverless size limit). `POST /price` takes a
-flight tuple, predicts a delay probability `p_delay`, and returns an expected-loss
-premium:
+`agent/` is a Python **FastAPI + XGBoost** service deployed on Render
+(`render.yaml` → **`flight-delay-predictions`**; it lives off-Vercel because
+xgboost/sklearn/pandas exceed the serverless size limit). It is deliberately a
+**pure prediction API — it knows nothing about premiums, payoffs, or
+insurance**; the protocol turns its probability into a price on the dapp side.
+
+**What the endpoint does.** `POST /predict` takes a route-level flight
+description — carrier, origin, dest, month, day-of-month, day-of-week,
+scheduled departure `HHMM` (optional, default noon), distance in miles
+(optional, default 1000) — and returns the **calibrated probability of the
+protocol's covered event**:
 
 ```
-premium_usdc = clamp(p_delay * payoff_usdc * MARGIN, PREMIUM_MIN, PREMIUM_MAX)
+p_covered = P( arrival ≥ 180 min late  OR  cancelled  OR  diverted )
 ```
 
-`dapp/api/_lib/agent_client.ts` calls it with a 15 s timeout and bearer token;
-**any failure returns `null`**, so a down or unset model degrades gracefully to
-human-set terms — never a broken cron. (The current model is an XGBoost delay
-classifier trained on the 2008 Kaggle/BTS dataset — a documented POC limitation.)
+plus a grade relative to the network baseline (`risk`: low < 0.75×, moderate
+< 2×, high ≥ 2× the 3.42% network-average rate), and the model version.
+Flight numbers are never a feature — a route+calendar+time tuple IS the
+model's entire input, so "UA, ORD→SFO, a December Tuesday around 9am" is a
+complete query. `GET /healthz` reports the loaded model version. An optional
+`AGENT_TOKEN` bearer-gates `/predict`.
 
-### Two engines today (legacy + current)
+**What the model is.** XGBoost (300 gradient-boosted trees) over one-hot
+route/calendar features + numeric departure-time/distance, followed by
+**isotonic calibration** — when it says 5%, ~5% of such flights actually miss.
+Trained on **15.4M BTS Marketing Carrier flights (24 months)**; v3 baseline:
+test AUC 0.789, mean-p 0.0341 vs actual 0.0342. It answers "what fraction of
+flights like this get disrupted?", not "will this specific flight be late" —
+it carries no forecast or live operational data. **Retraining every 6 months
+on fresh BTS data is a maintenance requirement — the full runbook, including
+the BTS download source and copy-paste Claude prompts that execute the whole
+refresh, is [maintenance.md](maintenance.md).**
 
-There are, deliberately, **two governance engines** during the transition:
+**How the protocol consumes it.** The daily `route_agent` collector calls it
+via `dapp/api/_lib/agent_client.ts` (15 s timeout, bearer token) and computes
+the premium anchor **protocol-side** (`route_rules.ts`):
 
-- **`route_agent` (legacy, daily 06:00)** — file-config driven. Reads
-  `config/routes.*.json`, gets the ML baseline from the pricing agent, fetches
-  Open-Meteo weather, decides per `route_rules.ts` (severe weather → disable,
-  elevated → premium × multiplier), and applies via the older hand-rolled ScVal
-  helpers in `_lib/governance.ts`. **This is the only engine that currently calls
-  the ML agent directly.**
-- **`gov_reconcile` (current, hourly)** — the DB/signals architecture above. It
-  consumes `elevated` **signals** (whose `payload.factor` sets the multiplier)
-  layered over admin-set base terms, and writes through `GovSubmitter`.
+```
+anchor = clampPremium( p_covered × payoff × 1.3 , rails )
+```
 
-`route_agent` is slated to be absorbed by the reconciler (a later phase); until
-then, treat the reconciler as the intended design and `route_agent` as the daily
-ML+weather pass that still uses the legacy path.
+which it writes as a `pricing` **signal**; the reconciler — the single audited
+actor — uses it as the premium anchor. **Any failure returns `null`**, so a
+down or unset model degrades gracefully to admin-set terms — never a broken
+cron, never a blocked route.
 
 ### Human oversight
 
@@ -2004,7 +2017,7 @@ RULES (hourly :10)    reconciler: readStatus(on-chain) + decideReconcileAction(p
         |                 pin? noop | severe? disable | cleared+hysteresis? enable
         |                 elevated? base x Pi(factors), clamp, guards
         v
-ML PRICING            base anchor: admin-set, or (legacy daily) Render XGBoost /price
+ML PRICING            anchor: p_covered from Render /predict × payoff × margin, rails-clamped
         |
         v
 SUBMITTER             GovSubmitter: before-snap -> disable/enable/update_route_terms
@@ -2023,11 +2036,11 @@ level keeps the same inversion (facts in, one audited actor out) and adds
 capability, never new trust. The task-level plan lives in
 [TODO.md §D](TODO.md); the architecture-level intent:
 
-**L1 — rules on weather (today).** The reconciler acts on airport-delay
+**L1 — rules on weather.** The reconciler acts on airport-delay
 signals (`gov_signals`) and admin-declared facts. Humans still do route
-onboarding, base terms, non-weather signals, and signal clearing. The
-legacy `route_agent` runs in parallel and is slated for absorption — it is
-the only un-audited actor and must not survive into L2.
+onboarding, base terms, non-weather signals, and signal clearing.
+(`route_agent` was absorbed 2026-07-27: it is now a facts-only collector —
+ML `pricing` + Open-Meteo `weather` signals, zero chain writes.)
 
 **L2 — the complete deterministic pipeline (no LLM).** *Status 2026-07-27:
 three of the four additions below are IMPLEMENTED (`gov_onboard`, the
@@ -2829,7 +2842,7 @@ sentinel_soroban_phase_3/
 │   ├── packages/                   # generated TS contract bindings, one per contract
 │   └── vercel.json
 ├── supabase/                       # migrations: governance_core.sql, cron_runs.sql (governance DB)
-├── agent/                          # Python XGBoost pricing service (Render-hosted)
+├── agent/                          # Python XGBoost prediction service (Render-hosted)
 ├── tools/mock-aeroapi/             # keyless AeroAPI mock for local demos
 ├── deployments/                    # testnet.json — addresses, wasm hashes, constructor params
 ├── playground/                     # legacy Next.js dApp (superseded by dapp/)
@@ -2992,7 +3005,7 @@ against `route_status`.
           the 07-18 testnet set.
         - Deploy; verify /api/cron/health (hasKeys + pendingOutcomes) and
           the /admin JOBS board.
-        - The pricing agent (agent/) deploys separately to Render
+        - The prediction service (agent/) deploys separately to Render
           (render.yaml).
 ```
 
