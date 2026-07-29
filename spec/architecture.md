@@ -51,6 +51,7 @@
   - [Generated contract bindings](#generated-contract-bindings)
   - [Pages](#pages-dappsrcpages)
 - [Deployment Order](#deployment-order)
+- [Admin Runbook — Route Seeding](#admin-runbook--route-seeding)
 - [End-to-End Testing](#end-to-end-testing)
 
 ---
@@ -3214,6 +3215,91 @@ with vault address, then call `vault.set_controller()`.
 
 **FlightPoolManager / Controller circular dependency:** Same pattern — deploy FlightPoolManager
 first, deploy Controller with its address, then call `flight_pool_manager.set_controller()`.
+
+## Admin Runbook — Route Seeding
+
+Route intake is MANUAL and admin-gated by design: no cron runs any of
+this, nothing is auto-promoted, and nothing reaches the chain until you
+have reviewed the staged whitelist and said go. Run it ad hoc — new
+routes might be added once a quarter, or never.
+
+**Prerequisites** (one-time): `dapp/.env` with `AEROAPI_KEY` (discovery)
+and `AGENT_BASE_URL` (pricing; defaults to the live Render service), and
+the gov-admin signing key — `GOVERNANCE_ADMIN_SECRET_KEY` in the
+environment or the local `sentinel-governor` stellar identity. All
+commands run **from `dapp/`**.
+
+### Step 1 — Discover (AeroAPI → catalog)
+
+```sh
+npx tsx ../scripts/discover_routes.ts            # ~160 paced API calls, ~15 min
+```
+
+Sweeps the 80-directed-pair matrix and merges every eligible flight into
+the deduped, uncapped catalog `config/routes.discovered.json`. Hard
+filters (nothing else gets through): attestable idents (airline-code +
+number), operating mainline flights only, and the nine tracked carriers —
+American, Delta, United, Alaska, Southwest, JetBlue, Frontier, Spirit,
+Hawaiian. Real scheduled departure times are captured per flight. Re-runs
+merge and never discard.
+
+### Step 2 — Price (catalog → staged whitelist)
+
+```sh
+npx tsx ../scripts/price_routes.ts               # live ML call per route
+```
+
+Prices every catalog candidate with the deployed prediction service
+(`/predict` with the flight's local departure time and great-circle
+distance) and stages `config/route_whitelist.json`:
+`premium = clamp(p_covered × $100 × 1.3, $10–$30)`, payoff $100, delay
+threshold 3h, model version stamped. Prints the premium distribution.
+Aborts (writes nothing) if the ML service is unreachable.
+
+### Step 3 — REVIEW (the human gate)
+
+```sh
+git diff dapp/config/route_whitelist.json        # what changed since last time
+npx tsx ../scripts/seed_routes.ts --dry-run      # table view, zero transactions
+```
+
+Look at the routes, the probabilities, the premiums. **Nothing has
+touched the chain yet.** If anything looks wrong, fix and re-run steps
+1–2 — the staged file is fully regenerable.
+
+### Step 4 — Seed (only on your go)
+
+```sh
+npx tsx ../scripts/seed_routes.ts                # gov-admin signed, idempotent
+```
+
+Whitelists each staged route on-chain with its EXACT staged terms
+(`Set premium / Set payoff / Set delay` — what you reviewed is what the
+chain gets) through the audited GovSubmitter, then mirrors seeded routes
+into `config/routes.testnet.json` (the operational fleet file the sale
+authorizer reads). The DB picks them up on `gov_onboard`'s next status
+sync. Idempotent semantics:
+
+| On-chain state | Action |
+|---|---|
+| Unknown | `whitelist_route` with staged terms |
+| Active | no-op — terms drift is REPORTED, never auto-fixed (repricing a live route is a separate governance decision) |
+| Disabled | skipped — governance disabled it for a reason |
+
+Commit the updated JSON files afterwards; the file history is the audit
+trail of every intake batch.
+
+### Starting over (full wipe)
+
+```sh
+npx tsx ../scripts/wipe_routes.ts --yes          # DESTRUCTIVE
+```
+
+Removes every fleet-file route from the chain (`remove_route`), clears
+the route-scoped DB tables (signals, premium_adjustments, pause_events,
+routes), empties the catalog, resets the fleet file's `routes` to `[]`
+(defaults/rails preserved), and deletes the staged whitelist — then
+re-intake from Step 1.
 
 ## End-to-End Testing
 

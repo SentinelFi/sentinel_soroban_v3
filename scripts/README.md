@@ -23,6 +23,7 @@ the admin has reviewed the staged file and said go.
 |---|---|---|---|
 | 1 | `discover_routes.ts` | real AeroAPI `/schedules` (80 directed pairs, paced) | `dapp/config/routes.discovered.json` — deduped, uncapped catalog. Filters: attestable idents only (airline-code+number), operating mainline flights, **tracked carriers only: American, Delta, United, Alaska, Southwest, JetBlue, Frontier, Spirit, Hawaiian** |
 | 2 | `price_routes.ts` | the catalog + the **live ML service** (`/predict` per route: real local dep time, great-circle distance) | `dapp/config/route_whitelist.json` — every route with `p_covered`, `premium = clamp(p × $100 × 1.3, $10–$30)`, payoff $100, delay 3h, model version |
+| — | `wipe_routes.ts` | fleet file (enumeration) | **DESTRUCTIVE** (`--yes` required): `remove_route` for every on-chain fleet route, clears route-scoped DB tables, empties catalog + fleet `routes`, deletes the staged whitelist — for a from-scratch re-intake |
 | 3 | `seed_routes.ts` | the staged whitelist (**only after admin approval**) | on-chain `whitelist_route` with the exact staged terms (audited GovSubmitter, idempotent: Active→no-op with drift report, Disabled→skipped) + mirrors seeded routes into `dapp/config/routes.testnet.json` (the operational fleet file the authorizer/jobs read) |
 
 Flags: `--dry` (discover: sweep only), `--date YYYY-MM-DD` (discover:
