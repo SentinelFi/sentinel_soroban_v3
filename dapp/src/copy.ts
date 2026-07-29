@@ -23,6 +23,8 @@ const fun = {
 		disconnect: "DISCONNECT",
 		copied: "Address copied to clipboard",
 		copyFailed: "Copy failed — try again",
+		connected: (addr: string) => `WALLET CONNECTED — ${addr}`,
+		disconnected: (addr: string) => `WALLET DISCONNECTED — ${addr}`,
 	},
 	brand: {
 		name: "FLIGHTS.FUN",
@@ -32,7 +34,7 @@ const fun = {
 		heroLine1: "INSURE YOUR FLIGHT.",
 		heroLine2: "GET PAID IF IT'S LATE.",
 		heroSub:
-			"Buying insurance here IS betting your flight lands late. Stake a fixed premium; if the flight is delayed past the threshold, the payout is yours automatically.",
+			"Buying insurance here IS predicting your flight lands late. Stake a fixed premium; if the flight is delayed past the threshold, the payout is yours automatically.",
 		boardTitle: "DEPARTURES — OPEN MARKETS",
 		boardHint: "PAY PREMIUM → PAID IF DELAYED",
 		colStake: "PREMIUM → PAYOUT",
@@ -58,6 +60,11 @@ const fun = {
 		pagePrev: "◀ PREV",
 		pageNext: "NEXT ▶",
 		pageOf: (page: number, total: number) => `PAGE ${page}/${total}`,
+		perPage: "PER PAGE",
+		perPageAria: "Flights per page",
+		sortAria: (col: string) => `Sort by ${col}`,
+		flightLinkTitle: (id: string) =>
+			`TRACK ${id} ON FLIGHTRADAR24 ↗ (opens in a new tab)`,
 		yieldExplain:
 			"takes the other side: it routes you to the underwriting pool, where on-time premiums become your yield.",
 		yieldExplainLead: "EARN YIELD",
@@ -89,7 +96,7 @@ const fun = {
 		connectPrompt: "Connect your wallet to buy this cover.",
 		blockedPrompt: "Cover is currently limited to approved buyers.",
 		fineprint:
-			"Buying cover IS betting your flight lands late: the premium is your stake on DELAYED. An oracle settles the flight on-chain after it lands. No claims forms.",
+			"Buying cover IS predicting your flight lands late: the premium is your stake on DELAYED. An oracle settles the flight on-chain after it lands. No claims forms.",
 	},
 	house: {
 		heroLine1: "EARN YIELD.",
@@ -295,6 +302,8 @@ const serious: Copy = {
 		disconnect: "Disconnect",
 		copied: "Address copied to clipboard",
 		copyFailed: "Copy failed — try again",
+		connected: (addr: string) => `Wallet connected — ${addr}`,
+		disconnected: (addr: string) => `Wallet disconnected — ${addr}`,
 	},
 	brand: {
 		name: "Flights.Fun",
@@ -330,6 +339,11 @@ const serious: Copy = {
 		pagePrev: "Previous",
 		pageNext: "Next",
 		pageOf: (page: number, total: number) => `Page ${page} / ${total}`,
+		perPage: "Per page",
+		perPageAria: "Flights per page",
+		sortAria: (col: string) => `Sort by ${col}`,
+		flightLinkTitle: (id: string) =>
+			`Track ${id} on Flightradar24 (opens in a new tab)`,
 		yieldExplain:
 			"takes the other side: it routes you to the underwriter vault, where premiums on on-time flights become your yield.",
 		yieldExplainLead: "Earn Yield",
