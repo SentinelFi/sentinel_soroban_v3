@@ -58,6 +58,12 @@ async function main(): Promise<void> {
         absent++;
         continue;
       }
+      // The contract enforces two-step removal (#508
+      // RouteMustBeDisabledBeforeRemoval): a live sellable route must be
+      // disabled before it can be removed.
+      if (onChain.status === "Active") {
+        await submitter.disable(key);
+      }
       await submitter.remove(key);
       removed++;
       if (removed % 25 === 0) console.log(`[wipe] ${removed} removed...`);
@@ -67,6 +73,12 @@ async function main(): Promise<void> {
     }
   }
   console.log(`[wipe] on-chain done: removed=${removed} not-on-chain=${absent} failed=${failed}`);
+  if (failed > 0) {
+    // Keep the JSON enumeration intact so a re-run can retry the failures —
+    // resetting the files while routes remain on-chain would orphan them.
+    console.error(`[wipe] ${failed} on-chain removal(s) failed — DB/JSON left untouched; fix and re-run.`);
+    process.exit(1);
+  }
 
   // ── 2. DB wipe (route-scoped tables) ────────────────────────────────────
   if (process.env.GOVERNANCE_DB_URL) {
