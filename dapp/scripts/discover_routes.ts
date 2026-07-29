@@ -7,8 +7,13 @@
  * operating flights only). So discovering the whole NYC × west/major matrix
  * costs one call per directed pair per sample day:
  *
- *   3 NYC airports × 5 destinations × 2 directions × 2 sample days
- *   = 60 calls (+ a page or two on busy pairs) → ~200-400 unique routes.
+ *   (3 NYC airports × 5 destinations × 2 directions) + 25 mesh pairs × 2
+ *   directions = 80 directed pairs × 2 sample days = 160 paced calls.
+ *
+ * EVERYTHING found is merged into config/routes.discovered.json (the
+ * uncapped catalog — RouteEntry-compatible, read by gov_onboard's
+ * candidate ingest). --max only caps what enters the governance routes
+ * file; the catalog never discards.
  *
  * Two sample days (a Tuesday and the following Saturday by default) filter
  * out one-off charters and catch day-of-week-only service; routes seen on
@@ -46,6 +51,31 @@ import { loadRoutesConfig, type RouteEntry } from "../api/_lib/routes_config";
 const DEFAULT_ORIGINS = ["JFK", "EWR", "LGA"];
 const DEFAULT_DESTINATIONS = ["SEA", "SFO", "LAX", "ORD", "MIA"];
 
+// Beyond the NYC matrix: major-airport mesh (each entry swept BOTH
+// directions → 50 directed pairs). Chosen for schedule density (hub-to-hub
+// corridors AeroAPI reliably populates) and delay-model interest
+// (congestion-prone short hops, weather-exposed hubs).
+const DEFAULT_EXTRA_PAIRS: Array<[string, string]> = [
+  // Boston
+  ["BOS", "ORD"], ["BOS", "LAX"], ["BOS", "SFO"], ["BOS", "MIA"], ["BOS", "PHL"],
+  // Philadelphia
+  ["PHL", "ORD"], ["PHL", "MIA"], ["PHL", "LAX"], ["PHL", "DFW"],
+  // Las Vegas
+  ["LAS", "LAX"], ["LAS", "SFO"], ["LAS", "SEA"], ["LAS", "ORD"], ["LAS", "DFW"],
+  // Portland
+  ["PDX", "SEA"], ["PDX", "SFO"], ["PDX", "LAX"],
+  // Dallas–Fort Worth
+  ["DFW", "ORD"], ["DFW", "LAX"], ["DFW", "MIA"], ["DFW", "SEA"],
+  // Houston
+  ["IAH", "ORD"], ["IAH", "LAX"], ["IAH", "MIA"], ["IAH", "SFO"],
+];
+
+// The FULL discovery catalog — every candidate ever seen, uncapped,
+// merge-on-write (the --max cap only limits what is appended to the
+// governance routes file, never what is remembered). gov_onboard's
+// candidate ingest reads this same file.
+const DISCOVERED_FILE = "config/routes.discovered.json";
+
 export interface DiscoveredRoute {
   flight_id: string;
   carrier: string;
@@ -69,17 +99,32 @@ export async function discoverRoutes(
   aero: AeroApiClient,
   origins: string[],
   destinations: string[],
-  sampleDays: string[] // YYYY-MM-DD
+  sampleDays: string[], // YYYY-MM-DD
+  extraPairs: Array<[string, string]> = []
 ): Promise<{ routes: DiscoveredRoute[]; apiCalls: number }> {
   const seen = new Map<string, DiscoveredRoute>();
   let apiCalls = 0;
 
-  // Directed pairs, both directions.
+  // Directed pairs: the origins×destinations matrix both ways, plus the
+  // extra mesh pairs both ways, deduplicated.
+  const pairSet = new Set<string>();
   const pairs: Array<[string, string]> = [];
+  const addPair = (a: string, b: string) => {
+    const k = `${a}|${b}`;
+    if (a !== b && !pairSet.has(k)) {
+      pairSet.add(k);
+      pairs.push([a, b]);
+    }
+  };
   for (const a of origins) {
     for (const b of destinations) {
-      pairs.push([a, b], [b, a]);
+      addPair(a, b);
+      addPair(b, a);
     }
+  }
+  for (const [a, b] of extraPairs) {
+    addPair(a, b);
+    addPair(b, a);
   }
 
   for (const [origin, destination] of pairs) {
@@ -168,6 +213,55 @@ export function trimBalanced(routes: DiscoveredRoute[], max: number): Discovered
   return out;
 }
 
+/** A catalog row: RouteEntry-compatible (gov_onboard reads this file) plus
+ *  tracking metadata. Nothing discovery sees is ever discarded again. */
+interface CatalogEntry extends RouteEntry {
+  days_seen?: number;
+  first_seen?: string; // YYYY-MM-DD (run date)
+  last_seen?: string;
+}
+
+/** Merge this run's FULL find list (uncapped) into the discovered catalog. */
+function persistCatalog(found: DiscoveredRoute[], sampleDays: string[]): { total: number; added: number } {
+  const today = new Date().toISOString().slice(0, 10);
+  let catalog: CatalogEntry[] = [];
+  try {
+    const raw = JSON.parse(readFileSync(DISCOVERED_FILE, "utf8"));
+    if (Array.isArray(raw)) catalog = raw as CatalogEntry[];
+  } catch {
+    /* first run — no catalog yet */
+  }
+  const byKey = new Map(catalog.map((c) => [`${c.flight_id}|${c.origin}|${c.destination}`, c]));
+  let added = 0;
+  for (const r of found) {
+    const key = `${r.flight_id}|${r.origin}|${r.destination}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.days_seen = Math.max(existing.days_seen ?? 0, r.days_seen);
+      existing.last_seen = today;
+    } else {
+      byKey.set(key, {
+        flight_id: r.flight_id,
+        carrier: r.carrier,
+        origin: r.origin,
+        destination: r.destination,
+        enabled: false, // candidates are not sold until curated + whitelisted
+        overrides: null,
+        notes: `discovery catalog (sampled ${sampleDays.join("+")})`,
+        days_seen: r.days_seen,
+        first_seen: today,
+        last_seen: today,
+      });
+      added++;
+    }
+  }
+  const merged = [...byKey.values()].sort((a, b) =>
+    `${a.origin}|${a.destination}|${a.flight_id}`.localeCompare(`${b.origin}|${b.destination}|${b.flight_id}`)
+  );
+  writeFileSync(DISCOVERED_FILE, JSON.stringify(merged, null, 2) + "\n");
+  return { total: merged.length, added };
+}
+
 function nextWeekday(from: Date, weekday: number): string {
   // weekday: 0=Sun..6=Sat (UTC). Always strictly in the future.
   const d = new Date(from);
@@ -203,9 +297,22 @@ async function main(): Promise<void> {
   });
 
   console.log(
-    `[discover] ${origins.join("/")} <-> ${destinations.join("/")} on ${sampleDays.join(" + ")}`
+    `[discover] ${origins.join("/")} <-> ${destinations.join("/")} + ${DEFAULT_EXTRA_PAIRS.length} mesh pair(s), on ${sampleDays.join(" + ")}`
   );
-  const { routes: found, apiCalls } = await discoverRoutes(aero, origins, destinations, sampleDays);
+  const { routes: found, apiCalls } = await discoverRoutes(
+    aero, origins, destinations, sampleDays, DEFAULT_EXTRA_PAIRS
+  );
+
+  // EVERYTHING found is persisted to the catalog before any capping —
+  // the --max cap below only limits what enters the governance routes
+  // file, never what is remembered. (The original 297-candidate discovery
+  // of 2026-07-27 was lost to exactly this gap.)
+  if (!dry) {
+    const cat = persistCatalog(found, sampleDays);
+    console.log(
+      `[discover] catalog: ${cat.total} candidate(s) in ${DISCOVERED_FILE} (${cat.added} new this run — nothing discarded)`
+    );
+  }
 
   // Idempotency, layer 1 of 3 — the whole discover → merge → whitelist loop
   // is safe to re-run:

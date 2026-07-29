@@ -1981,6 +1981,168 @@
       "enabled": true,
       "overrides": null,
       "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL353",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL701",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL742",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL752",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL767",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL771",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL773",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU1023",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU1123",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU1223",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU123",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU1523",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU223",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU323",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU423",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU523",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU823",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU923",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "LAX",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
     }
   ]
 }

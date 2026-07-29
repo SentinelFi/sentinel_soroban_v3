@@ -95,6 +95,10 @@ export function isConfirmedDiversion(flight: AeroApiFlight): boolean {
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
+// A per-minute rate limit clears within its window; a monthly quota cap
+// does not. 65s sits just past the window, so one cooldown-retry cleanly
+// separates the two 429 kinds (their response BODIES are identical).
+const RATE_LIMIT_COOLDOWN_MS = 65_000;
 // Every request gets a hard timeout — a hanging response must never hang a
 // job (found the hard way: schedule_check stalled a full cron slot).
 const FETCH_TIMEOUT_MS = 45_000;
@@ -286,21 +290,34 @@ export class AeroApiClient {
           return null;
         }
 
-        // 429 quota exhaustion is PERMANENT for the billing period — do not
-        // retry, and trip the run-level breaker so the rest of the run
-        // stops spending immediately. (A transient rate spike lacks the
-        // quota wording and still gets the backoff below.)
+        // 429 — WORDING CANNOT DISTINGUISH the two kinds: AeroAPI's
+        // per-minute rate limiter answers `{"reason":"RATE_LIMIT_ERROR",
+        // "detail":"User has reached quota limit"}` — the same "quota"
+        // wording as true billing-period exhaustion (observed live
+        // 2026-07-29: a burst tripped the old /quota/i breaker mid-sweep
+        // and silently killed 33 healthy calls). TIME distinguishes them:
+        // a rate limit clears within its one-minute window, a monthly cap
+        // does not. Cool down past the window and retry; only a 429 that
+        // SURVIVES the cooldown trips the permanent run-level breaker.
         if (resp.status === 429) {
-          const body = await resp.text().catch(() => "");
-          if (/quota/i.test(body)) {
-            console.error(`[aeroapi] QUOTA EXHAUSTED (${label}) — halting API calls for this run.`);
-            this.quotaExhausted = true;
-            return null;
+          if (attempt < MAX_RETRIES) {
+            console.warn(
+              `[aeroapi] HTTP 429 for ${label} — rate-limit/quota ambiguous; ` +
+                `cooling down ${RATE_LIMIT_COOLDOWN_MS / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES})...`
+            );
+            await sleep(RATE_LIMIT_COOLDOWN_MS);
+            continue;
           }
+          console.error(
+            `[aeroapi] 429 persists after ${MAX_RETRIES} cooldown retries (${label}) — ` +
+              `billing-period quota exhausted; halting API calls for this run.`
+          );
+          this.quotaExhausted = true;
+          return null;
         }
 
-        // Retryable errors — 429 (transient rate) and 5xx
-        if (resp.status === 429 || resp.status >= 500) {
+        // Retryable errors — 5xx
+        if (resp.status >= 500) {
           if (attempt < MAX_RETRIES) {
             const delay = BASE_DELAY_MS * Math.pow(2, attempt);
             console.warn(`[aeroapi] HTTP ${resp.status} for ${label}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})...`);
