@@ -1427,7 +1427,7 @@ data, **keeper** drives classification/settlement, **ttl** extends storage,
 | `gov_signals` | `/api/cron/gov-signals` | `5 * * * *` (hourly, :05) | — (facts only: AeroAPI `/airports/delays` → Supabase `signals`) | none |
 | `gov_exposure` | `/api/cron/gov-exposure` | `7 * * * *` (hourly, :07) | — (facts only: on-chain liability concentration → `exposure` signals) | none |
 | `gov_reconcile` | `/api/cron/gov-reconcile` | `10 * * * *` (hourly, :10) | `GovernanceModule.disable_route` / `enable_route` / `update_route_terms` (fleet guardrails: `ops_flags.gov_frozen` runtime brake, mass-disable circuit breaker, flap damping) | gov-admin |
-| `gov_onboard` | `/api/cron/gov-onboard` | `15 */6 * * *` (6-hourly, :15) | `GovernanceModule.whitelist_route` (capped; only with `GOV_ONBOARD_AUTO=true` — default is propose-only) + file/chain→DB route sync | gov-admin |
+| `gov_onboard` | `/api/cron/gov-onboard` | `15 */6 * * *` (6-hourly, :15) | — (fleet STATUS sync only: file/chain→DB; route intake is the manual admin pipeline in `scripts/`, never a cron) | gov-admin |
 | `route_agent` | `/api/cron/agent` | `0 6 * * *` (daily 06:00 UTC) | facts only: `pricing` + `weather` signals (no chain writes) | — |
 | `health` | `/api/cron/health` | liveness probe | — | — |
 
@@ -1974,8 +1974,9 @@ revert_premium | flag`):
 
 1. **Admin pin wins** — a pinned, unexpired route is never overridden (`noop`).
 2. **Not on-chain yet** → `noop` — whitelisting new routes is deliberately
-   manual: the discover → review → `whitelist:routes` pipeline (see
-   [Whitelisting a Route](#whitelisting-a-route)), never the reconciler.
+   manual: the admin pipeline in `scripts/` (discover → ML price → admin
+   review → seed; see [Whitelisting a Route](#whitelisting-a-route)),
+   never the reconciler.
 3. **Severe signal → `disable`** — any active `severe` signal matching the route's
    scope disables an Active route.
 4. **Admin lifecycle** — a route the admin set `disabled` is never auto-re-enabled.
@@ -2211,13 +2212,13 @@ exposure collector as `gov_exposure`, and the fleet guardrails — runtime
 freeze flag `ops_flags.gov_frozen` + admin endpoint, mass-disable circuit
 breaker, flap damping). Remaining: `gov_schedule_check` (needs AeroAPI) and
 the route_agent absorption.* Four additions close every routine human loop:
-- `gov_onboard` — route discovery output flows into the DB as `candidate`
-  rows (populating the canonical schedule columns), gets auto-scored (ML
-  `p_delay` within rails, schedule stability), and is auto-promoted +
-  whitelisted through GovSubmitter under caps (max N routes/day, default
-  terms only). This also closes today's *invisibility gap*: routes
-  whitelisted by script but absent from the DB are invisible to the
-  reconciler.
+- `gov_onboard` — fleet STATUS sync (file/chain→DB), closing the
+  *invisibility gap*: routes whitelisted by script but absent from the DB
+  are invisible to the reconciler. NOTE (2026-07-29 product decision):
+  route INTAKE is permanently out of scope for automation — new routes
+  enter only through the manual admin pipeline (`scripts/`: discover →
+  ML price → admin review → seed); the earlier candidate-ingest +
+  auto-promote design was removed.
 - **Exposure collector** — `InsuranceBought` events ingested from RPC into
   `policies` (resume via `ingest_cursors`), projected as `exposure`
   signals when a route/airport concentration crosses thresholds.
@@ -2327,34 +2328,43 @@ are the ones not covered by that story.
 
 ### Whitelisting a Route
 
-**Where routes come from (ops pipeline, idempotent end to end):**
+**Where routes come from — the MANUAL, admin-gated intake pipeline
+(2026-07-29 product decision: route whitelisting is NEVER automated — no
+cron, no auto-promote, no schedule; an admin runs it ad hoc):**
 
 ```
-1. DISCOVER   npm run discover:routes           (dapp/scripts/discover_routes.ts)
-   + ADD      One origin/destination-filtered /schedules call per directed
-              city pair per sample day (default: a Tuesday + the following
-              Saturday) — ~60 AeroAPI calls cover the NYC <-> SEA/SFO/LAX/
-              ORD/MIA matrix and yield 200+ operating-carrier routes.
-              APPENDS the new routes directly into the governance-consumed
-              JSON (config/routes.testnet.json), preserving everything else
-              in the file. Idempotent: routes already in the file are
-              skipped, multi-leg flight numbers are dropped (one flight_id
-              maps to ONE origin/dest on-chain — a second pair would be
-              rejected as FlightIdAlreadyMapped); a re-run writes nothing.
-              Review the append with `git diff` (--dry previews).
+1. DISCOVER   npx tsx ../scripts/discover_routes.ts        (from dapp/)
+              One /schedules call per directed city pair per sample day
+              (80 pairs, paced). HARD filters: attestable idents only
+              (airline-code+number — the oracle can't track what it can't
+              query), operating mainline flights, and TRACKED CARRIERS
+              ONLY (American, Delta, United, Alaska, Southwest, JetBlue,
+              Frontier, Spirit, Hawaiian — everything else ignored).
+              Everything eligible merges into the deduped, UNCAPPED
+              catalog config/routes.discovered.json (real departure time
+              captured per flight). Nothing else is touched.
 
-2. WHITELIST  npm run whitelist:routes           (gov-admin key — separate step)
-              Diffs each file entry against on-chain route_status first:
-                enabled + Unknown   -> whitelist_route(file overrides)
-                enabled + Disabled  -> enable_route
-                enabled + Active    -> noop            <- idempotent
-                disabled + Active   -> disable_route
-              Running it twice = "0 on-chain change(s)".
+2. PRICE      npx tsx ../scripts/price_routes.ts
+              Every catalog candidate is priced by the LIVE ML service
+              (/predict with its real local departure time + great-circle
+              distance): premium = clamp(p_covered × $100 × 1.3, $10–$30),
+              payoff $100, delay 3h → staged into
+              config/route_whitelist.json with p_covered + model version.
 
-3. ATTEST     The sale_authorizer picks the new routes up on its next run
-   + MANAGE   and starts opening sale windows; gov_onboard's sync phase
-              mirrors the file into the DB routes table so the reconciler
-              manages every listed route. Nothing else to configure.
+3. REVIEW     THE ADMIN LOOKS AT route_whitelist.json AND SAYS GO.
+              (git diff, or seed_routes --dry-run for the table view.)
+              Nothing reaches the chain without this step.
+
+4. SEED       npx tsx ../scripts/seed_routes.ts            (gov-admin key)
+              Whitelists each staged route on-chain with its EXACT staged
+              terms (Set premium/payoff/delay — what was reviewed is what
+              the chain gets), via the audited GovSubmitter. Idempotent:
+              Active → noop (terms drift reported, never auto-fixed),
+              Disabled → skipped (governance decision respected). Seeded
+              routes are mirrored into config/routes.testnet.json — the
+              operational fleet file the sale_authorizer reads — and
+              gov_onboard's status sync mirrors them into the DB so the
+              reconciler manages them.
 ```
 
 Re-running any step against already-listed routes is harmless: discovery

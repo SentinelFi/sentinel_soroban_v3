@@ -14,8 +14,6 @@
     "typecheck": "tsc -b --noEmit",
     "test:e2e": "tsx scripts/test_oracle_e2e.ts",
     "bot": "tsx scripts/run_bot.ts",
-    "discover:routes": "tsx scripts/discover_routes.ts",
-    "whitelist:routes": "tsx scripts/whitelist_routes.ts",
     "test:e2e:testnet": "tsx scripts/test_testnet_e2e.ts",
     "test:e2e:testnet:bootstrap": "tsx scripts/e2e/testnet_bootstrap.ts"
   },

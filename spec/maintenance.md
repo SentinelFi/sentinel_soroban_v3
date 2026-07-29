@@ -105,9 +105,11 @@ lags ~2 months behind the calendar.)
 - **AeroAPI quota**: confirm the monthly budget fits current route count —
   steady state is ~30 cached /schedules calls/day + per-flight calls only
   near departure/arrival (see architecture, call-economy sections).
-- **Routes refresh**: `npm run discover:routes` (idempotent) to pick up new
-  service on the configured city pairs; review `git diff`, then
-  `npm run whitelist:routes`.
+- **Routes refresh** (manual, admin-gated — never scheduled): the
+  3-script pipeline in `scripts/` — `discover_routes` (API → deduped
+  catalog, tracked carriers only) → `price_routes` (live ML →
+  `route_whitelist.json`) → ADMIN REVIEWS AND SAYS GO → `seed_routes`
+  (on-chain with the exact staged terms). See scripts/README.md.
 - **Governance DB hygiene**: `signals` self-expire; `aeroapi_cache` rows
   age out by TTL query (no cleanup needed); check `/api/admin/diagnostics`
   for accumulated operator-attention events.

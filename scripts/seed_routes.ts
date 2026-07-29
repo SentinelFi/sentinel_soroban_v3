@@ -1,54 +1,68 @@
 /**
- * Seed the route fleet on-chain — the 200 AeroAPI-discovered routes (plus
- * hand-seeded ones) from dapp/config/routes.testnet.json.
+ * STEP 3 of the admin route-intake pipeline — RUN ONLY AFTER THE ADMIN
+ * HAS REVIEWED config/route_whitelist.json AND SAID GO:
  *
- * IDEMPOTENT: safe to run any time. Per enabled route:
- *   - Unknown on-chain            → whitelist_route (overrides→Set terms,
- *                                   null→UseDefault: tracks module defaults)
- *   - Disabled but file-enabled   → enable_route
- *   - Active                      → no-op
- * File-disabled routes are never touched (governance may have its reasons).
+ *   discover_routes  →  price_routes  →  [ADMIN REVIEWS + SAYS GO]  →  seed_routes
  *
- * Prints a seeding table first (all the data each route is seeded with:
- * ident, carrier, pair, premium, payoff, delay threshold, term source),
- * then executes unless --dry-run.
+ * Reads the staged, ML-priced whitelist (route_whitelist.json) and seeds
+ * each route on-chain via the audited GovSubmitter with its EXPLICIT
+ * terms (Set premium / Set payoff / Set delay — not module defaults), so
+ * what the admin reviewed is exactly what the chain gets.
+ *
+ * IDEMPOTENT, per route:
+ *   - Unknown on-chain  → whitelist_route with the staged terms
+ *   - Active            → no-op (terms drift is REPORTED, not auto-fixed;
+ *                         repricing live routes is a governance decision)
+ *   - Disabled          → skipped (governance disabled it for a reason)
+ *
+ * Successfully seeded routes are merged into the operational fleet file
+ * (dapp/config/routes.testnet.json — what the authorizer and jobs read),
+ * with overrides mirroring the on-chain terms.
  *
  * Run (from dapp/):
- *   npx tsx ../scripts/seed_routes.ts --dry-run        # table only
- *   npx tsx ../scripts/seed_routes.ts                  # seed on-chain
- *   npx tsx ../scripts/seed_routes.ts --table 50       # wider preview
+ *   npx tsx ../scripts/seed_routes.ts --dry-run    # table only, no txs
+ *   npx tsx ../scripts/seed_routes.ts              # seed on-chain
  *
  * Signs with GOVERNANCE_ADMIN_SECRET_KEY (env), falling back to the local
  * `sentinel-governor` stellar identity.
  */
 
 import { execFileSync } from "child_process";
+import { readFileSync, writeFileSync } from "fs";
 import { loadDotEnv } from "../dapp/scripts/env";
-import {
-  loadRoutesConfig,
-  fileTerms,
-  baseUnitsToUsdc,
-  usdcToBaseUnits,
-  type RouteEntry,
-} from "../dapp/api/_lib/routes_config";
-import { GovSubmitter } from "../dapp/api/_lib/governance/submitter";
-
 loadDotEnv();
+import { GovSubmitter } from "../dapp/api/_lib/governance/submitter";
+import { usdcToBaseUnits, type RouteEntry } from "../dapp/api/_lib/routes_config";
 
-const DRY_RUN = process.argv.includes("--dry-run");
-const tableArg = process.argv.indexOf("--table");
-const TABLE_ROWS = tableArg >= 0 ? Number(process.argv[tableArg + 1]) : 20;
+const WHITELIST_FILE = "config/route_whitelist.json";
+const FLEET_FILE = "config/routes.testnet.json";
+
+interface StagedRoute {
+  flight_id: string;
+  carrier: string;
+  carrier_name: string;
+  origin: string;
+  destination: string;
+  dep_time_hhmm: number;
+  distance_mi: number;
+  p_covered: number;
+  premium_usdc: number;
+  payoff_usdc: number;
+  delay_hours: number;
+}
+
+interface StagedWhitelist {
+  generated_at: string;
+  model_version: string;
+  routes: StagedRoute[];
+}
 
 function adminSecret(): string {
   if (process.env.GOVERNANCE_ADMIN_SECRET_KEY) return process.env.GOVERNANCE_ADMIN_SECRET_KEY;
   try {
-    return execFileSync("stellar", ["keys", "show", "sentinel-governor"], {
-      encoding: "utf8",
-    }).trim();
+    return execFileSync("stellar", ["keys", "show", "sentinel-governor"], { encoding: "utf8" }).trim();
   } catch {
-    throw new Error(
-      "No GOVERNANCE_ADMIN_SECRET_KEY in env and no local `sentinel-governor` identity."
-    );
+    throw new Error("No GOVERNANCE_ADMIN_SECRET_KEY in env and no local `sentinel-governor` identity.");
   }
 }
 
@@ -57,98 +71,117 @@ function pad(s: string, w: number): string {
 }
 
 async function main(): Promise<void> {
-  const cfg = loadRoutesConfig();
-  const enabled = cfg.routes.filter((r) => r.enabled);
-  const disabled = cfg.routes.filter((r) => !r.enabled);
+  const dryRun = process.argv.includes("--dry-run");
+  const staged = JSON.parse(readFileSync(WHITELIST_FILE, "utf8")) as StagedWhitelist;
 
   console.log(
-    `Routes file: ${cfg.routes.length} route(s) — ${enabled.length} enabled, ` +
-      `${disabled.length} file-disabled (untouched).`
+    `Staged whitelist: ${staged.routes.length} route(s), generated ${staged.generated_at} ` +
+      `(model ${staged.model_version})`
   );
+  console.log(`\nFirst 20 (of ${staged.routes.length}):\n`);
   console.log(
-    `Defaults: premium $${cfg.defaults.premiumUsdc} / payoff $${cfg.defaults.payoffUsdc} / ` +
-      `delay ${cfg.defaults.delayHours}h · rails $${baseUnitsToUsdc(cfg.rails.premiumMin)}–$${baseUnitsToUsdc(cfg.rails.premiumMax)}`
+    pad("FLIGHT", 9) + pad("CARRIER", 11) + pad("ROUTE", 11) + pad("DEP", 6) +
+      pad("P(COV)", 9) + pad("PREMIUM", 9) + pad("PAYOFF", 8) + "DELAY≥"
   );
-
-  // ── Seeding table: exactly the data each route is seeded with ───────────
-  console.log(`\nSeeding data (first ${Math.min(TABLE_ROWS, enabled.length)} of ${enabled.length}):\n`);
-  console.log(
-    pad("FLIGHT", 9) + pad("CARRIER", 9) + pad("ROUTE", 11) +
-      pad("PREMIUM", 9) + pad("PAYOFF", 8) + pad("DELAY≥", 8) + "TERMS"
-  );
-  console.log("-".repeat(66));
-  for (const r of enabled.slice(0, TABLE_ROWS)) {
-    const t = fileTerms(cfg, r);
-    const src = r.overrides ? "override (Set)" : "module defaults (UseDefault)";
+  console.log("-".repeat(70));
+  for (const r of staged.routes.slice(0, 20)) {
     console.log(
-      pad(r.flight_id, 9) +
-        pad(r.carrier, 9) +
-        pad(`${r.origin}→${r.destination}`, 11) +
-        pad(`$${baseUnitsToUsdc(t.premium)}`, 9) +
-        pad(`$${baseUnitsToUsdc(t.payoff)}`, 8) +
-        pad(`${t.delayHours}h`, 8) +
-        src
+      pad(r.flight_id, 9) + pad(r.carrier_name, 11) + pad(`${r.origin}→${r.destination}`, 11) +
+        pad(String(r.dep_time_hhmm).padStart(4, "0"), 6) + pad(r.p_covered.toFixed(4), 9) +
+        pad(`$${r.premium_usdc}`, 9) + pad(`$${r.payoff_usdc}`, 8) + `${r.delay_hours}h`
     );
   }
-  if (enabled.length > TABLE_ROWS) console.log(`… ${enabled.length - TABLE_ROWS} more`);
+  if (staged.routes.length > 20) console.log(`… ${staged.routes.length - 20} more`);
 
-  if (DRY_RUN) {
+  if (dryRun) {
     console.log("\n--dry-run: no transactions submitted.");
     return;
   }
 
-  // ── Idempotent on-chain seeding via the audited GovSubmitter ────────────
   const submitter = new GovSubmitter({
     rpcUrl: process.env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org",
-    networkPassphrase:
-      process.env.STELLAR_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
-    governanceId:
-      process.env.GOVERNANCE_ID ?? "CANSHOFUFZPLZPCVUQYL3LBO25FW5BP6AEVAMNN2QS2BINGDIVZVEWYZ",
+    networkPassphrase: process.env.STELLAR_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
+    governanceId: process.env.GOVERNANCE_ID ?? "CANSHOFUFZPLZPCVUQYL3LBO25FW5BP6AEVAMNN2QS2BINGDIVZVEWYZ",
     adminSecretKey: adminSecret(),
     actor: "script:seed_routes",
   });
 
   let whitelisted = 0;
-  let enabledCount = 0;
   let noop = 0;
+  let drift = 0;
+  let disabled = 0;
   let failed = 0;
+  const seeded: StagedRoute[] = [];
   console.log("\nSeeding on-chain (idempotent)...");
-  for (const r of enabled) {
+  for (const r of staged.routes) {
     const key = { flightId: r.flight_id, origin: r.origin, dest: r.destination };
     const label = `${r.flight_id} ${r.origin}→${r.destination}`;
     try {
       const onChain = await submitter.readStatus(key);
       if (onChain.status === "Active") {
-        noop++;
+        const t = onChain.terms;
+        const stagedPremium = usdcToBaseUnits(r.premium_usdc);
+        if (t && (t.premium !== stagedPremium || t.payoff !== usdcToBaseUnits(r.payoff_usdc))) {
+          console.warn(
+            `  ${label}: active with DIFFERENT terms on-chain — staged $${r.premium_usdc}/$${r.payoff_usdc}, ` +
+              `live $${Number(t.premium) / 1e7}/$${Number(t.payoff) / 1e7}. Repricing live routes is a ` +
+              `governance decision — not touched.`
+          );
+          drift++;
+        } else {
+          noop++;
+        }
+        seeded.push(r); // ensure the fleet file covers it either way
       } else if (onChain.status === "Disabled") {
-        await submitter.enable(key);
-        console.log(`  ${label}: re-enabled`);
-        enabledCount++;
+        console.log(`  ${label}: Disabled on-chain — governance decision, skipped.`);
+        disabled++;
       } else {
         await submitter.whitelist(
           key,
-          overrideUnits(r, "premium_usdc"),
-          overrideUnits(r, "payoff_usdc"),
-          r.overrides?.delay_hours ?? null
+          usdcToBaseUnits(r.premium_usdc),
+          usdcToBaseUnits(r.payoff_usdc),
+          r.delay_hours
         );
-        console.log(`  ${label}: whitelisted`);
+        console.log(`  ${label}: whitelisted @ $${r.premium_usdc}/$${r.payoff_usdc}/${r.delay_hours}h`);
         whitelisted++;
+        seeded.push(r);
       }
     } catch (err) {
       failed++;
       console.error(`  ${label}: FAILED — ${String(err).slice(0, 140)}`);
     }
   }
+
+  // Mirror seeded routes into the operational fleet file (authorizer/jobs).
+  const fleet = JSON.parse(readFileSync(FLEET_FILE, "utf8")) as { routes: RouteEntry[] };
+  const known = new Set(fleet.routes.map((f) => `${f.flight_id}|${f.origin}|${f.destination}`));
+  let appended = 0;
+  for (const r of seeded) {
+    const k = `${r.flight_id}|${r.origin}|${r.destination}`;
+    if (known.has(k)) continue;
+    fleet.routes.push({
+      flight_id: r.flight_id,
+      carrier: r.carrier,
+      origin: r.origin,
+      destination: r.destination,
+      enabled: true,
+      overrides: {
+        premium_usdc: r.premium_usdc,
+        payoff_usdc: r.payoff_usdc,
+        delay_hours: r.delay_hours,
+      },
+      notes: `seeded ${new Date().toISOString().slice(0, 10)} (ML-priced, model ${staged.model_version})`,
+    });
+    known.add(k);
+    appended++;
+  }
+  if (appended > 0) writeFileSync(FLEET_FILE, JSON.stringify(fleet, null, 2) + "\n");
+
   console.log(
-    `\nDone. whitelisted=${whitelisted} re-enabled=${enabledCount} ` +
-      `already-active=${noop} failed=${failed}`
+    `\nDone. whitelisted=${whitelisted} already-active=${noop} terms-drift=${drift} ` +
+      `disabled-skipped=${disabled} failed=${failed}; fleet file +${appended} (${FLEET_FILE})`
   );
   process.exit(failed > 0 ? 1 : 0);
-}
-
-function overrideUnits(r: RouteEntry, field: "premium_usdc" | "payoff_usdc"): bigint | null {
-  const v = r.overrides?.[field];
-  return v != null ? usdcToBaseUnits(v) : null;
 }
 
 main().catch((err) => {

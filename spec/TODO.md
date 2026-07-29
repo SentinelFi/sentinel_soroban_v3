@@ -379,7 +379,9 @@ APIs. Ordered: each step's output feeds the next. The only hard blocker is
 
 - [ ] External pager on `stalled` (A/P1 remainder — needs a Slack webhook).
 - [ ] Cadence relaxation after observing JIT hit-rate (A/P2).
-- [ ] `GOV_ONBOARD_AUTO=true` once propose-only has built confidence (D).
+- ~~`GOV_ONBOARD_AUTO=true` once propose-only has built confidence~~ —
+  SUPERSEDED 2026-07-29: route intake is permanently manual (admin
+  pipeline in `scripts/`); auto-promote was removed from gov_onboard.
 - [ ] L3 agents (D — needs `ANTHROPIC_API_KEY`).
 
 ---

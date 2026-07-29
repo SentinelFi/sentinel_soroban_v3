@@ -127,8 +127,8 @@ unauthorized run fails the on-chain auth check with no side effects.
 ### Route discovery
 
 ```sh
-npm run discover:routes                     # NYC (JFK/EWR/LGA) <-> SEA/SFO/LAX/ORD/MIA
-npm run discover:routes -- --max 200 --date 2026-08-04
+npx tsx ../scripts/discover_routes.ts          # full 80-pair sweep → catalog
+npx tsx ../scripts/discover_routes.ts --date 2026-08-12
 ```
 
 Finds insurable routes with the minimum API spend: one origin/destination-
@@ -144,7 +144,8 @@ JSON (`config/routes.testnet.json`):
    multi-leg flight numbers the contract would reject are dropped, so a re-run
    finds everything covered and writes nothing. Review the append with
    `git diff` (use `--dry` to preview without writing).
-2. **Whitelist** — `npm run whitelist:routes` pushes the file on-chain. It
+2. **Whitelist** — `npx tsx ../scripts/seed_routes.ts` pushes the ADMIN-REVIEWED
+   staged whitelist (`config/route_whitelist.json`) on-chain. It
    diffs against live `route_status` first (`Active` → noop) and the contract
    treats a same-route re-whitelist as a no-op refresh — running it twice
    changes nothing.
@@ -200,7 +201,7 @@ tsconfig.api.json     type-checks api/ with node types (wired into tsc -b)
 | `/api/cron/ttl`      | `0 0 * * *`    | `extend_ttl` on all 5 contracts + `prune_settled` in a drain loop (repeats while the active count drops) |
 | `/api/cron/gov-signals` | `5 * * * *` | Airport-delay collector — ONE AeroAPI `/airports/delays` call covers the whole network; projects red→`severe` / yellow→`elevated` signals (origin+dest scoped, self-expiring) into the governance DB for the airports enabled routes touch. Facts only, no chain writes; runs 5 min before the reconciler |
 | `/api/cron/gov-exposure` | `7 * * * *` | Exposure collector — reads on-chain liability (payoff × buyers per active flight vs vault capacity, no AeroAPI) and projects route/airport concentration `exposure` signals (≥25% elevated, ≥50% severe; env-tunable). Facts only, no chain writes |
-| `/api/cron/gov-onboard` | `15 */6 * * *` | Route onboarding — syncs file/on-chain routes into the DB (so the reconciler manages every real route), ingests `routes.discovered.json` as candidates, and auto-promotes on-chain ONLY with `GOV_ONBOARD_AUTO=true` (default propose-only), capped by `GOV_ONBOARD_MAX_PER_RUN` |
+| `/api/cron/gov-onboard` | `15 */6 * * *` | Fleet status sync — file/on-chain routes → DB so the reconciler manages every real route. Route INTAKE is deliberately NOT here: whitelisting is the manual admin pipeline in `scripts/` (discover → price → review → seed) |
 | `/api/cron/gov-reconcile` | `10 * * * *` | Governance reconciler — recomputes each managed route's desired state from DB signals (admin pins win, pauses expand, multipliers stack, hysteresis damps) and submits the minimal on-chain diff; `GOV_DRY_RUN=true` logs decisions without submitting |
 
 `/api/cron/health` is an unauthenticated GET that returns the network, contract IDs, and `hasKeys` booleans (secrets are never echoed).
@@ -221,7 +222,6 @@ Server-side (no `PUBLIC_` prefix — set in Vercel project settings, never bundl
 - `WEATHER_BASE_URL` — Open-Meteo override (keyless; testing only)
 - `CRON_SECRET` — shared secret guarding the cron endpoints (recommended)
 - `GOVERNANCE_DB_URL` — Supabase transaction-pooler Postgres URL (governance DB); `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `ADMIN_EMAILS` — admin-console auth; `GOV_DRY_RUN` — compute-only mode for all governance jobs (the gov-admin IS an on-chain admin since 2026-07-27; the runtime brake is the `ops_flags.gov_frozen` DB flag via `POST /api/admin/freeze`)
-- `GOV_ONBOARD_AUTO` (`true` = auto-promote candidates on-chain; unset = propose-only), `GOV_ONBOARD_MAX_PER_RUN` (default 10), `GOV_ONBOARD_DISCOVERED` (path override for the discovery file)
 - `EXPOSURE_ELEVATED_PCT` / `EXPOSURE_SEVERE_PCT` — exposure-signal thresholds as fractions of vault capacity (defaults 0.25 / 0.5)
 
 ### Routes file + whitelist script
@@ -239,8 +239,8 @@ routes):
 
 ```sh
 # after filling config/routes.testnet.json (needs GOVERNANCE_ADMIN_SECRET_KEY)
-npm run whitelist:routes                 # list missing + enable/disable per file
-npm run whitelist:routes -- --sync-terms # also force file terms onto active routes
+npx tsx ../scripts/seed_routes.ts --dry-run   # review the staged whitelist
+npx tsx ../scripts/seed_routes.ts             # seed on-chain (admin go)
 ```
 
 ### Running without an AeroAPI key
