@@ -101,7 +101,7 @@ async function main(): Promise<void> {
   const submitter = new GovSubmitter({
     rpcUrl: process.env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org",
     networkPassphrase: process.env.STELLAR_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
-    governanceId: process.env.GOVERNANCE_ID ?? "CANSHOFUFZPLZPCVUQYL3LBO25FW5BP6AEVAMNN2QS2BINGDIVZVEWYZ",
+    governanceId: process.env.GOVERNANCE_ID ?? "CATUCJILWACDDEAIFXRL6HXSYDZ7TLOXHMUBKBG4URDOUJHEO7QAJ6NE",
     adminSecretKey: adminSecret(),
     actor: "script:seed_routes",
   });

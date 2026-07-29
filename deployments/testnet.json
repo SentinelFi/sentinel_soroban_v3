@@ -1,46 +1,52 @@
 {
   "network": "testnet",
   "network_passphrase": "Test SDF Network ; September 2015",
-  "deployed_at": "2026-07-18",
-  "deployer": "alice",
+  "deployed_at": "2026-07-29",
+  "deployer": "contract-owner",
+  "owner": "GCEODBNVUGJVYQKWY7NMU4U3EIYQOXA7LADMQOPNB5PBBKMYCQJ7E6KD",
+  "signers": {
+    "authorized_oracle": "GD7YY6ESNMW23QXSUJ4KWD2I3P5VCEHK3Z6KJJFANON7NWLZFZE7RNVU",
+    "authorized_keeper": "GAWMULSQDZWFKBUCFBSPFXGN7PVPDB3JCP6YL4VPQOSVQ5C4GKI3KKI5",
+    "governance_admin": "GC2QDXUDKLRX2EJSGHDDMZE7V5LF2GOCNZCT3V6JTSXIHTJYAJ34LQ2J"
+  },
+  "params": {
+    "defaults": {
+      "premium_usdc": 15,
+      "payoff_usdc": 100,
+      "delay_hours": 3
+    },
+    "term_limits": {
+      "max_payoff": 0,
+      "max_payoff_ratio": 100
+    },
+    "min_lead_time_secs": 3600,
+    "claim_expiry_window_secs": 604800,
+    "min_withdrawal_request": 10
+  },
   "contracts": {
     "mock_usdc": {
-      "address": "CCGB4TFBJYG7FMMZYH4BZC5SJITQIJ33XTJHSKRAVFKOQKDBM4QJPTVB",
-      "wasm_hash": "2c80bdda1c5e0a97b7e6e07d2b4aa64ddfea4155a5c46a13a9dd5f5e5cc1a8e5"
+      "address": "CDYZY5QA77SCNRKS7AOSVLCRKGI7TKYCWNAIHMOAKTZ5FLS3SR5MAE5Z",
+      "wasm_hash": "e73b679bc0ca0041868e0d36792338c79712cf38f375974483322661037e2418"
     },
     "governance_module": {
-      "address": "CANSHOFUFZPLZPCVUQYL3LBO25FW5BP6AEVAMNN2QS2BINGDIVZVEWYZ",
-      "wasm_hash": "4b9d10e294d88b9cc43103127cb5c2a7e10425570f71ac34aebb9f9e42ab2cd4"
+      "address": "CATUCJILWACDDEAIFXRL6HXSYDZ7TLOXHMUBKBG4URDOUJHEO7QAJ6NE",
+      "wasm_hash": "9ccef636b57e7c9680c93784ec388a99c3b61fbe745e42e71919ec35e22b7ecb"
     },
     "oracle_aggregator": {
-      "address": "CBSX3KRT4JI7XAOB33OTGZMZVOFXOS2LWDQCQKR2UAGHRMWYMC2D6QUL",
-      "wasm_hash": "eb02c0baf40bed7c9c17d40c54e45a48f8349f5b41a1174048b29c716b0ff831"
+      "address": "CDMKBMNJ2YZTARAM4ZUU7HZJZA7UUYJU76ZOAN2SCR3WJYZSSHXV7ESW",
+      "wasm_hash": "b06963d002aad52b5b93a1b64794862101c8693c53a1fc83b3bebe6155377b80"
     },
     "risk_vault": {
-      "address": "CAHUWF7GMAKZK34C3BBQWHA4GLAI2OSXGL25KMLW45INBDJMVQRAL3QW",
-      "wasm_hash": "68000b6949ea5e84c1d72ce0deccd474362029a4256b97c9dcb658ae99e79379"
+      "address": "CCJLBWEOPNUHIUNOGZMUDQ6EGO563SA3WSEX2NENEDCTJDZOKN3LLDKF",
+      "wasm_hash": "7cedeb1cc828601faadad5151ca13e2746965ae923475c8fd76be5c5377de9ca"
     },
     "flight_pool_manager": {
-      "address": "CD6XRCMKALQLB63ZYMA7GCW3Q2BQROGKYASRRRNZEFRPINQ6JFXO6YZT",
-      "wasm_hash": "cf4e48062755b52e1c3bd57b3e90e3faaaf7ba6447ec80ede5175e69d9ac6ff9"
+      "address": "CAA7DVZKQEA7JENAMI7DEKPGAWJQMPY6MKDED2DG2ZCK2G535X5V2PI7",
+      "wasm_hash": "70d8be1a58543f7a4cb66908d1d0578c8e38b72a75d15ef2ade78fb567adb60d"
     },
     "controller": {
-      "address": "CCWDQVAJCNMU2P35JF5RNGC7PM2LGWBXBSO6QUME2PJFK5LTVFNQZGHB",
-      "wasm_hash": "9d6c6a209f35565b974bf2b0de287e2c31c9b656b537be023861b749bbe52585"
+      "address": "CBDJIPZOC7KH3ICK57MAUZMUXBQ5XF56WJLRP2OY6FF5V2HOFDOFXVY3",
+      "wasm_hash": "dde75c21e9213e9d360763cd77664abeaf6d6b58714162b548af82ff8b9f2120"
     }
-  },
-  "accounts": {
-    "owner": "GCEODBNVUGJVYQKWY7NMU4U3EIYQOXA7LADMQOPNB5PBBKMYCQJ7E6KD",
-    "oracle_executor": "GDPAV73VMO7K5BD6GXXP53KAH4UNXM3WIGNLALIGQVMEX7FBY4DPNTSO",
-    "keeper_executor": "GDIGW7URDVR3ZP3BNZWI7QKTQFXXGZUY2IV66M2GAXHQ6GBR4CPXRU2H"
-  },
-  "parameters": {
-    "default_premium": "500000000",
-    "default_payoff": "5000000000",
-    "default_delay_hours": 3,
-    "min_lead_time_secs": 3600,
-    "claim_expiry_window_secs": 5184000,
-    "min_withdrawal_request": "1000000000",
-    "solvency_ratio": 100
   }
 }

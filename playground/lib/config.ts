@@ -25,37 +25,37 @@ export const CONTRACTS: Record<
 > = {
   controller: {
     label: "Controller",
-    address: "CCWDQVAJCNMU2P35JF5RNGC7PM2LGWBXBSO6QUME2PJFK5LTVFNQZGHB",
+    address: "CBDJIPZOC7KH3ICK57MAUZMUXBQ5XF56WJLRP2OY6FF5V2HOFDOFXVY3",
     description:
       "Protocol orchestrator. Users buy flight-delay insurance here; the keeper classifies and settles flights through it.",
   },
   risk_vault: {
     label: "Risk Vault",
-    address: "CAHUWF7GMAKZK34C3BBQWHA4GLAI2OSXGL25KMLW45INBDJMVQRAL3QW",
+    address: "CCJLBWEOPNUHIUNOGZMUDQ6EGO563SA3WSEX2NENEDCTJDZOKN3LLDKF",
     description:
       "ERC-4626-style underwriter capital pool. Deposit USDC, receive RVS shares, earn premiums, back payouts.",
   },
   flight_pool_manager: {
     label: "Flight Pool Manager",
-    address: "CD6XRCMKALQLB63ZYMA7GCW3Q2BQROGKYASRRRNZEFRPINQ6JFXO6YZT",
+    address: "CAA7DVZKQEA7JENAMI7DEKPGAWJQMPY6MKDED2DG2ZCK2G535X5V2PI7",
     description:
       "Per-flight policy state: premiums held per flight, buyer records, claim windows. Travelers claim payouts here.",
   },
   oracle_aggregator: {
     label: "Oracle Aggregator",
-    address: "CBSX3KRT4JI7XAOB33OTGZMZVOFXOS2LWDQCQKR2UAGHRMWYMC2D6QUL",
+    address: "CDMKBMNJ2YZTARAM4ZUU7HZJZA7UUYJU76ZOAN2SCR3WJYZSSHXV7ESW",
     description:
       "Authoritative flight status: sale windows, arrival times, landed/cancelled outcomes, settlement lifecycle.",
   },
   governance_module: {
     label: "Governance Module",
-    address: "CANSHOFUFZPLZPCVUQYL3LBO25FW5BP6AEVAMNN2QS2BINGDIVZVEWYZ",
+    address: "CATUCJILWACDDEAIFXRL6HXSYDZ7TLOXHMUBKBG4URDOUJHEO7QAJ6NE",
     description:
       "Route whitelist and policy terms: which routes are insurable and at what premium / payoff / delay threshold.",
   },
   mock_usdc: {
     label: "Mock USDC",
-    address: "CCGB4TFBJYG7FMMZYH4BZC5SJITQIJ33XTJHSKRAVFKOQKDBM4QJPTVB",
+    address: "CDYZY5QA77SCNRKS7AOSVLCRKGI7TKYCWNAIHMOAKTZ5FLS3SR5MAE5Z",
     description:
       "Testnet-only USDC token with a permissionless faucet (10,000 USDC per call).",
   },

@@ -199,8 +199,8 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
   try {
     // GovConfig carries no pool/vault ids — read them from the shared env
     // (same defaults as _lib/config.ts).
-    const poolId = process.env.FLIGHT_POOL_MANAGER_ID ?? "CD6XRCMKALQLB63ZYMA7GCW3Q2BQROGKYASRRRNZEFRPINQ6JFXO6YZT";
-    const vaultId = process.env.RISK_VAULT_ID ?? "CAHUWF7GMAKZK34C3BBQWHA4GLAI2OSXGL25KMLW45INBDJMVQRAL3QW";
+    const poolId = process.env.FLIGHT_POOL_MANAGER_ID ?? "CAA7DVZKQEA7JENAMI7DEKPGAWJQMPY6MKDED2DG2ZCK2G535X5V2PI7";
+    const vaultId = process.env.RISK_VAULT_ID ?? "CCJLBWEOPNUHIUNOGZMUDQ6EGO563SA3WSEX2NENEDCTJDZOKN3LLDKF";
     const client = new SorobanClient({
       stellarRpcUrl: config.stellarRpcUrl,
       networkPassphrase: config.networkPassphrase,
@@ -216,7 +216,7 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
     if (!config.dryRun) {
       try {
         const controllerId =
-          process.env.CONTROLLER_ID ?? "CCWDQVAJCNMU2P35JF5RNGC7PM2LGWBXBSO6QUME2PJFK5LTVFNQZGHB";
+          process.env.CONTROLLER_ID ?? "CBDJIPZOC7KH3ICK57MAUZMUXBQ5XF56WJLRP2OY6FF5V2HOFDOFXVY3";
         const ingested = await ingestChainEvents(config.stellarRpcUrl, controllerId);
         if (ingested.policies + ingested.settlements > 0) {
           actions.push({

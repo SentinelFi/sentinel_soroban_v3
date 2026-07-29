@@ -23,7 +23,7 @@ const TESTNET_DEFAULTS: Record<string, string> = {
   // 2026-07-18 testnet deployment (matches _lib/config.ts + the frontend).
   // NOTE: the gov-admin add_admin on this module is still pending the owner
   // key — keep GOV_DRY_RUN=true until it lands.
-  GOVERNANCE_ID: "CANSHOFUFZPLZPCVUQYL3LBO25FW5BP6AEVAMNN2QS2BINGDIVZVEWYZ",
+  GOVERNANCE_ID: "CATUCJILWACDDEAIFXRL6HXSYDZ7TLOXHMUBKBG4URDOUJHEO7QAJ6NE",
 };
 
 export interface GovConfig {
