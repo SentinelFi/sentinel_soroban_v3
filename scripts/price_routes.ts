@@ -29,6 +29,7 @@ import { expectedLossPremiumUnits, clampPremium } from "../dapp/api/_lib/route_r
 import { loadRoutesConfig, baseUnitsToUsdc } from "../dapp/api/_lib/routes_config";
 import { AIRPORTS } from "../dapp/api/_lib/airports";
 import { distanceMiles } from "../dapp/api/_lib/governance/schedule_check";
+import { toIata } from "../dapp/api/_lib/airline_codes";
 import type { CatalogEntry } from "./discover_routes";
 
 const CATALOG_FILE = "config/routes.discovered.json";
@@ -67,15 +68,12 @@ function routeDistanceMi(origin: string, destination: string): number {
   return a && b ? Math.round(distanceMiles(a, b)) : 1000; // model default
 }
 
-async function warm(): Promise<string | null> {
-  for (let i = 0; i < 15; i++) {
-    try {
-      const r = await fetch(`${ML_BASE}/healthz`, { signal: AbortSignal.timeout(10_000) });
-      if (r.ok) return ((await r.json()) as { model_version: string }).model_version;
-    } catch {
-      /* cold-starting */
-    }
-    await new Promise((r) => setTimeout(r, 8_000));
+async function fetchModelVersion(): Promise<string | null> {
+  try {
+    const r = await fetch(`${ML_BASE}/healthz`, { signal: AbortSignal.timeout(15_000) });
+    if (r.ok) return ((await r.json()) as { model_version: string }).model_version;
+  } catch {
+    /* unreachable */
   }
   return null;
 }
@@ -98,7 +96,7 @@ async function main(): Promise<void> {
       `pricing for ${forDate.toISOString().slice(0, 10)} via ${ML_BASE}`
   );
 
-  const modelVersion = await warm();
+  const modelVersion = await fetchModelVersion();
   if (!modelVersion) {
     console.error("[price] ML service unreachable — aborting (nothing written).");
     process.exit(1);
@@ -109,11 +107,20 @@ async function main(): Promise<void> {
   const routes: Array<Record<string, unknown>> = [];
   let failed = 0;
   for (const [i, c] of catalog.entries()) {
+    // The model only knows IATA carrier codes; the catalog stores IATA,
+    // but normalize anyway so a legacy ICAO entry can't silently price
+    // as "unknown carrier". Untracked = upstream bug → count as failed.
+    const iata = toIata(c.carrier);
+    if (!iata) {
+      console.error(`[price] ${c.flight_id}: untracked carrier code "${c.carrier}" — skipped`);
+      failed++;
+      continue;
+    }
     const dep = localDepHhmm(c.sched_out_utc, c.origin);
     const dist = routeDistanceMi(c.origin, c.destination);
     const p = await agent.predict(
       {
-        carrier: c.carrier,
+        carrier: iata,
         origin: c.origin,
         dest: c.destination,
         month,
@@ -131,7 +138,7 @@ async function main(): Promise<void> {
     const premiumUnits = clampPremium(expectedLossPremiumUnits(p, PAYOFF_UNITS), null, rails);
     routes.push({
       flight_id: c.flight_id,
-      carrier: c.carrier,
+      carrier: iata,
       carrier_name: c.carrier_name,
       origin: c.origin,
       destination: c.destination,

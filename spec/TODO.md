@@ -313,7 +313,7 @@ APIs. Ordered: each step's output feeds the next. The only hard blocker is
   locally — the system is fully operable by hand today; the steps below
   only replace the hand with schedules.
 
-### Step 1 — ML pricing service (Render — free tier is fine)
+### Step 1 — ML pricing service (Render — paid Starter since 2026-07-29, always on)
 
 - [ ] Deploy (or redeploy) the `render.yaml` web service at repo root →
   serves agent v3 (`GET /healthz` must show version `…-btsM24-arr180m`).

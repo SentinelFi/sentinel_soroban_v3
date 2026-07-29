@@ -8,6 +8,7 @@ import {
   type WeatherSeverity,
 } from "../route_rules";
 import { loadRoutesConfig, fileTerms } from "../routes_config";
+import { toIata } from "../airline_codes";
 import type { RunLogEntry, FetcherAction } from "../types";
 import type { GovConfig } from "../governance/config";
 import { getDb } from "../governance/db";
@@ -121,10 +122,17 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
         // and rails clamping happen HERE, protocol-side.
         let anchor: bigint | null = null;
         let pDelay: number | null = null;
-        if (agent) {
+        // The model only knows IATA carrier codes — an unconverted code
+        // would silently predict from the "unknown carrier" bucket, so an
+        // untracked code skips the ML anchor entirely (fail loud).
+        const iataCarrier = toIata(route.carrier);
+        if (agent && !iataCarrier) {
+          console.warn(`[route-agent] ${label}: untracked carrier code "${route.carrier}" — ML anchor skipped`);
+        }
+        if (agent && iataCarrier) {
           const p = await agent.predict(
             {
-              carrier: route.carrier,
+              carrier: iataCarrier,
               origin: route.origin,
               dest: route.destination,
               month,

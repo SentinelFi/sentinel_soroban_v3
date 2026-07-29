@@ -44,11 +44,31 @@ def test_optional_fields_default() -> None:
         assert implicit.json() == explicit.json()
 
 
-def test_unknown_categories_do_not_crash() -> None:
-    # handle_unknown="ignore" on the encoder — a brand-new carrier/airport
-    # must still predict (falls back to numeric features only).
+def test_unknown_carrier_rejected() -> None:
+    # The model only knows the IATA codes it was trained on. An unknown
+    # carrier would one-hot to all-zeros and silently predict without the
+    # carrier signal (the 2026-07-29 ICAO pricing bug) — reject instead.
     with TestClient(app) as client:
-        resp = client.post("/predict", json=_req(carrier="ZZ", origin="XXX", dest="YYY"))
+        for code in ("ZZ", "UAL", "AAL"):
+            resp = client.post("/predict", json=_req(carrier=code))
+            assert resp.status_code == 422, code
+            assert "IATA" in resp.json()["detail"]
+
+
+def test_icao_iata_pairs_differ() -> None:
+    # Sanity: real IATA codes carry signal — two different carriers on the
+    # same route/date must not collapse to one probability.
+    with TestClient(app) as client:
+        p_ua = client.post("/predict", json=_req(carrier="UA")).json()["p_covered"]
+        p_aa = client.post("/predict", json=_req(carrier="AA")).json()["p_covered"]
+        assert p_ua != p_aa
+
+
+def test_unknown_airports_do_not_crash() -> None:
+    # Airports stay handle_unknown="ignore" — a new airport still predicts
+    # (falls back to the remaining features); only carrier is validated.
+    with TestClient(app) as client:
+        resp = client.post("/predict", json=_req(origin="XXX", dest="YYY"))
         assert resp.status_code == 200
 
 

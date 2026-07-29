@@ -2018,10 +2018,10 @@ xgboost/sklearn/pandas exceed the serverless size limit). It is deliberately a
 **pure prediction API — it knows nothing about premiums, payoffs, or
 insurance**; the protocol turns its probability into a price on the dapp side.
 
-**Live:** <https://flight-delay-predictions.onrender.com> (free plan — spins
-down when idle, so the first request after a quiet spell cold-starts in
-~1 min; interactive Swagger docs at `/docs`). Deployed 2026-07-28 via the
-Render REST API; auto-deploys on every push to the linked branch.
+**Live:** <https://flight-delay-predictions.onrender.com> (paid Starter
+instance — always on, no cold starts; interactive Swagger docs at `/docs`).
+Deployed 2026-07-28 via the Render REST API; auto-deploys on every push to
+the linked branch.
 
 **What the endpoint does.** `POST /predict` takes a route-level flight
 description — carrier, origin, dest, month, day-of-month, day-of-week,
@@ -2070,9 +2070,34 @@ disrupted"), `vs_baseline` the multiple of the network average:
 }
 ```
 
-Unknown carriers/airports never error (the encoder ignores them and predicts
-from the remaining features). If `AGENT_TOKEN` is set on the service, add
+An **unknown carrier is rejected with a 422** — a code outside the training
+vocabulary would one-hot to all-zeros and silently predict *without* the
+carrier signal (see "Airline code standards" below). Unknown *airports*
+still predict (the encoder ignores them and falls back to the remaining
+features). If `AGENT_TOKEN` is set on the service, add
 `-H "Authorization: Bearer <token>"`.
+
+#### Airline code standards — ICAO vs IATA, which is used where
+
+Airlines carry two registry codes with **no algorithmic relationship**
+(United is `UAL`/`UA`, but Southwest is `SWA`/`WN`, JetBlue `JBU`/`B6`), so
+every conversion is a lookup. The protocol's rule is **one standard per
+purpose, converted exactly once**:
+
+| Field / boundary | Standard | Why |
+|---|---|---|
+| `flight_id` (`AAL1152`) — catalog, whitelist, fleet file, **on-chain route identity**, oracle attestation | **ICAO operating ident** | It's what AeroAPI `/schedules` returns for the physical flight (codeshare-proof) and what the oracle queries on `/flights/{ident}` |
+| `carrier` field — catalog, whitelist, fleet file | **IATA** (`AA`, `UA`) | Exists to feed the model, and IATA is the model's native standard (BTS training data) |
+| ML `/predict` request | **IATA only** — service 422s anything else | The 2026-07-29 lesson: ICAO codes silently priced every carrier as "unknown", erasing the carrier signal from an entire pricing run |
+| AeroAPI queries | either resolves; we pass the ICAO `flight_id` as-is | — |
+
+The single source of truth is **`dapp/api/_lib/airline_codes.ts`** — a
+closed 9-carrier ICAO↔IATA table (`toIata` / `toIcao` / `carrierName`),
+accept-either / return-canonical, **null on a miss** (callers fail loud;
+nothing guesses). Discovery converts idents' ICAO prefixes to IATA at
+intake, so everything downstream is already canonical; `price_routes` and
+`route_agent` re-normalize defensively before calling the model. Adding a
+tenth insured airline = adding one row to that table.
 
 **What the model is.** XGBoost (300 gradient-boosted trees) over one-hot
 route/calendar features + numeric departure-time/distance, followed by

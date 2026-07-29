@@ -239,18 +239,13 @@ async function ensureDefaults(ctx: Ctx): Promise<void> {
   );
 }
 
-/** Warm the Render free-tier service (cold start ≈ 1 min > client timeout). */
-async function warmMlService(): Promise<boolean> {
-  for (let i = 0; i < 15; i++) {
-    try {
-      const r = await fetch(`${ML_BASE}/healthz`, { signal: AbortSignal.timeout(10_000) });
-      if (r.ok) return true;
-    } catch {
-      /* cold-starting */
-    }
-    await new Promise((r) => setTimeout(r, 8_000));
+async function mlServiceReachable(): Promise<boolean> {
+  try {
+    const r = await fetch(`${ML_BASE}/healthz`, { signal: AbortSignal.timeout(15_000) });
+    return r.ok;
+  } catch {
+    return false;
   }
-  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -406,26 +401,29 @@ async function buyDayPhase(ctx: Ctx): Promise<void> {
 
   // ── E1/E2: pricing via the DEPLOYED ML API ──────────────────────────────
   console.log("\n── E1 ML pricing (live flight-delay-predictions API) ────");
-  const warmed = await warmMlService();
-  check("live ML service reachable (/healthz, cold-start tolerated)", warmed);
+  const warmed = await mlServiceReachable();
+  check("live ML service reachable (/healthz)", warmed);
   let mlPremium = BASE_PREMIUM; // fallback if service unreachable
   if (warmed) {
     const flightDay = new Date(Number(date) * 1000);
     const agent = new AgentClient(ML_BASE);
+    const flightDayFields = {
+      month: flightDay.getUTCMonth() + 1,
+      day_of_month: flightDay.getUTCDate(),
+      day_of_week: ((flightDay.getUTCDay() + 6) % 7) + 1,
+    };
+    // Real IATA carrier — the model only knows IATA codes, and the service
+    // 422s anything outside its training vocabulary (see E1b).
     const p = await agent.predict(
-      {
-        carrier: "ZZ",
-        origin: "JFK",
-        dest: "LAX",
-        month: flightDay.getUTCMonth() + 1,
-        day_of_month: flightDay.getUTCDate(),
-        day_of_week: ((flightDay.getUTCDay() + 6) % 7) + 1,
-        dep_time_hhmm: 2100,
-        distance_mi: 2475,
-      },
+      { carrier: "UA", origin: "JFK", dest: "LAX", ...flightDayFields, dep_time_hhmm: 2100, distance_mi: 2475 },
       F.govMl
     );
     check("E1: live /predict returned a probability", p !== null && p >= 0 && p <= 1, String(p));
+    const pUnknown = await agent.predict(
+      { carrier: "ZZ", origin: "JFK", dest: "LAX", ...flightDayFields },
+      "unknown-carrier"
+    );
+    check("E1b: unknown carrier rejected by service (422 → null)", pUnknown === null, String(pUnknown));
     if (p !== null) {
       // The REAL protocol pricing functions — same code the cron runs.
       mlPremium = clampPremium(expectedLossPremiumUnits(p, PAYOFF), null, RAILS);

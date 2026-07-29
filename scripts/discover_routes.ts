@@ -33,21 +33,10 @@ import { readFileSync, writeFileSync } from "fs";
 import { loadDotEnv } from "../dapp/scripts/env";
 loadDotEnv();
 import { AeroApiClient } from "../dapp/api/_lib/aeroapi_client";
-
-// ── Tracked carriers (the ONLY airlines we insure) ─────────────────────────
-// ICAO operating codes as returned by /schedules idents, with IATA
-// equivalents accepted defensively.
-const TRACKED_CARRIERS: Record<string, string> = {
-  AAL: "American", AA: "American",
-  DAL: "Delta", DL: "Delta",
-  UAL: "United", UA: "United",
-  ASA: "Alaska", AS: "Alaska",
-  SWA: "Southwest", WN: "Southwest",
-  JBU: "JetBlue", B6: "JetBlue",
-  FFT: "Frontier", F9: "Frontier",
-  NKS: "Spirit", NK: "Spirit",
-  HAL: "Hawaiian", HA: "Hawaiian",
-};
+// Tracked carriers (the ONLY airlines we insure) + ICAO↔IATA conversion.
+// flight_id keeps the ICAO operating ident (attestation key); the stored
+// `carrier` field is IATA (the standard the ML model was trained on).
+import { carrierName, toIata } from "../dapp/api/_lib/airline_codes";
 
 // ── The directed pair matrix ───────────────────────────────────────────────
 const NYC = ["JFK", "EWR", "LGA"];
@@ -65,8 +54,8 @@ const CATALOG_FILE = "config/routes.discovered.json";
 const PACE_MS = Number(process.env.DISCOVER_PACE_MS ?? 4000);
 
 export interface CatalogEntry {
-  flight_id: string;
-  carrier: string; // ICAO operating code (AAL, DAL, ...)
+  flight_id: string; // ICAO operating ident (AAL1152) — the attestation key
+  carrier: string; // IATA code (AA, DL, ...) — the ML model's standard
   carrier_name: string;
   origin: string;
   destination: string;
@@ -141,8 +130,8 @@ async function main(): Promise<void> {
         const ident = (row.actual_ident ?? row.ident) as string;
         const parsed = parseIdent(ident);
         if (!parsed) continue; // unattestable ident
-        const carrierName = TRACKED_CARRIERS[parsed.carrier];
-        if (!carrierName) {
+        const iata = toIata(parsed.carrier);
+        if (!iata) {
           ignoredCarriers++;
           continue; // not one of our nine airlines
         }
@@ -154,8 +143,8 @@ async function main(): Promise<void> {
           found.set(key, {
             entry: {
               flight_id: ident,
-              carrier: parsed.carrier,
-              carrier_name: carrierName,
+              carrier: iata,
+              carrier_name: carrierName(iata)!,
               origin,
               destination,
               sched_out_utc: (row as { scheduled_out?: string }).scheduled_out ?? null,
@@ -186,9 +175,12 @@ async function main(): Promise<void> {
   } catch {
     /* first run */
   }
-  // Prune legacy entries that predate the tracked-carrier rule.
+  // Prune legacy entries that predate the tracked-carrier rule, and
+  // normalize any legacy ICAO carrier codes to the IATA standard.
   const before = catalog.length;
-  catalog = catalog.filter((c) => TRACKED_CARRIERS[c.carrier]);
+  catalog = catalog
+    .filter((c) => toIata(c.carrier) !== null)
+    .map((c) => ({ ...c, carrier: toIata(c.carrier)! }));
   const pruned = before - catalog.length;
 
   const byKey = new Map(catalog.map((c) => [`${c.flight_id}|${c.origin}|${c.destination}`, c]));

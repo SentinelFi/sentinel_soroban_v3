@@ -75,6 +75,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _state["encoder"] = joblib.load(encoder_path)
     _state["model_version"] = version_path.read_text().strip()
     _state["loaded_at"] = datetime.now(timezone.utc).isoformat()
+    # Carrier vocabulary the encoder was fitted on (IATA, from BTS data).
+    # Anything outside it would one-hot to all-zeros ("unknown carrier")
+    # and silently predict without the carrier signal — /predict rejects
+    # such requests instead (422).
+    _state["known_carriers"] = _known_categories(_state["encoder"], "UniqueCarrier")
     yield
     _state.clear()
 
@@ -143,13 +148,36 @@ class PredictResponse(BaseModel):
 # ─── Helpers ──────────────────────────────────────────────────────────────
 
 
+def _known_categories(encoder: Any, column: str) -> frozenset[str] | None:
+    """Category vocabulary the fitted encoder learned for `column`.
+
+    Handles both a bare fitted OneHotEncoder over CAT_FEATURES and a
+    ColumnTransformer wrapping one (columns referenced by name or index).
+    None = not extractable — validation is then skipped, never guessed.
+    """
+    try:
+        transformers = getattr(encoder, "transformers_", None)
+        if transformers is None:
+            return frozenset(encoder.categories_[CAT_FEATURES.index(column)])
+        all_columns = CAT_FEATURES + NUM_FEATURES
+        for _name, trans, cols in transformers:
+            cols = [all_columns[c] if isinstance(c, int) else c for c in list(cols)]
+            if column in cols and hasattr(trans, "categories_"):
+                return frozenset(trans.categories_[cols.index(column)])
+    except Exception:
+        pass
+    return None
+
+
 def to_notebook_format(req: PredictRequest) -> pd.DataFrame:
     """Translate a request into the model's expected DataFrame format.
 
     The training pipeline represents Month/DayofMonth/DayOfWeek as `c-{n}`
     strings (e.g. `c-7`, `c-21`); the fitted ColumnTransformer expects the
-    same encoding at serving time. Unseen carriers/airports are handled by
-    the encoder's handle_unknown="ignore".
+    same encoding at serving time. Unseen airports are handled by the
+    encoder's handle_unknown="ignore"; unseen CARRIERS are rejected with a
+    422 in /predict before reaching here (a carrier outside the training
+    vocabulary would silently predict without the carrier signal).
     """
     row = {
         "Month": f"c-{req.month}",
@@ -205,6 +233,16 @@ def predict(req: PredictRequest) -> PredictResponse:
     this route/day/time historically misses several times more often than
     average, not that THIS flight will.
     """
+    known = _state.get("known_carriers")
+    if known is not None and req.carrier not in known:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Unknown carrier '{req.carrier}'. Expected an IATA code the model "
+                f"was trained on (e.g. UA, AA, DL) — ICAO codes (UAL, AAL) are not "
+                f"accepted; convert first."
+            ),
+        )
     p = predict_p_covered(req)
     vs = p / BASELINE_COVERED_RATE
     risk = "low" if vs < 0.75 else "moderate" if vs < 2.0 else "high"
