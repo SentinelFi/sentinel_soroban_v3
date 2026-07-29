@@ -1341,8 +1341,11 @@ input.field-px[type="date"] {
 	border-bottom-left-radius: var(--radius-card);
 	border-bottom-right-radius: var(--radius-card);
 }
+/* keep the rounded-corner clip but allow horizontal scroll on narrow
+   screens — a bare `overflow: hidden` made the board unscrollable */
 [data-theme="serious"] .board-table-wrap {
-	overflow: hidden;
+	overflow-x: auto;
+	overflow-y: hidden;
 }
 [data-theme="serious"] .board-table-wrap.board-foot {
 	border-radius: 0 0 var(--radius-card) var(--radius-card);

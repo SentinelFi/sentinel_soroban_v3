@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
@@ -25,6 +25,7 @@ import { TransactionButton } from "../components/TransactionButton"
 import { RiskBar } from "../components/RiskBar"
 import { FlightCalendar } from "../components/FlightCalendar"
 import {
+	routeRisk,
 	useProtocolStats,
 	useTotalAssets,
 	useFreeCapital,
@@ -77,8 +78,61 @@ const SAMPLE_ROUTES: UiRoute[] = CANDIDATE_ROUTES.map((route) => ({
 	terms: null,
 }))
 
-/** Rows per page of the departures board. */
+/** Default rows per page of the departures board. */
 const BOARD_PAGE_SIZE = 12
+/** Selectable page sizes — 12 stays the default. */
+const BOARD_PAGE_SIZES = [12, 24, 48, 96]
+
+/** Sortable board columns. */
+type SortKey = "flight" | "status" | "stake"
+type SortState = { key: SortKey; dir: 1 | -1 } | null
+
+/**
+ * Comparator for a sort key (ascending). Flight ids compare numerically
+ * (AA9 before AA100); status compares by the estimated delay-risk value the
+ * row's RiskBar displays (routeRisk is deterministic, so the order is
+ * stable); stake compares premium then payoff, with rows still missing
+ * terms sorted last. Ties break by flight id.
+ */
+function compareRoutes(
+	a: UiRoute,
+	b: UiRoute,
+	key: SortKey,
+	defaults: Defaults | undefined,
+): number {
+	const byFlight = a.flightId.localeCompare(b.flightId, undefined, {
+		numeric: true,
+	})
+	switch (key) {
+		case "flight":
+			return byFlight
+		case "status": {
+			const riskA = routeRisk(a.flightId, `${a.origin}-${a.dest}`)
+			const riskB = routeRisk(b.flightId, `${b.origin}-${b.dest}`)
+			return riskA.delayedPct - riskB.delayedPct || byFlight
+		}
+		case "stake": {
+			const ta = termsFor(a, defaults)
+			const tb = termsFor(b, defaults)
+			if (ta.premium === undefined || tb.premium === undefined)
+				return ta.premium === tb.premium
+					? byFlight
+					: ta.premium === undefined
+						? 1
+						: -1
+			const byPremium = Number(ta.premium - tb.premium)
+			const byPayoff = Number((ta.payoff ?? 0n) - (tb.payoff ?? 0n))
+			return byPremium || byPayoff || byFlight
+		}
+	}
+}
+
+/** External flight-tracking page for a flight id (lowercase slug). */
+function flightradarUrl(flightId: string): string {
+	return `https://www.flightradar24.com/data/flights/${encodeURIComponent(
+		flightId.toLowerCase(),
+	)}`
+}
 
 /** Case-insensitive multi-token match on flight id / airport codes. */
 function matchesQuery(route: UiRoute, query: string): boolean {
@@ -406,6 +460,8 @@ export default function Markets() {
 	const [slipRoute, setSlipRoute] = useState<UiRoute | null>(null)
 	const [query, setQuery] = useState("")
 	const [page, setPage] = useState(0)
+	const [pageSize, setPageSize] = useState(BOARD_PAGE_SIZE)
+	const [sort, setSort] = useState<SortState>(null)
 
 	const {
 		data: routes,
@@ -442,24 +498,70 @@ export default function Markets() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [deepLinkFlight, displayRoutes.length])
 
-	// Search-first board: with 100s of whitelisted flights a raw list is
-	// unusable — filter by flight number or airport code across ALL rows,
-	// then page the results 12 at a time (search resets to page 1).
-	const filtered = displayRoutes.filter((route) =>
-		matchesQuery(route, query),
-	)
-	const pageCount = Math.max(1, Math.ceil(filtered.length / BOARD_PAGE_SIZE))
-	const safePage = Math.min(page, pageCount - 1)
-	const visible = filtered.slice(
-		safePage * BOARD_PAGE_SIZE,
-		(safePage + 1) * BOARD_PAGE_SIZE,
-	)
-
 	const liveRows = (flightData ?? []).map((f) => ({
 		flightId: f.flightId,
 		date: f.date,
 		tag: f.data ? f.data.status.tag : null,
 	}))
+
+	// Top horizontal scrollbar for the board: a thin rail above the table
+	// mirroring the wrap's scrollWidth, kept in sync both ways so either
+	// bar drags the table. Only rendered while the board actually
+	// overflows (narrow screens).
+	const boardScrollRef = useRef<HTMLDivElement>(null)
+	const topScrollRef = useRef<HTMLDivElement>(null)
+	const [boardScrollWidth, setBoardScrollWidth] = useState(0)
+	const [boardOverflows, setBoardOverflows] = useState(false)
+	useEffect(() => {
+		const el = boardScrollRef.current
+		if (!el) return
+		const update = () => {
+			setBoardScrollWidth(el.scrollWidth)
+			setBoardOverflows(el.scrollWidth > el.clientWidth + 1)
+		}
+		update()
+		const ro = new ResizeObserver(update)
+		ro.observe(el)
+		const table = el.querySelector("table")
+		if (table) ro.observe(table)
+		return () => ro.disconnect()
+	}, [])
+	const syncFromBoard = () => {
+		if (topScrollRef.current && boardScrollRef.current)
+			topScrollRef.current.scrollLeft = boardScrollRef.current.scrollLeft
+	}
+	const syncFromTop = () => {
+		if (topScrollRef.current && boardScrollRef.current)
+			boardScrollRef.current.scrollLeft = topScrollRef.current.scrollLeft
+	}
+
+	// Header click cycles ascending → descending → back to board order.
+	const toggleSort = (key: SortKey) => {
+		setPage(0)
+		setSort((prev) =>
+			prev?.key !== key
+				? { key, dir: 1 }
+				: prev.dir === 1
+					? { key, dir: -1 }
+					: null,
+		)
+	}
+
+	// Search-first board: with 100s of whitelisted flights a raw list is
+	// unusable — filter by flight number or airport code across ALL rows,
+	// sort if a column is active, then page the results (search resets to
+	// page 1).
+	const filtered = displayRoutes.filter((route) =>
+		matchesQuery(route, query),
+	)
+	const sorted = sort
+		? [...filtered].sort(
+				(a, b) => compareRoutes(a, b, sort.key, defaults) * sort.dir,
+			)
+		: filtered
+	const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize))
+	const safePage = Math.min(page, pageCount - 1)
+	const visible = sorted.slice(safePage * pageSize, (safePage + 1) * pageSize)
 
 	return (
 		<div className="mx-auto max-w-6xl space-y-8 px-4 py-8">
@@ -491,7 +593,7 @@ export default function Markets() {
 							</span>
 						</h1>
 						<p className="max-w-sm font-body text-[15px] leading-relaxed text-dim">
-							Buying insurance here IS betting your flight lands
+							Buying insurance here IS predicting your flight lands
 							late. Stake a fixed premium; if the flight is{" "}
 							<span className="font-semibold text-loss">
 								delayed
@@ -571,7 +673,25 @@ export default function Markets() {
 					</span>
 				</div>
 
-				<div
+				{/* top scrollbar — mirrors the table's horizontal overflow so
+					    narrow screens get a scroll handle above the board too */}
+					{boardOverflows && (
+						<div
+							ref={topScrollRef}
+							onScroll={syncFromTop}
+							aria-hidden="true"
+							className="overflow-x-auto overflow-y-hidden border-2 border-b-0 border-line bg-surface"
+						>
+							<div
+								style={{ width: boardScrollWidth }}
+								className="h-px"
+							/>
+						</div>
+					)}
+
+					<div
+						ref={boardScrollRef}
+						onScroll={syncFromBoard}
 						className={`board-table-wrap relative overflow-x-auto border-2 border-line bg-inset ${
 							filtered.length > 0 ? "" : "board-foot"
 						}`}
@@ -580,19 +700,53 @@ export default function Markets() {
 					<table className="w-full min-w-[820px] border-collapse">
 						<thead>
 							<tr className="border-b-2 border-line text-left">
-								{[
-									t.markets.colFlight,
-									t.markets.colRoute,
-									t.markets.colDate,
-									t.markets.colStatus,
-									t.markets.colStake,
-									"",
-								].map((h, i) => (
+								{(
+									[
+										{ label: t.markets.colFlight, key: "flight" },
+										{ label: t.markets.colRoute },
+										{ label: t.markets.colDate },
+										{ label: t.markets.colStatus, key: "status" },
+										{ label: t.markets.colStake, key: "stake" },
+										{ label: "" },
+									] as Array<{ label: string; key?: SortKey }>
+								).map((col, i) => (
 									<th
 										key={i}
 										className="label-px px-4 py-2 font-normal"
+										aria-sort={
+											col.key && sort?.key === col.key
+												? sort.dir === 1
+													? "ascending"
+													: "descending"
+												: undefined
+										}
 									>
-										{h}
+										{col.key ? (
+											<button
+												type="button"
+												onClick={() => toggleSort(col.key!)}
+												className="label-px relative z-10 inline-flex items-center gap-1.5 cursor-pointer hover:text-ink"
+												aria-label={t.markets.sortAria(col.label)}
+											>
+												{col.label}
+												<span
+													aria-hidden="true"
+													className={
+														sort?.key === col.key
+															? "text-sky"
+															: "text-mute/50"
+													}
+												>
+													{sort?.key === col.key
+														? sort.dir === 1
+															? "▲"
+															: "▼"
+														: "↕"}
+												</span>
+											</button>
+										) : (
+											col.label
+										)}
 									</th>
 								))}
 							</tr>
@@ -615,8 +769,18 @@ export default function Markets() {
 									key={`${route.flightId}-${route.origin}-${route.dest}`}
 									className="border-b-2 border-line/60 hover:bg-raised/60"
 								>
-									<td className="board-figure px-4 py-3">
-										{route.flightId}
+									<td className="px-4 py-3">
+										<a
+											href={flightradarUrl(route.flightId)}
+											target="_blank"
+											rel="noopener noreferrer"
+											title={t.markets.flightLinkTitle(
+												route.flightId,
+											)}
+											className="board-figure relative z-10 hover:text-sky hover:underline"
+										>
+											{route.flightId}
+										</a>
 									</td>
 									<td className="px-4 py-3 font-body text-[14px] font-semibold tracking-[0.04em] text-ink">
 										{route.origin} → {route.dest}
@@ -703,13 +867,36 @@ export default function Markets() {
 				{/* pagination — page through the whole board, 12 rows at a time */}
 				{filtered.length > 0 && (
 					<div className="board-foot flex flex-wrap items-center justify-between gap-3 border-2 border-t-0 border-line bg-raised px-4 py-3">
-						<span className="label-px">
-							{t.markets.pageLabel(
-								safePage + 1,
-								pageCount,
-								filtered.length,
-							)}
-						</span>
+						<div className="flex flex-wrap items-center gap-3">
+							<span className="label-px">
+								{t.markets.pageLabel(
+									safePage + 1,
+									pageCount,
+									filtered.length,
+								)}
+							</span>
+							<label className="flex items-center gap-2">
+								<span className="label-px">{t.markets.perPage}</span>
+								<select
+									className="field-px w-auto px-2 py-1 text-[13px]"
+									value={pageSize}
+									onChange={(e) => {
+										setPageSize(Number(e.target.value))
+										setPage(0)
+										// drop focus so the field's focus border
+										// doesn't linger after picking a value
+										e.currentTarget.blur()
+									}}
+									aria-label={t.markets.perPageAria}
+								>
+									{BOARD_PAGE_SIZES.map((n) => (
+										<option key={n} value={n}>
+											{n}
+										</option>
+									))}
+								</select>
+							</label>
+						</div>
 						<div className="flex items-center gap-3">
 							<button
 								type="button"

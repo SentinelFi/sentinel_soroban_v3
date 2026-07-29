@@ -1,8 +1,10 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useNotification } from "../hooks/useNotification"
+import { useWallet } from "../hooks/useWallet"
 import { explorerTxUrl } from "../providers/NotificationProvider"
 import type { NotificationType } from "../providers/NotificationProvider"
 import { useTheme } from "../providers/ThemeProvider"
+import { useCopy } from "../copy"
 
 /**
  * Collapsible Activity Log drawer. A small tab docks bottom-left (above the
@@ -22,6 +24,34 @@ const KIND_DOT: Record<NotificationType, string> = {
 	secondary: "var(--color-blip)",
 }
 
+function shortAddr(addr: string) {
+	return `${addr.slice(0, 4)}…${addr.slice(-4)}`
+}
+
+/**
+ * Log wallet connect / disconnect into the activity feed. Watching the
+ * address transition (rather than the connect/disconnect buttons) also
+ * catches session restores on load, account switches, and the provider
+ * signing the user out after a wallet error.
+ */
+function useWalletActivity() {
+	const { address } = useWallet()
+	const { addNotification } = useNotification()
+	const t = useCopy()
+	const prevAddress = useRef<string | undefined>(undefined)
+
+	useEffect(() => {
+		const prev = prevAddress.current
+		if (prev === address) return
+		prevAddress.current = address
+		if (address) {
+			addNotification(t.wallet.connected(shortAddr(address)), "success")
+		} else if (prev) {
+			addNotification(t.wallet.disconnected(shortAddr(prev)), "warning")
+		}
+	}, [address, addNotification, t])
+}
+
 function timeAgo(at: number): string {
 	const s = Math.max(0, Math.round((Date.now() - at) / 1000))
 	if (s < 60) return `${s}s ago`
@@ -36,6 +66,7 @@ export function ActivityLog() {
 	const { theme } = useTheme()
 	const serious = theme === "serious"
 	const [open, setOpen] = useState(false)
+	useWalletActivity()
 
 	return (
 		<div className="activity-dock" data-open={open}>
