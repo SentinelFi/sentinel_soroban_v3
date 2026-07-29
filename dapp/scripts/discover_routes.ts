@@ -94,9 +94,14 @@ export async function discoverRoutes(
         maxPages: 5, // busy pairs (JFK-LAX) run >15 rows/day
       });
       if (!resp) {
-        console.warn(`[discover] ${origin}->${destination} ${day}: no data (skipped)`);
+        console.warn(`[discover] ${origin}->${destination} ${day}: request failed (skipped)`);
         continue;
       }
+      // Pace the sweep: 60 back-to-back max_pages=5 calls trip AeroAPI's
+      // per-minute rate limit and the tail of the sweep silently fails
+      // (observed 2026-07-29: dense pairs returned null while a lone
+      // curl to the same endpoint succeeded). DISCOVER_PACE_MS=0 disables.
+      await new Promise((r) => setTimeout(r, Number(process.env.DISCOVER_PACE_MS ?? 4000)));
 
       const dayIdents = new Set<string>();
       for (const row of resp.scheduled ?? []) {

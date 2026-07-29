@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Single human source of truth for insurable routes. Consumed by: scripts/whitelist_routes.ts (governance whitelisting), api/cron/authorize.ts (sale-window attestation list), api/cron/agent.ts (ML/weather repricing rails + human intent). Amounts are human USDC; scripts convert to 7-decimal base units. 'enabled': false = human-disabled \u2014 agents will disable it on-chain if needed and will NEVER re-enable it.",
+  "$schema_note": "Single human source of truth for insurable routes. Consumed by: scripts/whitelist_routes.ts (governance whitelisting), api/cron/authorize.ts (sale-window attestation list), api/cron/agent.ts (ML/weather repricing rails + human intent). Amounts are human USDC; scripts convert to 7-decimal base units. 'enabled': false = human-disabled — agents will disable it on-chain if needed and will NEVER re-enable it.",
   "network": "testnet",
   "defaults": {
     "premium_usdc": 15,
@@ -25,18 +25,18 @@
       "carrier": "AA",
       "origin": "JFK",
       "destination": "LAX",
-      "enabled": true,
+      "enabled": false,
       "overrides": null,
-      "notes": "example with per-route term overrides"
+      "notes": "hand-seeded demo route (pre-discovery) — retired 2026-07-29; fleet is AeroAPI-discovered only"
     },
     {
       "flight_id": "UA456",
       "carrier": "UA",
       "origin": "ORD",
       "destination": "SFO",
-      "enabled": true,
+      "enabled": false,
       "overrides": null,
-      "notes": "null overrides = protocol defaults; agent reprices within rails"
+      "notes": "hand-seeded demo route (pre-discovery) — retired 2026-07-29; fleet is AeroAPI-discovered only"
     },
     {
       "flight_id": "DL789",
@@ -1846,6 +1846,141 @@
       "enabled": true,
       "overrides": null,
       "notes": "discovered 2026-07-28+2026-08-01 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL365",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=2)"
+    },
+    {
+      "flight_id": "DAL679",
+      "carrier": "DAL",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=2)"
+    },
+    {
+      "flight_id": "JBU215",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=2)"
+    },
+    {
+      "flight_id": "JBU415",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=2)"
+    },
+    {
+      "flight_id": "JBU515",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=2)"
+    },
+    {
+      "flight_id": "AAL149",
+      "carrier": "AAL",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU15",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU615",
+      "carrier": "JBU",
+      "origin": "JFK",
+      "destination": "SFO",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "DAL691",
+      "carrier": "DAL",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU116",
+      "carrier": "JBU",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU16",
+      "carrier": "JBU",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU216",
+      "carrier": "JBU",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU316",
+      "carrier": "JBU",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU416",
+      "carrier": "JBU",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
+    },
+    {
+      "flight_id": "JBU816",
+      "carrier": "JBU",
+      "origin": "SFO",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "discovered 2026-08-04+2026-08-08 (days_seen=1)"
     }
   ]
 }
