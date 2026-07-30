@@ -85,7 +85,8 @@ The bots fall into **three tiers with different decentralization stories**:
   currently require the `authorized_keeper` key (spam control, not
   integrity — classification is deterministic from attested oracle data);
   the planned contract upgrade makes them permissionless with per-flight
-  bounties so third-party keeper bots earn for running them (spec/TODO.md §E).
+  bounties so third-party keeper bots earn for running them (see the
+  Decentralization Roadmap in spec/architecture.md).
 - **Keys decide authority, not the runner.** A third-party bot run only lands
   writes if its signing address is authorized on-chain — publishing the code
   gives away no power.

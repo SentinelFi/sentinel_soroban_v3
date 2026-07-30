@@ -1489,7 +1489,8 @@ attest real-world facts), and
 they move no new information on-chain, only execute what the oracle already
 attested). **Only the keeper tier is open-source-and-anyone-can-run**: every
 job runs standalone via `npm run bot -- <name>`, `ttl_extender` is
-permissionless today, and the planned bounty upgrade (spec/TODO.md §E) makes
+permissionless today, and the planned bounty upgrade (see the
+[Decentralization Roadmap](#decentralization-roadmap--from-our-crons-to-permissionless-keepers)) makes
 the remaining keeper entry points permissionless-and-paid. **Governance and
 oracle stay centralized** — the oracle's future trust upgrade is a TEE
 backend (address rotation, unchanged contracts), not permissionless
@@ -1511,7 +1512,7 @@ Roadmap](#decentralization-roadmap--from-our-crons-to-permissionless-keepers).
   (the `flight_schedules` timing hints, the guard's ledger dedupe)
   must degrade gracefully, never gate.
 - **The webhook is optional.** The planned AeroAPI push-alert webhook
-  (spec/TODO.md §B) only improves cancellation/arrival *latency* from hours
+  (a future improvement, documented in dapp/README.md) only improves cancellation/arrival *latency* from hours
   to seconds — the settle sweep remains the guaranteed base layer and the
   reconciliation path for missed alerts. If both die, sale windows
   self-expire (≤6h on-chain cap) and sales fail closed. The webhook must
@@ -2092,8 +2093,7 @@ Phase C          keeper kit published (events-poller + the existing bots);
 
 Each phase preserves the fail-closed property: at no point does
 decentralizing execution create a state where money moves without the
-contracts' own verification. The task-level checklist lives in
-[TODO.md §E](TODO.md).
+contracts' own verification.
 
 ---
 
@@ -2499,8 +2499,7 @@ pricing_runs, applied only by the admin's seeding ritual.)
 
 Governance is designed to become **fully automated** in staged levels — each
 level keeps the same inversion (facts in, one audited actor out) and adds
-capability, never new trust. The task-level plan lives in
-[TODO.md §D](TODO.md); the architecture-level intent:
+capability, never new trust. The architecture-level intent:
 
 **L1 — rules on facts** (history). The original design: collectors wrote
 facts into a `signals` table and a reconciler acted on them hourly.
