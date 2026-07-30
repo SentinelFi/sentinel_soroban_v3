@@ -23,6 +23,7 @@ import { PixelArt } from "../components/PixelArt"
 import { SeriousIcon } from "../components/SeriousIcon"
 import { HowItWorksBubble } from "../components/InfoBubble"
 import { TransactionButton } from "../components/TransactionButton"
+import { TxProgress } from "../components/TxProgress"
 import { Sparkline } from "../components/Sparkline"
 import { SharePriceChart } from "../components/SharePriceChart"
 import {
@@ -402,6 +403,7 @@ export default function House() {
 					>
 						{connected ? t.house.depositCta : t.house.connectWallet}
 					</TransactionButton>
+					<TxProgress state={depositTx} steps={["awaiting", "confirming"]} error={txError} />
 					<p className="mt-2 font-body text-[13px] text-mute">
 						{t.house.depositQueueHint}
 					</p>
@@ -463,7 +465,7 @@ export default function House() {
 							</span>
 							<span className="board-figure text-[20px] text-win">
 								{protocolStats !== undefined
-									? `+${formatUsdc(protocolStats.totalPremiums)} USDC`
+									? `+${formatUsdc(protocolStats.totalPremiumsCollected)} USDC`
 									: "…"}
 							</span>
 						</div>
@@ -525,6 +527,7 @@ export default function House() {
 						>
 							{connected ? t.house.queueCta : t.house.connectWallet}
 						</TransactionButton>
+						<TxProgress state={requestTx} steps={["awaiting", "confirming"]} error={txError} />
 						<p className="mt-2 font-body text-[13px] text-mute">
 							{t.house.queueHint}
 						</p>
@@ -640,6 +643,7 @@ export default function House() {
 								>
 									{t.house.collectCta}
 								</TransactionButton>
+								<TxProgress state={collectTx} steps={["awaiting", "confirming"]} error={txError} />
 							</div>
 						) : (
 							<p className="font-board text-[18px] text-mute">

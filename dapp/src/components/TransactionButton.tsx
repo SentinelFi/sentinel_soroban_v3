@@ -2,6 +2,7 @@ import type { TxState } from "../types"
 import { cn } from "../lib/utils"
 
 const STATE_LABEL: Partial<Record<TxState, string>> = {
+	verifying: "VERIFYING…",
 	awaiting: "CHECK WALLET…",
 	confirming: "CONFIRMING…",
 	success: "✓ DONE",
@@ -25,7 +26,7 @@ export function TransactionButton({
 	className?: string
 	children: React.ReactNode
 }) {
-	const busy = state === "awaiting" || state === "confirming"
+	const busy = state === "verifying" || state === "awaiting" || state === "confirming"
 	return (
 		<button
 			type="button"

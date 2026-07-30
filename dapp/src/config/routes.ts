@@ -1,5 +1,5 @@
 /**
- * Candidate flight routes — 200 US-domestic flights.
+ * Candidate flight routes — sourced from the fleet file at build time.
  *
  * The phase-3 GovernanceModule intentionally has no on-chain route
  * enumeration (routes are keyed storage, queried per-route via
@@ -8,15 +8,25 @@
  * `Active` are shown on the board, with terms taken from the chain — never
  * from this file.
  *
- * Sized for scale: exactly 200 candidates, all real US IATA airport pairs
- * on US carriers (AA UA DL WN B6 AS NK F9 HA G4). `useRoutes` resolves
- * these in chunks of 20 to stay friendly to the public RPC, streaming
- * results to the board as each chunk lands. The board UI is search-first.
+ * `config/routes.testnet.json` is the single human source of truth for
+ * insurable routes (see its `$schema_note`) — the same file the seeding
+ * pipeline, sale-auth, weather, and reprice jobs already read server-side
+ * (`api/_lib/routes_config.ts`). Importing it here instead of hand-typing
+ * a duplicate list means a newly whitelisted route shows up on the board
+ * on the next deploy, with no second file to remember to update. Every
+ * fleet entry is included regardless of its `enabled` flag — that flag
+ * governs the sale-authorizer, not display; the live chain read is what
+ * decides whether a route is actually shown.
  *
- * The first three entries (AA100, UA200, DL300) are the historical
- * on-chain routes — keep them first. To list a new route: whitelist it
- * on-chain from the classic frontend's Admin page, then add it here.
+ * `useActiveRoutes` resolves these in chunks of 20 to stay friendly to the
+ * public RPC, streaming results to the board as each chunk lands. The
+ * board UI is search-first, so import order doesn't matter.
+ *
+ * Also exports `DEMO_ROUTES` — a random sample used when nothing has
+ * resolved Active on-chain yet (see its own doc comment below).
  */
+
+import routesConfig from "../../config/routes.testnet.json"
 
 export interface CandidateRoute {
 	flightId: string
@@ -24,205 +34,44 @@ export interface CandidateRoute {
 	dest: string
 }
 
-export const CANDIDATE_ROUTES: CandidateRoute[] = [
-	{ flightId: "AA100", origin: "JFK", dest: "LAX" },
-	{ flightId: "UA200", origin: "SFO", dest: "ORD" },
-	{ flightId: "DL300", origin: "ATL", dest: "MIA" },
-	{ flightId: "AA97", origin: "MIA", dest: "BWI" },
-	{ flightId: "AA196", origin: "CVG", dest: "MIA" },
-	{ flightId: "AA273", origin: "SMF", dest: "JFK" },
-	{ flightId: "AA324", origin: "JFK", dest: "MKE" },
-	{ flightId: "AA342", origin: "CVG", dest: "JFK" },
-	{ flightId: "AA346", origin: "ORD", dest: "LAX" },
-	{ flightId: "AA395", origin: "TPA", dest: "MIA" },
-	{ flightId: "AA769", origin: "ANC", dest: "DFW" },
-	{ flightId: "AA895", origin: "LAX", dest: "RSW" },
-	{ flightId: "AA910", origin: "JFK", dest: "RSW" },
-	{ flightId: "AA975", origin: "MIA", dest: "RDU" },
-	{ flightId: "AA983", origin: "ANC", dest: "DCA" },
-	{ flightId: "AA988", origin: "DCA", dest: "PIT" },
-	{ flightId: "AA1231", origin: "PHX", dest: "BOS" },
-	{ flightId: "AA1295", origin: "ORD", dest: "AUS" },
-	{ flightId: "AA1389", origin: "MIA", dest: "LAS" },
-	{ flightId: "AA1548", origin: "MIA", dest: "SJC" },
-	{ flightId: "AA1604", origin: "LAX", dest: "SEA" },
-	{ flightId: "AA1616", origin: "LAX", dest: "FLL" },
-	{ flightId: "AA1626", origin: "DCA", dest: "FLL" },
-	{ flightId: "AA1638", origin: "JFK", dest: "ORD" },
-	{ flightId: "AA1643", origin: "CVG", dest: "LAX" },
-	{ flightId: "AA1677", origin: "SJC", dest: "DCA" },
-	{ flightId: "AA1687", origin: "STL", dest: "LAX" },
-	{ flightId: "AA1770", origin: "PHX", dest: "STL" },
-	{ flightId: "AA1841", origin: "LAX", dest: "BUF" },
-	{ flightId: "AA2025", origin: "DCA", dest: "SMF" },
-	{ flightId: "AA2176", origin: "JFK", dest: "BUF" },
-	{ flightId: "AA2265", origin: "LAS", dest: "MIA" },
-	{ flightId: "AA2309", origin: "FLL", dest: "DFW" },
-	{ flightId: "AS85", origin: "PDX", dest: "SEA" },
-	{ flightId: "AS246", origin: "MIA", dest: "SAN" },
-	{ flightId: "AS498", origin: "DAL", dest: "LAX" },
-	{ flightId: "AS524", origin: "ANC", dest: "BOS" },
-	{ flightId: "AS749", origin: "SEA", dest: "ONT" },
-	{ flightId: "AS1069", origin: "SEA", dest: "LAX" },
-	{ flightId: "AS1173", origin: "SEA", dest: "MIA" },
-	{ flightId: "AS1226", origin: "BUR", dest: "SFO" },
-	{ flightId: "AS1262", origin: "SEA", dest: "ORD" },
-	{ flightId: "AS1567", origin: "ANC", dest: "SNA" },
-	{ flightId: "AS1953", origin: "LAX", dest: "PHX" },
-	{ flightId: "AS1956", origin: "ABQ", dest: "LAX" },
-	{ flightId: "AS2018", origin: "MSY", dest: "PDX" },
-	{ flightId: "AS2051", origin: "SAN", dest: "BWI" },
-	{ flightId: "AS2301", origin: "ANC", dest: "ONT" },
-	{ flightId: "AS2332", origin: "ANC", dest: "SJC" },
-	{ flightId: "AS2350", origin: "PDX", dest: "SNA" },
-	{ flightId: "AS2383", origin: "IND", dest: "SAN" },
-	{ flightId: "B640", origin: "MCO", dest: "JFK" },
-	{ flightId: "B6115", origin: "SJC", dest: "BOS" },
-	{ flightId: "B6167", origin: "BOS", dest: "MCO" },
-	{ flightId: "B6168", origin: "JFK", dest: "BOS" },
-	{ flightId: "B6175", origin: "SAN", dest: "FLL" },
-	{ flightId: "B6208", origin: "LGA", dest: "SNA" },
-	{ flightId: "B6590", origin: "PHX", dest: "MCO" },
-	{ flightId: "B6820", origin: "MSP", dest: "JFK" },
-	{ flightId: "B6831", origin: "LGA", dest: "DCA" },
-	{ flightId: "B61126", origin: "LGA", dest: "FLL" },
-	{ flightId: "B61309", origin: "FLL", dest: "BUR" },
-	{ flightId: "B61449", origin: "SFO", dest: "JFK" },
-	{ flightId: "B61639", origin: "LGA", dest: "TPA" },
-	{ flightId: "B61757", origin: "IAH", dest: "BOS" },
-	{ flightId: "B61900", origin: "PIT", dest: "FLL" },
-	{ flightId: "B61945", origin: "ANC", dest: "JFK" },
-	{ flightId: "B61962", origin: "FLL", dest: "SMF" },
-	{ flightId: "B62204", origin: "FLL", dest: "RSW" },
-	{ flightId: "B62345", origin: "FLL", dest: "BWI" },
-	{ flightId: "B62359", origin: "LGA", dest: "OAK" },
-	{ flightId: "DL63", origin: "JAX", dest: "SEA" },
-	{ flightId: "DL231", origin: "MCO", dest: "LGA" },
-	{ flightId: "DL305", origin: "BOS", dest: "SLC" },
-	{ flightId: "DL419", origin: "FLL", dest: "ATL" },
-	{ flightId: "DL442", origin: "LGA", dest: "ATL" },
-	{ flightId: "DL451", origin: "ATL", dest: "SJC" },
-	{ flightId: "DL502", origin: "BOS", dest: "IAH" },
-	{ flightId: "DL822", origin: "SJC", dest: "JFK" },
-	{ flightId: "DL827", origin: "DAL", dest: "SEA" },
-	{ flightId: "DL831", origin: "MSP", dest: "DAL" },
-	{ flightId: "DL911", origin: "DTW", dest: "BWI" },
-	{ flightId: "DL917", origin: "DFW", dest: "ATL" },
-	{ flightId: "DL947", origin: "BOS", dest: "SEA" },
-	{ flightId: "DL1028", origin: "LAX", dest: "LGA" },
-	{ flightId: "DL1065", origin: "DFW", dest: "MSP" },
-	{ flightId: "DL1087", origin: "JAX", dest: "SLC" },
-	{ flightId: "DL1124", origin: "MKE", dest: "SEA" },
-	{ flightId: "DL1281", origin: "DTW", dest: "SMF" },
-	{ flightId: "DL1295", origin: "LGA", dest: "MKE" },
-	{ flightId: "DL1341", origin: "MCO", dest: "MSP" },
-	{ flightId: "DL1355", origin: "DEN", dest: "LGA" },
-	{ flightId: "DL1366", origin: "BWI", dest: "BOS" },
-	{ flightId: "DL1548", origin: "LGA", dest: "MDW" },
-	{ flightId: "DL1694", origin: "MSP", dest: "DFW" },
-	{ flightId: "DL1766", origin: "DCA", dest: "LGA" },
-	{ flightId: "DL1841", origin: "BOS", dest: "ABQ" },
-	{ flightId: "DL1895", origin: "DEN", dest: "DTW" },
-	{ flightId: "DL1897", origin: "DTW", dest: "MSP" },
-	{ flightId: "DL1916", origin: "JFK", dest: "ABQ" },
-	{ flightId: "DL2212", origin: "ATL", dest: "SAN" },
-	{ flightId: "F9290", origin: "MIA", dest: "TPA" },
-	{ flightId: "F9342", origin: "LGA", dest: "MIA" },
-	{ flightId: "F9743", origin: "MCO", dest: "DEN" },
-	{ flightId: "F9747", origin: "MIA", dest: "STL" },
-	{ flightId: "F9771", origin: "ABQ", dest: "PHX" },
-	{ flightId: "F91015", origin: "LAS", dest: "LGA" },
-	{ flightId: "F91303", origin: "STL", dest: "MCO" },
-	{ flightId: "F91393", origin: "DTW", dest: "MIA" },
-	{ flightId: "F92153", origin: "TPA", dest: "ABQ" },
-	{ flightId: "F92159", origin: "MIA", dest: "HNL" },
-	{ flightId: "F92348", origin: "BOS", dest: "DEN" },
-	{ flightId: "F92399", origin: "TPA", dest: "LGA" },
-	{ flightId: "G4587", origin: "FLL", dest: "STL" },
-	{ flightId: "G41212", origin: "LAS", dest: "IND" },
-	{ flightId: "G41528", origin: "TPA", dest: "CMH" },
-	{ flightId: "G41656", origin: "MKE", dest: "LAS" },
-	{ flightId: "G41872", origin: "LAS", dest: "CVG" },
-	{ flightId: "G42393", origin: "ABQ", dest: "LAS" },
-	{ flightId: "HA301", origin: "HNL", dest: "SMF" },
-	{ flightId: "HA844", origin: "HNL", dest: "SJC" },
-	{ flightId: "HA1019", origin: "SEA", dest: "HNL" },
-	{ flightId: "HA1070", origin: "HNL", dest: "SAN" },
-	{ flightId: "HA1617", origin: "LAS", dest: "HNL" },
-	{ flightId: "HA2118", origin: "HNL", dest: "SFO" },
-	{ flightId: "NK424", origin: "LAS", dest: "ABQ" },
-	{ flightId: "NK503", origin: "IAH", dest: "ATL" },
-	{ flightId: "NK603", origin: "MIA", dest: "DFW" },
-	{ flightId: "NK643", origin: "IAH", dest: "TPA" },
-	{ flightId: "NK706", origin: "FLL", dest: "ANC" },
-	{ flightId: "NK836", origin: "SJC", dest: "ATL" },
-	{ flightId: "NK888", origin: "ABQ", dest: "FLL" },
-	{ flightId: "NK1048", origin: "BWI", dest: "DFW" },
-	{ flightId: "NK1077", origin: "DFW", dest: "FLL" },
-	{ flightId: "NK1365", origin: "DFW", dest: "JAX" },
-	{ flightId: "NK1503", origin: "ABQ", dest: "DTW" },
-	{ flightId: "NK1585", origin: "LAS", dest: "SNA" },
-	{ flightId: "NK1626", origin: "DFW", dest: "SJC" },
-	{ flightId: "UA26", origin: "IAH", dest: "EWR" },
-	{ flightId: "UA110", origin: "EWR", dest: "BWI" },
-	{ flightId: "UA177", origin: "ATL", dest: "EWR" },
-	{ flightId: "UA213", origin: "DCA", dest: "ORD" },
-	{ flightId: "UA403", origin: "SLC", dest: "ORD" },
-	{ flightId: "UA434", origin: "SEA", dest: "EWR" },
-	{ flightId: "UA668", origin: "IAH", dest: "DFW" },
-	{ flightId: "UA710", origin: "LAX", dest: "STL" },
-	{ flightId: "UA815", origin: "SFO", dest: "LAX" },
-	{ flightId: "UA976", origin: "LAX", dest: "HNL" },
-	{ flightId: "UA1039", origin: "DEN", dest: "MCO" },
-	{ flightId: "UA1112", origin: "EWR", dest: "MKE" },
-	{ flightId: "UA1158", origin: "LGA", dest: "IAH" },
-	{ flightId: "UA1172", origin: "DEN", dest: "MKE" },
-	{ flightId: "UA1176", origin: "CMH", dest: "IAH" },
-	{ flightId: "UA1292", origin: "EWR", dest: "JAX" },
-	{ flightId: "UA1323", origin: "SAN", dest: "LAX" },
-	{ flightId: "UA1381", origin: "PDX", dest: "ORD" },
-	{ flightId: "UA1581", origin: "SFO", dest: "FLL" },
-	{ flightId: "UA1675", origin: "SMF", dest: "DEN" },
-	{ flightId: "UA1756", origin: "DEN", dest: "JAX" },
-	{ flightId: "UA1929", origin: "SFO", dest: "LAS" },
-	{ flightId: "UA2038", origin: "MSY", dest: "EWR" },
-	{ flightId: "UA2138", origin: "IAH", dest: "AUS" },
-	{ flightId: "UA2163", origin: "ORD", dest: "DEN" },
-	{ flightId: "UA2172", origin: "DEN", dest: "BNA" },
-	{ flightId: "UA2314", origin: "ORD", dest: "DAL" },
-	{ flightId: "UA2349", origin: "MIA", dest: "SFO" },
-	{ flightId: "UA2363", origin: "DEN", dest: "MSY" },
-	{ flightId: "UA2389", origin: "BUR", dest: "IAH" },
-	{ flightId: "WN15", origin: "PDX", dest: "MDW" },
-	{ flightId: "WN45", origin: "BUF", dest: "LAS" },
-	{ flightId: "WN57", origin: "HOU", dest: "SFO" },
-	{ flightId: "WN343", origin: "BOS", dest: "DAL" },
-	{ flightId: "WN390", origin: "LAS", dest: "BOS" },
-	{ flightId: "WN392", origin: "OAK", dest: "BOS" },
-	{ flightId: "WN444", origin: "PHX", dest: "CVG" },
-	{ flightId: "WN541", origin: "PHX", dest: "MSY" },
-	{ flightId: "WN704", origin: "SAN", dest: "AUS" },
-	{ flightId: "WN786", origin: "SLC", dest: "DAL" },
-	{ flightId: "WN870", origin: "DAL", dest: "JAX" },
-	{ flightId: "WN968", origin: "EWR", dest: "LAS" },
-	{ flightId: "WN970", origin: "MDW", dest: "DEN" },
-	{ flightId: "WN1121", origin: "TPA", dest: "LAS" },
-	{ flightId: "WN1128", origin: "FLL", dest: "OAK" },
-	{ flightId: "WN1178", origin: "PIT", dest: "PHX" },
-	{ flightId: "WN1193", origin: "BWI", dest: "RSW" },
-	{ flightId: "WN1260", origin: "STL", dest: "SEA" },
-	{ flightId: "WN1482", origin: "DAL", dest: "ABQ" },
-	{ flightId: "WN1542", origin: "MDW", dest: "BUF" },
-	{ flightId: "WN1752", origin: "SAN", dest: "DEN" },
-	{ flightId: "WN1802", origin: "DAL", dest: "DEN" },
-	{ flightId: "WN1815", origin: "MDW", dest: "SMF" },
-	{ flightId: "WN1956", origin: "ANC", dest: "SAN" },
-	{ flightId: "WN1981", origin: "CVG", dest: "MCO" },
-	{ flightId: "WN1993", origin: "EWR", dest: "HOU" },
-	{ flightId: "WN2043", origin: "FLL", dest: "HOU" },
-	{ flightId: "WN2059", origin: "LAS", dest: "BUR" },
-	{ flightId: "WN2138", origin: "DTW", dest: "STL" },
-	{ flightId: "WN2280", origin: "BWI", dest: "ABQ" },
-	{ flightId: "WN2335", origin: "BUF", dest: "HOU" },
-	{ flightId: "WN2371", origin: "MDW", dest: "ONT" },
-]
+interface FleetRouteEntry {
+	flight_id: string
+	origin: string
+	destination: string
+	enabled: boolean
+}
+
+const fleet = routesConfig as { routes: FleetRouteEntry[] }
+
+export const CANDIDATE_ROUTES: CandidateRoute[] = fleet.routes.map((r) => ({
+	flightId: r.flight_id,
+	origin: r.origin,
+	dest: r.destination,
+}))
+
+function randomSample<T>(items: T[], n: number): T[] {
+	const shuffled = [...items]
+	for (let i = shuffled.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1))
+		;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+	}
+	return shuffled.slice(0, n)
+}
+
+const DEMO_SAMPLE_SIZE = 14
+
+/**
+ * The board's DEMO/SAMPLE fallback when nothing has resolved Active
+ * on-chain yet — a random sample of the fleet's whitelisted (`enabled`)
+ * routes, picked once per page load. Prefers `enabled` routes since those
+ * are the ones actually meant to be sellable; falls back to the full
+ * fleet if every entry happens to be human-disabled, so a non-empty fleet
+ * file still always has *some* demo data to show.
+ */
+export const DEMO_ROUTES: CandidateRoute[] = randomSample(
+	(fleet.routes.filter((r) => r.enabled).length > 0
+		? fleet.routes.filter((r) => r.enabled)
+		: fleet.routes
+	).map((r) => ({ flightId: r.flight_id, origin: r.origin, dest: r.destination })),
+	DEMO_SAMPLE_SIZE,
+)

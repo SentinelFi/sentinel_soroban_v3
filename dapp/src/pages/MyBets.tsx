@@ -12,8 +12,10 @@ import {
 } from "../hooks/useContracts"
 import { useWallet } from "../hooks/useWallet"
 import { useNotification } from "../hooks/useNotification"
-import { formatDate } from "../lib/utils"
+import { cn, formatDate } from "../lib/utils"
 import { PixelArt } from "../components/PixelArt"
+import { TxProgress } from "../components/TxProgress"
+import type { TxState } from "../types"
 import { useTheme } from "../providers/ThemeProvider"
 import { useCopy } from "../copy"
 import { Plane, Trophy, Clock, Check, PlaneTakeoff } from "lucide-react"
@@ -98,6 +100,8 @@ export default function MyBets() {
 	const { theme } = useTheme()
 	const serious = theme === "serious"
 	const [claimingId, setClaimingId] = useState<string | null>(null)
+	const [claimTxState, setClaimTxState] = useState<TxState>("idle")
+	const [claimError, setClaimError] = useState<string | null>(null)
 
 	const { data: flights, isLoading: flightsLoading } =
 		useTravelerFlights(address)
@@ -233,27 +237,37 @@ export default function MyBets() {
 	const handleClaim = async (bet: Bet) => {
 		if (!address || claimingId) return
 		setClaimingId(bet.id)
+		setClaimTxState("awaiting")
+		setClaimError(null)
 		try {
 			const tx = await flightPoolManagerClient.claim({
 				traveler: address,
 				flight_id: bet.flightId,
 				date: bet.date,
 			})
+			setClaimTxState("confirming")
 			await tx.signAndSend({ signTransaction })
+			setClaimTxState("success")
 			addNotification(
 				`Payout claimed for flight ${bet.flightId}!`,
 				"success",
 			)
 			void queryClient.invalidateQueries({ queryKey: ["pool"] })
 			void queryClient.invalidateQueries({ queryKey: ["usdc"] })
+			setTimeout(() => {
+				setClaimTxState("idle")
+				setClaimingId(null)
+			}, 2000)
 		} catch (err) {
 			console.error("Claim failed:", err)
-			addNotification(
-				err instanceof Error ? err.message : "Claim failed",
-				"error",
-			)
-		} finally {
-			setClaimingId(null)
+			const message = err instanceof Error ? err.message : "Claim failed"
+			setClaimError(message)
+			setClaimTxState("error")
+			addNotification(message, "error")
+			setTimeout(() => {
+				setClaimTxState("idle")
+				setClaimingId(null)
+			}, 3000)
 		}
 	}
 
@@ -354,12 +368,23 @@ export default function MyBets() {
 									type="button"
 									onClick={() => void handleClaim(bet)}
 									disabled={claimingId !== null}
-									className="btn-px btn-win mt-4 w-full"
+									className={cn(
+										"btn-px btn-win mt-4 w-full",
+										claimingId === null && "claim-btn-pulse",
+									)}
 								>
 									{claimingId === bet.id
 										? t.policies.claiming
 										: t.policies.claimBtn}
 								</button>
+								{claimingId === bet.id && (
+									<TxProgress
+										state={claimTxState}
+										steps={["awaiting", "confirming"]}
+										error={claimError}
+										stamps={{ success: "stamp-paid" }}
+									/>
+								)}
 							</div>
 						))}
 					</div>
@@ -373,7 +398,7 @@ export default function MyBets() {
 						{serious ? (
 							<PlaneTakeoff className="h-5 w-5" strokeWidth={1.7} />
 						) : (
-							<span className="blink inline-block h-2 w-2 bg-win align-middle" />
+							<span className="breathe inline-block h-2 w-2 bg-win align-middle" />
 						)}
 						{t.policies.active}
 					</h2>

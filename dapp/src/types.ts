@@ -1,1 +1,1 @@
-export type TxState = "idle" | "awaiting" | "confirming" | "success" | "error"
+export type TxState = "idle" | "verifying" | "awaiting" | "confirming" | "success" | "error"

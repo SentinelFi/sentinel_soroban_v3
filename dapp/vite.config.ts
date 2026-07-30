@@ -27,5 +27,10 @@ export default defineConfig({
 	server: {
 		port: 5175,
 		strictPort: true,
+		proxy: {
+			// api/**/*.ts only run under Vercel's function runtime — vite dev
+			// serves the SPA, `npm run dev:api` (scripts/dev_api.ts) serves /api.
+			"/api": "http://localhost:3000",
+		},
 	},
 })

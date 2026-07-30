@@ -9,10 +9,14 @@ import {
   type InterventionRow,
 } from "../_lib/governance/interventions";
 
+const MAX_LIMIT = 200;
+const DEFAULT_LIMIT = 50;
+
 /**
  * Admin API — the interventions ledger (replaces the signals API).
  *
- * GET    → open interventions + the last 50 closed (context)
+ * GET    → paginated ledger: ?state=open|closed (default open) &page=
+ *          &limit= &cause= — the "what's paused/unpaused and why" view.
  * POST   → pause a route by hand: { flight_id, origin, dest, reason }
  *          — an `admin` intervention; NEVER auto-revived.
  * PATCH  → revive by id: { id } — closes that row (any cause; this is
@@ -24,8 +28,18 @@ import {
  * `admin:<email>`).
  */
 
-export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
-  const admin = await verifyAdmin(req);
+/** Optional dependency injection seam — tests pass fakes, production omits. */
+export interface InterventionsDeps {
+  verifyAdmin?: typeof verifyAdmin;
+  loadGovConfig?: typeof loadGovConfig;
+}
+
+export async function handler(
+  req: VercelRequest,
+  res: VercelResponse,
+  deps: InterventionsDeps = {}
+): Promise<void> {
+  const admin = await (deps.verifyAdmin ?? verifyAdmin)(req);
   if (!admin) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -36,19 +50,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     const sql = getDb();
 
     if (req.method === "GET") {
-      const open = await sql`
-        select * from interventions where revived_at is null order by opened_at desc
+      const state = req.query.state === "closed" ? "closed" : "open";
+      const cause = typeof req.query.cause === "string" ? req.query.cause.trim() : "";
+      const page = Math.max(1, Number(req.query.page) || 1);
+      const limit = Math.min(MAX_LIMIT, Math.max(1, Number(req.query.limit) || DEFAULT_LIMIT));
+      const offset = (page - 1) * limit;
+
+      const conditions = [state === "open" ? sql`revived_at is null` : sql`revived_at is not null`];
+      if (cause) conditions.push(sql`cause = ${cause}`);
+      const where = sql`where ${conditions.reduce((a, b) => sql`${a} and ${b}`)}`;
+      const orderBy = state === "open" ? sql`opened_at desc` : sql`revived_at desc`;
+
+      const rows = await sql`
+        select *, count(*) over () as full_count from interventions
+        ${where}
+        order by ${orderBy}
+        limit ${limit} offset ${offset}
       `.catch(() => []);
-      const closed = await sql`
-        select * from interventions where revived_at is not null
-        order by revived_at desc limit 50
-      `.catch(() => []);
-      res.status(200).json({ open, closed });
+      const total = rows.length > 0 ? Number(rows[0].full_count) : 0;
+      const clean = rows.map(({ full_count, ...r }) => r);
+
+      const [{ open_count }] = await sql`
+        select count(*)::int as open_count from interventions where revived_at is null
+      `.catch(() => [{ open_count: 0 }]);
+
+      res.status(200).json({ rows: clean, total, page, limit, state, open_count });
       return;
     }
 
     const chainConfig: GovChainConfig = (() => {
-      const c = loadGovConfig();
+      const c = (deps.loadGovConfig ?? loadGovConfig)();
       return {
         stellarRpcUrl: c.stellarRpcUrl,
         networkPassphrase: c.networkPassphrase,
@@ -102,4 +133,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+export default function (req: VercelRequest, res: VercelResponse): Promise<void> {
+  return handler(req, res);
 }

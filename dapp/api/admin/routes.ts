@@ -3,11 +3,14 @@ import { verifyAdmin } from "../_lib/governance/admin_auth";
 import { loadGovConfig } from "../_lib/governance/config";
 import { getDb } from "../_lib/governance/db";
 import { GovSubmitter } from "../_lib/governance/submitter";
+import { ensureTable as ensureInterventionsTable } from "../_lib/governance/interventions";
 
 /**
  * Admin API — route registry (DB rows; on-chain ops live in actions.ts).
  *
- * GET    → all routes; ?chain=1 adds live route_status per route
+ * GET    → paginated routes (?q=&page=&limit=&cause=); ?chain=1 adds live
+ *          route_status per route ON THE RETURNED PAGE ONLY — never the
+ *          whole fleet, so this stays flat as the route count grows.
  * POST   → upsert a route's base terms / schedule / metadata
  * PATCH  → { action: "pin" | "unpin" | "set_status", ... }
  *
@@ -15,6 +18,9 @@ import { GovSubmitter } from "../_lib/governance/submitter";
  * executor treats as law: pinned routes are untouchable by automated
  * causes, and admin holds are never auto-re-enabled.
  */
+
+const MAX_LIMIT = 200;
+const DEFAULT_LIMIT = 50;
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   const admin = await verifyAdmin(req);
@@ -26,7 +32,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   try {
     if (req.method === "GET") {
-      const routes = await sql`select * from routes order by flight_id, origin, dest`;
+      const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+      const cause = typeof req.query.cause === "string" ? req.query.cause.trim() : "";
+      const page = Math.max(1, Number(req.query.page) || 1);
+      const limit = Math.min(MAX_LIMIT, Math.max(1, Number(req.query.limit) || DEFAULT_LIMIT));
+      const offset = (page - 1) * limit;
+
+      const conditions = [];
+      if (q) {
+        const pattern = `%${q}%`;
+        conditions.push(
+          sql`(r.flight_id ilike ${pattern} or r.origin ilike ${pattern} or r.dest ilike ${pattern} or r.carrier ilike ${pattern})`
+        );
+      }
+      if (cause) conditions.push(sql`i.cause = ${cause}`);
+      const where = conditions.length
+        ? sql`where ${conditions.reduce((a, b) => sql`${a} and ${b}`)}`
+        : sql``;
+
+      await ensureInterventionsTable(sql); // may not exist yet on a fresh DB
+
+      const routes = await sql`
+        select r.*, count(*) over () as full_count,
+          i.id as open_intervention_id, i.cause as open_cause,
+          i.evidence as open_evidence, i.opened_at as open_opened_at
+        from routes r
+        left join lateral (
+          select id, cause, evidence, opened_at from interventions
+          where flight_id = r.flight_id and origin = r.origin and dest = r.dest
+            and revived_at is null
+          order by opened_at desc limit 1
+        ) i on true
+        ${where}
+        order by r.flight_id, r.origin, r.dest
+        limit ${limit} offset ${offset}
+      `;
+      const total = routes.length > 0 ? Number(routes[0].full_count) : 0;
+      const cleanRoutes = routes.map(({ full_count, ...r }) => r);
+
+      const [{ fleet_total }] = await sql`select count(*)::int as fleet_total from routes`;
+      const [{ fleet_active }] = await sql`
+        select count(*)::int as fleet_active from routes where status in ('active', 'disabled')
+      `;
+
       if (req.query.chain === "1") {
         const config = loadGovConfig();
         const submitter = new GovSubmitter({
@@ -37,7 +85,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
           actor: `admin:${admin.email}`,
         });
         const withChain = [];
-        for (const r of routes) {
+        for (const r of cleanRoutes) {
           const onChain = await submitter
             .readStatus({ flightId: r.flight_id, origin: r.origin, dest: r.dest })
             .catch((err) => ({ status: "Unknown" as const, terms: null, error: String(err) }));
@@ -55,10 +103,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
             },
           });
         }
-        res.status(200).json({ routes: withChain });
+        res.status(200).json({ routes: withChain, total, page, limit, fleet_total, fleet_active });
         return;
       }
-      res.status(200).json({ routes });
+      res.status(200).json({ routes: cleanRoutes, total, page, limit, fleet_total, fleet_active });
       return;
     }
 

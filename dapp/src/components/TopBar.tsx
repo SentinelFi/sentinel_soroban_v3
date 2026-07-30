@@ -12,6 +12,8 @@ import {
 import { connectWallet, disconnectWallet } from "../util/wallet"
 import { cn, txHashOf } from "../lib/utils"
 import { useCopy } from "../copy"
+import { useTheme } from "../providers/ThemeProvider"
+import { PixelArt } from "./PixelArt"
 
 const NAV = [
 	{ to: "/", key: "markets" },
@@ -115,6 +117,7 @@ function CoinChip() {
 	const queryClient = useQueryClient()
 	const { data: usdcBalance } = useUsdcBalance(address)
 	const [minting, setMinting] = useState(false)
+	const { theme } = useTheme()
 
 	if (!address) return null
 
@@ -137,7 +140,15 @@ function CoinChip() {
 
 	return (
 		<div className="hidden items-center gap-2 border-2 border-line bg-raised px-3 py-1.5 sm:flex">
-			<span className="font-body text-[12px] font-bold text-gold">$</span>
+			{theme === "fun" ? (
+				<PixelArt
+					key={usdcBalance?.toString() ?? "loading"}
+					name="coin-usdc"
+					className="coin-flip h-4 w-4"
+				/>
+			) : (
+				<span className="font-body text-[12px] font-bold text-gold">$</span>
+			)}
 			<span className="board-figure text-[18px] text-ink">
 				{usdcBalance != null ? formatUsdc(usdcBalance) : "…"}
 			</span>

@@ -52,6 +52,25 @@ The app serves at [http://localhost:5175](http://localhost:5175) (strict
 port). Connect a testnet wallet (e.g. Freighter set to Testnet) and use the
 top-bar **+MINT** button to fund yourself with mock USDC.
 
+`npm run dev` alone only serves the SPA — `/api/**` (JIT sale-auth, every
+admin panel fetch) needs the serverless functions running too. In a second
+terminal:
+
+```sh
+npm run dev:api
+```
+
+This runs `scripts/dev_api.ts` on `localhost:3000` (reading the same
+`.env`) — a small local server that mounts every `api/**/*.ts` handler as
+a real route and invokes it exactly like Vercel's Node runtime would.
+Vite proxies any `/api/*` request there (see `server.proxy` in
+`vite.config.ts`), so `/api` calls behave the same as once deployed.
+
+(Not `vercel dev`: it does not correctly execute `/api/**` in this repo —
+every request falls through to the Vite dev-command proxy and returns the
+handler's transpiled source instead of running it, confirmed on Vercel
+CLI 58.4.0. `scripts/dev_api.ts` has no `vercel` CLI dependency.)
+
 Useful extras:
 
 ```sh
@@ -302,13 +321,13 @@ The 5-minute schedules (`settle`, `queue`) and `maxDuration: 300` require **Verc
 ### Local testing
 
 ```sh
-# Option A — full emulation (needs vercel CLI; .env supplies server-side vars)
-vercel dev
+# Option A — full local server, every route (see "Run locally" step 4)
+npm run dev:api
 
 curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/settle
 curl http://localhost:3000/api/cron/health
 
-# Option B — no vercel CLI: invoke a handler directly with tsx
+# Option B — one handler, no server: invoke it directly with tsx
 npx tsx -e '
   import handler from "./api/cron/health";
   const res = { statusCode: 0, status(c){ this.statusCode = c; return this; }, json(b){ console.log(this.statusCode, JSON.stringify(b, null, 2)); } };
@@ -325,7 +344,7 @@ To exercise the fetcher without spending AeroAPI credits, see
 npm run test:e2e
 ```
 
-`scripts/test_oracle_e2e.ts` spawns `tools/mock-aeroapi` on an ephemeral port
+`tests/e2e_mock/test_oracle_e2e.ts` spawns `tools/mock-aeroapi` on an ephemeral port
 and runs the REAL fetcher + sale-authorizer job code (real `AeroApiClient`
 over HTTP) against an in-memory fake of the OracleAggregator + Controller
 (forward-only state machine, classify/settle semantics). It covers the full

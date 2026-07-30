@@ -85,7 +85,9 @@ export function computeDisableCap(routeCount: number): number {
   return Math.max(3, Math.ceil(routeCount * 0.2));
 }
 
-async function ensureTable(sql: ReturnType<typeof getDb>): Promise<void> {
+/** Exported so read paths (the admin routes board's cause join) can
+ *  guarantee the table exists without having opened an intervention yet. */
+export async function ensureTable(sql: ReturnType<typeof getDb>): Promise<void> {
   await sql`
     create table if not exists interventions (
       id bigint generated always as identity primary key,

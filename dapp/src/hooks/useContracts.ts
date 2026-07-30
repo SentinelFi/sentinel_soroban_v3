@@ -72,16 +72,16 @@ export function useProtocolStats() {
 		queryKey: ["controller", "stats"],
 		queryFn: async () => {
 			const tx = await controllerClient.get_stats()
-			// (total_travelers, total_locked, total_premiums)
-			const [travelers, locked, premiums] = tx.result as readonly [
+			// (total_policies_sold, total_premiums_collected, total_payouts_distributed)
+			const [sold, premiumsCollected, payoutsDistributed] = tx.result as readonly [
 				bigint,
 				bigint,
 				bigint,
 			]
 			return {
-				totalTravelers: Number(travelers),
-				totalLocked: locked,
-				totalPremiums: premiums,
+				totalPoliciesSold: Number(sold),
+				totalPremiumsCollected: premiumsCollected,
+				totalPayoutsDistributed: payoutsDistributed,
 			}
 		},
 		refetchInterval: 30_000,
@@ -446,6 +446,32 @@ export interface FlightWithData {
 	error: boolean
 }
 
+/** On-chain active_set caps at 100k flights (sentinel_types::active_set)
+ *  — firing one RPC call per entry unbounded would let a busy fleet flood
+ *  the public RPC every 30s. A worker pool of this size keeps the burst
+ *  flat regardless of how many flights are actually active. */
+const FLIGHT_DATA_CONCURRENCY = 50
+
+/** Run `fn` over `items` with at most `limit` in flight at once. */
+async function mapWithConcurrency<T, R>(
+	items: T[],
+	limit: number,
+	fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+	const results: R[] = new Array(items.length)
+	let next = 0
+	async function worker() {
+		while (next < items.length) {
+			const i = next++
+			results[i] = await fn(items[i])
+		}
+	}
+	await Promise.all(
+		Array.from({ length: Math.min(limit, items.length) }, worker),
+	)
+	return results
+}
+
 export function useFlightDataBatch(
 	flights: Array<readonly [string, bigint]> | undefined,
 ) {
@@ -457,20 +483,17 @@ export function useFlightDataBatch(
 		],
 		queryFn: async () => {
 			if (!flights) return []
-			const results: FlightWithData[] = await Promise.all(
-				flights.map(async ([flightId, date]) => {
-					try {
-						const tx = await oracleClient.get_flight_data({
-							flight_id: flightId,
-							date,
-						})
-						return { flightId, date, data: tx.result as FlightData, error: false }
-					} catch {
-						return { flightId, date, data: null, error: true }
-					}
-				}),
-			)
-			return results
+			return mapWithConcurrency(flights, FLIGHT_DATA_CONCURRENCY, async ([flightId, date]) => {
+				try {
+					const tx = await oracleClient.get_flight_data({
+						flight_id: flightId,
+						date,
+					})
+					return { flightId, date, data: tx.result as FlightData, error: false }
+				} catch {
+					return { flightId, date, data: null, error: true }
+				}
+			})
 		},
 		enabled: !!flights && flights.length > 0,
 		refetchInterval: 30_000,

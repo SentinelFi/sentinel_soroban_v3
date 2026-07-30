@@ -34,17 +34,17 @@ delete process.env.SALE_AUTH_HORIZON_DAYS;
 
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { check, startMock, summarize, type MockHandle } from "./e2e/harness";
-import type { SorobanClient } from "../api/_lib/soroban_client";
-import { run as fetcherRun } from "../api/_lib/jobs/fetcher";
-import { authorizeSale } from "../api/_lib/sale_auth";
-import { guardRoute, sweepVerdict } from "../api/_lib/route_guard";
-import { AeroApiClient } from "../api/_lib/aeroapi_client";
-import { computeConcentrations, computeExposureSignals } from "../api/_lib/governance/exposure_collector";
-import { computeDisableCap } from "../api/_lib/governance/interventions";
-import { distanceMiles } from "../api/_lib/airports";
-import { isExtremeForecast } from "../api/_lib/route_rules";
-import type { Config, RunLogEntry } from "../api/_lib/types";
+import { check, startMock, summarize, type MockHandle } from "../../scripts/e2e/harness";
+import type { SorobanClient } from "../../api/_lib/soroban_client";
+import { run as fetcherRun } from "../../api/_lib/jobs/fetcher";
+import { authorizeSale } from "../../api/_lib/sale_auth";
+import { guardRoute, sweepVerdict } from "../../api/_lib/route_guard";
+import { AeroApiClient } from "../../api/_lib/aeroapi_client";
+import { computeConcentrations, computeExposureSignals } from "../../api/_lib/governance/exposure_collector";
+import { computeDisableCap } from "../../api/_lib/governance/interventions";
+import { distanceMiles } from "../../api/_lib/airports";
+import { isExtremeForecast } from "../../api/_lib/route_rules";
+import type { Config, RunLogEntry } from "../../api/_lib/types";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = 3111;
@@ -347,7 +347,7 @@ async function testSaleAuth(): Promise<void> {
   console.log("\n── JIT sale authorization E2E ───────────────────────────");
   await mockReset();
 
-  process.env.ROUTES_CONFIG_PATH = join(__dirname, "fixtures", "routes.e2e.json");
+  process.env.ROUTES_CONFIG_PATH = join(__dirname, "..", "fixtures", "routes.e2e.json");
   const config = makeConfig(); // horizon 30, validity 6h, min lead 24h
   const fake = new FakeSoroban();
   const guardCalls: string[] = [];

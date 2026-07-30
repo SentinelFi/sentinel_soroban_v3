@@ -2,6 +2,32 @@ import { getDb } from "./governance/db";
 import { loadRoutesConfig } from "./routes_config";
 import { WeatherClient } from "./weather_client";
 
+/** Exported so read paths (the admin outcomes panel) can guarantee the
+ *  table exists without having logged an outcome yet. */
+export async function ensureOutcomesTable(sql: ReturnType<typeof getDb>): Promise<void> {
+  await sql`
+    create table if not exists flight_outcomes (
+      id bigint generated always as identity primary key,
+      logged_at timestamptz not null default now(),
+      flight_id text not null,
+      origin text not null,
+      dest text not null,
+      flight_date date not null,
+      outcome text not null,
+      delay_minutes int,
+      origin_gust_kmh real,
+      origin_snow_cm real,
+      origin_precip_prob_pct real,
+      origin_wmo_codes int[],
+      dest_gust_kmh real,
+      dest_snow_cm real,
+      dest_precip_prob_pct real,
+      dest_wmo_codes int[],
+      unique (flight_id, origin, dest, flight_date)
+    )
+  `;
+}
+
 /**
  * flight_outcomes — THE weather-learnability log (2026-07-30 design):
  * ONE table, ONE row per insured flight-day, written by the fetcher at
@@ -65,27 +91,7 @@ export async function logFlightOutcome(entry: OutcomeLogEntry): Promise<void> {
     ];
 
     const sql = getDb();
-    await sql`
-      create table if not exists flight_outcomes (
-        id bigint generated always as identity primary key,
-        logged_at timestamptz not null default now(),
-        flight_id text not null,
-        origin text not null,
-        dest text not null,
-        flight_date date not null,
-        outcome text not null,
-        delay_minutes int,
-        origin_gust_kmh real,
-        origin_snow_cm real,
-        origin_precip_prob_pct real,
-        origin_wmo_codes int[],
-        dest_gust_kmh real,
-        dest_snow_cm real,
-        dest_precip_prob_pct real,
-        dest_wmo_codes int[],
-        unique (flight_id, origin, dest, flight_date)
-      )
-    `;
+    await ensureOutcomesTable(sql);
     await sql`
       insert into flight_outcomes
         (flight_id, origin, dest, flight_date, outcome, delay_minutes,
