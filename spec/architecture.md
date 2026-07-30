@@ -3690,12 +3690,20 @@ re-intake from Step 1.
 
 ## End-to-End Testing
 
-Three test layers, from fast to real:
+Five test layers, from fast to real. All dapp-side suites live under
+`dapp/tests/`: `tests/e2e_mock/` for the mock-substrate suites (fake chain,
+fake AeroAPI/chain-reads where relevant, real Postgres for the two
+governance suites) plus their shared `dapp/scripts/e2e/harness.ts`, and
+`tests/fixtures/` for their synthetic routes JSON. `test_testnet_e2e.ts`
+stays in `dapp/scripts/` — it runs against a real deployed contract, not a
+mock, so it's a different category from everything in `e2e_mock/`.
 
 | Suite | Chain | AeroAPI | ML API | DB | Run |
 |---|---|---|---|---|---|
 | Agent unit tests | — | — | local model | — | `cd agent && make test` |
-| Hermetic E2E (63 checks) | in-memory fake | mock | — | **none (enforced)** | `cd dapp && npm run test:e2e` |
+| Hermetic E2E (66 checks) | in-memory fake | mock | — | **none (enforced)** | `cd dapp && npm run test:e2e` |
+| Interventions ledger E2E (26 checks) | none (no gov-admin key configured) | — | — | **live governance Supabase** | `cd dapp && npm run test:e2e:gov` |
+| Admin API + gov_exposure E2E (25 checks) | none (no gov-admin key configured) | — | — | **live governance Supabase** | `cd dapp && npm run test:e2e:admin` |
 | **Real-chain E2E** | **real contracts, testnet** | mock (runtime-scripted) | **live Render service** | **none (enforced)** | `cd dapp && npm run test:e2e:testnet` |
 
 ### The real-chain suite (`dapp/scripts/test_testnet_e2e.ts`)
@@ -3756,8 +3764,95 @@ applies to newly opened flight-date buckets, while buyers joining an
 already-open bucket pay its original premium (every buyer of one
 flight-date pays the same price).
 
-**Deferred to a with-DB suite:** the interventions ledger lifecycle
-(detector opens, per-cause revive predicates, the exposure clear-streak
-hysteresis), the `gov_frozen` freeze brake, pins, and the mass-disable
-circuit breaker — i.e., everything whose substrate IS the database. Those
-run against an isolated Postgres, never the live Supabase.
+### The interventions ledger suite (`dapp/tests/e2e_mock/test_interventions_e2e.ts`)
+
+"The admin has to come save everything" suite — everything whose substrate
+IS the database, which the real-chain suite above deliberately runs
+without. Runs the REAL `pauseRoute`/`reviveRoute`/`recordClearCheck`/
+`recordCheck`/`checkedRecently` primitives against the **live governance
+Supabase project** (there is no isolated/staging Postgres yet — see
+Safety below), with every `GovChainConfig` deliberately carrying no
+`governanceAdminSecretKey`, so the executor's submitter is always null and
+no call in this suite can ever reach the chain.
+
+**Scenarios covered:**
+
+- Admin manual pause → ledger row opens, outcome reports chain untouched
+  (no gov key) → admin revive closes it, no open rows remain.
+- Multi-cause overlap: `weather` + `exposure` both open on one route →
+  reviving `weather` alone leaves the route paused (`exposure` still holds
+  it) → reviving the last open cause fully clears it.
+- `gov_frozen` kill switch: blocks an automated (`weather`) pause with no
+  ledger row written; does **not** block an admin pause (the executor's
+  `cause !== "admin"` guard).
+- Pinned route: blocks an automated (`exposure`) pause; an admin pause
+  overrides the pin anyway.
+- Idempotent re-pause: pausing the same (route, cause) twice yields
+  exactly one open row, evidence refreshed to the latest call (the
+  `interventions_open_key` partial unique index).
+- Exposure clear-streak hysteresis: two consecutive `recordClearCheck`
+  calls → streak 2 (matches `revive.ts`'s `EXPOSURE_CLEAR_STREAK`); a
+  relapse (`touchIntervention`) resets the streak to 0.
+- `recordCheck`/`checkedRecently` call-economy dedupe: a check recorded
+  with no open row writes a pre-closed row, answering "checked recently?"
+  for free on the next pass.
+
+### The admin API + gov_exposure suite (`dapp/tests/e2e_mock/test_admin_gov_e2e.ts`)
+
+Covers the two admin HTTP handlers (`api/admin/interventions.ts`,
+`api/admin/freeze.ts`) and the `gov_exposure` cron's full `run()`
+orchestration — both gained a small `deps` injection seam (matching the
+existing `FetcherDeps`/sale-auth pattern: `verifyAdmin`, `loadGovConfig`,
+the exposure read client) so they can be driven with fakes instead of a
+live Supabase Auth session or a real Soroban RPC read, with production
+callers unaffected (the seam defaults to the real implementations).
+
+**Scenarios covered:**
+
+- `admin/interventions.ts`: 401 when `verifyAdmin` rejects; 400 on a POST
+  missing `flight_id`/`origin`/`dest`/`reason`; POST pauses a route
+  (chain untouched, no gov key) and the ledger shows exactly one open
+  `admin` row; GET `?state=open&cause=admin` finds it with the pagination
+  shape intact (`total`, `page`, `limit`, `open_count`); PATCH revives it
+  (200), reviving again 404s (already closed); an unsupported method
+  405s.
+- `admin/freeze.ts`: 401 when unauthorized; POST `{frozen:true}` returns
+  200 with the note stamped with the admin's email; GET reflects the new
+  state; POST `{frozen:false}` restores it; POST with a non-boolean
+  `frozen` 400s.
+- `gov_exposure` orchestration, driven by a fake chain-read client and the
+  `tests/fixtures/routes.exposure_e2e.json` fixture: a route-scope severe
+  liability (60% of vault capacity alone) opens exactly one `exposure`
+  row; an airport-scope severe liability aggregated from two routes
+  sharing an airport (30% + 30% = 60%) pauses **both** routes; an
+  elevated-only route (28%) is never paused, only logged as advisory; a
+  route hit by three separate severe specs (its own + both endpoint
+  airports) still yields exactly one ledger row (the affected-routes
+  de-dup); `dryRun: true` computes the same severities and logs
+  `[dry-run] would pause`, but writes nothing.
+
+**Known, deliberately unexercised gap:** the mass-disable circuit
+breaker's cap-reached branch in `exposure_collector.ts` only increments
+its counter when `pauseRoute` reports `disabledOnChain: true`, which
+requires a real `GovSubmitter` — i.e. a signed testnet transaction. Every
+config in both suites above carries no `governanceAdminSecretKey`
+specifically to guarantee zero chain writes, so this branch is provably
+unreachable here. Closing it for real means submitting live disable
+transactions against the governance contract on testnet — a materially
+different risk than anything else in these suites, and out of scope
+without an explicit decision to do that.
+
+**Safety, since both suites above run against the live project (no
+isolated/staging Postgres exists yet):**
+
+- every row either suite writes uses a synthetic flight_id (`ZZE2E0x` /
+  `ZZE2E1x`) that cannot collide with a real seeded route, deleted in a
+  `finally` after every scenario and again at suite end;
+- every `GovChainConfig`/`GovConfig` carries no `governanceAdminSecretKey`,
+  so no call in either suite can ever reach the chain;
+- the one shared, global row touched (`ops_flags.gov_frozen`) is read
+  before use and restored to its exact prior value in a `finally`.
+
+The plan is to destroy this project and provision a fresh one once
+everything ships to testnet, rather than adding branching/staging
+infrastructure now.

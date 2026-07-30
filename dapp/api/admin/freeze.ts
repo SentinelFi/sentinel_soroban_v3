@@ -12,8 +12,17 @@ import { getDb } from "../_lib/governance/db";
  * GOV_DRY_RUN, needs no env change or redeploy. Every toggle records the
  * admin email.
  */
-export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
-  const admin = await verifyAdmin(req);
+/** Optional dependency injection seam — tests pass a fake verifyAdmin, production omits. */
+export interface FreezeDeps {
+  verifyAdmin?: typeof verifyAdmin;
+}
+
+export async function handler(
+  req: VercelRequest,
+  res: VercelResponse,
+  deps: FreezeDeps = {}
+): Promise<void> {
+  const admin = await (deps.verifyAdmin ?? verifyAdmin)(req);
   if (!admin) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -56,4 +65,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+export default function (req: VercelRequest, res: VercelResponse): Promise<void> {
+  return handler(req, res);
 }

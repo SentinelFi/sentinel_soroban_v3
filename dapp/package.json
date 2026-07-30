@@ -8,11 +8,14 @@
   ],
   "scripts": {
     "dev": "vite --port 5175 --strictPort",
+    "dev:api": "tsx scripts/dev_api.ts",
     "build": "tsc -b && vite build",
     "install:contracts": "npm install --workspaces && npm run build --workspaces --if-present",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "test:e2e": "tsx scripts/test_oracle_e2e.ts",
+    "test:e2e": "tsx tests/e2e_mock/test_oracle_e2e.ts",
+    "test:e2e:gov": "tsx tests/e2e_mock/test_interventions_e2e.ts",
+    "test:e2e:admin": "tsx tests/e2e_mock/test_admin_gov_e2e.ts",
     "bot": "tsx scripts/run_bot.ts",
     "test:e2e:testnet": "tsx scripts/test_testnet_e2e.ts",
     "test:e2e:testnet:bootstrap": "tsx scripts/e2e/testnet_bootstrap.ts"

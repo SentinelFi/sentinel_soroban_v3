@@ -230,7 +230,12 @@ export function exposureReadClient(config: GovConfig): SorobanClient {
   } as Config);
 }
 
-export async function run(config: GovConfig): Promise<RunLogEntry> {
+/** Optional dependency injection seam — tests pass a fake read client, production omits. */
+export interface ExposureDeps {
+  client?: SorobanClient;
+}
+
+export async function run(config: GovConfig, deps: ExposureDeps = {}): Promise<RunLogEntry> {
   const start = Date.now();
   const actions: FetcherAction[] = [];
   const done = (success: boolean, error?: string): RunLogEntry => ({
@@ -244,7 +249,7 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
 
   try {
     const { poolId, vaultId, controllerId } = exposureContractIds();
-    const client = exposureReadClient(config);
+    const client = deps.client ?? exposureReadClient(config);
 
     // Chain-event mirror first (policies + settlements — the durable
     // copies the sweeper and analytics need beyond RPC's ~7-day

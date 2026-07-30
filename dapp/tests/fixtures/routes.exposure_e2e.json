@@ -1,0 +1,55 @@
+{
+  "$schema_note": "E2E-test routes fixture for the gov_exposure orchestration test — scripts/test_admin_gov_e2e.ts. Flight ids are synthetic (ZZE2E-prefixed), never real seeded routes.",
+  "network": "e2e",
+  "defaults": {
+    "premium_usdc": 50,
+    "payoff_usdc": 500,
+    "delay_hours": 2
+  },
+  "rails": {
+    "premium_usdc": { "min": 10, "max": 100 },
+    "base_premium_max_usdc": 20,
+    "weather_surcharge_usdc": { "elevated": 2, "severe": 10 },
+    "payoff_usdc": { "min": 100, "max": 1000 }
+  },
+  "sale_horizon_days": 30,
+  "weather_horizon_days": 3,
+  "routes": [
+    {
+      "flight_id": "ZZE2E10",
+      "carrier": "ZZ",
+      "origin": "ZZA",
+      "destination": "ZZB",
+      "enabled": true,
+      "overrides": null,
+      "notes": "route-scope severe (60% of vault capacity alone)"
+    },
+    {
+      "flight_id": "ZZE2E11",
+      "carrier": "ZZ",
+      "origin": "ZZC",
+      "destination": "ZZD",
+      "enabled": true,
+      "overrides": null,
+      "notes": "route-scope elevated (30%); airport ZZC severe once aggregated with ZZE2E12"
+    },
+    {
+      "flight_id": "ZZE2E12",
+      "carrier": "ZZ",
+      "origin": "ZZC",
+      "destination": "ZZE",
+      "enabled": true,
+      "overrides": null,
+      "notes": "route-scope elevated (30%); shares airport ZZC with ZZE2E11"
+    },
+    {
+      "flight_id": "ZZE2E13",
+      "carrier": "ZZ",
+      "origin": "ZZF",
+      "destination": "ZZG",
+      "enabled": true,
+      "overrides": null,
+      "notes": "elevated only (28%) — advisory, never paused"
+    }
+  ]
+}
