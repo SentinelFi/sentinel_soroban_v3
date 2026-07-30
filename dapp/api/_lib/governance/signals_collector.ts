@@ -16,7 +16,9 @@ import type { SignalRow } from "./model";
  *
  *   color "red"    → severity "severe"   → the reconciler pauses routes
  *                                          touching the airport
- *   color "yellow" → severity "elevated" → premium multiplier stacks
+ *   color "yellow" → severity "elevated" → ADVISORY only (visible in the
+ *                    DB/run logs; premiums are owned by seeding + the
+ *                    weather surcharge job since 2026-07-30)
  *   anything else  → ignored (informational)
  *
  * Signals are FACTS — this job never touches the chain. The reconciler

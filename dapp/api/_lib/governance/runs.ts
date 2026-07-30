@@ -39,7 +39,8 @@ export const JOB_REGISTRY: JobInfo[] = [
   { job: "gov_reconcile", path: "/api/cron/gov-reconcile", schedule: "10 * * * *", intervalMinutes: 60, signer: "gov-admin", manualRunnable: true, description: "Governance reconciler — signals → on-chain" },
   { job: "gov_schedule_check", path: "/api/cron/gov-schedule-check", schedule: "45 4 * * *", intervalMinutes: 1440, signer: "none", manualRunnable: true, description: "Schedule-drift detector — fills canonical schedule/distance, emits schedule_drift signals (retimed elevated / dropped severe)" },
   { job: "gov_onboard", path: "/api/cron/gov-onboard", schedule: "15 */6 * * *", intervalMinutes: 360, signer: "gov-admin", manualRunnable: true, description: "Fleet status sync — file/chain → DB (route INTAKE is the manual scripts/ pipeline, never automated)" },
-  { job: "route_agent", path: "/api/cron/agent", schedule: "0 6 * * *", intervalMinutes: 1440, signer: "none", manualRunnable: true, description: "ML pricing + forecast collector — daily pricing/weather signals (facts only, no chain writes; absorbed into the reconciler 2026-07-27)" },
+  { job: "weather", path: "/api/cron/weather", schedule: "20 */2 * * *", intervalMinutes: 120, signer: "gov-admin", manualRunnable: true, description: "Storm surcharge — stateless: fleet-file base + flat forecast surcharge → update_route_terms (no DB)" },
+  { job: "reprice", path: "/api/cron/reprice", schedule: "0 8 1 * *", intervalMinutes: 43200, signer: "none", manualRunnable: true, description: "Monthly ADVISORY seasonal repricing — proposal → pricing_runs; admin applies via seed_routes --apply-terms (no chain writes)" },
   { job: "ttl_extender", path: "/api/cron/ttl", schedule: "0 0 * * *", intervalMinutes: 1440, signer: "ttl", manualRunnable: true, description: "Extend contract TTLs, prune settled" },
 ];
 

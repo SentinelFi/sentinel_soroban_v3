@@ -2,6 +2,7 @@ import { SorobanClient } from "../soroban_client";
 import { AeroApiClient, isConfirmedCancellation, isConfirmedDiversion } from "../aeroapi_client";
 import { classifyAndSettleFlight } from "../targeted_settlement";
 import { parseFlightStatus } from "../status";
+import { logFlightOutcome } from "../outcome_log";
 import {
   FlightStatus,
   type ActiveFlight,
@@ -177,6 +178,7 @@ export async function run(config: Config, deps: FetcherDeps = {}): Promise<RunLo
             );
             console.log(`[fetcher] ${flight.flight_id}: NotInitiated → Cancelled ✓`);
             actions.push({ flight: flight.flight_id, transition: "NotInitiated → Cancelled" });
+            await logFlightOutcome({ flightId: flight.flight_id, dateUnix: flight.date, outcome: "cancelled", delayMinutes: null });
             // A written outcome engages the vault's settlement barrier —
             // drive this exact tuple through classify + settle right away.
             await classifyAndSettleFlight(client, config, flight.flight_id, flight.date, flight.flight_id, actions);
@@ -207,6 +209,7 @@ export async function run(config: Config, deps: FetcherDeps = {}): Promise<RunLo
               config.oracleSecretKey
             );
             actions.push({ flight: flight.flight_id, transition: "NotInitiated → Cancelled (diverted)" });
+            await logFlightOutcome({ flightId: flight.flight_id, dateUnix: flight.date, outcome: "diverted", delayMinutes: null });
             await classifyAndSettleFlight(client, config, flight.flight_id, flight.date, flight.flight_id, actions);
             continue;
           }
@@ -285,6 +288,7 @@ export async function run(config: Config, deps: FetcherDeps = {}): Promise<RunLo
             );
             console.log(`[fetcher] ${flight.flight_id}: Active → Cancelled ✓`);
             actions.push({ flight: flight.flight_id, transition: "Active → Cancelled" });
+            await logFlightOutcome({ flightId: flight.flight_id, dateUnix: flight.date, outcome: "cancelled", delayMinutes: null });
             await classifyAndSettleFlight(client, config, flight.flight_id, flight.date, flight.flight_id, actions);
           } else if (apiData.diverted) {
             // POLICY: diverted pays as cancellation. A diverted flight's
@@ -314,6 +318,7 @@ export async function run(config: Config, deps: FetcherDeps = {}): Promise<RunLo
             );
             console.log(`[fetcher] ${flight.flight_id}: Active → Cancelled (diverted) ✓`);
             actions.push({ flight: flight.flight_id, transition: "Active → Cancelled (diverted)" });
+            await logFlightOutcome({ flightId: flight.flight_id, dateUnix: flight.date, outcome: "diverted", delayMinutes: null });
             await classifyAndSettleFlight(client, config, flight.flight_id, flight.date, flight.flight_id, actions);
           } else if (estimatedArrival + ONE_HOUR_SECS > nowSecs) {
             // Not cancelled and not yet due — landed resolution waits.
@@ -337,6 +342,16 @@ export async function run(config: Config, deps: FetcherDeps = {}): Promise<RunLo
             );
             console.log(`[fetcher] ${flight.flight_id}: Active → Landed ✓`);
             actions.push({ flight: flight.flight_id, transition: "Active → Landed" });
+            // Gate delay vs the published schedule (the model's covered
+            // event is scheduled-vs-actual, not vs our on-chain ETA).
+            const scheduled = aeroApi.parseTimestamp(apiData.scheduled_in);
+            const delayMin = scheduled > 0n ? Math.round(Number(actualArrival - scheduled) / 60) : null;
+            await logFlightOutcome({
+              flightId: flight.flight_id,
+              dateUnix: flight.date,
+              outcome: delayMin !== null && delayMin >= 180 ? "delayed" : "ontime",
+              delayMinutes: delayMin,
+            });
             await classifyAndSettleFlight(client, config, flight.flight_id, flight.date, flight.flight_id, actions);
           } else {
             // Still in flight — no actual arrival yet

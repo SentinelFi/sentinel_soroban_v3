@@ -40,7 +40,8 @@ import { run as runClassifier } from "../api/_lib/jobs/classifier";
 import { run as runSettler } from "../api/_lib/jobs/settler";
 import { run as runQueue } from "../api/_lib/jobs/queue";
 import { run as runTtl } from "../api/_lib/jobs/ttl";
-import { run as runRouteAgent } from "../api/_lib/jobs/route_agent";
+import { run as runWeather } from "../api/_lib/jobs/weather";
+import { run as runRepricer } from "../api/_lib/jobs/repricer";
 import { run as runGovReconcile } from "../api/_lib/governance/reconciler";
 import { run as runGovSignals } from "../api/_lib/governance/signals_collector";
 import { run as runGovExposure } from "../api/_lib/governance/exposure_collector";
@@ -54,7 +55,8 @@ const BOTS: Partial<Record<JobName, () => Promise<RunLogEntry>>> = {
   settler: () => runSettler(loadConfig()),
   queue_maintainer: () => runQueue(loadConfig()),
   ttl_extender: () => runTtl(loadConfig()),
-  route_agent: () => runRouteAgent(loadGovConfig()),
+  weather: () => runWeather(loadGovConfig()),
+  reprice: () => runRepricer(),
   gov_reconcile: () => runGovReconcile(loadGovConfig()),
   gov_signals: () => runGovSignals(loadGovConfig()),
   gov_exposure: () => runGovExposure(loadGovConfig()),

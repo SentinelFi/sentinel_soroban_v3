@@ -74,43 +74,54 @@ export function expectedLossPremiumUnits(pCovered: number, payoffUnits: bigint):
   return (payoffUnits * pBps) / 10_000n;
 }
 
-// ── premium clamping ───────────────────────────────────────────────
+// ── premium bands (2026-07-30 redesign) ────────────────────────────
+//
+// Premiums are two independent, additive bands — one standard each:
+//   BASE  $10–$20  ML expected-loss price, whole dollars, set at seeding
+//                  and at the monthly repricing ritual. Above $20 the
+//                  route is EXCLUDED (never sold at expected loss).
+//   +WEATHER $2/$10 flat surcharge from the live 3-day forecast, applied
+//                  and cleared by the stateless weather job.
+// TOTAL is clamped to rails.premiumMax ($30). All values whole dollars.
+
+const ONE_DOLLAR_UNITS = 10_000_000n; // 7-decimal USDC
+
+/** Round premium UP to whole dollars — rounding error favors the vault. */
+export function roundUpToWholeDollar(units: bigint): bigint {
+  const rem = units % ONE_DOLLAR_UNITS;
+  return rem === 0n ? units : units + (ONE_DOLLAR_UNITS - rem);
+}
 
 /**
- * Clamp a target premium to the rails, then cap the per-day step relative
- * to the current on-chain premium (max_daily_premium_change_pct) so a
- * model glitch can't reprice a route 10x overnight. Current === null
- * (route not yet priced on-chain) skips the step cap.
+ * ML BASE premium for a route: expected loss × margin, rounded UP to a
+ * whole dollar, floored at rails.premiumMin. Returns null when the
+ * honest price exceeds rails.basePremiumMax — the route is EXCLUDED
+ * from whitelisting rather than sold at a known expected loss.
  */
-export function clampPremium(
-  target: bigint,
-  current: bigint | null,
+export function mlBasePremiumUnits(
+  pCovered: number,
+  payoffUnits: bigint,
   rails: RouteRails
-): bigint {
+): bigint | null {
+  const honest = expectedLossPremiumUnits(pCovered, payoffUnits);
+  if (honest > rails.basePremiumMax) return null;
+  let premium = roundUpToWholeDollar(honest);
+  if (premium < rails.premiumMin) premium = rails.premiumMin;
+  if (premium > rails.basePremiumMax) premium = rails.basePremiumMax;
+  return premium;
+}
+
+/** Clamp a target premium to the min/max rails (total, incl. surcharge). */
+export function clampPremium(target: bigint, rails: RouteRails): bigint {
   let result = target;
-  if (current !== null && current > 0n && rails.maxDailyPremiumChangePct > 0) {
-    const pct = BigInt(rails.maxDailyPremiumChangePct);
-    const maxUp = current + (current * pct) / 100n;
-    const maxDown = current - (current * pct) / 100n;
-    if (result > maxUp) result = maxUp;
-    if (result < maxDown) result = maxDown;
-  }
   if (result < rails.premiumMin) result = rails.premiumMin;
   if (result > rails.premiumMax) result = rails.premiumMax;
   return result;
 }
 
-/** Apply the elevated-weather multiplier (integer-safe, 2dp precision). */
-export function applyMultiplier(premium: bigint, multiplier: number): bigint {
-  const scaled = BigInt(Math.round(multiplier * 100));
-  return (premium * scaled) / 100n;
+/** Flat weather surcharge for a severity, base units (0 when ok). */
+export function weatherSurchargeUnits(severity: WeatherSeverity, rails: RouteRails): bigint {
+  if (severity === "severe") return rails.weatherSurcharge.severe;
+  if (severity === "elevated") return rails.weatherSurcharge.elevated;
+  return 0n;
 }
-
-// ── decision ───────────────────────────────────────────────────────
-
-/** Skip premium writes smaller than this (1 USDC) — no churn txs. */
-export const DRIFT_THRESHOLD_BASE_UNITS = 10_000_000n;
-
-// (decideRouteAction/RouteAction removed 2026-07-27: route_agent no longer
-// acts directly — it writes pricing/weather SIGNALS and the reconciler's
-// decideReconcileAction is the single decision engine.)

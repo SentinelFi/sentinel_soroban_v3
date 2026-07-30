@@ -8,11 +8,12 @@
   },
   "rails": {
     "premium_usdc": { "min": 10, "max": 100 },
-    "payoff_usdc": { "min": 100, "max": 1000 },
-    "max_daily_premium_change_pct": 50,
-    "elevated_weather_multiplier": 1.25
+    "base_premium_max_usdc": 20,
+    "weather_surcharge_usdc": { "elevated": 2, "severe": 10 },
+    "payoff_usdc": { "min": 100, "max": 1000 }
   },
   "sale_horizon_days": 30,
+  "weather_horizon_days": 3,
   "routes": [
     {
       "flight_id": "AA100",

@@ -26,7 +26,8 @@ export type JobName =
   | "queue_maintainer"
   | "ttl_extender"
   | "sale_authorizer"
-  | "route_agent"
+  | "weather"
+  | "reprice"
   // Governance module (signals + reconciler) — Phase 2+.
   | "gov_reconcile"
   | "gov_signals"

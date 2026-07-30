@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Single human source of truth for insurable routes. Consumed by: scripts/whitelist_routes.ts (governance whitelisting), api/cron/authorize.ts (sale-window attestation list), api/cron/agent.ts (ML/weather repricing rails + human intent). Amounts are human USDC; scripts convert to 7-decimal base units. 'enabled': false = human-disabled \u2014 agents will disable it on-chain if needed and will NEVER re-enable it.",
+  "$schema_note": "Single human source of truth for insurable routes. Consumed by: scripts/seed_routes.ts (governance whitelisting), api/cron/authorize.ts (sale-window attestation list), api/cron/weather.ts (surcharge base terms + rails), api/cron/reprice.ts (monthly advisory repricing). Amounts are human USDC; scripts convert to 7-decimal base units. 'enabled': false = human-disabled - agents will disable it on-chain if needed and will NEVER re-enable it.",
   "network": "testnet",
   "defaults": {
     "premium_usdc": 15,
@@ -11,13 +11,17 @@
       "min": 10,
       "max": 30
     },
+    "base_premium_max_usdc": 20,
+    "weather_surcharge_usdc": {
+      "elevated": 2,
+      "severe": 10
+    },
     "payoff_usdc": {
       "min": 100,
       "max": 1000
-    },
-    "max_daily_premium_change_pct": 50,
-    "elevated_weather_multiplier": 1.25
+    }
   },
   "sale_horizon_days": 7,
-  "routes": []
+  "routes": [],
+  "weather_horizon_days": 3
 }

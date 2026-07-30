@@ -1,5 +1,3 @@
-import { clampPremium } from "../route_rules";
-import { loadRoutesConfig, usdcToBaseUnits } from "../routes_config";
 import type { FetcherAction, RunLogEntry } from "../types";
 import type { GovConfig } from "./config";
 import { getDb } from "./db";
@@ -7,7 +5,6 @@ import type { RouteRow, SignalRow } from "./model";
 import {
   HYSTERESIS_HOURS,
   decideReconcileAction,
-  isAdjuster,
   isPause,
   signalMatchesRoute,
   type ReconcileAction,
@@ -18,16 +15,19 @@ import { GovSubmitter } from "./submitter";
  * Gov cron — Reconciler (hourly, :10 — after the signal collectors).
  *
  * Layer 2 of the governance architecture: signals are facts in the DB;
- * this is the only thing that acts on them. For every managed route:
+ * this is the only thing that acts on them. Since the 2026-07-30
+ * simplification it is a PAUSE ENGINE ONLY — premiums are owned by the
+ * seeding/monthly-repricing ritual (base) and jobs/weather.ts (flat
+ * surcharge). For every managed route:
  *
- * 1. Gather DB state — active signals matched to the route's scope
- *    (route | origin | dest expansion), open pause_events, open
- *    premium_adjustments, hysteresis lookbacks.
+ * 1. Gather DB state — active SEVERE signals matched to the route's
+ *    scope (route | origin | dest expansion), open pause_events,
+ *    hysteresis lookbacks. Elevated signals are advisory (no action).
  * 2. Read the actual on-chain route_status.
  * 3. decideReconcileAction (pure rules — pin wins, pauses expand,
- *    multipliers stack, hysteresis damps).
+ *    hysteresis damps re-enables).
  * 4. Execute the minimal on-chain diff via GovSubmitter (which writes
- *    actions_log), and mirror it in pause_events / premium_adjustments.
+ *    actions_log), and mirror it in pause_events.
  *
  * Idempotent by design: desired state is recomputed from scratch every
  * run, so a crashed run heals on the next tick. GOV_DRY_RUN=true logs
@@ -74,9 +74,6 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
       };
     }
 
-    const routesConfig = loadRoutesConfig();
-    const defaultPremium = usdcToBaseUnits(routesConfig.defaults.premiumUsdc);
-
     const submitter = new GovSubmitter({
       rpcUrl: config.stellarRpcUrl,
       networkPassphrase: config.networkPassphrase,
@@ -107,15 +104,6 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
       select flight_id, origin, dest from pause_events where ended_at is null
     `) as unknown as Array<{ flight_id: string; origin: string; dest: string }>;
 
-    const openAdjustments = (await sql`
-      select flight_id, origin, dest from premium_adjustments where reverted_at is null
-    `) as unknown as Array<{ flight_id: string; origin: string; dest: string }>;
-
-    const adjustedToday = (await sql`
-      select distinct flight_id, origin, dest from premium_adjustments
-      where applied_at > now() - interval '24 hours'
-    `) as unknown as Array<{ flight_id: string; origin: string; dest: string }>;
-
     // Flap damping: routes whose pause state changed ≥2× in 24h (each
     // pause_events row contributes its start and, if today, its end) get
     // no further disable/enable transitions today — only flags.
@@ -132,8 +120,6 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
     const keyOf = (r: { flight_id: string; origin: string; dest: string }) =>
       `${r.flight_id}|${r.origin}|${r.dest}`;
     const openPauseSet = new Set(openPauses.map(keyOf));
-    const openAdjSet = new Set(openAdjustments.map(keyOf));
-    const adjustedTodaySet = new Set(adjustedToday.map(keyOf));
     const flapSet = new Set(
       flapCounts.filter((r) => Number(r.n) >= FLAP_TRANSITIONS_PER_DAY).map(keyOf)
     );
@@ -152,33 +138,14 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
         // 2. On-chain actual
         const onChain = await submitter.readStatus(routeKey);
 
-        // 3. Decide
+        // 3. Decide (pause engine — elevated signals are advisory only)
         const matching = activeSignals.filter((s) => signalMatchesRoute(s, route));
-        // ML pricing anchor (route_agent's daily `pricing` signal, severity
-        // info — never a pause or adjuster). Latest wins; rails-clamped.
-        const pricingSignals = matching.filter((s) => s.type === "pricing");
-        let anchorPremium: bigint | null = null;
-        if (pricingSignals.length > 0) {
-          const latest = pricingSignals.reduce((a, b) => (a.created_at > b.created_at ? a : b));
-          const raw = (latest.payload as { anchor_units?: unknown }).anchor_units;
-          if (typeof raw === "string" && /^\d+$/.test(raw)) {
-            anchorPremium = clampPremium(BigInt(raw), null, routesConfig.rails);
-          }
-        }
         const action = decideReconcileAction({
           route,
           onChain,
-          anchorPremium,
           pauses: matching.filter(isPause),
-          adjusters: matching.filter(isAdjuster),
           recentlyCleared: recentlyEnded.some((s) => signalMatchesRoute(s, route)),
           hasOpenPauseEvent: openPauseSet.has(keyOf(route)),
-          hasOpenAdjustment: openAdjSet.has(keyOf(route)),
-          adjustedToday: adjustedTodaySet.has(keyOf(route)),
-          basePremium: route.base_premium_units
-            ? BigInt(route.base_premium_units)
-            : defaultPremium,
-          rails: routesConfig.rails,
         });
 
         console.log(`[gov-reconcile] ${label}: on-chain=${onChain.status} → ${action.kind} (${action.reason})`);
@@ -269,35 +236,6 @@ async function execute(
           and dest = ${route.dest} and ended_at is null
       `;
       return { flight: label, transition: `re-enabled (${action.reason})` };
-    }
-
-    case "set_premium": {
-      await submitter.updateTerms(routeKey, action.target, "keep", "keep");
-      await sql`
-        insert into premium_adjustments
-          (flight_id, origin, dest, base_premium_units, multipliers, final_premium_units, reason)
-        values
-          (${route.flight_id}, ${route.origin}, ${route.dest},
-           ${(route.base_premium_units ?? action.target.toString()).toString()},
-           ${sql.json(action.multipliers)}, ${action.target.toString()}, ${action.reason})
-      `;
-      return { flight: label, transition: `premium → ${action.target} (${action.reason})` };
-    }
-
-    case "revert_premium": {
-      // Base set on the route row → pin it back explicitly; otherwise
-      // hand the field back to the on-chain defaults chain.
-      if (route.base_premium_units) {
-        await submitter.updateTerms(routeKey, BigInt(route.base_premium_units), "keep", "keep");
-      } else {
-        await submitter.updateTerms(routeKey, "use_default", "keep", "keep");
-      }
-      await sql`
-        update premium_adjustments set reverted_at = now()
-        where flight_id = ${route.flight_id} and origin = ${route.origin}
-          and dest = ${route.dest} and reverted_at is null
-      `;
-      return { flight: label, transition: `premium reverted to base (${action.reason})` };
     }
   }
 }

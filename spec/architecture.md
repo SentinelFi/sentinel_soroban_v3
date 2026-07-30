@@ -67,7 +67,8 @@ Nothing on-chain self-triggers, so scheduled off-chain jobs keep the protocol
 ticking: `fetcher` writes real flight data on-chain, `sale_authorizer` attests
 flights insurable, `classifier` / `settler` / `queue_maintainer` drive
 classification, settlement, and the LP queues, `ttl_extender` keeps storage alive,
-and two governance jobs (`gov_reconcile`, `route_agent`) manage the route rulebook.
+and the governance jobs (`gov_reconcile` pauses, `weather` surcharges, `reprice`
+proposes) manage the route rulebook.
 All run today as **Vercel serverless functions** in `dapp/api/cron/`, but the
 contracts don't know or care what backend calls them — each write is gated by
 `require_auth()` on an **owner-updatable address** (`authorized_oracle`,
@@ -1326,12 +1327,16 @@ for run telemetry, but degrades to direct API calls without it.
 
 ### 3. Governance — centralized automation with two subsystems
 
-The rulebook manager: collectors write **facts** (weather forecasts, live
-airport delays, exposure concentration, ML pricing anchors, schedule
-drift) as self-expiring `signals`; the hourly **reconciler** decides within
-rails; the **GovSubmitter** — the single audited actor — writes on-chain.
-Humans set appetite (rails, defaults, term limits) and keep emergency
-controls (freeze, pins). Two subsystems:
+The rulebook manager, split by concern since 2026-07-30: **pauses** flow
+through facts — collectors write live airport delays, exposure
+concentration, schedule drift as self-expiring `signals`; the hourly
+**reconciler** (a pause engine) decides within rails. **Premiums** travel
+two simpler paths: the stateless `weather` job (fleet-file base + flat
+forecast surcharge, every ~2h, no DB) and the monthly advisory `reprice`
+proposal the admin applies via the seeding ritual. Everything on-chain
+goes through the **GovSubmitter** — the single audited actor. Humans set
+appetite (rails, defaults, term limits) and keep emergency controls
+(freeze, pins). Two subsystems:
 
 - **The ML prediction service** (`agent/`, Render service
   `flight-delay-predictions`) — a pure, insurance-blind FastAPI:
@@ -1410,10 +1415,10 @@ recorded to the Supabase `cron_runs` table (see [Job-Ops Layer](#job-ops-layer))
 
 ### Job Summary
 
-The registry defines nine jobs. Six drive the settlement path and storage (this
-section); two automate governance (`gov_reconcile`, `route_agent` — see [Off-Chain
-Governance Automation](#off-chain-governance-automation)); `health` is a liveness
-probe. Four signer roles keep blast radius separated: **oracle** writes flight
+The registry defines the jobs below. Six drive the settlement path and storage
+(this section); the rest automate governance (`gov_reconcile` + collectors,
+`weather`, `reprice` — see [Off-Chain Governance
+Automation](#off-chain-governance-automation)); `health` is a liveness probe. Four signer roles keep blast radius separated: **oracle** writes flight
 data, **keeper** drives classification/settlement, **ttl** extends storage,
 **gov-admin** writes governance. Each address is owner-updatable on-chain.
 
@@ -1429,7 +1434,8 @@ data, **keeper** drives classification/settlement, **ttl** extends storage,
 | `gov_exposure` | `/api/cron/gov-exposure` | `7 * * * *` (hourly, :07) | — (facts only: on-chain liability concentration → `exposure` signals) | none |
 | `gov_reconcile` | `/api/cron/gov-reconcile` | `10 * * * *` (hourly, :10) | `GovernanceModule.disable_route` / `enable_route` / `update_route_terms` (fleet guardrails: `ops_flags.gov_frozen` runtime brake, mass-disable circuit breaker, flap damping) | gov-admin |
 | `gov_onboard` | `/api/cron/gov-onboard` | `15 */6 * * *` (6-hourly, :15) | — (fleet STATUS sync only: file/chain→DB; route intake is the manual admin pipeline in `scripts/`, never a cron) | gov-admin |
-| `route_agent` | `/api/cron/agent` | `0 6 * * *` (daily 06:00 UTC) | facts only: `pricing` + `weather` signals (no chain writes) | — |
+| `weather` | `/api/cron/weather` | `20 */2 * * *` (every 2h, :20) | `GovernanceModule.update_route_terms` — stateless flat storm surcharge over the fleet-file base (no DB) | gov-admin |
+| `reprice` | `/api/cron/reprice` | `0 8 1 * *` (monthly, 1st 08:00 UTC) | — (ADVISORY only: seasonal ML proposal → `pricing_runs`; admin applies via `seed_routes --apply-terms`) | none |
 | `health` | `/api/cron/health` | liveness probe | — | — |
 
 The `:30` and `+2` offsets keep the two oracle jobs (and the two keeper jobs) off
@@ -1440,7 +1446,7 @@ name (`gov_schedule_check`) remains a placeholder that rejects as "not
 implemented" (it needs AeroAPI schedule comparison).
 
 **Three tiers, one decentralization target.** The jobs split into
-**governance** (gov_signals/gov_reconcile/route_agent — centralized, ours by
+**governance** (gov_signals/gov_reconcile/weather/reprice — centralized, ours by
 design), **oracle** (fetcher/sale_authorizer — the centralized trust root:
 they spend AeroAPI calls and attest real-world facts), and
 **keepers/liquidators** (classifier/settler/queue_maintainer/ttl_extender —
@@ -1838,7 +1844,7 @@ dapp/
 │   └── _lib/
 │       ├── jobs/                 # runtime-agnostic settlement-path job logic
 │       │   ├── fetcher.ts  authorizer.ts  classifier.ts  settler.ts
-│       │   └── queue.ts  ttl.ts  route_agent.ts
+│       │   └── queue.ts  ttl.ts  weather.ts  repricer.ts
 │       ├── governance/           # governance automation subsystem (see next section)
 │       │   ├── reconciler.ts  rules.ts  submitter.ts  model.ts
 │       │   └── db.ts  config.ts  action_log.ts  admin_auth.ts  runs.ts
@@ -1910,13 +1916,15 @@ recorded) stay purchasable after the key swap.
 ## Off-Chain Governance Automation
 
 > **In plain terms — the rulebook manages itself.** The GovernanceModule *stores* the
-> rules, but something has to *decide* them: raise a premium when a storm is brewing,
-> pause a route that's gotten too risky, re-open it when things calm down. That
-> decision-making is this off-chain system. It works like a newsroom with one editor:
-> anyone can file a **fact** ("storm at DEN", "too many policies on this route"), but
-> only one careful **editor** (the reconciler) decides what to actually publish to the
-> chain — and it double-checks against the live on-chain state every time, so a hiccup
-> never leaves things half-done.
+> rules, but something has to *decide* them: pause a route that's gotten too risky,
+> re-open it when things calm down. That decision-making is this off-chain system.
+> It works like a newsroom with one editor: anyone can file a **fact** ("red delay
+> program at DEN", "too many policies on this route"), but only one careful
+> **editor** (the reconciler) decides what to actually publish to the chain — and it
+> double-checks against the live on-chain state every time, so a hiccup never leaves
+> things half-done. (Premiums are simpler and live outside the newsroom: the ML
+> base is set at seeding/monthly repricing, and a stateless weather loop adds a
+> flat storm surcharge — see [Premium bands](#premium-bands--ml-base--weather-surcharge-formula--knobs).)
 
 The `GovernanceModule` contract is the on-chain route authority (terms, whitelist,
 lifecycle), but the *decisions* — which routes to disable in a storm, how much to
@@ -1947,9 +1955,11 @@ mirrored in `dapp/api/_lib/governance/model.ts`.
 | Table | Role |
 |---|---|
 | `routes` | One row per insurable route (`flight_id+origin+dest` = the on-chain key). Holds admin-set **base/anchor terms**, canonical schedule (for drift detection), the `status` lifecycle (`candidate/active/disabled/removed`), and the **admin pin** (`pinned`, `pin_until`). The reconciler treats pin + lifecycle as law. |
-| `signals` | **Layer-1 facts.** Collectors and admins write here; only the reconciler acts on them. `type` (weather / geopolitical / exposure / schedule_drift / manual), `scope_kind` (route / origin / dest), `severity` (`info` / `elevated` / `severe`), `payload` jsonb (e.g. `{factor}`), `expires_at`, `cleared_at`. Active = uncleared and unexpired. |
+| `signals` | **Layer-1 facts.** Collectors and admins write here; only the reconciler acts on them. `type` (geopolitical / exposure / schedule_drift / manual / airport-delay), `scope_kind` (route / origin / dest), `severity` (`info` / `elevated` / `severe`), `payload` jsonb, `expires_at`, `cleared_at`. Active = uncleared and unexpired. **Only `severe` drives action (pause)** — `elevated` is advisory since 2026-07-30. |
 | `pause_events` | History of every pause enacted on-chain, with the causing `signal_id`; `ended_at` on re-enable. The reconciler only auto-re-enables a route whose *own* pause_event is still open. |
-| `premium_adjustments` | Every premium change (base, multiplier stack, clamped result). Doubles as the **hysteresis / one-change-per-day** record. |
+| `premium_adjustments` | RETIRED 2026-07-30 (the multiplier engine was removed with the weather-v2 simplification). Historical rows remain as audit history; nothing writes here anymore. |
+| `pricing_runs` | One row per ML pricing run — both `manual:price_routes` (intake step 2) and `cron:reprice` (monthly advisory proposal): totals, premium distribution, excluded-over-cap routes, proposed changes. Self-creating. |
+| `flight_outcomes` | One row per insured flight-day at outcome attestation: outcome + delay minutes + ACTUAL weather at both airports — the weather-learnability log (see [The outcomes log](#the-outcomes-log-flight_outcomes--weather--outcome-learnability)). Self-creating. |
 | `actions_log` | **Append-only audit** of every on-chain governance call (actor, action, tx hash, before/after `route_status` snapshots, success/error). No update or delete path exists. |
 | `policies` | Durable mirror of `InsuranceBought` events (ingested from RPC) for exposure counting. |
 | `ingest_cursors` | Per-collector resume points (last-seen ledger). |
@@ -1960,18 +1970,22 @@ mirrored in `dapp/api/_lib/governance/model.ts`.
 Runs after the signal collectors. It is **idempotent** — desired state is recomputed
 from scratch every tick, so a crashed run self-heals next hour:
 
+Since 2026-07-30 the reconciler is a **PAUSE ENGINE ONLY** — premiums are
+owned by seeding / the monthly repricing ritual (base) and the stateless
+weather surcharge job. `elevated` signals are advisory (visible in the DB
+and run logs, no action).
+
 ```
-1. Bulk-load DB state: routes, active signals, recently-ended signals (hysteresis
-   window), open pause_events, open + last-24h premium_adjustments.
+1. Bulk-load DB state: routes, active SEVERE signals, recently-ended signals
+   (hysteresis window), open pause_events.
 2. Per route: read the ACTUAL on-chain status via submitter.readStatus(),
    filter matching signals by scope, then call the PURE decideReconcileAction(...).
 3. Execute the returned action through GovSubmitter, and mirror the result into
-   pause_events / premium_adjustments.
+   pause_events.
 ```
 
 The decision function in `rules.ts` is **pure — no I/O** — and applies a fixed
-priority order (returning one of `noop | disable | enable | set_premium |
-revert_premium | flag`):
+priority order (returning one of `noop | disable | enable | flag`):
 
 1. **Admin pin wins** — a pinned, unexpired route is never overridden (`noop`).
 2. **Not on-chain yet** → `noop` — whitelisting new routes is deliberately
@@ -1984,12 +1998,6 @@ revert_premium | flag`):
 5. **Reactivation** — a Disabled route re-`enable`s only if the engine's *own*
    pause_event is open (else it `flag`s for review — someone acted outside the
    engine) **and** all pause signals have been clear for `HYSTERESIS_HOURS = 2`.
-6. **Premium multipliers** — each active `elevated` signal contributes a factor
-   (`payload.factor`), factors **stack multiplicatively** over the route's base
-   premium, then clamp to the configured rails. Guards: a `terms_valid` mirror
-   check (`premium < payoff`, `payoff/premium ≤ 100`, else `flag`), a
-   `DRIFT_THRESHOLD` no-churn skip (≈1 USDC), and **max one change per route per
-   day**. When the adjusters clear, `revert_premium` walks terms back to base.
 
 ### GovSubmitter — the single on-chain choke point (`submitter.ts`)
 
@@ -2096,8 +2104,8 @@ closed 9-carrier ICAO↔IATA table (`toIata` / `toIcao` / `carrierName`),
 accept-either / return-canonical, **null on a miss** (callers fail loud;
 nothing guesses). Discovery converts idents' ICAO prefixes to IATA at
 intake, so everything downstream is already canonical; `price_routes` and
-`route_agent` re-normalize defensively before calling the model. Adding a
-tenth insured airline = adding one row to that table.
+the `reprice` job re-normalize defensively before calling the model. Adding
+a tenth insured airline = adding one row to that table.
 
 **What the model is.** XGBoost (300 gradient-boosted trees) over one-hot
 route/calendar features + numeric departure-time/distance, followed by
@@ -2117,66 +2125,130 @@ flight be late" — it carries no forecast or live operational data.
 the full runbook, including the BTS links and copy-paste Claude prompts that
 execute the whole refresh, is [maintenance.md](maintenance.md).**
 
-**How the protocol consumes it.** The daily `route_agent` collector calls it
-via `dapp/api/_lib/agent_client.ts` (15 s timeout, bearer token) and computes
-the premium anchor **protocol-side** (`route_rules.ts`):
+**How the protocol consumes it.** Two callers, both computing the premium
+**protocol-side** (`route_rules.ts` — see [Premium
+bands](#premium-bands--ml-base--weather-surcharge-formula--knobs)):
+`scripts/price_routes.ts` (intake step 2, prices the whole catalog into the
+staged whitelist) and the monthly `reprice` job (advisory seasonal proposal
+into `pricing_runs`). Both call it via `dapp/api/_lib/agent_client.ts` (15 s
+timeout, bearer token):
 
 ```
-anchor = clampPremium( p_covered × payoff × 1.3 , rails )
+base = mlBasePremiumUnits( p_covered, payoff, rails )
+     = round-up-to-whole-dollar( p_covered × payoff × 1.3 ), floor $10,
+       null above the $20 base cap (route excluded)
 ```
 
-which it writes as a `pricing` **signal**; the reconciler — the single audited
-actor — uses it as the premium anchor. **Any failure returns `null`**, so a
-down or unset model degrades gracefully to admin-set terms — never a broken
+**Any failure returns `null`**, so a down or unset model degrades gracefully
+— the pricing run reports the failure and the admin re-runs; never a broken
 cron, never a blocked route.
 
-### How the premium is clamped (formula + where to change the limits)
+### Premium bands — ML base + weather surcharge (formula + knobs)
 
-Current terms (2026-07-28): **premium clamped to $10–$30, payoff $100** per
-policy, delay threshold 3h. The full pipeline from probability to on-chain
-premium, in order:
+Since the 2026-07-30 redesign a premium is **two independent, additive
+bands, always in whole dollars** (rounded UP — rounding error favors the
+vault), with payoff fixed at $100 and the delay threshold at 3h:
 
 ```
-p_covered                       ← POST /predict (the ML service)
-raw      = p_covered × payoff × 1.3        expectedLossPremiumUnits()   route_rules.ts
-anchor   = clamp(raw, MIN, MAX)            clampPremium() rails         route_rules.ts
-target   = anchor × Π(active elevated multipliers, default ×1.25)       governance/rules.ts
-final    = clamp(target, MIN, MAX, ±50%/day vs current premium)         governance/rules.ts
-on-chain: update_route_terms(final) — rejected if it exceeds the
-          owner-set term limits (the backstop no automation can pass)
+BASE  $10–$20      p_covered × payoff × 1.3        expectedLossPremiumUnits()
+                   → round UP to whole dollars,     mlBasePremiumUnits()
+                     floor $10                      route_rules.ts
+                   honest price > $20 → the route is EXCLUDED from
+                   whitelisting (never clamped down — the protocol does
+                   not sell at a known expected loss; break-even at the
+                   cap is p ≈ 15.4%)
+
++WEATHER $2 / $10  flat surcharge from the live forecast (elevated /
+                   severe), applied and cleared by the stateless
+                   jobs/weather.ts loop — see below
+
+TOTAL ≤ $30        rails.premium_usdc.max — and behind it the on-chain
+                   backstop: GovernanceModule.set_term_limits (owner-only)
+                   caps max_payoff / max_payoff_ratio; no file edit or
+                   automated write can price past those
 ```
 
-Any `severe` signal skips pricing entirely and pauses the route.
+Worked example: a typical route (p ≈ 0.034) prices at 0.034 × $100 × 1.3
+≈ $4.40 → **floors at $10**; premiums leave the floor from p ≈ 0.070,
+reach the $20 base cap at p ≈ 0.146, and above p ≈ 0.154 the route is
+**excluded** (on the 2026-07 catalog that dropped exactly 2 of 1,302
+routes — both MIA/ORD→EWR evening departures). A severe storm on top of
+a $20 base sells at $30.
 
-Worked example at today's terms: a typical route (p ≈ 0.034) prices at
-0.034 × $100 × 1.3 ≈ $4.40 → **floors at $10**; premiums rise above the
-floor from p ≈ 0.077 and **cap at $30** from p ≈ 0.23 (rare — multi-x
-storm-season routes, which weather multipliers can also push to the cap).
+**When each band moves:**
 
-**Where to change MIN/MAX (or the payoff)** — one file, three knobs, all in
+- **BASE** is set at seeding and refreshed by the **monthly repricing
+  ritual**: the `reprice` cron (1st of the month) stages an advisory
+  proposal in the `pricing_runs` DB table — proposed changes + routes
+  whose honest price now exceeds the cap — and the admin applies it by
+  re-running the manual pipeline with `seed_routes --apply-terms`. The
+  cron never touches the chain; seasonality comes from the model's own
+  calendar features, so monthly is exactly as often as its inputs change.
+- **WEATHER** moves every ~2h with the forecast, automatically (below).
+
+**Where to change the knobs** — one file,
 [`dapp/config/routes.testnet.json`](../dapp/config/routes.testnet.json):
 
-- `rails.premium_usdc.min` / `.max` — the clamp bounds ($10/$30 today).
-  Rails changes take effect on the **next cron pass automatically** (both
-  route_agent's anchor and the reconciler's final clamp re-read the file).
-- `defaults.payoff_usdc` — the payoff ($100 today) and
-  `defaults.premium_usdc` — the admin base premium used when no ML anchor
-  is live ($15 today). On-chain, every route (all file overrides are null)
-  stores `UseDefault` and resolves against the module's global defaults —
-  so the whole fleet reprices with **one owner transaction**:
-  `GovernanceModule.set_defaults(premium, payoff, delay_hours)` (verified
-  2026-07-28: one call moved all 202 routes from $50/$500 to $15/$100).
-  Also update the DB `routes` base-term columns the reconciler prefers
-  (manual today — see TODO §D on teaching `gov_onboard` to sync terms).
-  Per-route *overrides* in the file are the exception: those need
-  `npm run whitelist:routes -- --sync-terms` (one `update_route_terms`
-  per changed route, gov-admin signed).
+- `rails.premium_usdc.min` / `.max` — floor and TOTAL ceiling ($10/$30).
+- `rails.base_premium_max_usdc` — the ML base cap / exclusion threshold ($20).
+- `rails.weather_surcharge_usdc.elevated` / `.severe` — the flat adds ($2/$10).
+- `weather_horizon_days` — the forecast look-ahead (3).
+- `defaults.payoff_usdc` / `defaults.premium_usdc` — module defaults;
+  routes seeded with explicit terms don't track these, but
+  `GovernanceModule.set_defaults` remains the one-tx fleet knob for any
+  `UseDefault` routes.
 - The margin (×1.3) is `EXPECTED_LOSS_MARGIN` in
   `dapp/api/_lib/route_rules.ts`.
 
-The final backstop lives on-chain: `GovernanceModule.set_term_limits`
-(owner-only) caps `max_payoff` and `max_payoff_ratio` — no file edit or
-automated write can price past those.
+Rails changes take effect on the next cron pass (the jobs re-read the
+file); base-cap changes take effect at the next pricing run.
+
+### The weather surcharge job (`dapp/api/_lib/jobs/weather.ts`, every ~2h)
+
+The storm system is deliberately the simplest thing that works — **no DB,
+no signals, no multipliers, no hysteresis machinery**. One stateless pass:
+
+```
+for each enabled fleet route:
+  severity = worst(origin, dest) forecast over the next 3 days
+             (Open-Meteo daily, airport-local dates via timezone=auto;
+             thresholds in route_rules.ts: gusts/snow/thunderstorm codes)
+  target   = fleet-file base premium + surcharge (ok +$0 / elevated +$2 /
+             severe +$10), clamped to $30
+  on-chain premium ≠ target → update_route_terms (gov-admin signed,
+             through the audited GovSubmitter)
+```
+
+Raise and clear are the same comparison — a calm forecast makes
+`target = base`, so surcharges clear on the next pass. The 3-day horizon
+is a deliberate skill boundary: storm forecasts (and therefore
+storm-aware buyers) see ~3 days out, so pricing that window neutralizes
+adverse selection, while buyers further out get the base price the model
+already set for the season. The term-snapshot rule means a surcharge only
+affects flight-date buckets whose first purchase comes after it — nobody
+who already bought is ever repriced. **Weather never disables a route**:
+stopping sales is a human decision (admin) or the exposure guardrails'.
+
+Forecast source: Open-Meteo, keyless — free tier (10k calls/day / 300k/mo)
+covers the ~14-airport fleet at hourly polling ~30× over; note the free
+tier is **non-commercial only** (mainnet revenue ⇒ the ~$29/mo API plan).
+
+### The outcomes log (`flight_outcomes` — weather → outcome learnability)
+
+ONE DB table, ONE row per insured flight-day, written by the fetcher at
+the moment it attests the final outcome on-chain: flight, route, local
+flight date, outcome (`ontime | delayed | cancelled | diverted`), gate
+delay in minutes, and the **actual** weather (Open-Meteo past-date
+reanalysis, both airports: max gusts, snowfall, precipitation
+probability, WMO codes). Strictly DB-optional and fail-open — a missing
+DB or dead weather API never blocks an attestation.
+
+This is the measurement loop for the surcharge: "of the flight-days with
+gusts ≥ X at origin, what fraction had covered events?" is a single-table
+query, which is how the $2/$10 amounts and the classifier thresholds get
+tuned from evidence. (It is deliberately NOT a model training set — it
+only covers insured flights. A weather-aware model v4 would train on BTS
++ retroactive NOAA history, which already exists.)
 
 ### Human oversight
 
@@ -2199,24 +2271,25 @@ deny-all pooler).
 SIGNAL INGESTION      collectors + admins  --INSERT-->  signals (facts)
                         gov_signals (hourly :05): ONE AeroAPI /airports/delays
                         call covers the whole network — red airport -> severe
-                        (pause), yellow -> elevated (premium multiplier), two
+                        (pause), yellow -> elevated (ADVISORY only), two
                         scoped rows per airport (origin + dest), self-expiring
         |
         v
 RULES (hourly :10)    reconciler: readStatus(on-chain) + decideReconcileAction(pure)
         |                 pin? noop | severe? disable | cleared+hysteresis? enable
-        |                 elevated? base x Pi(factors), clamp, guards
         v
-ML PRICING            anchor: p_covered from Render /predict × payoff × margin, rails-clamped
-        |
-        v
-SUBMITTER             GovSubmitter: before-snap -> disable/enable/update_route_terms
+SUBMITTER             GovSubmitter: before-snap -> disable/enable
         |                          -> after-snap -> actions_log   (gov-admin key)
         v
 ON-CHAIN              GovernanceModule  (+ owner term-limits backstop)
-        |             + DB mirror: pause_events / premium_adjustments
+        |             + DB mirror: pause_events
         v
 OVERSIGHT             /admin (declare signals, pin, direct ops) | /status (public)
+
+(Premiums travel a separate, simpler path: jobs/weather.ts every ~2h —
+fleet-file base + flat forecast surcharge -> update_route_terms through
+the same GovSubmitter; and jobs/repricer.ts monthly -> ADVISORY proposal
+into pricing_runs, applied only by the admin's seeding ritual.)
 ```
 
 ### The autonomy ladder (L1 → L3)
@@ -2229,15 +2302,17 @@ capability, never new trust. The task-level plan lives in
 **L1 — rules on weather.** The reconciler acts on airport-delay
 signals (`gov_signals`) and admin-declared facts. Humans still do route
 onboarding, base terms, non-weather signals, and signal clearing.
-(`route_agent` was absorbed 2026-07-27: it is now a facts-only collector —
-ML `pricing` + Open-Meteo `weather` signals, zero chain writes.)
+(History: `route_agent` was absorbed into a facts-only collector 2026-07-27,
+then DELETED 2026-07-30 when the weather-v2 simplification replaced the
+signal→multiplier premium path with the stateless `weather` surcharge job +
+the advisory `reprice` cron.)
 
 **L2 — the complete deterministic pipeline (no LLM).** *Status 2026-07-27:
 three of the four additions below are IMPLEMENTED (`gov_onboard`, the
 exposure collector as `gov_exposure`, and the fleet guardrails — runtime
 freeze flag `ops_flags.gov_frozen` + admin endpoint, mass-disable circuit
-breaker, flap damping). Remaining: `gov_schedule_check` (needs AeroAPI) and
-the route_agent absorption.* Four additions close every routine human loop:
+breaker, flap damping). Remaining: `gov_schedule_check` (needs AeroAPI).*
+Four additions close every routine human loop:
 - `gov_onboard` — fleet STATUS sync (file/chain→DB), closing the
   *invisibility gap*: routes whitelisted by script but absent from the DB
   are invisible to the reconciler. NOTE (2026-07-29 product decision):
@@ -2270,7 +2345,8 @@ admin console.
 
 ```
 on-chain     term limits, payoff ratio, gov key is admin-not-owner, pausable
-  └ rules    rails clamps, hysteresis, 1-change/day, fleet breaker, pins win
+  └ rules    rails clamps, flat whole-dollar surcharges, hysteresis on
+             re-enables, fleet breaker, pins win
      └ agent facts only, JSON-schema validated, per-run caps, fully logged
 ```
 
@@ -2373,9 +2449,11 @@ cron, no auto-promote, no schedule; an admin runs it ad hoc):**
 2. PRICE      npx tsx ../scripts/price_routes.ts
               Every catalog candidate is priced by the LIVE ML service
               (/predict with its real local departure time + great-circle
-              distance): premium = clamp(p_covered × $100 × 1.3, $10–$30),
-              payoff $100, delay 3h → staged into
-              config/route_whitelist.json with p_covered + model version.
+              distance): whole-dollar base premium (p_covered × $100 ×
+              1.3, rounded up, floor $10; honest price > $20 → EXCLUDED,
+              never clamped), payoff $100, delay 3h → staged into
+              config/route_whitelist.json with p_covered + model version;
+              run logged to pricing_runs when a DB is configured.
 
 3. REVIEW     THE ADMIN LOOKS AT route_whitelist.json AND SAYS GO.
               (git diff, or seed_routes --dry-run for the table view.)
@@ -2385,12 +2463,13 @@ cron, no auto-promote, no schedule; an admin runs it ad hoc):**
               Whitelists each staged route on-chain with its EXACT staged
               terms (Set premium/payoff/delay — what was reviewed is what
               the chain gets), via the audited GovSubmitter. Idempotent:
-              Active → noop (terms drift reported, never auto-fixed),
-              Disabled → skipped (governance decision respected). Seeded
-              routes are mirrored into config/routes.testnet.json — the
-              operational fleet file the sale_authorizer reads — and
-              gov_onboard's status sync mirrors them into the DB so the
-              reconciler manages them.
+              Active → noop (terms drift reported; --apply-terms updates
+              it — the monthly repricing ritual), Disabled → skipped
+              (governance decision respected). Seeded routes are mirrored
+              into config/routes.testnet.json — the operational fleet
+              file the sale_authorizer AND the weather surcharge job
+              read — and gov_onboard's status sync mirrors them into the
+              DB so the reconciler manages them.
 ```
 
 Re-running any step against already-listed routes is harmless: discovery
@@ -2602,8 +2681,9 @@ withdrawable_capital = max(total_managed_assets - ceil(locked_capital * solvency
          Owner  (owner txns: set defaults / term limits / add_admin / rotate signer keys)
            |
            v
-      GovernanceModule <---- gov_reconcile / route_agent  (gov-admin key, off-chain:
-           |                    signals -> rules -> GovSubmitter -> disable/enable/update_route_terms)
+      GovernanceModule <---- gov_reconcile / weather  (gov-admin key, off-chain:
+           |                    signals -> rules -> GovSubmitter -> disable/enable;
+           |                    forecast -> surcharge -> GovSubmitter -> update_route_terms)
            |  resolved terms (cross-contract client)
            v
           Controller  <---- classifier       (keeper, hourly)
@@ -3170,7 +3250,7 @@ against `route_status`.
 7. Register signer addresses on-chain:
         OracleAggregator.set_oracle(ORACLE_EXECUTOR_ADDRESS)
         Controller.set_keeper(KEEPER_EXECUTOR_ADDRESS)
-        GovernanceModule.add_admin(GOV_ADMIN_ADDRESS)   <- gates gov-reconcile / route_agent
+        GovernanceModule.add_admin(GOV_ADMIN_ADDRESS)   <- gates gov-reconcile / weather / seeding
         (until add_admin lands, run the governance jobs with GOV_DRY_RUN=true)
 
 8. Fund the signer accounts with XLM (oracle, keeper, ttl, gov-admin) for tx fees.
@@ -3276,10 +3356,14 @@ npx tsx ../scripts/price_routes.ts               # live ML call per route
 
 Prices every catalog candidate with the deployed prediction service
 (`/predict` with the flight's local departure time and great-circle
-distance) and stages `config/route_whitelist.json`:
-`premium = clamp(p_covered × $100 × 1.3, $10–$30)`, payoff $100, delay
-threshold 3h, model version stamped. Prints the premium distribution.
-Aborts (writes nothing) if the ML service is unreachable.
+distance) and stages `config/route_whitelist.json`: whole-dollar base
+premium (`p_covered × $100 × 1.3`, rounded up, floor $10), payoff $100,
+delay threshold 3h, model version stamped. Routes whose honest price
+exceeds the **$20 base cap are EXCLUDED** (listed in the file's
+`excluded` array and printed — the protocol never sells at a known
+expected loss). Prints the premium distribution; logs the run to the
+`pricing_runs` DB table when `GOVERNANCE_DB_URL` is set. Aborts (writes
+nothing) if the ML service is unreachable.
 
 ### Step 3 — REVIEW (the human gate)
 
@@ -3308,11 +3392,30 @@ sync. Idempotent semantics:
 | On-chain state | Action |
 |---|---|
 | Unknown | `whitelist_route` with staged terms |
-| Active | no-op — terms drift is REPORTED, never auto-fixed (repricing a live route is a separate governance decision) |
+| Active | no-op — terms drift is REPORTED, never auto-fixed. With `--apply-terms`, drifted routes are UPDATED to the staged terms (the monthly repricing ritual) |
 | Disabled | skipped — governance disabled it for a reason |
 
 Commit the updated JSON files afterwards; the file history is the audit
 trail of every intake batch.
+
+### Monthly repricing ritual (seasonality)
+
+On the 1st the advisory `reprice` cron stages a seasonal proposal in the
+`pricing_runs` DB table (proposed base changes + routes newly over the
+cap). It never touches the chain. To apply it, run the same pipeline with
+the apply flag — steps 2–4 only, no discovery needed:
+
+```sh
+npx tsx ../scripts/price_routes.ts               # fresh staged whitelist
+git diff dapp/config/route_whitelist.json        # REVIEW the changes
+npx tsx ../scripts/seed_routes.ts --apply-terms  # update drifted live routes
+```
+
+`--apply-terms` also syncs the fleet file's overrides, which matters:
+the fleet file is the base the weather surcharge job builds on. Routes
+now over the cap are NOT auto-disabled — disabling is your decision.
+Remember the term-snapshot rule: new terms affect newly opened
+flight-date buckets only.
 
 ### Starting over (full wipe)
 
@@ -3367,10 +3470,11 @@ ledger), resumed automatically from cached state.
   and locks exactly the payoff; purchase on a disabled route is rejected
   by the contract gate.
 - **C. Governance (manual mode, no DB)** — storm: `disable_route` → buy
-  fails → recovery: `enable_route` → the same buy succeeds · elevated:
-  premium ×1.25 on-chain → a purchase opening a **fresh** flight bucket
-  pays $18.75 while a buyer joining an **already-open** bucket pays its
-  snapshotted $15 → revert → terms read back at base.
+  fails → recovery: `enable_route` → the same buy succeeds · surcharge:
+  premium raised on-chain ($15 → $18.75 via `update_route_terms`) → a
+  purchase opening a **fresh** flight bucket pays the raised premium
+  while a buyer joining an **already-open** bucket pays its snapshotted
+  $15 → revert → terms read back at base.
 - **E. ML pricing** — the live `/predict` API prices a route; the anchor
   is computed with the real protocol functions
   (`expectedLossPremiumUnits` + `clampPremium`), pushed on-chain, and a

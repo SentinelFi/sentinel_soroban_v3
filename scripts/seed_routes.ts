@@ -11,8 +11,10 @@
  *
  * IDEMPOTENT, per route:
  *   - Unknown on-chain  → whitelist_route with the staged terms
- *   - Active            → no-op (terms drift is REPORTED, not auto-fixed;
- *                         repricing live routes is a governance decision)
+ *   - Active            → no-op (terms drift is REPORTED, not auto-fixed).
+ *                         With --apply-terms, drifted routes are UPDATED to
+ *                         the staged terms instead — the monthly repricing
+ *                         ritual (an explicit admin decision, hence a flag)
  *   - Disabled          → skipped (governance disabled it for a reason)
  *
  * Successfully seeded routes are merged into the operational fleet file
@@ -20,8 +22,9 @@
  * with overrides mirroring the on-chain terms.
  *
  * Run (from dapp/):
- *   npx tsx ../scripts/seed_routes.ts --dry-run    # table only, no txs
- *   npx tsx ../scripts/seed_routes.ts              # seed on-chain
+ *   npx tsx ../scripts/seed_routes.ts --dry-run       # table only, no txs
+ *   npx tsx ../scripts/seed_routes.ts                 # seed on-chain
+ *   npx tsx ../scripts/seed_routes.ts --apply-terms   # + reprice drifted live routes
  *
  * Signs with GOVERNANCE_ADMIN_SECRET_KEY (env), falling back to the local
  * `sentinel-governor` stellar identity.
@@ -72,6 +75,7 @@ function pad(s: string, w: number): string {
 
 async function main(): Promise<void> {
   const dryRun = process.argv.includes("--dry-run");
+  const applyTerms = process.argv.includes("--apply-terms");
   const staged = JSON.parse(readFileSync(WHITELIST_FILE, "utf8")) as StagedWhitelist;
 
   console.log(
@@ -109,6 +113,7 @@ async function main(): Promise<void> {
   let whitelisted = 0;
   let noop = 0;
   let drift = 0;
+  let applied = 0;
   let disabled = 0;
   let failed = 0;
   const seeded: StagedRoute[] = [];
@@ -122,12 +127,21 @@ async function main(): Promise<void> {
         const t = onChain.terms;
         const stagedPremium = usdcToBaseUnits(r.premium_usdc);
         if (t && (t.premium !== stagedPremium || t.payoff !== usdcToBaseUnits(r.payoff_usdc))) {
-          console.warn(
-            `  ${label}: active with DIFFERENT terms on-chain — staged $${r.premium_usdc}/$${r.payoff_usdc}, ` +
-              `live $${Number(t.premium) / 1e7}/$${Number(t.payoff) / 1e7}. Repricing live routes is a ` +
-              `governance decision — not touched.`
-          );
-          drift++;
+          if (applyTerms) {
+            await submitter.updateTerms(key, stagedPremium, usdcToBaseUnits(r.payoff_usdc), r.delay_hours);
+            console.log(
+              `  ${label}: terms applied — $${Number(t.premium) / 1e7}/$${Number(t.payoff) / 1e7} → ` +
+                `$${r.premium_usdc}/$${r.payoff_usdc} (--apply-terms)`
+            );
+            applied++;
+          } else {
+            console.warn(
+              `  ${label}: active with DIFFERENT terms on-chain — staged $${r.premium_usdc}/$${r.payoff_usdc}, ` +
+                `live $${Number(t.premium) / 1e7}/$${Number(t.payoff) / 1e7}. Repricing live routes is a ` +
+                `governance decision — re-run with --apply-terms to apply.`
+            );
+            drift++;
+          }
         } else {
           noop++;
         }
@@ -154,11 +168,33 @@ async function main(): Promise<void> {
 
   // Mirror seeded routes into the operational fleet file (authorizer/jobs).
   const fleet = JSON.parse(readFileSync(FLEET_FILE, "utf8")) as { routes: RouteEntry[] };
-  const known = new Set(fleet.routes.map((f) => `${f.flight_id}|${f.origin}|${f.destination}`));
+  const byFleetKey = new Map(fleet.routes.map((f) => [`${f.flight_id}|${f.origin}|${f.destination}`, f]));
+  const known = new Set(byFleetKey.keys());
   let appended = 0;
+  let mirrored = 0;
   for (const r of seeded) {
     const k = `${r.flight_id}|${r.origin}|${r.destination}`;
-    if (known.has(k)) continue;
+    if (known.has(k)) {
+      // --apply-terms repriced live routes on-chain — keep the fleet file
+      // (the base the weather job builds on) in lockstep.
+      if (applyTerms) {
+        const entry = byFleetKey.get(k)!;
+        const o: import("../dapp/api/_lib/routes_config").RouteTermsOverride = entry.overrides ?? {};
+        if (
+          o.premium_usdc !== r.premium_usdc ||
+          o.payoff_usdc !== r.payoff_usdc ||
+          o.delay_hours !== r.delay_hours
+        ) {
+          entry.overrides = {
+            premium_usdc: r.premium_usdc,
+            payoff_usdc: r.payoff_usdc,
+            delay_hours: r.delay_hours,
+          };
+          mirrored++;
+        }
+      }
+      continue;
+    }
     fleet.routes.push({
       flight_id: r.flight_id,
       carrier: r.carrier,
@@ -175,11 +211,12 @@ async function main(): Promise<void> {
     known.add(k);
     appended++;
   }
-  if (appended > 0) writeFileSync(FLEET_FILE, JSON.stringify(fleet, null, 2) + "\n");
+  if (appended > 0 || mirrored > 0) writeFileSync(FLEET_FILE, JSON.stringify(fleet, null, 2) + "\n");
 
   console.log(
     `\nDone. whitelisted=${whitelisted} already-active=${noop} terms-drift=${drift} ` +
-      `disabled-skipped=${disabled} failed=${failed}; fleet file +${appended} (${FLEET_FILE})`
+      `terms-applied=${applied} disabled-skipped=${disabled} failed=${failed}; ` +
+      `fleet file +${appended} new, ${mirrored} override(s) synced (${FLEET_FILE})`
   );
   process.exit(failed > 0 ? 1 : 0);
 }

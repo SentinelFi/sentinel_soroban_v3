@@ -107,14 +107,14 @@ const UNIT = 10_000_000n;
 const BASE_PREMIUM = 15n * UNIT;
 const PAYOFF = 100n * UNIT;
 const DELAY_HOURS = 3;
-const ELEVATED_PREMIUM = (BASE_PREMIUM * 125n) / 100n; // ×1.25 = $18.75
+const ELEVATED_PREMIUM = (BASE_PREMIUM * 125n) / 100n; // manual raise to $18.75
 const RAILS: RouteRails = {
   premiumMin: 10n * UNIT,
   premiumMax: 30n * UNIT,
+  basePremiumMax: 20n * UNIT,
+  weatherSurcharge: { elevated: 2n * UNIT, severe: 10n * UNIT },
   payoffMin: 100n * UNIT,
   payoffMax: 1000n * UNIT,
-  maxDailyPremiumChangePct: 50,
-  elevatedWeatherMultiplier: 1.25,
 };
 
 // ETA pinned 6 min after the flight day's midnight: satisfies the oracle's
@@ -309,11 +309,12 @@ async function buyDayPhase(ctx: Ctx): Promise<void> {
       defaults: { premium_usdc: 15, payoff_usdc: 100, delay_hours: DELAY_HOURS },
       rails: {
         premium_usdc: { min: 10, max: 30 },
+        base_premium_max_usdc: 20,
+        weather_surcharge_usdc: { elevated: 2, severe: 10 },
         payoff_usdc: { min: 100, max: 1000 },
-        max_daily_premium_change_pct: 50,
-        elevated_weather_multiplier: 1.25,
       },
       sale_horizon_days: 2,
+      weather_horizon_days: 3,
       routes: Object.values(F).map((id) => ({
         flight_id: id, carrier: "ZZ", origin: "JFK", destination: "LAX",
         enabled: true, overrides: null,
@@ -426,7 +427,7 @@ async function buyDayPhase(ctx: Ctx): Promise<void> {
     check("E1b: unknown carrier rejected by service (422 → null)", pUnknown === null, String(pUnknown));
     if (p !== null) {
       // The REAL protocol pricing functions — same code the cron runs.
-      mlPremium = clampPremium(expectedLossPremiumUnits(p, PAYOFF), null, RAILS);
+      mlPremium = clampPremium(expectedLossPremiumUnits(p, PAYOFF), RAILS);
       console.log(`  p_covered=${p.toFixed(4)} → anchor=${Number(mlPremium) / 1e7} USDC`);
       await submitter.updateTerms({ flightId: F.govMl, origin: "JFK", dest: "LAX" }, mlPremium, "keep", "keep");
       const mlTerms = await submitter.readStatus({ flightId: F.govMl, origin: "JFK", dest: "LAX" });
