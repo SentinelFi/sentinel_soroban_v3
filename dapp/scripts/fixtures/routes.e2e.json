@@ -32,6 +32,33 @@
       "enabled": true,
       "overrides": null,
       "notes": "mock outcome: cancelled; unscheduled on day +5"
+    },
+    {
+      "flight_id": "LOST666",
+      "carrier": "AA",
+      "origin": "PHX",
+      "destination": "DFW",
+      "enabled": true,
+      "overrides": null,
+      "notes": "mock outcome: tracking_lost (bare cancelled flag)"
+    },
+    {
+      "flight_id": "FUT111",
+      "carrier": "UA",
+      "origin": "LAX",
+      "destination": "JFK",
+      "enabled": true,
+      "overrides": null,
+      "notes": "mock outcome: scheduled (future flight, published schedule)"
+    },
+    {
+      "flight_id": "DUP777",
+      "carrier": "UA",
+      "origin": "SEA",
+      "destination": "ORD",
+      "enabled": true,
+      "overrides": null,
+      "notes": "mock: duplicate live instances (ambiguous)"
     }
   ]
 }

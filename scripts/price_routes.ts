@@ -35,7 +35,7 @@ import { expectedLossPremiumUnits, mlBasePremiumUnits } from "../dapp/api/_lib/r
 import { logPricingRun } from "../dapp/api/_lib/governance/pricing_log";
 import { loadRoutesConfig, baseUnitsToUsdc } from "../dapp/api/_lib/routes_config";
 import { AIRPORTS } from "../dapp/api/_lib/airports";
-import { distanceMiles } from "../dapp/api/_lib/governance/schedule_check";
+import { distanceMiles } from "../dapp/api/_lib/airports";
 import { toIata } from "../dapp/api/_lib/airline_codes";
 import type { CatalogEntry } from "./discover_routes";
 

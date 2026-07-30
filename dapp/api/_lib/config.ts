@@ -58,16 +58,19 @@ export function loadConfig(): Config {
     governanceAdminSecretKey: process.env.GOVERNANCE_ADMIN_SECRET_KEY || undefined,
     aeroApiBaseUrl: envOrDefault("AEROAPI_BASE_URL"),
     aeroApiKey: process.env.AEROAPI_KEY ?? "",
-    // Fetcher polling window before the recorded scheduled arrival
-    // (cancellation watch + landing resolution). Default 6h.
-    fetcherWatchSecs: parsePositiveInt(process.env.FETCHER_WATCH_SECS, 21_600),
-    // Sale authorization. 0/unset horizon falls back to the routes file's
-    // sale_horizon_days at job start.
+    // Settle cron: first AeroAPI look at an insured flight comes this long
+    // after its scheduled arrival (public promise: settled within 24h of
+    // ETA). Default 5h.
+    settleAfterEtaSecs: parsePositiveInt(process.env.SETTLE_AFTER_ETA_SECS, 18_000),
+    // JIT sale authorization. 0/unset horizon falls back to the routes
+    // file's sale_horizon_days.
     saleAuthHorizonDays: parsePositiveInt(process.env.SALE_AUTH_HORIZON_DAYS, 0),
     saleAuthValiditySecs: Math.min(
       parsePositiveInt(process.env.SALE_AUTH_VALIDITY_SECS, 21_600), // 6h
       86_400 // on-chain cap — larger values would revert every open_sale
     ),
+    // Purchase cutoff vs the scheduled departure. Default 24h.
+    saleMinLeadSecs: parsePositiveInt(process.env.SALE_MIN_LEAD_SECS, 86_400),
     agentBaseUrl: process.env.AGENT_BASE_URL || undefined,
     agentToken: process.env.AGENT_TOKEN || undefined,
     weatherBaseUrl: process.env.WEATHER_BASE_URL ?? "https://api.open-meteo.com/v1/forecast",

@@ -3,18 +3,17 @@ import { loadConfig } from "../_lib/config";
 import { verifyAdmin } from "../_lib/governance/admin_auth";
 import { loadGovConfig } from "../_lib/governance/config";
 import { JOB_REGISTRY, latestRuns, recentRuns, recordRun } from "../_lib/governance/runs";
-import { run as runAuthorizer } from "../_lib/jobs/authorizer";
 import { run as runClassifier } from "../_lib/jobs/classifier";
 import { run as runFetcher } from "../_lib/jobs/fetcher";
 import { run as runQueue } from "../_lib/jobs/queue";
-import { run as runRouteAgent } from "../_lib/jobs/route_agent";
+import { run as runRepricer } from "../_lib/jobs/repricer";
+import { run as runRevive } from "../_lib/jobs/revive";
 import { run as runSettler } from "../_lib/jobs/settler";
 import { run as runTtl } from "../_lib/jobs/ttl";
+import { run as runWeather } from "../_lib/jobs/weather";
 import { run as runGovReconcile } from "../_lib/governance/reconciler";
-import { run as runGovSignals } from "../_lib/governance/signals_collector";
 import { run as runGovExposure } from "../_lib/governance/exposure_collector";
 import { run as runGovOnboard } from "../_lib/governance/onboard";
-import { run as runGovScheduleCheck } from "../_lib/governance/schedule_check";
 import type { JobName, RunLogEntry } from "../_lib/types";
 
 // Manual runs can be slow (fetcher walks every active flight).
@@ -36,13 +35,12 @@ const RUNNERS: Record<JobName, () => Promise<RunLogEntry>> = {
   settler: () => runSettler(loadConfig()),
   queue_maintainer: () => runQueue(loadConfig()),
   ttl_extender: () => runTtl(loadConfig()),
-  sale_authorizer: () => runAuthorizer(loadConfig()),
-  route_agent: () => runRouteAgent(loadGovConfig()),
+  weather: () => runWeather(loadGovConfig()),
+  reprice: () => runRepricer(),
+  revive: () => runRevive(loadGovConfig()),
   gov_reconcile: () => runGovReconcile(loadGovConfig()),
-  gov_signals: () => runGovSignals(loadGovConfig()),
   gov_exposure: () => runGovExposure(loadGovConfig()),
   gov_onboard: () => runGovOnboard(loadGovConfig()),
-  gov_schedule_check: () => runGovScheduleCheck(loadGovConfig()),
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {

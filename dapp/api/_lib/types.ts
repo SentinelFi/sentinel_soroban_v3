@@ -17,23 +17,24 @@ export interface TTLResult {
 
 // audit M-03 split queue maintenance out of settlement; queue_maintainer
 // is a Phase 3 addition not present in the phase-2 executor.
-// sale_authorizer ports the executor's cron #0 (sale-window attestation);
-// route_agent is the daily ML-pricing + weather governance agent.
+// 2026-07-31 demand-driven rework: sale authorization moved from a cron
+// (sale_authorizer) to the JIT /api/sale-auth/request endpoint; the
+// AeroAPI signal collectors (gov_signals, gov_schedule_check) retired
+// with it. "fetcher" is now the settle sweep (name kept for run-log
+// continuity); "revive" re-checks guard-paused routes daily.
 export type JobName =
   | "fetcher"
   | "classifier"
   | "settler"
   | "queue_maintainer"
   | "ttl_extender"
-  | "sale_authorizer"
   | "weather"
   | "reprice"
-  // Governance module (signals + reconciler) — Phase 2+.
+  | "revive"
+  // Governance module (exposure signals + reconciler) — Phase 2+.
   | "gov_reconcile"
-  | "gov_signals"
   | "gov_exposure"
-  | "gov_onboard"
-  | "gov_schedule_check";
+  | "gov_onboard";
 
 export interface RunLogEntry {
   timestamp: string;
@@ -98,21 +99,23 @@ export interface Config {
   keeperSecretKey: string;
   ttlExtenderSecretKey: string;
   // Governance agent key (4th identity) — a GovernanceModule ADMIN, never
-  // the owner. Only the route_agent job and the whitelist script need it,
-  // so it is optional here and enforced at job start.
+  // the owner. Only the route guard's pause path and the whitelist script
+  // need it, so it is optional here (guard degrades to log-only without it).
   governanceAdminSecretKey?: string;
   // AeroAPI.
   aeroApiBaseUrl: string;
   aeroApiKey: string;
-  // Fetcher call economy: how long before a flight's recorded scheduled
-  // arrival the fetcher starts polling AeroAPI for that Active flight
-  // (cancellation watch + landing resolution). Outside this window the
-  // fetcher spends ZERO API calls on the flight.
-  fetcherWatchSecs: number;
-  // Sale authorization (cron #0). Horizon defaults come from
+  // Settle cron timing: how long after a flight's scheduled arrival the
+  // settle sweep makes its first (usually only) AeroAPI call. Before that
+  // moment an insured flight costs ZERO API calls.
+  settleAfterEtaSecs: number;
+  // JIT sale authorization. Horizon defaults come from
   // config/routes.testnet.json; env overrides win.
   saleAuthHorizonDays: number;
   saleAuthValiditySecs: number;
+  // Purchase cutoff: no sale window ever authorizes a buy closer than
+  // this to the scheduled departure (product rule: 24h).
+  saleMinLeadSecs: number;
   // ML pricing agent (Render-hosted FastAPI). Optional — route_agent falls
   // back to the routes-file terms when unset or unreachable.
   agentBaseUrl?: string;

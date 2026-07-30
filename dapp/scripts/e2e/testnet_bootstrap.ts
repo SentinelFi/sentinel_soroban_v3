@@ -111,9 +111,14 @@ export function deploymentConfig(d: E2eDeployment, aeroApiBaseUrl: string): Conf
     ttlExtenderSecretKey: d.opsSecret,
     aeroApiBaseUrl,
     aeroApiKey: "e2e",
-    fetcherWatchSecs: 21_600,
+    // 1h settle delay: the suite's pinned ETA is 06:00Z on the flight day,
+    // so the flight-day phase is runnable from ~07:00Z (vs 5h in prod).
+    settleAfterEtaSecs: 3_600,
     saleAuthHorizonDays: 2, // near window only — no /schedules churn
     saleAuthValiditySecs: 21_600,
+    // The throwaway deployment's contract min-lead is 60s; mirror it here
+    // so the JIT check authorizes tomorrow's 03:00Z departures.
+    saleMinLeadSecs: 60,
     weatherBaseUrl: "http://fake-weather.invalid",
   };
 }

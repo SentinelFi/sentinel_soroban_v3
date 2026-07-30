@@ -356,6 +356,7 @@ const stats = {
 app.get("/flights/:ident", (req, res) => {
   const { ident } = req.params;
   const startParam = req.query.start as string | undefined;
+  const endParam = req.query.end as string | undefined;
   const dateParam = startParam?.slice(0, 10);
 
   stats.flights++;
@@ -375,12 +376,32 @@ app.get("/flights/:ident", (req, res) => {
     return;
   }
 
+  // One instance per day in the requested range (real AeroAPI returns every
+  // tracked instance) — single-day queries keep returning exactly one.
+  // Days listed in unscheduled_days are absent, mirroring /schedules.
   let flights: AeroApiFlight[] = [];
   if (scenario) {
-    flights = [buildFlight(ident, scenario, dateParam)];
-    if (scenario.duplicate) {
-      // Second candidate record for the same ident/day → ambiguous response.
-      flights.push(buildFlight(ident, scenario, dateParam));
+    const startDay = dateParam ?? new Date().toISOString().slice(0, 10);
+    const endDay = endParam?.slice(0, 10) ?? startDay;
+    const unscheduled = new Set(
+      (scenario.unscheduled_days ?? []).map((d) => {
+        if (!d.startsWith("+")) return d;
+        const todayMs = Date.parse(new Date().toISOString().slice(0, 10));
+        return new Date(todayMs + Number(d.slice(1)) * 86_400_000)
+          .toISOString()
+          .slice(0, 10);
+      })
+    );
+    const startMs = Date.parse(`${startDay}T00:00:00Z`);
+    const endMs = Date.parse(`${endDay}T00:00:00Z`);
+    for (let ms = startMs; ms <= endMs; ms += 86_400_000) {
+      const day = new Date(ms).toISOString().slice(0, 10);
+      if (unscheduled.has(day)) continue;
+      flights.push(buildFlight(ident, scenario, day));
+      if (scenario.duplicate) {
+        // Second candidate record for the same ident/day → ambiguous response.
+        flights.push(buildFlight(ident, scenario, day));
+      }
     }
   }
 

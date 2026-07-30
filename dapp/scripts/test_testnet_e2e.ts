@@ -16,18 +16,22 @@
  *
  * Scenario list (also documented in spec/architecture.md, E2E section):
  *
- * A. Flight outcomes (delay threshold 3h, payoff $100):
+ * A. Flight outcomes (delay threshold 3h, payoff $100). Per the
+ *    demand-driven rework NOTHING settles before scheduled arrival +
+ *    settle delay — every outcome (cancellations included) resolves on
+ *    the FLIGHT DAY, one API call per flight:
  *   A1 lands 5min early            → SettledOnTime, claim REJECTED
  *   A2 lands 3h30 late (>3h)       → SettledDelayed, claim pays $100
  *   A3 lands 2h00 late (<3h)       → SettledOnTime, claim REJECTED
- *   A4 cancelled (corroborated)    → SettledCancelled same day, claim pays
+ *   A4 cancelled (corroborated)    → SettledCancelled, claim pays
  *   A5 diverted (corroborated)     → pays as cancellation, claim pays,
  *                                    never attested as landed
- *   A6 tracking-lost (bare flag)   → NO tombstone, zero settle txs; then
- *                                    tracking recovers → settles normally
+ *   A6 tracking-lost (bare flag)   → NO tombstone; tracking recovers →
+ *                                    settles normally in the same pass
  *
  * B. Sales/purchase coupling:
- *   B1 real authorizer opens windows (is_sale_open) before purchase
+ *   B1 JIT sale-auth (authorizeSale — the buy-click path) verifies each
+ *      flight live and opens its window (is_sale_open) before purchase
  *   B2 every purchase pays EXACTLY the current on-chain premium and locks
  *      exactly the payoff in the vault
  *   B3 purchase against a disabled route FAILS at the contract gate
@@ -53,12 +57,14 @@
  *   G2 money conservation: buyer net Δ = payoffs − premiums exactly;
  *      vault locked returns to its pre-run level
  *
- * TWO PHASES (the real oracle enforces date ≤ ETA / date ≤ actual, so
- * landings can only be attested on the flight day):
- *   BUY DAY    — setup, sales, purchases, all governance scenarios, and
- *                the cancelled/diverted settlements + claims.
- *   FLIGHT DAY — from ~01:08 UTC on the flight date: the three landings,
- *                tracking-lost recovery, remaining claims, final ledger.
+ * TWO PHASES (the real oracle enforces date ≤ ETA / date ≤ actual, and
+ * the settle sweep waits for scheduled arrival + its settle delay):
+ *   BUY DAY    — setup, JIT sales, purchases, all governance scenarios.
+ *                Run it BEFORE ~03:00 UTC of the flight day (the JIT
+ *                24h-equivalent cutoff uses the suite's 60s min lead
+ *                against the pinned 03:00Z departure).
+ *   FLIGHT DAY — from ~07:08 UTC on the flight date (pinned ETA 06:00Z +
+ *                1h settle delay): every outcome settles, claims, ledger.
  *
  * One-time setup:  npm run test:e2e:testnet:bootstrap  (+ ~6h deposit ripen)
  * Run:             npm run test:e2e:testnet             (each phase)
@@ -67,7 +73,6 @@
 
 // The no-DB contract is the point of this suite — enforce it.
 delete process.env.GOVERNANCE_DB_URL;
-delete process.env.SALE_AUTH_DEMAND_MODE;
 delete process.env.SALE_AUTH_HORIZON_DAYS;
 
 import { writeFileSync } from "fs";
@@ -88,7 +93,7 @@ import { GovSubmitter } from "../api/_lib/governance/submitter";
 import { AgentClient } from "../api/_lib/agent_client";
 import { expectedLossPremiumUnits, clampPremium } from "../api/_lib/route_rules";
 import type { RouteRails } from "../api/_lib/routes_config";
-import { run as authorizerRun } from "../api/_lib/jobs/authorizer";
+import { authorizeSale } from "../api/_lib/sale_auth";
 import { run as fetcherRun } from "../api/_lib/jobs/fetcher";
 import { run as classifierRun } from "../api/_lib/jobs/classifier";
 import { run as settlerRun } from "../api/_lib/jobs/settler";
@@ -117,9 +122,12 @@ const RAILS: RouteRails = {
   payoffMax: 1000n * UNIT,
 };
 
-// ETA pinned 6 min after the flight day's midnight: satisfies the oracle's
-// date ≤ eta bound while making landings attestable from eta+1h ≈ 01:08.
-const ETA_AFTER_MIDNIGHT_SECS = 360;
+// ETA pinned 06:00Z on the flight day (well inside the oracle's date ≤
+// eta ≤ date+3d bound). The mock derives departure as ETA−3h = 03:00Z,
+// so the JIT min-lead check (60s here) passes for any buy-day run before
+// ~03:00Z of the flight day, and the settle sweep (1h delay) opens at
+// ~07:00Z on the flight day.
+const ETA_AFTER_MIDNIGHT_SECS = 21_600;
 const RESUME_MARGIN_SECS = 120;
 
 const ROLES = [
@@ -322,15 +330,23 @@ async function buyDayPhase(ctx: Ctx): Promise<void> {
     }, null, 2)
   );
 
-  // ── B1: sale authorization (real authorizer, healthy schedules) ─────────
-  console.log("\n── sale authorizer (near window, real open_sale) ────────");
+  // ── B1: JIT sale authorization (the buy-click path, real open_sale) ─────
+  console.log("\n── JIT sale-auth (live verification, real open_sale) ────");
   await mock.setScenarios(
     Object.fromEntries(
       Object.values(F).map((id) => [id, { outcome: "scheduled", sched_in_epoch_secs: schedEpoch }])
     )
   );
-  const authRes = await authorizerRun(config);
-  check("authorizer run succeeds", authRes.success, authRes.error ?? "");
+  let allAuthorized = true;
+  let authDetail = "";
+  for (const id of Object.values(F)) {
+    const res = await authorizeSale(config, id, date);
+    if (!res.authorized) {
+      allAuthorized = false;
+      authDetail += `${id}: ${res.reason}; `;
+    }
+  }
+  check(`B1: JIT authorization succeeds for all ${Object.values(F).length} flights`, allAuthorized, authDetail);
   let allOpen = true;
   for (const id of Object.values(F)) {
     if ((await h.readOracle("is_sale_open", [h.sym(id), h.u64(date)])) !== true) allOpen = false;
@@ -466,51 +482,26 @@ async function buyDayPhase(ctx: Ctx): Promise<void> {
     [F.govMl]: { outcome: "on_time", sched_in_epoch_secs: schedEpoch },
   });
 
-  // ── fetcher: ETA writes; cancelled + diverted settle TODAY ──────────────
-  console.log("\n── fetcher (ETAs; cancelled/diverted settle same day) ───");
-  const cancelBefore = await h.readOracle("get_pending_outcomes").catch(() => null);
+  // ── settle sweep: NOTHING settles before the gate (demand-driven) ───────
+  // The old fetcher wrote ETAs at T−2d and settled cancellations the same
+  // day. The settle sweep spends ZERO API calls until scheduled arrival +
+  // settle delay — even on flights that will cancel. Everything resolves
+  // on the flight day.
+  console.log("\n── settle sweep (pre-gate: zero calls, zero writes) ─────");
+  const statsBeforeSweep = await mock.stats();
   const fetch1 = await fetcherRun(config);
-  check("fetcher run succeeds", fetch1.success, fetch1.error ?? "");
-  void cancelBefore;
-  for (const role of ["onTime", "delayed210", "delayed120", "govStorm", "govPrice", "govPrice2", "govMl"] as Role[]) {
-    const fd = await h.flightData(F[role], date);
-    check(
-      `${F[role]} (${role}): Active with pinned ETA accepted by the oracle`,
-      parseFlightStatus(fd.status) === FlightStatus.Active && BigInt(fd.estimated_arrival_time) === BigInt(schedEpoch),
-      `${variantName(fd.status)}/${fd.estimated_arrival_time}`
-    );
+  check("settle sweep run succeeds", fetch1.success, fetch1.error ?? "");
+  const statsAfterSweep = await mock.stats();
+  check(
+    "pre-gate sweep spends ZERO AeroAPI calls",
+    statsAfterSweep.flights === statsBeforeSweep.flights,
+    `${statsBeforeSweep.flights} → ${statsAfterSweep.flights}`
+  );
+  let allNotInitiated = true;
+  for (const role of ["onTime", "cancelled", "diverted", "lost"] as Role[]) {
+    if ((await h.oracleStatus(F[role], date)) !== FlightStatus.NotInitiated) allNotInitiated = false;
   }
-  check(
-    `A4 ${F.cancelled}: corroborated cancellation → Settled`,
-    (await h.oracleStatus(F.cancelled, date)) === FlightStatus.Settled
-  );
-  check(
-    `A4 ${F.cancelled}: pool SettledCancelled`,
-    variantName((await h.poolConfig(F.cancelled, date))?.status) === "SettledCancelled"
-  );
-  check(
-    `A5 ${F.diverted}: diverted pays as cancellation → Settled/SettledCancelled`,
-    (await h.oracleStatus(F.diverted, date)) === FlightStatus.Settled &&
-      variantName((await h.poolConfig(F.diverted, date))?.status) === "SettledCancelled"
-  );
-  check(
-    `A6 ${F.lost}: bare cancelled flag — NO tombstone (still NotInitiated)`,
-    (await h.oracleStatus(F.lost, date)) === FlightStatus.NotInitiated
-  );
-
-  // ── A4/A5 claims pay today ──────────────────────────────────────────────
-  console.log("\n── claims (cancelled + diverted) ────────────────────────");
-  for (const role of ["cancelled", "diverted"] as Role[]) {
-    try {
-      const before = await h.usdcBalance(ctx.buyerPub);
-      await h.claim(F[role], date);
-      const after = await h.usdcBalance(ctx.buyerPub);
-      check(`${F[role]} (${role}): claim paid the full $100 payoff`, after - before === PAYOFF, `Δ=${after - before}`);
-      buyerExpectedDelta += PAYOFF;
-    } catch (err) {
-      check(`${F[role]} (${role}): claim paid the full $100 payoff`, false, String(err).slice(0, 120));
-    }
-  }
+  check("pre-gate: every insured flight still NotInitiated (nothing settles early)", allNotInitiated);
 
   // ── G1: keeper sweeps are clean mid-run ─────────────────────────────────
   console.log("\n── batch keeper jobs (buy-day sweep) ────────────────────");
@@ -551,8 +542,9 @@ async function flightDayPhase(ctx: Ctx): Promise<void> {
   console.log(`\nResuming run @ ${new Date(Number(date) * 1000).toISOString().slice(0, 10)}`);
 
   // Same pinned schedule as the buy day; tracking has RECOVERED for A6.
-  // Built only from idents present in the pending run (older runs may
-  // predate a role).
+  // A4 (cancelled) and A5 (diverted) keep their buy-day scenarios. Built
+  // only from idents present in the pending run (older runs may predate
+  // a role).
   const flightDayOutcome = (role: Role) =>
     role === "delayed210"
       ? { outcome: "delayed", delay_minutes: 210, sched_in_epoch_secs: p.schedEpoch }
@@ -567,15 +559,18 @@ async function flightDayPhase(ctx: Ctx): Promise<void> {
     )
   );
 
-  // ── fetcher pass 1: landings settle; A6 gets its late ETA ───────────────
-  console.log("\n── fetcher pass 1 (landings; A6 tracking recovers) ──────");
+  // ── settle sweep pass 1: every outcome resolves, one call each ──────────
+  console.log("\n── settle sweep pass 1 (all outcomes resolve) ───────────");
   const fetch1 = await fetcherRun(config);
-  check("fetcher pass 1 succeeds", fetch1.success, fetch1.error ?? "");
+  check("settle sweep pass 1 succeeds", fetch1.success, fetch1.error ?? "");
   const expectPool: Array<[Role, string, string]> = (
     [
       ["onTime", "SettledOnTime", "A1 lands −5min"],
       ["delayed210", "SettledDelayed", "A2 lands 3h30 late (>3h)"],
       ["delayed120", "SettledOnTime", "A3 lands 2h00 late (<3h — boundary)"],
+      ["cancelled", "SettledCancelled", "A4 corroborated cancellation"],
+      ["diverted", "SettledCancelled", "A5 diverted pays as cancellation"],
+      ["lost", "SettledOnTime", "A6 tracking recovered — settles same pass"],
       ["govStorm", "SettledOnTime", "gov flight settles"],
       ["govPrice", "SettledOnTime", "gov flight settles"],
       ["govPrice2", "SettledOnTime", "gov flight settles"],
@@ -587,17 +582,26 @@ async function flightDayPhase(ctx: Ctx): Promise<void> {
     check(`${label}: ${F[role]} → ${want}`, got === want, got);
   }
   check(
-    `A6 ${F.lost}: tracking recovered → ETA written (Active)`,
-    (await h.oracleStatus(F.lost, date)) === FlightStatus.Active
+    `A5 ${F.diverted}: never attested as landed (oracle Settled via cancellation)`,
+    (await h.oracleStatus(F.diverted, date)) === FlightStatus.Settled
+  );
+  const fdOnTime = await h.flightData(F.onTime, date);
+  check(
+    "A1: schedule written from the same response (eta = pinned 06:00Z)",
+    BigInt(fdOnTime.estimated_arrival_time) === BigInt(p.schedEpoch),
+    String(fdOnTime.estimated_arrival_time)
   );
 
-  // ── fetcher pass 2: the recovered flight lands + settles ────────────────
-  console.log("\n── fetcher pass 2 (A6 lands) ────────────────────────────");
+  // ── settle sweep pass 2: idempotent (everything already settled) ────────
+  console.log("\n── settle sweep pass 2 (idempotence) ────────────────────");
+  const statsBefore2 = await mock.stats();
   const fetch2 = await fetcherRun(config);
-  check("fetcher pass 2 succeeds", fetch2.success, fetch2.error ?? "");
+  check("settle sweep pass 2 succeeds", fetch2.success, fetch2.error ?? "");
+  const statsAfter2 = await mock.stats();
   check(
-    `A6 ${F.lost}: settles normally after tracking gap → SettledOnTime`,
-    variantName((await h.poolConfig(F.lost, date))?.status) === "SettledOnTime"
+    "pass 2 spends ZERO AeroAPI calls (all outcomes recorded)",
+    statsAfter2.flights === statsBefore2.flights,
+    `${statsBefore2.flights} → ${statsAfter2.flights}`
   );
 
   // ── G1: batch keeper jobs on the real chain ─────────────────────────────
@@ -609,9 +613,20 @@ async function flightDayPhase(ctx: Ctx): Promise<void> {
   check("queue-maintenance succeeds", (await queueRun(config)).success);
   check("ttl-extender succeeds (DB-only sweeps skip)", (await ttlRun(config)).success);
 
-  // ── remaining claims ────────────────────────────────────────────────────
-  console.log("\n── claims (A2 pays; A1 and A3 rejected) ─────────────────");
+  // ── claims ──────────────────────────────────────────────────────────────
+  console.log("\n── claims (A2/A4/A5 pay; A1 and A3 rejected) ────────────");
   let buyerExpectedDelta = BigInt(p.buyerExpectedDelta);
+  for (const role of ["cancelled", "diverted"] as Role[]) {
+    try {
+      const before = await h.usdcBalance(ctx.buyerPub);
+      await h.claim(F[role], date);
+      const after = await h.usdcBalance(ctx.buyerPub);
+      check(`${F[role]} (${role}): claim paid the full $100 payoff`, after - before === PAYOFF, `Δ=${after - before}`);
+      buyerExpectedDelta += PAYOFF;
+    } catch (err) {
+      check(`${F[role]} (${role}): claim paid the full $100 payoff`, false, String(err).slice(0, 120));
+    }
+  }
   try {
     const before = await h.usdcBalance(ctx.buyerPub);
     await h.claim(F.delayed210, date);
