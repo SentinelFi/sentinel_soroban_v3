@@ -31,8 +31,8 @@ export type JobName =
   | "weather"
   | "reprice"
   | "revive"
-  // Governance module (exposure signals + reconciler) — Phase 2+.
-  | "gov_reconcile"
+  // Governance module — Phase 2+. gov_reconcile retired 2026-08-01: the
+  // exposure brake acts directly through the interventions executor.
   | "gov_exposure"
   | "gov_onboard";
 

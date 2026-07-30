@@ -1,9 +1,16 @@
-import { classifyForecast, clampPremium, combineSeverity, weatherSurchargeUnits } from "../route_rules";
+import {
+  classifyForecast,
+  clampPremium,
+  combineSeverity,
+  isExtremeForecast,
+  weatherSurchargeUnits,
+} from "../route_rules";
 import { baseUnitsToUsdc, fileTerms, loadRoutesConfig } from "../routes_config";
 import { WeatherClient } from "../weather_client";
 import type { FetcherAction, RunLogEntry } from "../types";
 import type { GovConfig } from "../governance/config";
 import { GovSubmitter } from "../governance/submitter";
+import { pauseRoute, type GovChainConfig } from "../governance/interventions";
 
 /**
  * weather (every ~2h) — the STATELESS storm surcharge loop.
@@ -30,12 +37,16 @@ import { GovSubmitter } from "../governance/submitter";
  *     buckets whose first purchase comes after it — never repricing
  *     anyone who already bought.
  *
- * Weather NEVER disables a route. Stopping sales is a human decision
- * (admin) or the exposure guardrails' — see governance/reconciler.ts.
+ * One exception above "severe" (2026-08-01, user decision): an EXTREME
+ * forecast — hurricane-force gusts / blizzard-scale snow at either
+ * airport (route_rules.isExtremeForecast) — is not priced, it is paused:
+ * a `weather` intervention opens through the shared executor, and the
+ * hourly revive cron lifts it the moment the forecast drops back below
+ * extreme. Severe still just adds the +$10 surcharge and keeps selling.
  *
  * Forecasts fail open: an unreachable Open-Meteo or unknown airport is
- * "ok" (no surcharge), never an error — real insurability is still gated
- * by the sale authorizer (AeroAPI, fail-closed).
+ * "ok" (no surcharge, no pause), never an error — real insurability is
+ * still gated by the JIT sale-auth endpoint (AeroAPI, fail-closed).
  */
 
 const ACTOR = "cron:weather";
@@ -78,6 +89,29 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
       const label = `${route.flight_id} ${route.origin}→${route.destination}`;
       try {
         const [o, d] = [await getForecast(route.origin), await getForecast(route.destination)];
+
+        // EXTREME → pause, don't price. The revive cron re-opens the
+        // route the hour the forecast clears.
+        if (isExtremeForecast(o) || isExtremeForecast(d)) {
+          const evidence = {
+            origin: { iata: route.origin, gust_kmh: o?.maxWindGustKmh, snow_cm: o?.totalSnowfallCm },
+            dest: { iata: route.destination, gust_kmh: d?.maxWindGustKmh, snow_cm: d?.totalSnowfallCm },
+          };
+          if (config.dryRun) {
+            actions.push({ flight: label, skipped: "[dry-run] EXTREME forecast — would pause" });
+            continue;
+          }
+          const chainConfig: GovChainConfig = {
+            stellarRpcUrl: config.stellarRpcUrl,
+            networkPassphrase: config.networkPassphrase,
+            governanceId: config.governanceId,
+            governanceAdminSecretKey: config.govAdminSecretKey,
+          };
+          const result = await pauseRoute(chainConfig, route, "weather", evidence, ACTOR);
+          actions.push({ flight: label, transition: `EXTREME forecast — ${result.outcome}` });
+          continue;
+        }
+
         const severity = combineSeverity(classifyForecast(o), classifyForecast(d));
 
         const base = fileTerms(routesConfig, route).premium;

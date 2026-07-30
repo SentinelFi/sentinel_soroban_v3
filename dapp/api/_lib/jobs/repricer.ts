@@ -4,10 +4,17 @@ import { toIata } from "../airline_codes";
 import { expectedLossPremiumUnits, mlBasePremiumUnits } from "../route_rules";
 import { baseUnitsToUsdc, fileTerms, loadRoutesConfig } from "../routes_config";
 import type { FetcherAction, RunLogEntry } from "../types";
+import type { GovConfig } from "../governance/config";
 import { logPricingRun } from "../governance/pricing_log";
+import {
+  openInterventions,
+  pauseRoute,
+  reviveRoute,
+  type GovChainConfig,
+} from "../governance/interventions";
 
 /**
- * reprice (monthly, ADVISORY) — seasonal ML repricing PROPOSAL.
+ * reprice (monthly) — seasonal ML repricing PROPOSAL + the pricing brake.
  *
  * Runs the same whole-dollar base pricing as scripts/price_routes.ts over
  * every enabled fleet route, for a date ~2 weeks out, and writes the
@@ -16,21 +23,34 @@ import { logPricingRun } from "../governance/pricing_log";
  *   - proposed base premium per route where it differs from the current
  *     fleet-file base
  *   - routes whose honest price now exceeds the base cap (seasonal risk
- *     spike) — flagged for the admin to consider disabling
+ *     spike)
  *
- * DELIBERATELY NO CHAIN WRITES and no file writes. The single source of
- * truth for base premiums is the fleet file, and only the admin changes
- * it — by running the manual ritual (price_routes → review →
- * seed_routes --apply-terms) when this proposal convinces them. Two
- * reasons this stays advisory:
- *   1. The human gate: repricing live routes is a governance decision.
- *   2. One premium per route on-chain: an auto-writer here would fight
- *      the weather surcharge job over the same value.
+ * PRICES stay ADVISORY — no premium is ever written on-chain here. The
+ * single source of truth for base premiums is the fleet file, and only
+ * the admin changes it (price_routes → review → seed_routes
+ * --apply-terms): repricing live routes is a governance decision, and an
+ * auto-writer would fight the weather surcharge job over the one on-chain
+ * premium.
+ *
+ * The ONE action it does take (2026-08-01, user decision): a LIVE route
+ * whose honest price now exceeds the base cap is selling at a known
+ * expected loss — that is not a pricing question, it is a "stop selling"
+ * question. Such routes get a `pricing` intervention (pause) through the
+ * shared executor, and this same run closes its own `pricing` rows when a
+ * later month prices the route back under the cap. Monthly cadence is the
+ * revive cadence — BTS-grade seasonal risk doesn't move faster.
  */
 
 const ACTOR = "cron:reprice";
 const WHITELIST_FILE = "config/route_whitelist.json";
 const PAYOFF_UNITS = 1_000_000_000n; // $100, 7 decimals
+
+const chainConfig = (config: GovConfig): GovChainConfig => ({
+  stellarRpcUrl: config.stellarRpcUrl,
+  networkPassphrase: config.networkPassphrase,
+  governanceId: config.governanceId,
+  governanceAdminSecretKey: config.govAdminSecretKey,
+});
 
 interface StagedDetail {
   dep_time_hhmm?: number;
@@ -51,7 +71,7 @@ function loadStagedDetails(): Map<string, StagedDetail> {
   }
 }
 
-export async function run(): Promise<RunLogEntry> {
+export async function run(config: GovConfig): Promise<RunLogEntry> {
   const start = Date.now();
   const actions: FetcherAction[] = [];
 
@@ -82,6 +102,9 @@ export async function run(): Promise<RunLogEntry> {
 
     const changes: Array<{ flight_id: string; origin: string; dest: string; current_usdc: number; proposed_usdc: number }> = [];
     const excluded: Array<{ flight_id: string; origin: string; dest: string; p_covered: number; honest_premium_usdc: number }> = [];
+    // Routes this run PRICED and found under the cap — the only evidence
+    // that may close a `pricing` pause (a failed prediction is silence).
+    const underCap = new Set<string>();
     let priced = 0;
     let failed = 0;
 
@@ -123,10 +146,25 @@ export async function run(): Promise<RunLogEntry> {
           p_covered: Number(p.toFixed(5)),
           honest_premium_usdc: Number(honest.toFixed(2)),
         });
-        actions.push({ flight: label, skipped: `now above base cap (honest $${honest.toFixed(2)}) — admin should review` });
+        // Selling below expected loss is a "stop", not a price: open a
+        // `pricing` intervention (idempotent; the executor's guardrails
+        // apply). Revived below, the month it prices back under the cap.
+        if (config.dryRun) {
+          actions.push({ flight: label, skipped: `[dry-run] above base cap (honest $${honest.toFixed(2)}) — would pause` });
+        } else {
+          const result = await pauseRoute(
+            chainConfig(config),
+            route,
+            "pricing",
+            { p_covered: p, honest_premium_usdc: honest },
+            ACTOR
+          );
+          actions.push({ flight: label, transition: `above base cap (honest $${honest.toFixed(2)}) — ${result.outcome}` });
+        }
         continue;
       }
 
+      underCap.add(`${route.flight_id}|${route.origin}|${route.destination}`);
       const currentBase = fileTerms(routesConfig, route).premium;
       if (proposed !== currentBase) {
         changes.push({
@@ -143,9 +181,30 @@ export async function run(): Promise<RunLogEntry> {
       }
     }
 
+    // ── Close pricing pauses that priced back under the cap ────────────
+    // Only routes this run successfully priced count as "back": a failed
+    // prediction is silence, not evidence.
+    if (process.env.GOVERNANCE_DB_URL && !config.dryRun) {
+      try {
+        for (const row of await openInterventions("pricing")) {
+          const key = `${row.flight_id}|${row.origin}|${row.dest}`;
+          if (!underCap.has(key)) continue;
+          const outcome = await reviveRoute(
+            chainConfig(config),
+            { flight_id: row.flight_id, origin: row.origin, destination: row.dest },
+            "pricing",
+            ACTOR
+          );
+          actions.push({ flight: `${row.flight_id} ${row.origin}→${row.dest}`, transition: `back under the cap — ${outcome}` });
+        }
+      } catch (err) {
+        console.warn(`[reprice] pricing-pause review failed (ignored): ${err}`);
+      }
+    }
+
     console.log(
       `[reprice] done: ${priced} priced, ${changes.length} proposed change(s), ` +
-        `${excluded.length} now over the base cap, ${failed} failed — ADVISORY ONLY, nothing applied`
+        `${excluded.length} over the base cap (paused), ${failed} failed — prices ADVISORY, nothing applied`
     );
 
     await logPricingRun({

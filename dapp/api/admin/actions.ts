@@ -18,7 +18,7 @@ import { GovSubmitter, type DelayOp, type PremiumOp } from "../_lib/governance/s
  *
  * Admin clicks go through the SAME GovSubmitter pipeline as the cron
  * rules — identical audit rows, actor = admin:<email>. The route's DB
- * lifecycle row is kept in step so the reconciler and the UI agree.
+ * lifecycle row is kept in step so the detectors and the UI agree.
  */
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {

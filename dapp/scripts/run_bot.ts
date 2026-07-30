@@ -44,7 +44,6 @@ import { run as runTtl } from "../api/_lib/jobs/ttl";
 import { run as runWeather } from "../api/_lib/jobs/weather";
 import { run as runRepricer } from "../api/_lib/jobs/repricer";
 import { run as runRevive } from "../api/_lib/jobs/revive";
-import { run as runGovReconcile } from "../api/_lib/governance/reconciler";
 import { run as runGovExposure } from "../api/_lib/governance/exposure_collector";
 import { run as runGovOnboard } from "../api/_lib/governance/onboard";
 
@@ -55,9 +54,8 @@ const BOTS: Partial<Record<JobName, () => Promise<RunLogEntry>>> = {
   queue_maintainer: () => runQueue(loadConfig()),
   ttl_extender: () => runTtl(loadConfig()),
   weather: () => runWeather(loadGovConfig()),
-  reprice: () => runRepricer(),
+  reprice: () => runRepricer(loadGovConfig()),
   revive: () => runRevive(loadGovConfig()),
-  gov_reconcile: () => runGovReconcile(loadGovConfig()),
   gov_exposure: () => runGovExposure(loadGovConfig()),
   gov_onboard: () => runGovOnboard(loadGovConfig()),
 };

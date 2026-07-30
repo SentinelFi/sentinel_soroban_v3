@@ -11,9 +11,9 @@ import { GovSubmitter } from "../_lib/governance/submitter";
  * POST   → upsert a route's base terms / schedule / metadata
  * PATCH  → { action: "pin" | "unpin" | "set_status", ... }
  *
- * Pinning and lifecycle status are ADMIN DECISIONS the reconciler
- * treats as law: pinned routes are untouchable, status='disabled'
- * routes are kept off-chain-disabled and never auto-re-enabled.
+ * Pinning and lifecycle status are ADMIN DECISIONS the interventions
+ * executor treats as law: pinned routes are untouchable by automated
+ * causes, and admin holds are never auto-re-enabled.
  */
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {

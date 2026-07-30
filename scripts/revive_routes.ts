@@ -1,18 +1,20 @@
 /**
- * Admin companion to the daily revive cron — re-checks PAUSED routes
- * (paused by the route guard's cancellation sweep, ledger: route_health)
- * and re-enables any whose flight is verifiably back in the schedule.
+ * Admin companion to the hourly revive cron — force-runs the unified
+ * revive engine over the ENTIRE interventions ledger, ignoring the
+ * per-cause cadence gates (the cron re-sweeps cancellation rows ~daily
+ * in batches of 20; this checks every open row NOW).
  *
- * Same logic as the cron, different scope:
- *   - cron (daily, automatic): 20 most recently paused routes
- *   - this script:             the same 20 by default, or EVERYTHING
- *                              still paused with --all
+ * Causes and their predicates (see dapp/api/_lib/jobs/revive.ts):
+ *   cancellation → 5-day sweep finds a live day
+ *   weather      → forecast no longer extreme
+ *   exposure     → concentration eased (2-check hysteresis still applies)
+ *   pricing      → owned by the monthly reprice run (reported only)
+ *   admin        → never auto-revived (close via the /admin console)
  *
  * Run (from dapp/):
- *   npx tsx ../scripts/revive_routes.ts          # last 20 paused
- *   npx tsx ../scripts/revive_routes.ts --all    # every paused route
+ *   npx tsx ../scripts/revive_routes.ts
  *
- * Needs GOVERNANCE_DB_URL (the pause ledger), AEROAPI_KEY, and
+ * Needs GOVERNANCE_DB_URL (the ledger), AEROAPI_KEY, and
  * GOVERNANCE_ADMIN_SECRET_KEY (falls back to the local
  * `sentinel-governor` stellar identity, same as seed_routes).
  */
@@ -37,10 +39,9 @@ function resolveGovKey(): void {
 
 async function main(): Promise<void> {
   resolveGovKey();
-  const all = process.argv.includes("--all");
-  console.log(`Revive check — scope: ${all ? "ALL paused routes" : "20 most recently paused"}`);
+  console.log("Revive check — ALL open interventions, cadence gates bypassed.");
 
-  const entry = await run(loadGovConfig(), { limit: all ? "all" : 20 });
+  const entry = await run(loadGovConfig(), { forceAll: true });
   for (const a of entry.actions ?? []) {
     console.log(`  ${a.flight}: ${a.transition ?? a.skipped ?? a.error}`);
   }

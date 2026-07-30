@@ -1,10 +1,11 @@
 import { makeGovCronHandler } from "../_lib/governance/config";
 import { run } from "../_lib/jobs/repricer";
 
-// Monthly ADVISORY seasonal repricing: stages a proposal in the
-// pricing_runs DB table; never touches the chain or the fleet file. The
-// admin applies via the manual ritual (price_routes → review →
-// seed_routes --apply-terms).
+// Monthly seasonal repricing. Prices stay ADVISORY (proposal →
+// pricing_runs; the admin applies via price_routes → review →
+// seed_routes --apply-terms). Its one action: live routes priced above
+// the base cap get a `pricing` intervention (pause), revived by the run
+// that prices them back under.
 export const config = { maxDuration: 300 };
 
 export default makeGovCronHandler(run);

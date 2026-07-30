@@ -69,8 +69,9 @@ ticking: the JIT sale-auth endpoint attests a flight insurable the moment a
 buyer acts, the `fetcher` settle sweep writes real outcomes on-chain within
 24h of scheduled arrival, `classifier` / `settler` / `queue_maintainer` drive
 classification, settlement, and the LP queues, `ttl_extender` keeps storage alive,
-and the governance jobs (`gov_reconcile` pauses, `weather` surcharges, `reprice`
-proposes, `revive` heals guard-paused routes) manage the route rulebook.
+and the governance detectors (`gov_exposure`, the route guard, `weather`,
+`reprice`) pause through one interventions ledger that the hourly `revive`
+engine heals — together they manage the route rulebook.
 All run today as **Vercel serverless functions** in `dapp/api/cron/`, but the
 contracts don't know or care what backend calls them — each write is gated by
 `require_auth()` on an **owner-updatable address** (`authorized_oracle`,
@@ -154,15 +155,16 @@ oracle writes a flight's result it **immediately** pushes that one exact flight 
 classification and settlement. Flights settle in seconds, and the freeze lifts fast.
 The timed sweeps only mop up anything the instant path missed.
 
-**Automated governance — a rulebook that manages itself.** Nobody hand-edits the
-rulebook mid-crisis. Instead, real-world **signals** (a storm at an airport, a
-geopolitical event, too much exposure on one route) are recorded as plain **facts** in
-a database. Once an hour, a **reconciler** program reads those facts, decides what the
-rulebook *should* say — pause a dangerous route, raise a premium, re-open it once the
-storm clears — and makes exactly those changes on-chain through one audited path. A
-machine-learning model can suggest baseline prices. Human admins oversee it all from a
-dashboard, but they too only **write facts**; the reconciler is the only thing that
-touches the chain.
+**Automated governance — one ledger of what's off, and why.** Nobody hand-edits the
+rulebook mid-crisis. Four detectors each watch one danger — a flight that's publicly
+dead, too much of the vault promised to one hub, a hurricane-grade forecast, a route
+whose honest price went above the cap — and when one fires, the route is paused
+through a single audited path and recorded as one open row in an **interventions
+ledger**. An hourly **revive engine** re-checks every open row with that cause's own
+"is it safe now?" test and turns the route back on when the last hold clears. A
+machine-learning model suggests baseline prices (applied only by the admin's manual
+ritual). Human admins oversee it all from a dashboard; their own pauses live in the
+same ledger — just marked "never auto-revive".
 
 That's the entire system: travelers and underwriters on one side, five contracts
 holding the state and money, timed + just-in-time helpers keeping it moving, and a
@@ -1338,19 +1340,20 @@ but degrades gracefully without it.
 
 ### 3. Governance — centralized automation with two subsystems
 
-The rulebook manager, split by concern since 2026-07-30: **pauses** come
-from two evidence-driven paths — the exposure collector writes on-chain
-liability concentration as self-expiring `signals` for the hourly
-**reconciler** (a pause engine deciding within rails), and the **route
-guard** (fired by the JIT endpoint on a buy attempt against a cancelled/
-vanished flight) pauses a route directly when its flight is verifiably
-dead for the next 5 days, with the daily `revive` cron re-enabling routes
-whose schedule comes back. **Premiums** travel two simpler paths: the
-stateless `weather` job (fleet-file base + flat forecast surcharge, every
-~2h, no DB) and the monthly advisory `reprice` proposal the admin applies
-via the seeding ritual. Everything on-chain goes through the
-**GovSubmitter** — the single audited actor (the guard/revive path
-included). Humans set appetite (rails, defaults, term limits) and keep
+The rulebook manager, unified 2026-08-01 around one shape: **detectors →
+the interventions executor → the chain**, healed by one hourly **revive
+engine**. Four automated pause causes — `cancellation` (the route guard's
+5-day sweep off a buy-click anomaly), `exposure` (hourly on-chain
+concentration vs vault capacity), `weather` (EXTREME forecasts —
+hurricane-force, a tier above the priced "severe"), and `pricing` (a live
+route's honest ML price above the base cap, monthly) — plus `admin` holds
+that nothing auto-revives. Every pause is one open row in the
+`interventions` ledger; a route sells again when its last row closes.
+**Premiums** stay outside the ledger: the stateless `weather` surcharge
+(fleet-file base + flat add-on, recomputed every pass) and the monthly
+advisory `reprice` proposal the admin applies via the seeding ritual.
+Everything on-chain goes through the **GovSubmitter** — the single audited
+actor. Humans set appetite (rails, defaults, term limits) and keep
 emergency controls (freeze, pins). Two subsystems:
 
 - **The ML prediction service** (`agent/`, Render service
@@ -1359,14 +1362,13 @@ emergency controls (freeze, pins). Two subsystems:
   premium math lives protocol-side. Details:
   [The ML prediction service](#the-ml-prediction-service-render-hosted).
 - **The Supabase DB** — the governance system's memory, audit trail, and
-  coordination point: the route registry the reconciler evaluates,
-  self-expiring `signals`, the `actions_log`/`pause_events` audit trail,
-  the route guard's pause ledger (`route_health`), runtime brakes
+  coordination point: the `routes` world-map, the unified `interventions`
+  pause ledger, the `actions_log` audit trail, runtime brakes
   (`ops_flags.gov_frozen`), the policies/settlements event mirror (durable
   history past RPC retention), and `cron_runs` telemetry. **It is NOT
   strictly needed**: only the
   governance tier requires it — without the DB, automated governance
-  simply stops *safely* (no signals → no actions; on-chain terms and
+  simply stops *safely* (no ledger → no automated actions; on-chain terms and
   statuses persist unchanged) while sales, settlement, claims, and manual
   governance (owner/admin calls and scripts) continue untouched. Signals
   self-expire (~26h), so a DB outage leaves no stale automation state to
@@ -1406,7 +1408,7 @@ serverless handlers under [`dapp/api/cron/`](../dapp/api/) — one file per job,
 a thin wrapper around a runtime-agnostic implementation in `dapp/api/_lib/jobs/`
 (settlement path) or `dapp/api/_lib/governance/` (governance automation). Stack:
 TypeScript + `@stellar/stellar-sdk` talking to Stellar RPC, backed by a Supabase
-Postgres for off-chain state (governance signals, run history, exposure mirror).
+Postgres for off-chain state (the interventions ledger, run history, event mirror).
 The frontend and this backend cohabit the **same Vercel project** (`dapp/`): the
 SPA is served from `dist/`, the jobs from `/api/*` (see the SPA-vs-API rewrite in
 `dapp/vercel.json`).
@@ -1432,9 +1434,10 @@ recorded to the Supabase `cron_runs` table (see [Job-Ops Layer](#job-ops-layer))
 ### Job Summary
 
 The registry defines the jobs below. Five drive the settlement path and storage
-(this section); the rest automate governance (`gov_reconcile` + the exposure
-collector, `weather`, `reprice`, `revive` — see [Off-Chain Governance
-Automation](#off-chain-governance-automation)); `health` is a liveness probe.
+(this section); the rest automate governance (the `gov_exposure` brake,
+`weather`, `reprice`, the unified `revive` engine — see [Off-Chain
+Governance Automation](#off-chain-governance-automation)); `health` is a
+liveness probe.
 Sale authorization is **not a cron**: it is the JIT endpoint
 `POST /api/sale-auth/request`, invoked by the frontend on every buy click
 (oracle-signed, same `_lib` layer — see [JIT sale
@@ -1450,18 +1453,16 @@ data, **keeper** drives classification/settlement, **ttl** extends storage,
 | `settler` | `/api/cron/settle` | `*/5 * * * *` (every 5 min) | `Controller.execute_settlements` | keeper |
 | `queue_maintainer` | `/api/cron/queue` | `2-59/5 * * * *` (every 5 min, +2) | `Controller.run_queue_maintenance` | keeper |
 | `ttl_extender` | `/api/cron/ttl` | `0 0 * * *` (daily) | `extend_ttl` ×5 + `OracleAggregator.prune_settled` | ttl |
-| `gov_exposure` | `/api/cron/gov-exposure` | `7 * * * *` (hourly, :07) | — (facts only: on-chain liability concentration → `exposure` signals) | none |
-| `gov_reconcile` | `/api/cron/gov-reconcile` | `10 * * * *` (hourly, :10) | `GovernanceModule.disable_route` / `enable_route` (fleet guardrails: `ops_flags.gov_frozen` runtime brake, mass-disable circuit breaker, flap damping) | gov-admin |
+| `gov_exposure` | `/api/cron/gov-exposure` | `7 * * * *` (hourly, :07) | Exposure brake: liability concentration ≥50% of vault capacity → `exposure` intervention (`disable_route`, capped per run); ≥25% advisory. Also ingests the policies event mirror | gov-admin |
 | `gov_onboard` | `/api/cron/gov-onboard` | `15 */6 * * *` (6-hourly, :15) | — (fleet STATUS sync only: file/chain→DB; route intake is the manual admin pipeline in `scripts/`, never a cron) | gov-admin |
-| `weather` | `/api/cron/weather` | `20 */2 * * *` (every 2h, :20) | `GovernanceModule.update_route_terms` — stateless flat storm surcharge over the fleet-file base (no DB) | gov-admin |
-| `reprice` | `/api/cron/reprice` | `0 8 1 * *` (monthly, 1st 08:00 UTC) | — (ADVISORY only: seasonal ML proposal → `pricing_runs`; admin applies via `seed_routes --apply-terms`) | none |
-| `revive` | `/api/cron/revive` | `0 6 * * *` (daily, 06:00 UTC) | `GovernanceModule.enable_route` — re-sweeps the 20 most recently guard-paused routes (`route_health`); schedule verifiably back → re-enabled | gov-admin |
+| `weather` | `/api/cron/weather` | `20 */2 * * *` (every 2h, :20) | `GovernanceModule.update_route_terms` — stateless flat storm surcharge over the fleet-file base; EXTREME forecasts open a `weather` intervention (pause) instead | gov-admin |
+| `reprice` | `/api/cron/reprice` | `0 8 1 * *` (monthly, 1st 08:00 UTC) | Prices ADVISORY (proposal → `pricing_runs`; admin applies via `seed_routes --apply-terms`) — but live routes priced above the base cap get a `pricing` intervention (pause), revived when back under | gov-admin |
+| `revive` | `/api/cron/revive` | `40 * * * *` (hourly, :40) | `GovernanceModule.enable_route` — the unified revive engine: re-checks every open intervention with its cause's own predicate; last hold cleared → route re-enabled | gov-admin |
 | `health` | `/api/cron/health` | liveness probe | — | — |
 
 The `+2` offset keeps the two keeper jobs off the same minute to avoid
-Stellar sequence-number contention; `gov_exposure` (:07) runs just before
-`gov_reconcile` (:10) so every reconcile tick acts on a fresh exposure
-picture.
+Stellar sequence-number contention; `gov_exposure` (:07) and `revive`
+(:40) sit on different minutes for the same reason.
 
 > **Retired 2026-07-31 (demand-driven rework).** Three polling jobs were
 > deleted outright: the `sale_authorizer` cron (every-2h attestation of the
@@ -1473,9 +1474,13 @@ picture.
 > `warm_windows` demand-breadcrumb table and the `aeroapi_cache` response
 > cache died with them. Net effect: an idle whitelisted route costs ZERO
 > AeroAPI calls, and there is no flat daily API overhead at all.
+> **2026-08-01 (interventions unification):** the `signals` table, the
+> `gov_reconcile` cron, and the reconciler/rules machinery retired too —
+> every pause detector now acts directly through the shared interventions
+> executor, and one hourly `revive` engine heals the whole ledger.
 
 **Three tiers, one decentralization target.** The jobs split into
-**governance** (gov_exposure/gov_reconcile/gov_onboard/weather/reprice/revive
+**governance** (gov_exposure/gov_onboard/weather/reprice/revive
 — centralized, ours by design), **oracle** (the JIT sale-auth endpoint + the
 settle sweep — the centralized trust root: they spend AeroAPI calls and
 attest real-world facts), and
@@ -1497,10 +1502,10 @@ operation.
   down, recording fails silently while the job still completes its on-chain
   work — the e2e suite runs the entire settlement pipeline with no database
   attached. Only the governance tier requires the DB, because that tier *is*
-  the DB (signals, audit log, route registry). A dead Supabase degrades
+  the DB (the interventions ledger, audit log, route registry). A dead Supabase degrades
   governance to manual admin ops; purchases, attestation, settlement,
   claims, and TTL are untouched. Any DB feature the oracle path touches
-  (the `flight_schedules` timing hints, the guard's `route_health` dedupe)
+  (the `flight_schedules` timing hints, the guard's ledger dedupe)
   must degrade gracefully, never gate.
 - **The webhook is optional.** The planned AeroAPI push-alert webhook
   (spec/TODO.md §B) only improves cancellation/arrival *latency* from hours
@@ -1576,21 +1581,23 @@ flag or API error reads as *unknown*, never dead — an AeroAPI outage must
 not pause the fleet) and one `/schedules` pair call for days +3..+5 (dead =
 flight number not published).
 
-**All five days dead** → `disable_route` via the audited GovSubmitter
-(respecting the `ops_flags.gov_frozen` kill switch), the DB `routes` row
-flips to `disabled` (so the reconciler enforces rather than fights it), and
-one row lands in **`route_health`** — the single pause ledger (paused_at,
-reason, per-day evidence, revived_at, last_swept_at; also the sweep's
-once-per-route-per-24h dedupe). Any day alive or unknown → no pause; the
-buy refusal and per-day tombstones already protect the vault.
+**All five days dead** → a `cancellation` intervention opens through the
+shared executor (`governance/interventions.ts`): `disable_route` via the
+audited GovSubmitter (guardrails — `gov_frozen`, pins — enforced there),
+the DB `routes` row flips to `disabled`, and the evidence lands in the
+unified **`interventions`** ledger. Any day alive or unknown → no pause;
+the buy refusal and per-day tombstones already protect the vault (the
+sweep is still recorded as a closed ledger row — history + the
+once-per-route-per-24h dedupe).
 
-**Revive** (`revive` cron, daily 06:00 UTC): re-runs the same sweep on the
-20 most recently paused routes; ANY of the next 5 days verifiably back →
-`enable_route` + the ledger row marked revived. Deliberately auto-healing —
-the criterion is the same objective check that paused the route. The manual
-companion `scripts/revive_routes.ts` runs the identical logic (`--all` for
-every paused route), and `route_health` is the admin's review surface.
-Nothing paused (the normal state) → zero API calls.
+**Revive**: the hourly unified revive engine re-runs the same sweep on
+open `cancellation` rows ~daily (20h gate, 20 per run); ANY of the next
+5 days verifiably back → the row closes, and the route re-enables if it
+was the last hold. Deliberately auto-healing — the criterion is the same
+objective check that paused the route. `scripts/revive_routes.ts` forces
+the full ledger now, and the `interventions` table (plus the /admin
+board) is the review surface. Nothing paused (the normal state) → zero
+API calls.
 
 ### Cron #1 — the Settle Sweep (Oracle, every 2 hours)
 
@@ -1883,19 +1890,19 @@ dapp/
 ├── api/                          # Vercel serverless backend (same project as the SPA)
 │   ├── cron/                     # one thin handler per scheduled job
 │   │   ├── fetcher.ts  classify.ts  settle.ts  queue.ts  ttl.ts
-│   │   ├── gov-reconcile.ts  gov-exposure.ts  gov-onboard.ts
+│   │   ├── gov-exposure.ts  gov-onboard.ts
 │   │   ├── weather.ts  reprice.ts  revive.ts  # governance automation
 │   │   └── health.ts                          # liveness probe
 │   ├── sale-auth/request.ts      # the JIT buy-click endpoint (public)
 │   ├── admin/                    # authenticated ops API (Supabase JWT + email allowlist)
-│   │   └── actions.ts  jobs.ts  routes.ts  signals.ts
+│   │   └── actions.ts  jobs.ts  routes.ts  interventions.ts  freeze.ts
 │   ├── status/runs.ts            # PUBLIC sanitized job-health feed
 │   └── _lib/
 │       ├── jobs/                 # runtime-agnostic settlement-path job logic
 │       │   ├── fetcher.ts  classifier.ts  settler.ts  queue.ts
 │       │   └── ttl.ts  weather.ts  repricer.ts  revive.ts
 │       ├── governance/           # governance automation subsystem (see next section)
-│       │   ├── reconciler.ts  rules.ts  submitter.ts  model.ts
+│       │   ├── interventions.ts  submitter.ts  model.ts
 │       │   └── db.ts  config.ts  action_log.ts  admin_auth.ts  runs.ts
 │       ├── sale_auth.ts  route_guard.ts  flight_schedules.ts
 │       ├── soroban_client.ts  aeroapi_client.ts  weather_client.ts
@@ -1965,31 +1972,46 @@ recorded) stay purchasable after the key swap.
 
 ## Off-Chain Governance Automation
 
-> **In plain terms — the rulebook manages itself.** The GovernanceModule *stores* the
-> rules, but something has to *decide* them: pause a route that's gotten too risky,
-> re-open it when things calm down. That decision-making is this off-chain system.
-> It works like a newsroom with one editor: anyone can file a **fact** ("red delay
-> program at DEN", "too many policies on this route"), but only one careful
-> **editor** (the reconciler) decides what to actually publish to the chain — and it
-> double-checks against the live on-chain state every time, so a hiccup never leaves
-> things half-done. (Premiums are simpler and live outside the newsroom: the ML
-> base is set at seeding/monthly repricing, and a stateless weather loop adds a
-> flat storm surcharge — see [Premium bands](#premium-bands--ml-base--weather-surcharge-formula--knobs).)
+> **In plain terms — one ledger of what's turned off, and why.** The
+> GovernanceModule *stores* the rules, but something has to *decide* them:
+> stop selling a route that's gotten dangerous, re-open it when things calm
+> down. Since the 2026-08-01 unification that decision-making is one simple
+> shape: **detectors** (dead flight? too concentrated? extreme storm? bad
+> price?) each call one shared **pause executor**, every pause becomes one
+> open row in the **`interventions`** ledger, and one hourly **revive
+> engine** re-checks each open row with its cause's own "is it safe now?"
+> test and turns the route back on when the LAST hold clears. Premiums live
+> outside this entirely: the ML base is set at seeding/monthly repricing and
+> a stateless weather loop adds a flat storm surcharge — a price is
+> recomputed, never "reverted", so it needs no ledger row (see [Premium
+> bands](#premium-bands--ml-base--weather-surcharge-formula--knobs)).
 
-The `GovernanceModule` contract is the on-chain route authority (terms, whitelist,
-lifecycle), but the *decisions* — which routes to disable in a storm, how much to
-raise a premium when risk spikes — are made off-chain and pushed on-chain by
-automated jobs. The design has one governing principle:
+The design has one governing principle:
 
-> **Humans and collectors never call the chain directly. They write *facts* into
-> Supabase; one idempotent reconciler is the sole actor; every mutation flows
-> through a single audited choke point.**
+> **Every pause is one open `interventions` row; every chain write flows
+> through the audited GovSubmitter; a route sells again only when its last
+> open row closes.**
 
-The whole subsystem signs with a dedicated **gov-admin key** — a fourth identity,
-distinct from the contract owner and from the oracle/keeper — registered on the
-module via `GovernanceModule.add_admin`. (On testnet this `add_admin` is still
-pending the owner key, so the reconciler runs with `GOV_DRY_RUN=true`: it computes
-and logs every decision but submits nothing. See below.)
+Five causes, each owned end-to-end by one detector and one revive predicate:
+
+| Cause | Detector (opens the row) | Revive predicate (closes it) | Revive cadence |
+|---|---|---|---|
+| `cancellation` | route guard — a buy click hit a dead flight; 2-call 5-day sweep all-dead | the same sweep finds a live day | ~daily (20h gate, 20/run; script forces all) |
+| `exposure` | hourly `gov_exposure` — one route/airport ≥50% of vault capacity | route + both airports under threshold for 2 consecutive checks | hourly |
+| `weather` | the weather job — EXTREME forecast (gusts ≥120 km/h / snow ≥40 cm) at either airport | forecast back below extreme | hourly |
+| `pricing` | monthly `reprice` — a live route's honest ML price above the base cap | a later pricing run prices it under the cap | monthly |
+| `admin` | a human, via /admin | **never auto** — the admin closes it | — |
+
+The executor (`governance/interventions.ts`) enforces the guardrails once,
+for every caller: the `ops_flags.gov_frozen` kill switch stops all
+automated pauses/revives, pinned routes are untouchable by automated
+causes, new on-chain disables are capped per run at max(3, 20% of the
+fleet), and the DB `routes.status` is mirrored so the world-map stays
+honest. The whole subsystem signs with a dedicated **gov-admin key** — a
+fourth identity, distinct from the contract owner and from the
+oracle/keeper — registered on the module via `GovernanceModule.add_admin`.
+`GOV_DRY_RUN=true` makes every detector compute and log without touching
+anything.
 
 ### What data is held (Supabase, `supabase/migrations/`)
 
@@ -2004,10 +2026,9 @@ mirrored in `dapp/api/_lib/governance/model.ts`.
 
 | Table | Role |
 |---|---|
-| `routes` | One row per insurable route (`flight_id+origin+dest` = the on-chain key). Holds admin-set **base/anchor terms**, canonical schedule (for drift detection), the `status` lifecycle (`candidate/active/disabled/removed`), and the **admin pin** (`pinned`, `pin_until`). The reconciler treats pin + lifecycle as law. |
-| `signals` | **Layer-1 facts.** The exposure collector and admins write here; only the reconciler acts on them. `type` (geopolitical / exposure / manual), `scope_kind` (route / origin / dest), `severity` (`info` / `elevated` / `severe`), `payload` jsonb, `expires_at`, `cleared_at`. Active = uncleared and unexpired. **Only `severe` drives action (pause)** — `elevated` is advisory since 2026-07-30. (The AeroAPI-fed sources — airport-delay and schedule_drift — retired 2026-07-31 with the demand-driven rework; historical rows remain.) |
-| `pause_events` | History of every pause enacted on-chain, with the causing `signal_id`; `ended_at` on re-enable. The reconciler only auto-re-enables a route whose *own* pause_event is still open. |
-| `route_health` | The route guard's pause ledger — one row per route: `paused_at` / `pause_reason` / per-day `evidence` when the 5-day cancellation sweep kills it, `revived_at` when the daily revive check (or `scripts/revive_routes.ts`) brings it back, `last_swept_at` (the once-per-24h sweep dedupe). The admin's review surface for guard pauses. Self-creating. |
+| `routes` | One row per insurable route (`flight_id+origin+dest` = the on-chain key). Holds admin-set **base/anchor terms**, the `status` lifecycle (`candidate/active/disabled/removed`), and the **admin pin** (`pinned`, `pin_until`). The interventions executor treats the pin as law; `gov_onboard` keeps `status` synced to the chain. |
+| `interventions` | **THE unified pause ledger** (2026-08-01 — replaces `signals`, `pause_events`, and `route_health`). One OPEN row (revived_at null) per (route, cause) that is currently holding a route off: `cause` (cancellation / exposure / weather / pricing / admin), `evidence` jsonb, `opened_by`, `opened_at`, `last_checked_at`, `clear_streak` (exposure hysteresis), `revived_at`/`revived_by`. Closed rows are the check/pause history (and the guard's 24h sweep dedupe). The admin's single answer to "what's off and why". Self-creating. |
+| `signals`, `pause_events` | RETIRED 2026-08-01 (superseded by `interventions`). Historical rows remain readable; nothing writes them. |
 | `flight_schedules` | Scheduled dep/arr snapshot per (flight, day), written by the JIT sale-auth endpoint at buy time — the settle sweep's timing hint (first API look at scheduled arrival + 5h). Strictly advisory: no row → the sweep falls back to date + 30h. Self-creating. |
 | `premium_adjustments` | RETIRED 2026-07-30 (the multiplier engine was removed with the weather-v2 simplification). Historical rows remain as audit history; nothing writes here anymore. |
 | `pricing_runs` | One row per ML pricing run — both `manual:price_routes` (intake step 2) and `cron:reprice` (monthly advisory proposal): totals, premium distribution, excluded-over-cap routes, proposed changes. Self-creating. |
@@ -2017,44 +2038,43 @@ mirrored in `dapp/api/_lib/governance/model.ts`.
 | `ingest_cursors` | Per-collector resume points (last-seen ledger). |
 | `cron_runs` | One row per job execution — feeds the admin JOBS board and public `/status` (see Job-Ops Layer). |
 
-### The reconciler (`dapp/api/_lib/governance/reconciler.ts`, hourly at `:10`)
+### The interventions executor + revive engine
 
-Runs after the signal collectors. It is **idempotent** — desired state is recomputed
-from scratch every tick, so a crashed run self-heals next hour:
-
-Since 2026-07-30 the reconciler is a **PAUSE ENGINE ONLY** — premiums are
-owned by seeding / the monthly repricing ritual (base) and the stateless
-weather surcharge job. `elevated` signals are advisory (visible in the DB
-and run logs, no action).
+`governance/interventions.ts` is the pause world's one door, the way
+`GovSubmitter` is the chain's one door:
 
 ```
-1. Bulk-load DB state: routes, active SEVERE signals, recently-ended signals
-   (hysteresis window), open pause_events.
-2. Per route: read the ACTUAL on-chain status via submitter.readStatus(),
-   filter matching signals by scope, then call the PURE decideReconcileAction(...).
-3. Execute the returned action through GovSubmitter, and mirror the result into
-   pause_events.
+pauseRoute(route, cause, evidence, actor)
+  1. no DB → log-only (the caller's fail-closed refusal still protects)
+  2. automated cause + gov_frozen → skip;  pinned route → skip
+  3. open (or refresh) the ledger row FIRST — a failed chain write is
+     retried off the same open row next detector pass
+  4. on-chain Active → GovSubmitter.disable  (audited in actions_log)
+  5. mirror DB routes.status = 'disabled'
+
+reviveRoute(route, cause, actor)
+  1. close the (route, cause) row
+  2. other open rows remain → route stays off (causes heal independently)
+  3. last row closed → GovSubmitter.enable + routes.status = 'active'
 ```
 
-The decision function in `rules.ts` is **pure — no I/O** — and applies a fixed
-priority order (returning one of `noop | disable | enable | flag`):
+The revive engine (`jobs/revive.ts`, hourly at :40) walks every open row
+and applies the cause's predicate from the table above — sweeping
+cancellation rows ~daily in batches, re-reading chain concentration and
+forecasts every hour, and reporting (never touching) `pricing` and `admin`
+rows. `scripts/revive_routes.ts` is the same engine with the cadence gates
+off. Everything is idempotent: state is recomputed from scratch each pass,
+so a crashed run self-heals on the next.
 
-1. **Admin pin wins** — a pinned, unexpired route is never overridden (`noop`).
-2. **Not on-chain yet** → `noop` — whitelisting new routes is deliberately
-   manual: the admin pipeline in `scripts/` (discover → ML price → admin
-   review → seed; see [Whitelisting a Route](#whitelisting-a-route)),
-   never the reconciler.
-3. **Severe signal → `disable`** — any active `severe` signal matching the route's
-   scope disables an Active route.
-4. **Admin lifecycle** — a route the admin set `disabled` is never auto-re-enabled.
-5. **Reactivation** — a Disabled route re-`enable`s only if the engine's *own*
-   pause_event is open (else it `flag`s for review — someone acted outside the
-   engine) **and** all pause signals have been clear for `HYSTERESIS_HOURS = 2`.
+Whitelisting new routes is deliberately NOT here — intake is the manual
+admin pipeline in `scripts/` (discover → ML price → admin review → seed;
+see [Whitelisting a Route](#whitelisting-a-route)).
 
 ### GovSubmitter — the single on-chain choke point (`submitter.ts`)
 
-Both the reconciler and the admin API mutate the chain **only** through
-`GovSubmitter`, so every write is identically audited. Each `submit()`:
+Every detector, the revive engine, and the admin API mutate the chain
+**only** through `GovSubmitter`, so every write is identically audited.
+Each `submit()`:
 
 1. Snapshots `route_status` **before**;
 2. simulates / signs / submits the contract call with the gov-admin key (captures
@@ -2066,9 +2086,9 @@ It wraps the **generated TypeScript bindings** (the `governance_module` package)
 compiler-checked `Keep | Set | UseDefault` term-update unions, and exposes methods
 that map 1:1 to contract entry points: `disable` → `disable_route`, `enable` →
 `enable_route`, `updateTerms` → `update_route_terms`, plus `whitelist` / `remove` /
-`revertTerms`. An off-chain signal therefore becomes, literally, a `disable_route` /
-`update_route_terms` call — with the contract's owner-set **term limits as the final
-backstop** no automated write can exceed.
+`revertTerms`. An intervention therefore becomes, literally, a
+`disable_route` / `enable_route` call — with the contract's owner-set
+**term limits as the final backstop** no automated write can exceed.
 
 ### The ML prediction service (Render-hosted)
 
@@ -2304,46 +2324,48 @@ only covers insured flights. A weather-aware model v4 would train on BTS
 
 ### Human oversight
 
-Admins never touch the chain by hand either — they write facts and let the pipeline
-act. All admin APIs (`dapp/api/admin/*`) are gated by `verifyAdmin`: a Supabase Auth
-JWT verified live via `auth.getUser`, then checked against an `ADMIN_EMAILS`
-allowlist (Supabase Auth is used for **identity only**; data access stays on the
-deny-all pooler).
+All admin APIs (`dapp/api/admin/*`) are gated by `verifyAdmin`: a Supabase
+Auth JWT verified live via `auth.getUser`, then checked against an
+`ADMIN_EMAILS` allowlist (Supabase Auth is used for **identity only**; data
+access stays on the deny-all pooler).
 
-- **`/admin`** (`src/pages/Admin.tsx`, hidden "Route Control" board) — declare/clear
-  **signals** (facts, picked up next reconciler tick — *not* direct chain calls),
-  pin/unpin routes, set lifecycle, run direct ops (which still go through
-  `GovSubmitter`, actor `admin:<email>`), and watch the job board + `actions_log`.
+- **`/admin`** (`src/pages/Admin.tsx`, hidden "Route Control" board) — the
+  interventions ledger (everything paused + why, one-click revive, and
+  "pause a route" = an `admin` hold nothing auto-revives), pin/unpin,
+  lifecycle, direct ops (still through `GovSubmitter`, actor
+  `admin:<email>`), the job board, and `actions_log`.
 - **`/status`** (`src/pages/Status.tsx`, public) — the sanitized job-health board.
-- **`GOV_DRY_RUN=true`** — while set (current testnet state, pending the on-chain
-  `add_admin`), the reconciler decides and logs every action but submits nothing and
-  writes no mirror rows — a safe rollout switch.
+- **`GOV_DRY_RUN=true`** — every detector computes and logs its decisions
+  but touches nothing — a safe rollout switch.
 
 ```
-SIGNAL INGESTION      collectors + admins  --INSERT-->  signals (facts)
-                        gov_exposure (hourly :07): on-chain liability
-                        concentration (route + airport) vs vault capacity,
-                        self-expiring
+DETECTORS             each owns ONE danger, fires on its own evidence
+  guard (buy click)     dead flight: 2-call 5-day sweep, all days dead
+  gov_exposure (1h)     ≥50% of vault capacity on one route/airport
+  weather (2h)          EXTREME forecast (≥120 km/h gusts / ≥40 cm snow)
+  reprice (monthly)     honest ML price above the base cap on a live route
+  admin (/admin)        human hold — never auto-revived
         |
         v
-RULES (hourly :10)    reconciler: readStatus(on-chain) + decideReconcileAction(pure)
-        |                 pin? noop | severe? disable | cleared+hysteresis? enable
-        v
-SUBMITTER             GovSubmitter: before-snap -> disable/enable
-        |                          -> after-snap -> actions_log   (gov-admin key)
+EXECUTOR              pauseRoute(): gov_frozen? pinned? per-run cap?
+ (interventions.ts)     -> GovSubmitter.disable (audited: actions_log)
+        |               -> ONE open row in the `interventions` ledger
         v
 ON-CHAIN              GovernanceModule  (+ owner term-limits backstop)
-        |             + DB mirror: pause_events
+        ^
+        |
+REVIVE (hourly :40)   per-cause predicate on every open row:
+                        sweep finds a live day | concentration eased ×2 |
+                        forecast cleared | repriced under cap | admin click
+                      last row closed -> GovSubmitter.enable
+        |
         v
-OVERSIGHT             /admin (declare signals, pin, direct ops) | /status (public)
+OVERSIGHT             /admin (ledger, revive, admin holds) | /status (public)
 
-(Cancellation-evidence pauses travel the route-guard path instead: a buy
-attempt on a dead flight -> 2-call 5-day sweep -> disable_route through
-the same GovSubmitter + a route_health row; the daily revive cron
-re-enables when the schedule is verifiably back. Premiums travel a third,
-simpler path: jobs/weather.ts every ~2h — fleet-file base + flat forecast
-surcharge -> update_route_terms; and jobs/repricer.ts monthly -> ADVISORY
-proposal into pricing_runs, applied only by the admin's seeding ritual.)
+(Premiums never enter the ledger: jobs/weather.ts every ~2h recomputes
+fleet-file base + flat forecast surcharge -> update_route_terms through
+the same GovSubmitter; jobs/repricer.ts monthly -> ADVISORY proposal into
+pricing_runs, applied only by the admin's seeding ritual.)
 ```
 
 ### The autonomy ladder (L1 → L3)
@@ -2353,54 +2375,50 @@ level keeps the same inversion (facts in, one audited actor out) and adds
 capability, never new trust. The task-level plan lives in
 [TODO.md §D](TODO.md); the architecture-level intent:
 
-**L1 — rules on facts.** The reconciler acts on collector signals and
-admin-declared facts. Humans still do route onboarding, base terms,
-non-automated signals, and signal clearing. (History: `route_agent` was
-absorbed into a facts-only collector 2026-07-27, then DELETED 2026-07-30
-when the weather-v2 simplification replaced the signal→multiplier premium
-path with the stateless `weather` surcharge job + the advisory `reprice`
-cron. The airport-delay collector `gov_signals` and the drift detector
-`gov_schedule_check` — both AeroAPI pollers — were DELETED 2026-07-31 by
-the demand-driven rework: route-death evidence now comes from the route
-guard's cancellation sweep, and drift is caught at buy time.)
+**L1 — rules on facts** (history). The original design: collectors wrote
+facts into a `signals` table and a reconciler acted on them hourly.
+`route_agent` was absorbed 2026-07-27, DELETED 2026-07-30 (weather-v2
+replaced the signal→multiplier premium path with the stateless surcharge);
+`gov_signals` and `gov_schedule_check` — both AeroAPI pollers — DELETED
+2026-07-31 (the demand-driven rework); the `signals` table + reconciler
+themselves DELETED 2026-08-01 when the interventions unification made
+every pause detector→executor direct.
 
-**L2 — the complete deterministic pipeline (no LLM).** *Status 2026-07-31:
-IMPLEMENTED.* The additions that closed the routine human loops:
+**L2 — the complete deterministic pipeline (no LLM).** *Status 2026-08-01:
+IMPLEMENTED, in its unified form.* What closed the routine human loops:
 - `gov_onboard` — fleet STATUS sync (file/chain→DB), closing the
   *invisibility gap*: routes whitelisted by script but absent from the DB
-  are invisible to the reconciler. NOTE (2026-07-29 product decision):
+  are invisible to the detectors. NOTE (2026-07-29 product decision):
   route INTAKE is permanently out of scope for automation — new routes
   enter only through the manual admin pipeline (`scripts/`: discover →
   ML price → admin review → seed); the earlier candidate-ingest +
   auto-promote design was removed.
-- **Exposure collector** — `InsuranceBought` events ingested from RPC into
-  `policies` (resume via `ingest_cursors`), projected as `exposure`
-  signals when a route/airport concentration crosses thresholds.
-- **The route guard + revive pair** — anomaly-triggered cancellation
-  pausing with objective, self-healing reactivation (replaced the planned
-  schedule-drift detector).
-- **Fleet-level guardrails** — a mass-disable circuit breaker (beyond
-  per-route hysteresis), a runtime freeze flag (kill switch without a
-  redeploy), and disable/enable flap damping.
+- **The four automated pause causes** — cancellation (route guard),
+  exposure (`InsuranceBought` events mirrored into `policies`, hourly
+  concentration vs vault capacity), extreme weather, and over-cap pricing
+  — each detector→executor→ledger→revive, end to end.
+- **Fleet-level guardrails, enforced once in the executor** — the
+  mass-disable circuit breaker, the runtime freeze flag (kill switch
+  without a redeploy), pins, and per-cause revive hysteresis.
 After L2 the only human actions left are appetite changes (rails, defaults,
-term limits — owner), emergencies (pause, pins), and — if propose-only mode
-is chosen — approving onboarding candidates.
+term limits — owner), emergencies (admin holds, pins, freeze), and route
+onboarding.
 
 **L3 — the agentic layer.** An LLM **analyst agent** joins as *just another
-collector*: it reads signals, exposure, run health, and open-web context
-(storms, geopolitics, airline disruptions) and writes ONLY schema-validated
-facts — `signals` rows with rationale in the payload, candidate-route
-annotations. It holds no keys and never calls the chain; the reconciler
-remains the sole actor. A read-only **auditor agent** reviews the actions
-log for anomalies (premium oscillation, over-pausing) and reports to the
-admin console.
+detector*: it reads the ledger, exposure, run health, and open-web context
+(storms, geopolitics, airline disruptions) and proposes ONLY
+schema-validated facts — e.g. admin-style holds with rationale in the
+evidence field, candidate-route annotations. It holds no keys and never
+calls the chain; the executor remains the sole actor. A read-only
+**auditor agent** reviews the actions log for anomalies (over-pausing,
+flapping) and reports to the admin console.
 
 **Why full autonomy is safe here — three nested cages:**
 
 ```
 on-chain     term limits, payoff ratio, gov key is admin-not-owner, pausable
-  └ rules    rails clamps, flat whole-dollar surcharges, hysteresis on
-             re-enables, fleet breaker, pins win
+  └ executor gov_frozen kill switch, pins win, per-run disable cap,
+             per-cause revive hysteresis, rails clamps on every price
      └ agent facts only, JSON-schema validated, per-run caps, fully logged
 ```
 
@@ -2421,7 +2439,7 @@ Every mechanism in this document exists to serve this one story. Flight `UA100`
 DEN→SFO on March 3, premium $10, payoff $50, delay threshold 2h:
 
 ```
- 1. LISTED     Governance admin (or the reconciler, via GovSubmitter) calls
+ 1. LISTED     Governance admin (via GovSubmitter) calls
                governance.whitelist_route(UA100, DEN, SFO, $10, $50, 2h).
                Nothing else happens — no flight entry exists yet.
 
@@ -2532,7 +2550,7 @@ cron, no auto-promote, no schedule; an admin runs it ad hoc):**
               into config/routes.testnet.json — the operational fleet
               file the JIT sale-auth endpoint AND the weather surcharge
               job read — and gov_onboard's status sync mirrors them into
-              the DB so the reconciler manages them.
+              the DB so the governance detectors manage them.
 ```
 
 Re-running any step against already-listed routes is harmless: discovery
@@ -2744,8 +2762,8 @@ withdrawable_capital = max(total_managed_assets - ceil(locked_capital * solvency
          Owner  (owner txns: set defaults / term limits / add_admin / rotate signer keys)
            |
            v
-      GovernanceModule <---- gov_reconcile / weather  (gov-admin key, off-chain:
-           |                    signals -> rules -> GovSubmitter -> disable/enable;
+      GovernanceModule <---- detectors + revive / weather  (gov-admin key, off-chain:
+           |                    interventions executor -> GovSubmitter -> disable/enable;
            |                    forecast -> surcharge -> GovSubmitter -> update_route_terms)
            |  resolved terms (cross-contract client)
            v
@@ -3518,8 +3536,8 @@ the flight world and the **deployed
 predictions. **Deliberately DB-less**: `GOVERNANCE_DB_URL` is deleted at
 startup, so every run also proves the DB-optional invariant — governance
 here is exercised the way manual-mode governance actually works (admin
-calls through the same audited `GovSubmitter` choke point the reconciler
-uses). Two phases, because the real oracle enforces `date ≤ ETA` /
+calls through the same audited `GovSubmitter` choke point the
+interventions executor uses). Two phases, because the real oracle enforces `date ≤ ETA` /
 `date ≤ actual_arrival`: **buy day** (sales, purchases, governance,
 cancellations) and **flight day** (landings, remaining claims, final
 ledger), resumed automatically from cached state.
@@ -3565,9 +3583,8 @@ applies to newly opened flight-date buckets, while buyers joining an
 already-open bucket pay its original premium (every buyer of one
 flight-date pays the same price).
 
-**Deferred to a with-DB suite:** the signals lifecycle (collectors
-writing, expiry, source-owned clearing), reconciler decisions,
-`gov_frozen` freeze brake, mass-disable circuit breaker, and
-hysteresis/step-clamp behavior — i.e., everything whose substrate IS the
-database. Those run against an isolated Postgres, never the live
-Supabase.
+**Deferred to a with-DB suite:** the interventions ledger lifecycle
+(detector opens, per-cause revive predicates, the exposure clear-streak
+hysteresis), the `gov_frozen` freeze brake, pins, and the mass-disable
+circuit breaker — i.e., everything whose substrate IS the database. Those
+run against an isolated Postgres, never the live Supabase.

@@ -24,6 +24,21 @@ export const ELEVATED_GUST_KMH = 60;
 export const ELEVATED_SNOW_CM = 5;
 export const ELEVATED_PRECIP_PROB_PCT = 80;
 
+// EXTREME — a tier above "severe" (which only adds the +$10 surcharge):
+// conditions under which flying plausibly stops altogether, so selling
+// stops too. Hurricane-force gusts (≥120 km/h ≈ Beaufort 12) or a
+// blizzard-scale dump. Extreme at either airport → the weather job opens
+// a `weather` intervention (pause); the hourly revive cron lifts it the
+// moment the forecast drops back below these numbers.
+export const EXTREME_GUST_KMH = 120;
+export const EXTREME_SNOW_CM = 40;
+
+/** True when a forecast is EXTREME (pause-worthy). null → false (fail-open). */
+export function isExtremeForecast(f: DailyForecast | null): boolean {
+  if (!f) return false;
+  return f.maxWindGustKmh >= EXTREME_GUST_KMH || f.totalSnowfallCm >= EXTREME_SNOW_CM;
+}
+
 /** Severity of a single airport forecast. null forecast → "ok" (fail-open). */
 export function classifyForecast(f: DailyForecast | null): WeatherSeverity {
   if (!f) return "ok";

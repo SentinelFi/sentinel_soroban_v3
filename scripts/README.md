@@ -37,19 +37,21 @@ same pipeline — steps 2–3 with `--apply-terms`, no discovery needed.
 
 ## Route revival (guard-paused routes)
 
-`revive_routes.ts` — the manual companion to the daily `revive` cron.
-Re-runs the route guard's 5-day cancellation sweep on paused routes
-(`route_health` ledger) and re-enables any whose flight is verifiably back
-in the schedule:
+`revive_routes.ts` — the manual companion to the hourly `revive` cron.
+Force-runs the unified revive engine over EVERY open row in the
+`interventions` ledger (the cron re-checks cancellation rows ~daily in
+batches; this checks them all now), applying each cause's own predicate —
+cancellation: sweep finds a live day · weather: forecast cleared ·
+exposure: concentration eased · pricing/admin: reported only:
 
 ```sh
-npx tsx ../scripts/revive_routes.ts          # 20 most recently paused
-npx tsx ../scripts/revive_routes.ts --all    # every paused route
+npx tsx ../scripts/revive_routes.ts
 ```
 
 Needs `GOVERNANCE_DB_URL`, `AEROAPI_KEY`, and the gov-admin key (same
-fallback as seed_routes). The `route_health` table (paused_at, reason,
-per-day evidence, revived_at) is the admin's review surface.
+fallback as seed_routes). The `interventions` table (cause, evidence,
+opened_at, revived_at) — also on the /admin board — is the review
+surface.
 
 Signing: `seed_routes` uses `GOVERNANCE_ADMIN_SECRET_KEY` from the
 environment, falling back to the local `sentinel-governor` stellar

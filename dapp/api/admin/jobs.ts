@@ -11,7 +11,6 @@ import { run as runRevive } from "../_lib/jobs/revive";
 import { run as runSettler } from "../_lib/jobs/settler";
 import { run as runTtl } from "../_lib/jobs/ttl";
 import { run as runWeather } from "../_lib/jobs/weather";
-import { run as runGovReconcile } from "../_lib/governance/reconciler";
 import { run as runGovExposure } from "../_lib/governance/exposure_collector";
 import { run as runGovOnboard } from "../_lib/governance/onboard";
 import type { JobName, RunLogEntry } from "../_lib/types";
@@ -36,9 +35,8 @@ const RUNNERS: Record<JobName, () => Promise<RunLogEntry>> = {
   queue_maintainer: () => runQueue(loadConfig()),
   ttl_extender: () => runTtl(loadConfig()),
   weather: () => runWeather(loadGovConfig()),
-  reprice: () => runRepricer(),
+  reprice: () => runRepricer(loadGovConfig()),
   revive: () => runRevive(loadGovConfig()),
-  gov_reconcile: () => runGovReconcile(loadGovConfig()),
   gov_exposure: () => runGovExposure(loadGovConfig()),
   gov_onboard: () => runGovOnboard(loadGovConfig()),
 };

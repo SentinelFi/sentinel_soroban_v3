@@ -40,9 +40,10 @@ import { run as fetcherRun } from "../api/_lib/jobs/fetcher";
 import { authorizeSale } from "../api/_lib/sale_auth";
 import { guardRoute, sweepVerdict } from "../api/_lib/route_guard";
 import { AeroApiClient } from "../api/_lib/aeroapi_client";
-import { computeExposureSignals } from "../api/_lib/governance/exposure_collector";
-import { computeDisableCap } from "../api/_lib/governance/reconciler";
+import { computeConcentrations, computeExposureSignals } from "../api/_lib/governance/exposure_collector";
+import { computeDisableCap } from "../api/_lib/governance/interventions";
 import { distanceMiles } from "../api/_lib/airports";
+import { isExtremeForecast } from "../api/_lib/route_rules";
 import type { Config, RunLogEntry } from "../api/_lib/types";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -497,14 +498,15 @@ async function testRouteGuard(): Promise<void> {
     v3.days[0].state === "unknown" && !v3.allDead,
     v3.days.map((d) => d.state).join(","));
 
-  // guardRoute end-to-end without a gov key: verdict runs, pause skipped.
+  // guardRoute end-to-end in the DB-less suite: verdict runs, the pause
+  // degrades to log-only (no interventions ledger without a DB).
   const res = await guardRoute(
     makeConfig(),
     { flight_id: "DEAD000", origin: "BWI", destination: "SLC" },
     aero
   );
-  check("guardRoute: allDead without gov key → verdict logged, pause skipped",
-    res.swept && res.verdict?.allDead === true && /no gov key/.test(res.outcome),
+  check("guardRoute: allDead without a DB → verdict logged, pause skipped",
+    res.swept && res.verdict?.allDead === true && /no DB/.test(res.outcome),
     res.outcome);
 }
 
@@ -533,11 +535,38 @@ async function testGovernanceMath(): Promise<void> {
   );
   check("exposure: zero capacity → no signals", computeExposureSignals(flights, 0n).length === 0);
 
+  // Concentration fractions (the revive predicate's input).
+  const conc = computeConcentrations(flights, 1000n);
+  check(
+    "concentrations: JFK airport fraction = 55% (both flights aggregate)",
+    Math.abs((conc.airports.get("JFK") ?? 0) - 0.55) < 1e-6,
+    String(conc.airports.get("JFK"))
+  );
+  check(
+    "concentrations: AA100 route fraction = 30%",
+    Math.abs((conc.routes.get("AA100|JFK|LAX")?.fraction ?? 0) - 0.3) < 1e-6
+  );
+
   // Mass-disable circuit breaker: max(3, 20% of fleet).
   check(
     "breaker cap: small fleets floor at 3, large scale at 20%",
     computeDisableCap(2) === 3 && computeDisableCap(15) === 3 && computeDisableCap(200) === 40,
     `${computeDisableCap(2)}/${computeDisableCap(15)}/${computeDisableCap(200)}`
+  );
+
+  // Extreme-weather pause tier sits above the +$10 severe surcharge tier.
+  const forecast = (gust: number, snow: number) => ({
+    maxWindGustKmh: gust,
+    totalSnowfallCm: snow,
+    maxPrecipProbPct: 0,
+    weatherCodes: [],
+  });
+  check(
+    "extreme forecast: hurricane gusts / blizzard snow pause; severe does not",
+    isExtremeForecast(forecast(125, 0)) &&
+      isExtremeForecast(forecast(0, 45)) &&
+      !isExtremeForecast(forecast(95, 25)) &&
+      !isExtremeForecast(null)
   );
 
   // Great-circle helper (feeds the ML distance feature).

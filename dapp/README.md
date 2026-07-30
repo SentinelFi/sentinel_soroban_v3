@@ -68,14 +68,14 @@ with no Vercel dependency. The crons below are just *our* schedule for them:
 ```sh
 npm run bot -- fetcher          # single-shot run, prints the RunLogEntry JSON
 npm run bot -- settler          # exit 0 = success, 1 = failure
-npm run bot -- gov_reconcile
+npm run bot -- gov_exposure
 ```
 
 The bots fall into **three tiers with different decentralization stories**:
 
 | Tier | Bots | Who runs them |
 |---|---|---|
-| **Governance** | `gov_exposure`, `gov_reconcile`, `gov_onboard`, `weather`, `reprice`, `revive` | **Centralized (us), by design** — writes route policy with the gov-admin key, backed by the governance DB |
+| **Governance** | `gov_exposure`, `gov_onboard`, `weather`, `reprice`, `revive` | **Centralized (us), by design** — writes route policy with the gov-admin key, backed by the governance DB |
 | **Oracle** | `fetcher` (the settle sweep) — plus the JIT sale-auth endpoint `POST /api/sale-auth/request`, which is a request handler, not a bot | **Centralized (us), by design** — the trust root: they spend AeroAPI calls and attest real-world facts with the `authorized_oracle` key |
 | **Keepers / liquidators** | `classifier`, `settler`, `queue_maintainer`, `ttl_extender` | **The decentralization target** — they move no new information on-chain, only execute what the oracle already attested |
 
@@ -157,7 +157,7 @@ and live testnet.
 
 ## Serverless crons (Vercel)
 
-Eleven cron jobs run as Vercel serverless functions inside this app, so a single Vercel deployment can serve the frontend **and** keep the protocol running. All jobs share one transaction pattern: simulate → assemble (with 40% resource-fee bump) → sign → send → poll.
+Ten cron jobs run as Vercel serverless functions inside this app, so a single Vercel deployment can serve the frontend **and** keep the protocol running. All jobs share one transaction pattern: simulate → assemble (with 40% resource-fee bump) → sign → send → poll.
 
 > **Current deploy state:** the checked-in `vercel.json` has the `crons` block
 > **removed** and `.vercelignore` excludes `api/` — the present deployment is
@@ -179,7 +179,7 @@ api/
     handler.ts        auth + makeCronHandler wrapper
     types.ts          RunLogEntry / FlightStatus / Config (executor shapes)
     sale_auth.ts      JIT sale authorization core (the buy-click check)
-    route_guard.ts    anomaly-triggered 5-day cancellation sweep + route_health ledger
+    route_guard.ts    anomaly-triggered 5-day cancellation sweep (opens `cancellation` interventions)
     jobs/             fetcher (settle sweep), classifier, settler, queue, ttl, weather, repricer, revive — each exports run(config)
     governance/       DB-driven governance layer: reconciler, rules, submitter, run recorder
   cron/               routed functions
@@ -201,11 +201,10 @@ tsconfig.api.json     type-checks api/ with node types (wired into tsc -b)
 | `/api/cron/queue`    | `2-59/5 * * * *` | `Controller.run_queue_maintenance` — skips (no tx) while the settlement barrier is engaged or when queues are empty + today's snapshot exists; off-tempo from settle (txBadSeq retried once in the client) |
 | `/api/cron/weather`  | `20 */2 * * *` | Storm surcharge — stateless: fleet-file base + flat Open-Meteo forecast surcharge → `update_route_terms` (no DB) |
 | `/api/cron/reprice`  | `0 8 1 * *`    | Monthly ADVISORY seasonal repricing — proposal → `pricing_runs`; the admin applies it via `seed_routes --apply-terms` (no chain writes) |
-| `/api/cron/revive`   | `0 6 * * *`    | Revive check — re-sweeps the 20 most recently guard-paused routes (`route_health`); a schedule that is verifiably back → `enable_route` |
+| `/api/cron/revive`   | `40 * * * *`   | The unified revive engine — re-checks every open row in the `interventions` ledger with its cause's own predicate (cancellation: ~daily sweep · exposure: eased 2 checks · weather: forecast cleared); last hold cleared → `enable_route` |
 | `/api/cron/ttl`      | `0 0 * * *`    | `extend_ttl` on all 5 contracts + `prune_settled` in a drain loop (repeats while the active count drops) |
-| `/api/cron/gov-exposure` | `7 * * * *` | Exposure collector — reads on-chain liability (payoff × buyers per active flight vs vault capacity, no AeroAPI) and projects route/airport concentration `exposure` signals (≥25% elevated, ≥50% severe; env-tunable). Facts only, no chain writes |
+| `/api/cron/gov-exposure` | `7 * * * *` | Exposure brake — reads on-chain liability (payoff × buyers per active flight vs vault capacity, no AeroAPI); a route/airport at ≥50% opens an `exposure` intervention (pause, per-run cap), ≥25% is advisory (env-tunable). Also ingests the policies event mirror |
 | `/api/cron/gov-onboard` | `15 */6 * * *` | Fleet status sync — file/on-chain routes → DB so the reconciler manages every real route. Route INTAKE is deliberately NOT here: whitelisting is the manual admin pipeline in `scripts/` (discover → price → review → seed) |
-| `/api/cron/gov-reconcile` | `10 * * * *` | Governance reconciler (pause engine) — recomputes each managed route's desired state from DB signals (admin pins win, severe pauses expand, hysteresis damps re-enables) and submits the minimal on-chain diff; `GOV_DRY_RUN=true` logs decisions without submitting |
 
 `/api/cron/health` is an unauthenticated GET that returns the network, contract IDs, and `hasKeys` booleans (secrets are never echoed).
 
@@ -215,8 +214,9 @@ flight just-in-time (live `/flights` inside 2 days, published `/schedules`
 presence further out; refuses anything departing <24h out), opens the
 on-chain sale window with expiry `min(now+validity, departure−24h)`, and
 fires the route guard's 2-call 5-day sweep when a buy attempt hits a
-cancelled/vanished flight (all 5 days dead → route disabled + `route_health`
-row; the daily revive cron heals it). Idle whitelisted routes cost ZERO
+cancelled/vanished flight (all 5 days dead → route disabled + an open row
+in the `interventions` ledger; the hourly revive engine heals it). Idle
+whitelisted routes cost ZERO
 AeroAPI calls.
 
 ### Env vars
