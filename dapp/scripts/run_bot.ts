@@ -3,10 +3,12 @@
  *
  * The Vercel crons are just OUR schedule for these bots. Three tiers:
  *
- * - GOVERNANCE (gov_signals, gov_reconcile, route_agent) — centralized,
- *   ours by design; gov-admin key + governance DB.
- * - ORACLE (fetcher, sale_authorizer) — centralized trust root, ours by
- *   design; AeroAPI + the authorized_oracle key.
+ * - GOVERNANCE (gov_reconcile, gov_exposure, gov_onboard, weather,
+ *   reprice, revive) — centralized, ours by design; gov-admin key +
+ *   governance DB.
+ * - ORACLE (fetcher — the settle sweep) — centralized trust root, ours
+ *   by design; AeroAPI + the authorized_oracle key. Sale authorization
+ *   is no longer a bot: it is the JIT /api/sale-auth/request endpoint.
  * - KEEPERS / liquidators (classifier, settler, queue_maintainer,
  *   ttl_extender) — the decentralization target: they execute what the
  *   oracle already attested, need no AeroAPI key and no DB.
@@ -16,7 +18,7 @@
  *
  *   npm run bot -- fetcher            # or: npx tsx scripts/run_bot.ts fetcher
  *   npm run bot -- settler
- *   npm run bot -- gov_signals
+ *   npm run bot -- gov_reconcile
  *
  * Env: same variables as the crons (see README "Env vars").
  *
@@ -35,31 +37,27 @@ import { loadGovConfig } from "../api/_lib/governance/config";
 import { recordRun } from "../api/_lib/governance/runs";
 import type { JobName, RunLogEntry } from "../api/_lib/types";
 import { run as runFetcher } from "../api/_lib/jobs/fetcher";
-import { run as runAuthorizer } from "../api/_lib/jobs/authorizer";
 import { run as runClassifier } from "../api/_lib/jobs/classifier";
 import { run as runSettler } from "../api/_lib/jobs/settler";
 import { run as runQueue } from "../api/_lib/jobs/queue";
 import { run as runTtl } from "../api/_lib/jobs/ttl";
-import { run as runRouteAgent } from "../api/_lib/jobs/route_agent";
-import { run as runGovReconcile } from "../api/_lib/governance/reconciler";
-import { run as runGovSignals } from "../api/_lib/governance/signals_collector";
+import { run as runWeather } from "../api/_lib/jobs/weather";
+import { run as runRepricer } from "../api/_lib/jobs/repricer";
+import { run as runRevive } from "../api/_lib/jobs/revive";
 import { run as runGovExposure } from "../api/_lib/governance/exposure_collector";
 import { run as runGovOnboard } from "../api/_lib/governance/onboard";
-import { run as runGovScheduleCheck } from "../api/_lib/governance/schedule_check";
 
 const BOTS: Partial<Record<JobName, () => Promise<RunLogEntry>>> = {
   fetcher: () => runFetcher(loadConfig()),
-  sale_authorizer: () => runAuthorizer(loadConfig()),
   classifier: () => runClassifier(loadConfig()),
   settler: () => runSettler(loadConfig()),
   queue_maintainer: () => runQueue(loadConfig()),
   ttl_extender: () => runTtl(loadConfig()),
-  route_agent: () => runRouteAgent(loadGovConfig()),
-  gov_reconcile: () => runGovReconcile(loadGovConfig()),
-  gov_signals: () => runGovSignals(loadGovConfig()),
+  weather: () => runWeather(loadGovConfig()),
+  reprice: () => runRepricer(loadGovConfig()),
+  revive: () => runRevive(loadGovConfig()),
   gov_exposure: () => runGovExposure(loadGovConfig()),
   gov_onboard: () => runGovOnboard(loadGovConfig()),
-  gov_schedule_check: () => runGovScheduleCheck(loadGovConfig()),
 };
 
 async function main(): Promise<void> {

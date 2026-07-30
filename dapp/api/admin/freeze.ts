@@ -6,10 +6,11 @@ import { getDb } from "../_lib/governance/db";
  * Admin API — the governance freeze switch (ops_flags.gov_frozen).
  *
  * GET  → { frozen, note, updated_at }   (absent row = not frozen)
- * POST → { frozen: boolean, note?: string } — upsert. The reconciler checks
- *        this flag at the start of every run and takes NO action while
- *        frozen — the runtime kill switch that, unlike GOV_DRY_RUN, needs
- *        no env change or redeploy. Every toggle records the admin email.
+ * POST → { frozen: boolean, note?: string } — upsert. The interventions
+ * executor checks this flag before every automated pause/revive and takes
+ * NO action while frozen — the runtime kill switch that, unlike
+ * GOV_DRY_RUN, needs no env change or redeploy. Every toggle records the
+ * admin email.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   const admin = await verifyAdmin(req);

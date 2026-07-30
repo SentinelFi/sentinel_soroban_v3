@@ -40,24 +40,6 @@ export interface AeroApiSchedulesResponse {
   num_pages?: number;
 }
 
-/** One row of GET /airports/delays — an airport-wide delay condition. */
-export interface AeroApiAirportDelay {
-  /** Airport code (ICAO for US airports, e.g. "KJFK"). */
-  airport: string;
-  /** Category of the largest delay: "weather", "traffic", ... */
-  category: string;
-  /** Severity color of the largest delay (red/yellow). */
-  color: string;
-  /** Duration of the largest delay in seconds (trend signal, not a promise). */
-  delay_secs: number;
-}
-
-export interface AeroApiAirportDelaysResponse {
-  delays: AeroApiAirportDelay[];
-  links?: { next: string } | null;
-  num_pages?: number;
-}
-
 /**
  * True only when AeroAPI's cancellation signal is corroborated.
  *
@@ -162,6 +144,28 @@ export class AeroApiClient {
   }
 
   /**
+   * Fetch EVERY tracked instance of an ident inside a date range (start
+   * inclusive, end inclusive — pass full ISO timestamps). The range must
+   * respect the same −10d..+2d visibility window as getFlightData.
+   *
+   * Unlike getFlightData this does NOT collapse to a single flight: the
+   * route guard's cancellation sweep wants one entry per day the flight
+   * operated (a flight number flying daily returns ~one instance per day).
+   * Returns null on any error; an empty array means "verified: no tracked
+   * instances in the range".
+   */
+  async getFlightInstances(
+    ident: string,
+    startIso: string,
+    endIso: string
+  ): Promise<AeroApiFlight[] | null> {
+    const url = `${this.baseUrl}/flights/${ident}?start=${startIso}&end=${endIso}`;
+    const data = await this.requestJson<AeroApiResponse>(url, `${ident} ${startIso}..${endIso}`);
+    if (!data) return null;
+    return data.flights ?? [];
+  }
+
+  /**
    * Fetch published airline schedules for a date window (both bounds are
    * date strings; date_end is exclusive per the API).
    *
@@ -241,19 +245,6 @@ export class AeroApiClient {
     }
     console.warn(`[aeroapi] ${label}: cursor limit reached (${MAX_CURSOR_FOLLOWS} follows) — returning partial set.`);
     return merged;
-  }
-
-  /**
-   * Fetch the current airport-wide delay list — ONE call covers every
-   * airport with an active delay condition, which makes it a nearly-free
-   * network-wide governance signal source (the gov_signals collector maps
-   * these onto the reconciler's signals table).
-   *
-   * Returns null on any error (fail-soft, like every other method).
-   */
-  async getAirportDelays(): Promise<AeroApiAirportDelaysResponse | null> {
-    const url = `${this.baseUrl}/airports/delays`;
-    return this.requestJson<AeroApiAirportDelaysResponse>(url, "airports/delays");
   }
 
   /**

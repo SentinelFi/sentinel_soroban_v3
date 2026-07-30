@@ -13,8 +13,9 @@
 - [The Off-Chain Layer: Three Systems + a Frontend](#the-off-chain-layer-three-systems--a-frontend)
 - [Off-Chain Keeper & Oracle Layer](#off-chain-keeper--oracle-layer)
   - [Job Summary](#job-summary)
-  - [Cron #0 — SaleAuthorizer (Oracle, every 2 hours at :30)](#cron-0--saleauthorizer-oracle-every-2-hours-at-30)
-  - [Cron #1 — FlightDataFetcher (Oracle, every 2 hours)](#cron-1--flightdatafetcher-oracle-every-2-hours)
+  - [JIT sale authorization — the buy-click path (Oracle)](#jit-sale-authorization--the-buy-click-path-oracle)
+  - [The route guard — cancellation sweep + daily revive](#the-route-guard--cancellation-sweep--daily-revive)
+  - [Cron #1 — the Settle Sweep (Oracle, every 2 hours)](#cron-1--the-settle-sweep-oracle-every-2-hours)
   - [Cron #2 — FlightClassifier (Keeper, every 1 hour)](#cron-2--flightclassifier-keeper-every-1-hour)
   - [Cron #3 — SettlementExecutor (Keeper, every 5 minutes)](#cron-3--settlementexecutor-keeper-every-5-minutes)
   - [Cron #3b — QueueMaintainer (Keeper, every 5 minutes)](#cron-3b--queuemaintainer-keeper-every-5-minutes)
@@ -24,6 +25,7 @@
   - [Backend structure](#backend-structure)
   - [Job-Ops Layer](#job-ops-layer)
   - [Backend migration](#backend-migration)
+- [Decentralization Roadmap — from our crons to permissionless keepers](#decentralization-roadmap--from-our-crons-to-permissionless-keepers)
 - [Off-Chain Governance Automation](#off-chain-governance-automation)
 - [Data Flow](#data-flow)
   - [The Life of One Insured Flight](#the-life-of-one-insured-flight)
@@ -63,11 +65,14 @@ claims; **travelers** pay a premium to receive a fixed payoff if their flight is
 beyond a configurable threshold (per-route `delay_hours`). All contracts are written in
 **Rust** and compiled to **Soroban WASM**.
 
-Nothing on-chain self-triggers, so scheduled off-chain jobs keep the protocol
-ticking: `fetcher` writes real flight data on-chain, `sale_authorizer` attests
-flights insurable, `classifier` / `settler` / `queue_maintainer` drive
+Nothing on-chain self-triggers, so off-chain jobs keep the protocol
+ticking: the JIT sale-auth endpoint attests a flight insurable the moment a
+buyer acts, the `fetcher` settle sweep writes real outcomes on-chain within
+24h of scheduled arrival, `classifier` / `settler` / `queue_maintainer` drive
 classification, settlement, and the LP queues, `ttl_extender` keeps storage alive,
-and two governance jobs (`gov_reconcile`, `route_agent`) manage the route rulebook.
+and the governance detectors (`gov_exposure`, the route guard, `weather`,
+`reprice`) pause through one interventions ledger that the hourly `revive`
+engine heals — together they manage the route rulebook.
 All run today as **Vercel serverless functions** in `dapp/api/cron/`, but the
 contracts don't know or care what backend calls them — each write is gated by
 `require_auth()` on an **owner-updatable address** (`authorized_oracle`,
@@ -125,11 +130,15 @@ contracts. No company holds the money; the code does.
    others.
 
 **The off-chain helpers (keepers & oracle).** Smart contracts can't wake themselves
-up — there is no on-chain timer. Small programs on a schedule (today, serverless
-functions) do the waking:
+up — there is no on-chain timer. Small serverless programs do the waking, and they
+talk to the flight API **only when something real is at stake** (a buy click, a
+flight due to settle) — never on an always-on polling loop:
 
-- The **oracle** job fetches real flight data from a flight API and writes it to the
-  scoreboard.
+- The **oracle** has two paths: the **buy-click check** verifies a flight the
+  moment someone wants to insure it (refusing anything cancelled, vanished, or
+  departing within 24h) and stamps the sale window the contract requires; the
+  **settle sweep** looks each insured flight up once, ~5h after its scheduled
+  arrival, and writes the outcome to the scoreboard — settled within 24h of ETA.
 - The **keeper** jobs read the scoreboard and tell the referee to classify each
   outcome and move the money.
 - A **TTL** job periodically touches storage so it doesn't expire.
@@ -147,15 +156,16 @@ oracle writes a flight's result it **immediately** pushes that one exact flight 
 classification and settlement. Flights settle in seconds, and the freeze lifts fast.
 The timed sweeps only mop up anything the instant path missed.
 
-**Automated governance — a rulebook that manages itself.** Nobody hand-edits the
-rulebook mid-crisis. Instead, real-world **signals** (a storm at an airport, a
-geopolitical event, too much exposure on one route) are recorded as plain **facts** in
-a database. Once an hour, a **reconciler** program reads those facts, decides what the
-rulebook *should* say — pause a dangerous route, raise a premium, re-open it once the
-storm clears — and makes exactly those changes on-chain through one audited path. A
-machine-learning model can suggest baseline prices. Human admins oversee it all from a
-dashboard, but they too only **write facts**; the reconciler is the only thing that
-touches the chain.
+**Automated governance — one ledger of what's off, and why.** Nobody hand-edits the
+rulebook mid-crisis. Four detectors each watch one danger — a flight that's publicly
+dead, too much of the vault promised to one hub, a hurricane-grade forecast, a route
+whose honest price went above the cap — and when one fires, the route is paused
+through a single audited path and recorded as one open row in an **interventions
+ledger**. An hourly **revive engine** re-checks every open row with that cause's own
+"is it safe now?" test and turns the route back on when the last hold clears. A
+machine-learning model suggests baseline prices (applied only by the admin's manual
+ritual). Human admins oversee it all from a dashboard; their own pauses live in the
+same ledger — just marked "never auto-revive".
 
 That's the entire system: travelers and underwriters on one side, five contracts
 holding the state and money, timed + just-in-time helpers keeping it moving, and a
@@ -1314,24 +1324,38 @@ stalled keeper costs latency, never correctness.
 
 ### 2. Oracle — centralized trust root, ours by design
 
-The two jobs that put facts on-chain: the **sale authorizer** (attests
-which flight-days are insurable — sales fail closed without it) and the
-**flight data fetcher** (writes ETAs, landings, corroborated cancellations
-via AeroAPI). This is the protocol's trust root; its key is the
-`authorized_oracle` address, and its future trust upgrade is a TEE backend
-(Acurast/Phala) taking over the same address — not multi-party operation.
-The oracle **must run with no database** (the DB-optional invariant below);
-it may *opportunistically* use the DB as a `/schedules` response cache and
-for run telemetry, but degrades to direct API calls without it.
+The two code paths that put facts on-chain, both **demand-driven since the
+2026-07-31 rework** (AeroAPI is consulted when a buyer acts or an outcome
+is owed — never on a polling schedule): the **JIT sale authorization
+endpoint** (`POST /api/sale-auth/request` — verifies the flight at buy
+time and opens the on-chain sale window; sales fail closed without it) and
+the **settle sweep** (the `fetcher` cron — one AeroAPI call per insured
+flight once past scheduled arrival + 5h, writing the schedule, landing, or
+corroborated cancellation; public promise: settled within 24h of ETA).
+This is the protocol's trust root; its key is the `authorized_oracle`
+address, and its future trust upgrade is a TEE backend (Acurast/Phala)
+taking over the same address — not multi-party operation. The oracle
+**must run with no database** (the DB-optional invariant below); it may
+*opportunistically* use the DB for settle-timing hints and run telemetry,
+but degrades gracefully without it.
 
 ### 3. Governance — centralized automation with two subsystems
 
-The rulebook manager: collectors write **facts** (weather forecasts, live
-airport delays, exposure concentration, ML pricing anchors, schedule
-drift) as self-expiring `signals`; the hourly **reconciler** decides within
-rails; the **GovSubmitter** — the single audited actor — writes on-chain.
-Humans set appetite (rails, defaults, term limits) and keep emergency
-controls (freeze, pins). Two subsystems:
+The rulebook manager, unified 2026-08-01 around one shape: **detectors →
+the interventions executor → the chain**, healed by one hourly **revive
+engine**. Four automated pause causes — `cancellation` (the route guard's
+5-day sweep off a buy-click anomaly), `exposure` (hourly on-chain
+concentration vs vault capacity), `weather` (EXTREME forecasts —
+hurricane-force, a tier above the priced "severe"), and `pricing` (a live
+route's honest ML price above the base cap, monthly) — plus `admin` holds
+that nothing auto-revives. Every pause is one open row in the
+`interventions` ledger; a route sells again when its last row closes.
+**Premiums** stay outside the ledger: the stateless `weather` surcharge
+(fleet-file base + flat add-on, recomputed every pass) and the monthly
+advisory `reprice` proposal the admin applies via the seeding ritual.
+Everything on-chain goes through the **GovSubmitter** — the single audited
+actor. Humans set appetite (rails, defaults, term limits) and keep
+emergency controls (freeze, pins). Two subsystems:
 
 - **The ML prediction service** (`agent/`, Render service
   `flight-delay-predictions`) — a pure, insurance-blind FastAPI:
@@ -1339,13 +1363,13 @@ controls (freeze, pins). Two subsystems:
   premium math lives protocol-side. Details:
   [The ML prediction service](#the-ml-prediction-service-render-hosted).
 - **The Supabase DB** — the governance system's memory, audit trail, and
-  coordination point: the route registry the reconciler evaluates,
-  self-expiring `signals`, the `actions_log`/`pause_events` audit trail,
-  runtime brakes (`ops_flags.gov_frozen`), the policies/settlements event
-  mirror (durable history past RPC retention), `cron_runs` telemetry, and
-  the AeroAPI response cache. **It is NOT strictly needed**: only the
+  coordination point: the `routes` world-map, the unified `interventions`
+  pause ledger, the `actions_log` audit trail, runtime brakes
+  (`ops_flags.gov_frozen`), the policies/settlements event mirror (durable
+  history past RPC retention), and `cron_runs` telemetry. **It is NOT
+  strictly needed**: only the
   governance tier requires it — without the DB, automated governance
-  simply stops *safely* (no signals → no actions; on-chain terms and
+  simply stops *safely* (no ledger → no automated actions; on-chain terms and
   statuses persist unchanged) while sales, settlement, claims, and manual
   governance (owner/admin calls and scripts) continue untouched. Signals
   self-expire (~26h), so a DB outage leaves no stale automation state to
@@ -1385,7 +1409,7 @@ serverless handlers under [`dapp/api/cron/`](../dapp/api/) — one file per job,
 a thin wrapper around a runtime-agnostic implementation in `dapp/api/_lib/jobs/`
 (settlement path) or `dapp/api/_lib/governance/` (governance automation). Stack:
 TypeScript + `@stellar/stellar-sdk` talking to Stellar RPC, backed by a Supabase
-Postgres for off-chain state (governance signals, run history, exposure mirror).
+Postgres for off-chain state (the interventions ledger, run history, event mirror).
 The frontend and this backend cohabit the **same Vercel project** (`dapp/`): the
 SPA is served from `dist/`, the jobs from `/api/*` (see the SPA-vs-API rewrite in
 `dapp/vercel.json`).
@@ -1410,48 +1434,69 @@ recorded to the Supabase `cron_runs` table (see [Job-Ops Layer](#job-ops-layer))
 
 ### Job Summary
 
-The registry defines nine jobs. Six drive the settlement path and storage (this
-section); two automate governance (`gov_reconcile`, `route_agent` — see [Off-Chain
-Governance Automation](#off-chain-governance-automation)); `health` is a liveness
-probe. Four signer roles keep blast radius separated: **oracle** writes flight
+The registry defines the jobs below. Five drive the settlement path and storage
+(this section); the rest automate governance (the `gov_exposure` brake,
+`weather`, `reprice`, the unified `revive` engine — see [Off-Chain
+Governance Automation](#off-chain-governance-automation)); `health` is a
+liveness probe.
+Sale authorization is **not a cron**: it is the JIT endpoint
+`POST /api/sale-auth/request`, invoked by the frontend on every buy click
+(oracle-signed, same `_lib` layer — see [JIT sale
+authorization](#jit-sale-authorization--the-buy-click-path-oracle)). Four
+signer roles keep blast radius separated: **oracle** writes flight
 data, **keeper** drives classification/settlement, **ttl** extends storage,
 **gov-admin** writes governance. Each address is owner-updatable on-chain.
 
 | Job (registry name) | Endpoint | Schedule | On-chain target | Signer |
 |------|------|-----------|-----------------|--------|
-| `fetcher` | `/api/cron/fetcher` | `0 */2 * * *` (every 2h) | `OracleAggregator.set_estimated_arrival` / `set_landed` / `set_cancelled` | oracle |
-| `sale_authorizer` | `/api/cron/authorize` | `30 */2 * * *` (every 2h, :30) | `OracleAggregator.open_sale` / `close_sale` / `set_cancelled` | oracle |
+| `fetcher` (settle sweep) | `/api/cron/fetcher` | `0 */2 * * *` (every 2h) | `OracleAggregator.set_estimated_arrival` / `set_landed` / `set_cancelled` — only for insured flights past scheduled arrival + 5h | oracle |
 | `classifier` | `/api/cron/classify` | `0 * * * *` (hourly) | `Controller.classify_flights` | keeper |
 | `settler` | `/api/cron/settle` | `*/5 * * * *` (every 5 min) | `Controller.execute_settlements` | keeper |
 | `queue_maintainer` | `/api/cron/queue` | `2-59/5 * * * *` (every 5 min, +2) | `Controller.run_queue_maintenance` | keeper |
 | `ttl_extender` | `/api/cron/ttl` | `0 0 * * *` (daily) | `extend_ttl` ×5 + `OracleAggregator.prune_settled` | ttl |
-| `gov_signals` | `/api/cron/gov-signals` | `5 * * * *` (hourly, :05) | — (facts only: AeroAPI `/airports/delays` → Supabase `signals`) | none |
-| `gov_exposure` | `/api/cron/gov-exposure` | `7 * * * *` (hourly, :07) | — (facts only: on-chain liability concentration → `exposure` signals) | none |
-| `gov_reconcile` | `/api/cron/gov-reconcile` | `10 * * * *` (hourly, :10) | `GovernanceModule.disable_route` / `enable_route` / `update_route_terms` (fleet guardrails: `ops_flags.gov_frozen` runtime brake, mass-disable circuit breaker, flap damping) | gov-admin |
+| `gov_exposure` | `/api/cron/gov-exposure` | `7 * * * *` (hourly, :07) | Exposure brake: liability concentration ≥50% of vault capacity → `exposure` intervention (`disable_route`, capped per run); ≥25% advisory. Also ingests the policies event mirror | gov-admin |
 | `gov_onboard` | `/api/cron/gov-onboard` | `15 */6 * * *` (6-hourly, :15) | — (fleet STATUS sync only: file/chain→DB; route intake is the manual admin pipeline in `scripts/`, never a cron) | gov-admin |
-| `route_agent` | `/api/cron/agent` | `0 6 * * *` (daily 06:00 UTC) | facts only: `pricing` + `weather` signals (no chain writes) | — |
+| `weather` | `/api/cron/weather` | `20 */2 * * *` (every 2h, :20) | `GovernanceModule.update_route_terms` — stateless flat storm surcharge over the fleet-file base; EXTREME forecasts open a `weather` intervention (pause) instead | gov-admin |
+| `reprice` | `/api/cron/reprice` | `0 8 1 * *` (monthly, 1st 08:00 UTC) | Prices ADVISORY (proposal → `pricing_runs`; admin applies via `seed_routes --apply-terms`) — but live routes priced above the base cap get a `pricing` intervention (pause), revived when back under | gov-admin |
+| `revive` | `/api/cron/revive` | `40 * * * *` (hourly, :40) | `GovernanceModule.enable_route` — the unified revive engine: re-checks every open intervention with its cause's own predicate; last hold cleared → route re-enabled | gov-admin |
 | `health` | `/api/cron/health` | liveness probe | — | — |
 
-The `:30` and `+2` offsets keep the two oracle jobs (and the two keeper jobs) off
-the same minute to avoid Stellar sequence-number contention; `gov_signals` (:05)
-and `gov_exposure` (:07) run just before `gov_reconcile` (:10) so every
-reconcile tick acts on a fresh airport-delay AND exposure picture. One registry
-name (`gov_schedule_check`) remains a placeholder that rejects as "not
-implemented" (it needs AeroAPI schedule comparison).
+The `+2` offset keeps the two keeper jobs off the same minute to avoid
+Stellar sequence-number contention; `gov_exposure` (:07) and `revive`
+(:40) sit on different minutes for the same reason.
+
+> **Retired 2026-07-31 (demand-driven rework).** Three polling jobs were
+> deleted outright: the `sale_authorizer` cron (every-2h attestation of the
+> whole fleet × horizon — replaced by the JIT endpoint), `gov_signals`
+> (hourly AeroAPI `/airports/delays` → delay signals — superseded by
+> cancellation-evidence pausing via the route guard), and
+> `gov_schedule_check` (daily schedule-drift sampling — drift is now caught
+> at buy time, since nothing is pre-attested to drift against). The
+> `warm_windows` demand-breadcrumb table and the `aeroapi_cache` response
+> cache died with them. Net effect: an idle whitelisted route costs ZERO
+> AeroAPI calls, and there is no flat daily API overhead at all.
+> **2026-08-01 (interventions unification):** the `signals` table, the
+> `gov_reconcile` cron, and the reconciler/rules machinery retired too —
+> every pause detector now acts directly through the shared interventions
+> executor, and one hourly `revive` engine heals the whole ledger.
 
 **Three tiers, one decentralization target.** The jobs split into
-**governance** (gov_signals/gov_reconcile/route_agent — centralized, ours by
-design), **oracle** (fetcher/sale_authorizer — the centralized trust root:
-they spend AeroAPI calls and attest real-world facts), and
+**governance** (gov_exposure/gov_onboard/weather/reprice/revive
+— centralized, ours by design), **oracle** (the JIT sale-auth endpoint + the
+settle sweep — the centralized trust root: they spend AeroAPI calls and
+attest real-world facts), and
 **keepers/liquidators** (classifier/settler/queue_maintainer/ttl_extender —
 they move no new information on-chain, only execute what the oracle already
 attested). **Only the keeper tier is open-source-and-anyone-can-run**: every
 job runs standalone via `npm run bot -- <name>`, `ttl_extender` is
-permissionless today, and the planned bounty upgrade (spec/TODO.md §E) makes
+permissionless today, and the planned bounty upgrade (see the
+[Decentralization Roadmap](#decentralization-roadmap--from-our-crons-to-permissionless-keepers)) makes
 the remaining keeper entry points permissionless-and-paid. **Governance and
 oracle stay centralized** — the oracle's future trust upgrade is a TEE
 backend (address rotation, unchanged contracts), not permissionless
-operation.
+operation. The full staged plan — and why the beta deliberately runs
+centralized first — is the [Decentralization
+Roadmap](#decentralization-roadmap--from-our-crons-to-permissionless-keepers).
 
 **Optional by design — the system runs without them:**
 
@@ -1461,82 +1506,108 @@ operation.
   down, recording fails silently while the job still completes its on-chain
   work — the e2e suite runs the entire settlement pipeline with no database
   attached. Only the governance tier requires the DB, because that tier *is*
-  the DB (signals, audit log, route registry). A dead Supabase degrades
+  the DB (the interventions ledger, audit log, route registry). A dead Supabase degrades
   governance to manual admin ops; purchases, attestation, settlement,
-  claims, and TTL are untouched. Any future DB feature (e.g. the planned
-  AeroAPI response cache) must degrade to direct calls, never gate.
+  claims, and TTL are untouched. Any DB feature the oracle path touches
+  (the `flight_schedules` timing hints, the guard's ledger dedupe)
+  must degrade gracefully, never gate.
 - **The webhook is optional.** The planned AeroAPI push-alert webhook
-  (spec/TODO.md §B) only improves cancellation/arrival *latency* from hours
-  to seconds — polling remains the guaranteed base layer and the
-  reconciliation path for missed alerts. If both webhook and polling die,
-  sale windows self-expire (≤6h on-chain cap) and sales fail closed. The
-  webhook must never become a single point of failure.
+  (a future improvement, documented in dapp/README.md) only improves cancellation/arrival *latency* from hours
+  to seconds — the settle sweep remains the guaranteed base layer and the
+  reconciliation path for missed alerts. If both die, sale windows
+  self-expire (≤6h on-chain cap) and sales fail closed. The webhook must
+  never become a single point of failure.
 
-### Cron #0 — SaleAuthorizer (Oracle, every 2 hours at :30)
+### JIT sale authorization — the buy-click path (Oracle)
 
-Keeps the purchase gate's sale windows attested. `buy_insurance` requires a
-live, unexpired `open_sale` authorization — absence of an on-chain outcome is
-not evidence the real flight is insurable (a publicly cancelled flight looks
-identical to a valid unreported one until the cancellation write lands), so
-the oracle attests insurability affirmatively and purchases fail closed
-without it.
+`buy_insurance` requires a live, unexpired `open_sale` authorization —
+absence of an on-chain outcome is not evidence the real flight is insurable
+(a publicly cancelled flight looks identical to a valid unreported one until
+the cancellation write lands), so the oracle attests insurability
+affirmatively and purchases fail closed without it.
 
-The flight list is derived from the enabled routes in
-`config/routes.testnet.json` (env `SALE_AUTH_HORIZON_DAYS` overrides the
-file's `sale_horizon_days`). Each run attests every (flight, day) in the
-horizon, **split by AeroAPI visibility** (`/flights/{ident}` only accepts
-queries within 10 days past → 2 days future):
+Since 2026-07-31 that attestation is **just-in-time**: `POST
+/api/sale-auth/request { flight_id, date }` (`dapp/api/sale-auth/request.ts`
+→ `_lib/sale_auth.ts`), called by the frontend right before building the buy
+transaction. No cron polls the fleet; a route nobody buys costs **zero**
+AeroAPI calls.
 
-**Near window (days 1–2) — live tracking data via `GET /flights/{ident}`:**
+The check, in order (each step fails closed):
 
-1. queries AeroAPI for the (flight, day) instance;
-2. on a cancellation signal, revokes any live window with the pause-exempt
-   `close_sale` FIRST (safe on the bare `cancelled` flag — fail closed), then
-   pushes the `set_cancelled` tombstone **only when corroborated**: AeroAPI's
-   `cancelled` flag alone means "no longer tracked", which the spec says "will
-   not always" be an airline cancellation — and the tombstone pays every
-   buyer, so it additionally requires a cancelled status text. A bare flag is
-   logged for ops and retried;
-3. `close_sale`s a window whose instance became unverifiable (no data /
-   ambiguous candidates) — fail closed, never guess;
-4. otherwise opens/refreshes the window with expiry
-   `min(flight date, now + SALE_AUTH_VALIDITY_SECS)` (default 6h; the
-   contract caps validity at 24h).
-
-**Far window (days 3..horizon) — published schedules via `GET /schedules`:**
-one call per ≤20-day chunk (the endpoint sees up to 1 year out, ≤3-week
-windows, filtered by airline + flight number + route origin/destination)
-attests which days the airline has published the flight for. Exactly one
-instance on a day → open/refresh; verified absent → close; more than one →
-ambiguous, fail closed; the schedules *call itself* failed → no action (live
-windows lapse within their ≤6h validity rather than being mass-revoked by a
-transient API error). Published-schedule existence deliberately does NOT
-attest "not cancelled" — cancellation detection lives on live tracking data
-in the near window and the fetcher's watch window.
-
-Call economy: per flight per run ≈ 2 `/flights` calls + `ceil((horizon−2)/20)`
-`/schedules` calls — ~7 calls for a 90-day horizon instead of 90 (the old
-per-day sweep also queried `/flights` for days it structurally cannot see,
-so days 3+ never opened at all).
+1. **Free gates — no API call.** Route must be whitelisted + enabled (DB
+   `routes` table canonical when populated, fleet file as bootstrap/no-DB
+   fallback); date must be tomorrow-or-later inside the sale horizon; a
+   (flight, day) with a recorded outcome refuses on a free chain read; and
+   **a still-live window short-circuits to authorized** — every buyer inside
+   its validity rides the first buyer's API call.
+2. **Days +1..+2 — live tracking via `GET /flights/{ident}`.** A
+   corroborated cancellation (flag AND cancelled status — the bare flag
+   means "no longer tracked" and never mints the payout-bearing tombstone)
+   refuses the buy, writes the purchase-blocking `set_cancelled` tombstone,
+   drives targeted settlement for any existing buyers, and fires the
+   [route guard](#the-route-guard--cancellation-sweep--daily-revive) sweep.
+   A clean instance yields its scheduled dep/arr.
+3. **Days +3..horizon — published schedule via `GET /schedules`** for the
+   exact pair + date. Present exactly once → clean (existence attests
+   "published as scheduled", deliberately NOT "not cancelled" — beyond
+   live-tracking visibility that fact does not exist yet, which is precisely
+   the uncertainty the product insures). Vanished → refuse + fire the guard.
+   Ambiguous or unverifiable → refuse, no guard.
+4. **The 24h cutoff, against the real departure time** (product rule #4):
+   refuse when `scheduled_out − now < SALE_MIN_LEAD_SECS` (default 24h).
+5. **Open the window**: `open_sale` with expiry
+   `min(now + SALE_AUTH_VALIDITY_SECS, scheduled_out − SALE_MIN_LEAD_SECS)`
+   (validity default 6h; contract caps 24h) — no window ever authorizes a
+   purchase inside the cutoff. The scheduled dep/arr is saved to
+   `flight_schedules` (DB-optional) as the settle sweep's timing hint, and
+   returned to the frontend.
 
 Ops invariants:
 
-- **The routes file must track the governance route whitelist.** A
-  whitelisted route missing/disabled in the file is never sellable.
-- **Cadence must stay well inside the validity window**, or every sale
-  window lapses between runs and sales halt protocol-wide. That halt is the
-  intended fail-safe when the authorizer is down — availability degrades,
-  never safety.
-- Far-window attestation needs a parsable ident (airline + flight number,
-  e.g. `UA100`/`UAL100`); unparsable idents keep near-window attestation and
-  their far days stay closed.
-- Runs on the oracle key, off-tempo from the fetcher (:30 vs :00) to avoid
-  sequence-number contention.
+- **If the endpoint is down, sales halt protocol-wide** as windows lapse
+  within their ≤6h validity — the intended fail-safe: availability
+  degrades, never safety.
+- **Abuse is bounded.** The endpoint is deliberately public (it is the
+  storefront gate): live windows and tombstones absorb repeat probes with
+  free chain reads, refusals write nothing, and the worst an abusive
+  sweep of fleet × horizon can trigger equals what the retired cron
+  burned unconditionally every run.
 
-### Cron #1 — FlightDataFetcher (Oracle, every 2 hours)
+### The route guard — cancellation sweep + daily revive
 
-Fetches flight data from AeroAPI and writes it to the OracleAggregator. This cron is the
-only off-chain process that talks to external APIs.
+The exploit being closed: buying future days of a flight that is publicly
+not operating. The guard (`dapp/api/_lib/route_guard.ts`) fires **only on
+anomaly** — a JIT buy attempt hitting a cancelled or schedule-vanished
+flight — never on a schedule, and answers "is this route dead for the next
+5 days?" with exactly **two AeroAPI calls**: one `/flights` range call for
+days +1..+2 (dead = corroborated cancellation or verified absent; a bare
+flag or API error reads as *unknown*, never dead — an AeroAPI outage must
+not pause the fleet) and one `/schedules` pair call for days +3..+5 (dead =
+flight number not published).
+
+**All five days dead** → a `cancellation` intervention opens through the
+shared executor (`governance/interventions.ts`): `disable_route` via the
+audited GovSubmitter (guardrails — `gov_frozen`, pins — enforced there),
+the DB `routes` row flips to `disabled`, and the evidence lands in the
+unified **`interventions`** ledger. Any day alive or unknown → no pause;
+the buy refusal and per-day tombstones already protect the vault (the
+sweep is still recorded as a closed ledger row — history + the
+once-per-route-per-24h dedupe).
+
+**Revive**: the hourly unified revive engine re-runs the same sweep on
+open `cancellation` rows ~daily (20h gate, 20 per run); ANY of the next
+5 days verifiably back → the row closes, and the route re-enables if it
+was the last hold. Deliberately auto-healing — the criterion is the same
+objective check that paused the route. `scripts/revive_routes.ts` forces
+the full ledger now, and the `interventions` table (plus the /admin
+board) is the review surface. Nothing paused (the normal state) → zero
+API calls.
+
+### Cron #1 — the Settle Sweep (Oracle, every 2 hours)
+
+Resolves and settles insured flights (registry name `fetcher`, kept for
+run-log continuity). The public promise it implements: **insured flights
+settle autonomously within 24 hours of their scheduled arrival.**
 
 > **Semantics contract:** the "estimated arrival time" written on-chain in Step A is
 > AeroAPI's **`scheduled_in`** (the published schedule), NOT the live `estimated_in`
@@ -1555,57 +1626,48 @@ only off-chain process that talks to external APIs.
 > backend AND every frontend deriving day keys must preserve this.
 
 ```
-FlightDataFetcher
+SettleSweep (registry name: fetcher)
     |
-    +-> reads the oracle active set + get_flight_data per flight
+    +-> reads the oracle active set (every purchase registers its flight,
+    |   so this IS "flights someone paid for") + get_flight_data per flight
     |
-    +-> Step A: For flights in NotInitiated status:
-    |       PHASE GATE (no API call): skip if flight date > now + 2d
-    |         (/flights/{ident} cannot see further future schedule — the call
-    |          could never succeed) or if now > date + 10d (past the API's
-    |          history window; the stale-void timeout reclaims the row)
-    |       calls AeroAPI for the day's instance
-    |       +- confirmed cancellation (cancelled flag AND cancelled status)
-    |       |    -> set_cancelled (NotInitiated -> Cancelled)
-    |       |    -> targeted classify_flight + settle_flight
-    |       +- cancelled flag WITHOUT corroborating status -> log + retry
-    |       |    (tracking gap, not proof — the tombstone pays every buyer)
-    |       +- otherwise signs + submits:
-    |            OracleAggregator.set_estimated_arrival(flight_id, date,
-    |                                                   scheduled_in)
-    |            (NotInitiated -> Active)
+    +-> TIMING GATE (no API call): skip until
+    |     now >= scheduled arrival + SETTLE_AFTER_ETA_SECS (default 5h).
+    |   Scheduled arrival, in order: the on-chain ETA (a prior run wrote
+    |   it) -> the flight_schedules row the JIT endpoint saved at buy time
+    |   (DB-optional) -> flight date + 30h (no-hint fallback).
+    |   Skip after scheduled arrival + 10d (past AeroAPI's history window —
+    |   the stale-void timeout reclaims the row).
     |
-    +-> Step B: For flights in Active status:
-    |       PHASE GATE (no API call): skip until
-    |         now >= estimated_arrival − FETCHER_WATCH_SECS (default 6h);
-    |         skip after estimated_arrival + 10d (history window passed —
-    |         the active-void timeout reclaims the row)
-    |       inside the watch window, calls AeroAPI every cycle:
-    |           |
-    |           +- confirmed cancellation -> set_cancelled
-    |           |    (Active -> Cancelled) + targeted classify + settle
-    |           +- cancelled flag, uncorroborated -> log + retry
-    |           +- confirmed diversion -> set_cancelled  (POLICY: diverted
-    |           |    pays as cancellation; actual_in is the DIVERSION
-    |           |    airport's arrival and is never attested as a landing)
-    |           +- diverted flag, uncorroborated -> log + retry
-    |           +- before estimated_arrival + 1h -> cancellation watch only
-    |           +- actual_in present -> set_landed(actual_in)
-    |           |    (Active -> Landed) + targeted classify + settle
-    |           +- still in flight / HTTP error -> skip, retry next cycle
+    +-> past the gate: ONE /flights call resolves the outcome
+            |
+            +- confirmed cancellation (cancelled flag AND cancelled status)
+            |    -> set_cancelled + targeted classify_flight + settle_flight
+            +- cancelled flag WITHOUT corroborating status -> log + retry
+            |    (tracking gap, not proof — the tombstone pays every buyer)
+            +- confirmed diversion -> set_cancelled  (POLICY: diverted pays
+            |    as cancellation; actual_in is the DIVERSION airport's
+            |    arrival and is never attested as a landing)
+            +- diverted flag, uncorroborated -> log + retry
+            +- actual_in present -> set_estimated_arrival(scheduled_in)
+            |    (the forward-only machine requires NotInitiated -> Active
+            |    before Landed, and delay math needs the schedule; both
+            |    writes come from the SAME response) -> set_landed(actual_in)
+            |    -> targeted classify + settle
+            +- still en route / no data -> skip, retry next cycle (a heavy
+                 delay; the 2h cadence keeps the 24h promise easily)
 ```
 
-**Why the watch window?** Nothing between the ETA write (T-2d) and shortly
-before arrival can produce an attestable outcome except a cancellation, and
-the pre-departure cancellation check lives inside the window (sale windows
-never extend past the departure-day boundary, so the gap adds no purchase
-exposure). A flight therefore costs ~1 call at T-2d plus ~3–6 calls around
-arrival — and **zero** calls the rest of its life, regardless of how far
-ahead it was bought.
-
-**Why the extra 1-hour buffer?** Landing resolution only starts 1 hour after
-the scheduled arrival — flights still in the air need no landing query, and
-AeroAPI gets time to record final gate-arrival data.
+**Why wait until ETA + 5h?** Before arrival there is nothing attestable —
+pre-departure cancellations are caught at buy time (JIT + tombstones), and
+sale windows never authorize a purchase inside the 24h cutoff, so the quiet
+period adds no purchase exposure. Five hours past the schedule, one call
+almost always finds a final state (`actual_in` set, or a cancellation);
+the rare long-delay/diversion case retries every 2h. **An insured flight
+therefore costs ~1 AeroAPI call in its life here — and zero until 5h past
+its scheduled arrival, regardless of how far ahead it was bought.** Every
+outcome write also appends the `flight_outcomes` learnability row (outcome
++ that day's actual weather at both airports) from the same response.
 
 ### Cron #2 — FlightClassifier (Keeper, every 1 hour)
 
@@ -1650,7 +1712,8 @@ Landed/Cancelled yet.
 
 **Targeted "just-in-time" fast path — the primary latency route.** The hourly and
 5-minute sweeps are the *backstop*, not the main path. Whichever job writes an
-outcome doesn't wait for the next sweep: the moment `fetcher`/`sale_authorizer`
+outcome doesn't wait for the next sweep: the moment the settle sweep or the
+JIT sale-auth endpoint
 lands a `set_landed` / `set_cancelled`, the off-chain `classifyAndSettleFlight`
 helper (`dapp/api/_lib/targeted_settlement.ts`) immediately drives that *exact*
 `(flight_id, date)` tuple through two dedicated on-chain entry points —
@@ -1792,21 +1855,22 @@ different backend (TEE workers, a long-running node) wraps the same modules in i
 own scheduler.
 
 ```
-fetcher (signer: oracle)
+fetcher — the settle sweep (signer: oracle)
   1. Read OracleAggregator active set (paged) + get_flight_data per flight
-  2. NotInitiated, within T-2d -> AeroAPI schedule -> set_estimated_arrival
-     (-> Active; earlier flights cost ZERO calls — outside API visibility)
-  3. Active, inside the watch window (ETA - 6h .. ETA + 10d) -> AeroAPI
-     status -> set_landed / set_cancelled (+ targeted classify + settle)
-  4. Corroborated cancellation OR diversion seen in a watched phase ->
-     set_cancelled (diverted pays as cancellation, by policy); flag-only
-     signals are never attested
+  2. Skip until scheduled arrival + 5h (on-chain ETA, else the JIT's
+     flight_schedules hint, else date + 30h) — ZERO calls before the gate
+  3. Past the gate: ONE /flights call -> set_estimated_arrival +
+     set_landed, or set_cancelled (+ targeted classify + settle)
+  4. Corroborated cancellation OR diversion -> set_cancelled (diverted
+     pays as cancellation, by policy); flag-only signals never attested
 
-sale_authorizer (signer: oracle)
-  Days 1-2: live /flights check  -> open_sale / close_sale / set_cancelled
-  Days 3+:  published /schedules -> open_sale / close_sale (chunked, ~5 calls/90d)
+POST /api/sale-auth/request — JIT sale auth (signer: oracle, no cron)
+  Buy click: <24h to departure -> refuse (no call)
+  Days 1-2: live /flights check  -> open_sale / set_cancelled tombstone
+  Days 3+:  published /schedules presence -> open_sale
     (affirmative "this flight is insurable" attestation;
-     buy_insurance fails closed without a live window)
+     buy_insurance fails closed without a live window;
+     anomalies fire the route guard's 5-day sweep)
 
 classifier / settler / queue_maintainer (signer: keeper)
   Build + sign + submit one Controller call:
@@ -1829,19 +1893,22 @@ subsystem.
 dapp/
 ├── api/                          # Vercel serverless backend (same project as the SPA)
 │   ├── cron/                     # one thin handler per scheduled job
-│   │   ├── fetcher.ts  authorize.ts  classify.ts  settle.ts  queue.ts  ttl.ts
-│   │   ├── gov-reconcile.ts  agent.ts        # governance automation
-│   │   └── health.ts                         # liveness probe
+│   │   ├── fetcher.ts  classify.ts  settle.ts  queue.ts  ttl.ts
+│   │   ├── gov-exposure.ts  gov-onboard.ts
+│   │   ├── weather.ts  reprice.ts  revive.ts  # governance automation
+│   │   └── health.ts                          # liveness probe
+│   ├── sale-auth/request.ts      # the JIT buy-click endpoint (public)
 │   ├── admin/                    # authenticated ops API (Supabase JWT + email allowlist)
-│   │   └── actions.ts  jobs.ts  routes.ts  signals.ts
+│   │   └── actions.ts  jobs.ts  routes.ts  interventions.ts  freeze.ts
 │   ├── status/runs.ts            # PUBLIC sanitized job-health feed
 │   └── _lib/
 │       ├── jobs/                 # runtime-agnostic settlement-path job logic
-│       │   ├── fetcher.ts  authorizer.ts  classifier.ts  settler.ts
-│       │   └── queue.ts  ttl.ts  route_agent.ts
+│       │   ├── fetcher.ts  classifier.ts  settler.ts  queue.ts
+│       │   └── ttl.ts  weather.ts  repricer.ts  revive.ts
 │       ├── governance/           # governance automation subsystem (see next section)
-│       │   ├── reconciler.ts  rules.ts  submitter.ts  model.ts
+│       │   ├── interventions.ts  submitter.ts  model.ts
 │       │   └── db.ts  config.ts  action_log.ts  admin_auth.ts  runs.ts
+│       ├── sale_auth.ts  route_guard.ts  flight_schedules.ts
 │       ├── soroban_client.ts  aeroapi_client.ts  weather_client.ts
 │       └── agent_client.ts  targeted_settlement.ts  config.ts  handler.ts
 ├── packages/                     # generated TS contract bindings, one per contract
@@ -1905,33 +1972,173 @@ immediately sweep `close_sale` over every window still open (reconstructed from 
 on publicly cancelled flights, each a deterministic claim once the cancellation is
 recorded) stay purchasable after the key swap.
 
+## Decentralization Roadmap — from our crons to permissionless keepers
+
+> **In plain terms.** Today, our robots keep the protocol moving. The plan is
+> that anyone's robots can — discovering work from public contract events and
+> getting paid a bounty per settlement — while the oracle and governance stay
+> ours on purpose. This section says exactly what is open today, what the
+> target looks like, why we are *deliberately* not there yet, and what has to
+> be true before we flip the switch.
+
+### Why centralized now — the honest position
+
+Full decentralization of the execution layer is the committed end-state, not
+the starting point — and that ordering is deliberate, not a compromise we
+hope nobody notices. A beta's job is to **measure**: what settlement latency
+really looks like against the 24h promise, how often flights void on the
+14-day timeouts, what a settlement costs in transactions and fees, how often
+competing keepers would race and no-op. Every one of those numbers is an
+input to the bounty economics — and bounty economics written before the data
+exist are guesses that get frozen into contracts that are, by design, hard
+to change. Centralized crons let us:
+
+- **iterate daily** — a cron edit is a redeploy; a keeper-incentive mistake
+  is a contract migration. The last month alone replaced the entire sale
+  authorizer, the fetcher's phase machinery, and the governance pause
+  pipeline — three rewrites that would each have been a migration ceremony
+  in an immutable keeper economy;
+- **fail safely** — every centralized job fails *closed*: a dead sale-auth
+  endpoint halts new sales, a dead settle sweep delays payouts, a dead
+  governance cron freezes the rulebook as-is. None of them can lose money.
+  "Our cron is down" degrades availability, never correctness;
+- **ship v1 in months, not years** — the fast-moving beta phase is exactly
+  when the system should NOT be immutable.
+
+So the position is: **sufficiently decentralized now, fully decentralized on
+evidence.** Sufficient, because the things that matter are already out of
+any operator's hands — custody and settlement rules live on-chain, the
+contracts re-verify every keeper input, no automated actor can exceed the
+owner-set term limits, and the trust-free entry points are already
+permissionless. Full, later, because the remaining step (keeper bounties)
+deserves to be built on beta data instead of faith. We promised complete
+decentralization of execution; this is the sequencing that gets there
+without freezing guesses into immutable infrastructure.
+
+### What is already open today
+
+| Piece | Status |
+|---|---|
+| `extend_ttl` (all 5 contracts), `prune_settled`, `sweep_expired` | **Permissionless now** — any funded key, no registration |
+| The four keeper bots (`classifier`, `settler`, `queue_maintainer`, `ttl_extender`) | Code public + runnable by anyone (`npm run bot -- <name>`: RPC + key, no AeroAPI, no DB); writes land only for the registered `authorized_keeper` (spam control, not integrity) |
+| Every keeper input | Re-verified on-chain — keepers move **no new information**, so publishing the code gives away zero power |
+
+### The trust map — what decentralizes and what never does
+
+| Tier | End state | Why |
+|---|---|---|
+| **Keepers** (classify / settle / voids / queue / TTL) | **Permissionless + paid** | They only execute what the oracle already attested; opening them costs no trust — only incentive design |
+| **Oracle** (JIT sale-auth + settle sweep) | Centralized; trust upgrade = **TEE** (Acurast/Phala) taking over the same `authorized_oracle` address | Real-world facts need a trusted observer; the upgrade hardens the observer, it does not multiply it |
+| **Governance** (interventions, pricing, intake) | Centralized; bounded by on-chain term limits, the executor guardrails, and the owner backstop | Underwriting appetite is a business decision, not a consensus problem |
+
+### The target design — event-driven keepers, no database anywhere
+
+A third-party keeper needs exactly two things: a Stellar RPC URL and a
+funded key. Work discovery comes from the contracts' own event stream (62
+typed events), not from any operator infrastructure:
+
+```
+LISTEN   poll RPC getEvents on the deployed contracts
+           sentinel.flight_status = Landed | Cancelled  → classify work
+           classify outcome (ToBeSettled*)              → settle work
+VERIFY   simulate the call (free) — does the transition actually pend?
+SUBMIT   controller.classify_flight / settle_flight for that exact tuple
+EARN     the contract pays the bounty ONLY when the call's bool reports
+         a real transition — a racing loser's call no-ops at its own fee
+```
+
+Clock-shaped work needs no events at all: the 14-day void timeouts, queue
+snapshots, and TTL upkeep are all derivable from free public state reads
+(`get_active_flights` + dates, queue views). RPC's ~7-day event retention
+is sufficient — keepers chase live work, not history. The entry points are
+already idempotent, tuple-exact, and bool-returning; the loop above works
+against today's contracts minus the key gate.
+
+### The bounty upgrade — the one contract change (Phase B)
+
+Shipped through the contracts' existing owner-gated wasm-upgrade path, on a
+future contracts branch (never `off_chain_fixes`):
+
+1. **Drop the `authorized_keeper` gate** on `classify_flight(s)` /
+   `settle_flight` / `execute_settlements`. Spam control is replaced by
+   economics: a call that does no work no-ops at the caller's own fee.
+2. **Pay on true transitions**: the existing bool returns mark exactly when
+   a call did real work — that is the bounty trigger, nothing new to detect.
+3. **Fund from premiums** (current design lean, final sizing deferred to
+   beta data): a small per-policy skim escrowed at purchase into that
+   flight's bounty pot — buyers fund their own settlement guarantee, and
+   the pot scales 1:1 with the work.
+4. **Scope**: classify + settle + the void timeouts are bountied (the tail
+   nobody runs for fun); queue maintenance and TTL stay unpaid — cheap,
+   already permissionless (TTL), and we keep running them regardless.
+5. **Races are harmless on Stellar**: no public-mempool front-running; the
+   losing transaction no-ops and pays only its own fee, and simulation-first
+   keepers rarely submit losers at all.
+
+### Migration phases — and what the beta must measure first
+
+```
+Phase A (NOW)    gated keepers, our crons, measurement:
+                   - settle latency vs the 24h-of-ETA promise
+                   - txs + fees per settlement (bounty floor)
+                   - no-op / skip ratios per cron (race-waste estimate)
+                   - void frequency (the tail work worth paying for)
+                   - AeroAPI calls per insured flight (oracle cost base)
+Phase B          bounty upgrade via the wasm-upgrade path, sized from
+                 Phase A's numbers; keeper key gate removed
+Phase C          keeper kit published (events-poller + the existing bots);
+                 our crons demoted to ONE BACKSTOP KEEPER among many —
+                 liveness guaranteed by us, delivered by whoever is fastest
+```
+
+Each phase preserves the fail-closed property: at no point does
+decentralizing execution create a state where money moves without the
+contracts' own verification.
+
 ---
 
 ## Off-Chain Governance Automation
 
-> **In plain terms — the rulebook manages itself.** The GovernanceModule *stores* the
-> rules, but something has to *decide* them: raise a premium when a storm is brewing,
-> pause a route that's gotten too risky, re-open it when things calm down. That
-> decision-making is this off-chain system. It works like a newsroom with one editor:
-> anyone can file a **fact** ("storm at DEN", "too many policies on this route"), but
-> only one careful **editor** (the reconciler) decides what to actually publish to the
-> chain — and it double-checks against the live on-chain state every time, so a hiccup
-> never leaves things half-done.
+> **In plain terms — one ledger of what's turned off, and why.** The
+> GovernanceModule *stores* the rules, but something has to *decide* them:
+> stop selling a route that's gotten dangerous, re-open it when things calm
+> down. Since the 2026-08-01 unification that decision-making is one simple
+> shape: **detectors** (dead flight? too concentrated? extreme storm? bad
+> price?) each call one shared **pause executor**, every pause becomes one
+> open row in the **`interventions`** ledger, and one hourly **revive
+> engine** re-checks each open row with its cause's own "is it safe now?"
+> test and turns the route back on when the LAST hold clears. Premiums live
+> outside this entirely: the ML base is set at seeding/monthly repricing and
+> a stateless weather loop adds a flat storm surcharge — a price is
+> recomputed, never "reverted", so it needs no ledger row (see [Premium
+> bands](#premium-bands--ml-base--weather-surcharge-formula--knobs)).
 
-The `GovernanceModule` contract is the on-chain route authority (terms, whitelist,
-lifecycle), but the *decisions* — which routes to disable in a storm, how much to
-raise a premium when risk spikes — are made off-chain and pushed on-chain by
-automated jobs. The design has one governing principle:
+The design has one governing principle:
 
-> **Humans and collectors never call the chain directly. They write *facts* into
-> Supabase; one idempotent reconciler is the sole actor; every mutation flows
-> through a single audited choke point.**
+> **Every pause is one open `interventions` row; every chain write flows
+> through the audited GovSubmitter; a route sells again only when its last
+> open row closes.**
 
-The whole subsystem signs with a dedicated **gov-admin key** — a fourth identity,
-distinct from the contract owner and from the oracle/keeper — registered on the
-module via `GovernanceModule.add_admin`. (On testnet this `add_admin` is still
-pending the owner key, so the reconciler runs with `GOV_DRY_RUN=true`: it computes
-and logs every decision but submits nothing. See below.)
+Five causes, each owned end-to-end by one detector and one revive predicate:
+
+| Cause | Detector (opens the row) | Revive predicate (closes it) | Revive cadence |
+|---|---|---|---|
+| `cancellation` | route guard — a buy click hit a dead flight; 2-call 5-day sweep all-dead | the same sweep finds a live day | ~daily (20h gate, 20/run; script forces all) |
+| `exposure` | hourly `gov_exposure` — one route/airport ≥50% of vault capacity | route + both airports under threshold for 2 consecutive checks | hourly |
+| `weather` | the weather job — EXTREME forecast (gusts ≥120 km/h / snow ≥40 cm) at either airport | forecast back below extreme | hourly |
+| `pricing` | monthly `reprice` — a live route's honest ML price above the base cap | a later pricing run prices it under the cap | monthly |
+| `admin` | a human, via /admin | **never auto** — the admin closes it | — |
+
+The executor (`governance/interventions.ts`) enforces the guardrails once,
+for every caller: the `ops_flags.gov_frozen` kill switch stops all
+automated pauses/revives, pinned routes are untouchable by automated
+causes, new on-chain disables are capped per run at max(3, 20% of the
+fleet), and the DB `routes.status` is mirrored so the world-map stays
+honest. The whole subsystem signs with a dedicated **gov-admin key** — a
+fourth identity, distinct from the contract owner and from the
+oracle/keeper — registered on the module via `GovernanceModule.add_admin`.
+`GOV_DRY_RUN=true` makes every detector compute and log without touching
+anything.
 
 ### What data is held (Supabase, `supabase/migrations/`)
 
@@ -1946,55 +2153,55 @@ mirrored in `dapp/api/_lib/governance/model.ts`.
 
 | Table | Role |
 |---|---|
-| `routes` | One row per insurable route (`flight_id+origin+dest` = the on-chain key). Holds admin-set **base/anchor terms**, canonical schedule (for drift detection), the `status` lifecycle (`candidate/active/disabled/removed`), and the **admin pin** (`pinned`, `pin_until`). The reconciler treats pin + lifecycle as law. |
-| `signals` | **Layer-1 facts.** Collectors and admins write here; only the reconciler acts on them. `type` (weather / geopolitical / exposure / schedule_drift / manual), `scope_kind` (route / origin / dest), `severity` (`info` / `elevated` / `severe`), `payload` jsonb (e.g. `{factor}`), `expires_at`, `cleared_at`. Active = uncleared and unexpired. |
-| `pause_events` | History of every pause enacted on-chain, with the causing `signal_id`; `ended_at` on re-enable. The reconciler only auto-re-enables a route whose *own* pause_event is still open. |
-| `premium_adjustments` | Every premium change (base, multiplier stack, clamped result). Doubles as the **hysteresis / one-change-per-day** record. |
+| `routes` | One row per insurable route (`flight_id+origin+dest` = the on-chain key). Holds admin-set **base/anchor terms**, the `status` lifecycle (`candidate/active/disabled/removed`), and the **admin pin** (`pinned`, `pin_until`). The interventions executor treats the pin as law; `gov_onboard` keeps `status` synced to the chain. |
+| `interventions` | **THE unified pause ledger** (2026-08-01 — replaces `signals`, `pause_events`, and `route_health`). One OPEN row (revived_at null) per (route, cause) that is currently holding a route off: `cause` (cancellation / exposure / weather / pricing / admin), `evidence` jsonb, `opened_by`, `opened_at`, `last_checked_at`, `clear_streak` (exposure hysteresis), `revived_at`/`revived_by`. Closed rows are the check/pause history (and the guard's 24h sweep dedupe). The admin's single answer to "what's off and why". Self-creating. |
+| `signals`, `pause_events` | RETIRED 2026-08-01 (superseded by `interventions`). Historical rows remain readable; nothing writes them. |
+| `flight_schedules` | Scheduled dep/arr snapshot per (flight, day), written by the JIT sale-auth endpoint at buy time — the settle sweep's timing hint (first API look at scheduled arrival + 5h). Strictly advisory: no row → the sweep falls back to date + 30h. Self-creating. |
+| `premium_adjustments` | RETIRED 2026-07-30 (the multiplier engine was removed with the weather-v2 simplification). Historical rows remain as audit history; nothing writes here anymore. |
+| `pricing_runs` | One row per ML pricing run — both `manual:price_routes` (intake step 2) and `cron:reprice` (monthly advisory proposal): totals, premium distribution, excluded-over-cap routes, proposed changes. Self-creating. |
+| `flight_outcomes` | One row per insured flight-day at outcome attestation: outcome + delay minutes + ACTUAL weather at both airports — the weather-learnability log (see [The outcomes log](#the-outcomes-log-flight_outcomes--weather--outcome-learnability)). Self-creating. |
 | `actions_log` | **Append-only audit** of every on-chain governance call (actor, action, tx hash, before/after `route_status` snapshots, success/error). No update or delete path exists. |
 | `policies` | Durable mirror of `InsuranceBought` events (ingested from RPC) for exposure counting. |
 | `ingest_cursors` | Per-collector resume points (last-seen ledger). |
 | `cron_runs` | One row per job execution — feeds the admin JOBS board and public `/status` (see Job-Ops Layer). |
 
-### The reconciler (`dapp/api/_lib/governance/reconciler.ts`, hourly at `:10`)
+### The interventions executor + revive engine
 
-Runs after the signal collectors. It is **idempotent** — desired state is recomputed
-from scratch every tick, so a crashed run self-heals next hour:
+`governance/interventions.ts` is the pause world's one door, the way
+`GovSubmitter` is the chain's one door:
 
 ```
-1. Bulk-load DB state: routes, active signals, recently-ended signals (hysteresis
-   window), open pause_events, open + last-24h premium_adjustments.
-2. Per route: read the ACTUAL on-chain status via submitter.readStatus(),
-   filter matching signals by scope, then call the PURE decideReconcileAction(...).
-3. Execute the returned action through GovSubmitter, and mirror the result into
-   pause_events / premium_adjustments.
+pauseRoute(route, cause, evidence, actor)
+  1. no DB → log-only (the caller's fail-closed refusal still protects)
+  2. automated cause + gov_frozen → skip;  pinned route → skip
+  3. open (or refresh) the ledger row FIRST — a failed chain write is
+     retried off the same open row next detector pass
+  4. on-chain Active → GovSubmitter.disable  (audited in actions_log)
+  5. mirror DB routes.status = 'disabled'
+
+reviveRoute(route, cause, actor)
+  1. close the (route, cause) row
+  2. other open rows remain → route stays off (causes heal independently)
+  3. last row closed → GovSubmitter.enable + routes.status = 'active'
 ```
 
-The decision function in `rules.ts` is **pure — no I/O** — and applies a fixed
-priority order (returning one of `noop | disable | enable | set_premium |
-revert_premium | flag`):
+The revive engine (`jobs/revive.ts`, hourly at :40) walks every open row
+and applies the cause's predicate from the table above — sweeping
+cancellation rows ~daily in batches, re-reading chain concentration and
+forecasts every hour, and reporting (never touching) `pricing` and `admin`
+rows. `scripts/revive_routes.ts` is the same engine with the cadence gates
+off. Everything is idempotent: state is recomputed from scratch each pass,
+so a crashed run self-heals on the next.
 
-1. **Admin pin wins** — a pinned, unexpired route is never overridden (`noop`).
-2. **Not on-chain yet** → `noop` — whitelisting new routes is deliberately
-   manual: the admin pipeline in `scripts/` (discover → ML price → admin
-   review → seed; see [Whitelisting a Route](#whitelisting-a-route)),
-   never the reconciler.
-3. **Severe signal → `disable`** — any active `severe` signal matching the route's
-   scope disables an Active route.
-4. **Admin lifecycle** — a route the admin set `disabled` is never auto-re-enabled.
-5. **Reactivation** — a Disabled route re-`enable`s only if the engine's *own*
-   pause_event is open (else it `flag`s for review — someone acted outside the
-   engine) **and** all pause signals have been clear for `HYSTERESIS_HOURS = 2`.
-6. **Premium multipliers** — each active `elevated` signal contributes a factor
-   (`payload.factor`), factors **stack multiplicatively** over the route's base
-   premium, then clamp to the configured rails. Guards: a `terms_valid` mirror
-   check (`premium < payoff`, `payoff/premium ≤ 100`, else `flag`), a
-   `DRIFT_THRESHOLD` no-churn skip (≈1 USDC), and **max one change per route per
-   day**. When the adjusters clear, `revert_premium` walks terms back to base.
+Whitelisting new routes is deliberately NOT here — intake is the manual
+admin pipeline in `scripts/` (discover → ML price → admin review → seed;
+see [Whitelisting a Route](#whitelisting-a-route)).
 
 ### GovSubmitter — the single on-chain choke point (`submitter.ts`)
 
-Both the reconciler and the admin API mutate the chain **only** through
-`GovSubmitter`, so every write is identically audited. Each `submit()`:
+Every detector, the revive engine, and the admin API mutate the chain
+**only** through `GovSubmitter`, so every write is identically audited.
+Each `submit()`:
 
 1. Snapshots `route_status` **before**;
 2. simulates / signs / submits the contract call with the gov-admin key (captures
@@ -2006,9 +2213,9 @@ It wraps the **generated TypeScript bindings** (the `governance_module` package)
 compiler-checked `Keep | Set | UseDefault` term-update unions, and exposes methods
 that map 1:1 to contract entry points: `disable` → `disable_route`, `enable` →
 `enable_route`, `updateTerms` → `update_route_terms`, plus `whitelist` / `remove` /
-`revertTerms`. An off-chain signal therefore becomes, literally, a `disable_route` /
-`update_route_terms` call — with the contract's owner-set **term limits as the final
-backstop** no automated write can exceed.
+`revertTerms`. An intervention therefore becomes, literally, a
+`disable_route` / `enable_route` call — with the contract's owner-set
+**term limits as the final backstop** no automated write can exceed.
 
 ### The ML prediction service (Render-hosted)
 
@@ -2096,8 +2303,8 @@ closed 9-carrier ICAO↔IATA table (`toIata` / `toIcao` / `carrierName`),
 accept-either / return-canonical, **null on a miss** (callers fail loud;
 nothing guesses). Discovery converts idents' ICAO prefixes to IATA at
 intake, so everything downstream is already canonical; `price_routes` and
-`route_agent` re-normalize defensively before calling the model. Adding a
-tenth insured airline = adding one row to that table.
+the `reprice` job re-normalize defensively before calling the model. Adding
+a tenth insured airline = adding one row to that table.
 
 **What the model is.** XGBoost (300 gradient-boosted trees) over one-hot
 route/calendar features + numeric departure-time/distance, followed by
@@ -2117,160 +2324,227 @@ flight be late" — it carries no forecast or live operational data.
 the full runbook, including the BTS links and copy-paste Claude prompts that
 execute the whole refresh, is [maintenance.md](maintenance.md).**
 
-**How the protocol consumes it.** The daily `route_agent` collector calls it
-via `dapp/api/_lib/agent_client.ts` (15 s timeout, bearer token) and computes
-the premium anchor **protocol-side** (`route_rules.ts`):
+**How the protocol consumes it.** Two callers, both computing the premium
+**protocol-side** (`route_rules.ts` — see [Premium
+bands](#premium-bands--ml-base--weather-surcharge-formula--knobs)):
+`scripts/price_routes.ts` (intake step 2, prices the whole catalog into the
+staged whitelist) and the monthly `reprice` job (advisory seasonal proposal
+into `pricing_runs`). Both call it via `dapp/api/_lib/agent_client.ts` (15 s
+timeout, bearer token):
 
 ```
-anchor = clampPremium( p_covered × payoff × 1.3 , rails )
+base = mlBasePremiumUnits( p_covered, payoff, rails )
+     = round-up-to-whole-dollar( p_covered × payoff × 1.3 ), floor $10,
+       null above the $20 base cap (route excluded)
 ```
 
-which it writes as a `pricing` **signal**; the reconciler — the single audited
-actor — uses it as the premium anchor. **Any failure returns `null`**, so a
-down or unset model degrades gracefully to admin-set terms — never a broken
+**Any failure returns `null`**, so a down or unset model degrades gracefully
+— the pricing run reports the failure and the admin re-runs; never a broken
 cron, never a blocked route.
 
-### How the premium is clamped (formula + where to change the limits)
+### Premium bands — ML base + weather surcharge (formula + knobs)
 
-Current terms (2026-07-28): **premium clamped to $10–$30, payoff $100** per
-policy, delay threshold 3h. The full pipeline from probability to on-chain
-premium, in order:
+Since the 2026-07-30 redesign a premium is **two independent, additive
+bands, always in whole dollars** (rounded UP — rounding error favors the
+vault), with payoff fixed at $100 and the delay threshold at 3h:
 
 ```
-p_covered                       ← POST /predict (the ML service)
-raw      = p_covered × payoff × 1.3        expectedLossPremiumUnits()   route_rules.ts
-anchor   = clamp(raw, MIN, MAX)            clampPremium() rails         route_rules.ts
-target   = anchor × Π(active elevated multipliers, default ×1.25)       governance/rules.ts
-final    = clamp(target, MIN, MAX, ±50%/day vs current premium)         governance/rules.ts
-on-chain: update_route_terms(final) — rejected if it exceeds the
-          owner-set term limits (the backstop no automation can pass)
+BASE  $10–$20      p_covered × payoff × 1.3        expectedLossPremiumUnits()
+                   → round UP to whole dollars,     mlBasePremiumUnits()
+                     floor $10                      route_rules.ts
+                   honest price > $20 → the route is EXCLUDED from
+                   whitelisting (never clamped down — the protocol does
+                   not sell at a known expected loss; break-even at the
+                   cap is p ≈ 15.4%)
+
++WEATHER $2 / $10  flat surcharge from the live forecast (elevated /
+                   severe), applied and cleared by the stateless
+                   jobs/weather.ts loop — see below
+
+TOTAL ≤ $30        rails.premium_usdc.max — and behind it the on-chain
+                   backstop: GovernanceModule.set_term_limits (owner-only)
+                   caps max_payoff / max_payoff_ratio; no file edit or
+                   automated write can price past those
 ```
 
-Any `severe` signal skips pricing entirely and pauses the route.
+Worked example: a typical route (p ≈ 0.034) prices at 0.034 × $100 × 1.3
+≈ $4.40 → **floors at $10**; premiums leave the floor from p ≈ 0.070,
+reach the $20 base cap at p ≈ 0.146, and above p ≈ 0.154 the route is
+**excluded** (on the 2026-07 catalog that dropped exactly 2 of 1,302
+routes — both MIA/ORD→EWR evening departures). A severe storm on top of
+a $20 base sells at $30.
 
-Worked example at today's terms: a typical route (p ≈ 0.034) prices at
-0.034 × $100 × 1.3 ≈ $4.40 → **floors at $10**; premiums rise above the
-floor from p ≈ 0.077 and **cap at $30** from p ≈ 0.23 (rare — multi-x
-storm-season routes, which weather multipliers can also push to the cap).
+**When each band moves:**
 
-**Where to change MIN/MAX (or the payoff)** — one file, three knobs, all in
+- **BASE** is set at seeding and refreshed by the **monthly repricing
+  ritual**: the `reprice` cron (1st of the month) stages an advisory
+  proposal in the `pricing_runs` DB table — proposed changes + routes
+  whose honest price now exceeds the cap — and the admin applies it by
+  re-running the manual pipeline with `seed_routes --apply-terms`. The
+  cron never touches the chain; seasonality comes from the model's own
+  calendar features, so monthly is exactly as often as its inputs change.
+- **WEATHER** moves every ~2h with the forecast, automatically (below).
+
+**Where to change the knobs** — one file,
 [`dapp/config/routes.testnet.json`](../dapp/config/routes.testnet.json):
 
-- `rails.premium_usdc.min` / `.max` — the clamp bounds ($10/$30 today).
-  Rails changes take effect on the **next cron pass automatically** (both
-  route_agent's anchor and the reconciler's final clamp re-read the file).
-- `defaults.payoff_usdc` — the payoff ($100 today) and
-  `defaults.premium_usdc` — the admin base premium used when no ML anchor
-  is live ($15 today). On-chain, every route (all file overrides are null)
-  stores `UseDefault` and resolves against the module's global defaults —
-  so the whole fleet reprices with **one owner transaction**:
-  `GovernanceModule.set_defaults(premium, payoff, delay_hours)` (verified
-  2026-07-28: one call moved all 202 routes from $50/$500 to $15/$100).
-  Also update the DB `routes` base-term columns the reconciler prefers
-  (manual today — see TODO §D on teaching `gov_onboard` to sync terms).
-  Per-route *overrides* in the file are the exception: those need
-  `npm run whitelist:routes -- --sync-terms` (one `update_route_terms`
-  per changed route, gov-admin signed).
+- `rails.premium_usdc.min` / `.max` — floor and TOTAL ceiling ($10/$30).
+- `rails.base_premium_max_usdc` — the ML base cap / exclusion threshold ($20).
+- `rails.weather_surcharge_usdc.elevated` / `.severe` — the flat adds ($2/$10).
+- `weather_horizon_days` — the forecast look-ahead (3).
+- `defaults.payoff_usdc` / `defaults.premium_usdc` — module defaults;
+  routes seeded with explicit terms don't track these, but
+  `GovernanceModule.set_defaults` remains the one-tx fleet knob for any
+  `UseDefault` routes.
 - The margin (×1.3) is `EXPECTED_LOSS_MARGIN` in
   `dapp/api/_lib/route_rules.ts`.
 
-The final backstop lives on-chain: `GovernanceModule.set_term_limits`
-(owner-only) caps `max_payoff` and `max_payoff_ratio` — no file edit or
-automated write can price past those.
+Rails changes take effect on the next cron pass (the jobs re-read the
+file); base-cap changes take effect at the next pricing run.
+
+### The weather surcharge job (`dapp/api/_lib/jobs/weather.ts`, every ~2h)
+
+The storm system is deliberately the simplest thing that works — **no DB,
+no signals, no multipliers, no hysteresis machinery**. One stateless pass:
+
+```
+for each enabled fleet route:
+  severity = worst(origin, dest) forecast over the next 3 days
+             (Open-Meteo daily, airport-local dates via timezone=auto;
+             thresholds in route_rules.ts: gusts/snow/thunderstorm codes)
+  target   = fleet-file base premium + surcharge (ok +$0 / elevated +$2 /
+             severe +$10), clamped to $30
+  on-chain premium ≠ target → update_route_terms (gov-admin signed,
+             through the audited GovSubmitter)
+```
+
+Raise and clear are the same comparison — a calm forecast makes
+`target = base`, so surcharges clear on the next pass. The 3-day horizon
+is a deliberate skill boundary: storm forecasts (and therefore
+storm-aware buyers) see ~3 days out, so pricing that window neutralizes
+adverse selection, while buyers further out get the base price the model
+already set for the season. The term-snapshot rule means a surcharge only
+affects flight-date buckets whose first purchase comes after it — nobody
+who already bought is ever repriced. **Weather never disables a route**:
+stopping sales is a human decision (admin) or the exposure guardrails'.
+
+Forecast source: Open-Meteo, keyless — free tier (10k calls/day / 300k/mo)
+covers the ~14-airport fleet at hourly polling ~30× over; note the free
+tier is **non-commercial only** (mainnet revenue ⇒ the ~$29/mo API plan).
+
+### The outcomes log (`flight_outcomes` — weather → outcome learnability)
+
+ONE DB table, ONE row per insured flight-day, written by the fetcher at
+the moment it attests the final outcome on-chain: flight, route, local
+flight date, outcome (`ontime | delayed | cancelled | diverted`), gate
+delay in minutes, and the **actual** weather (Open-Meteo past-date
+reanalysis, both airports: max gusts, snowfall, precipitation
+probability, WMO codes). Strictly DB-optional and fail-open — a missing
+DB or dead weather API never blocks an attestation.
+
+This is the measurement loop for the surcharge: "of the flight-days with
+gusts ≥ X at origin, what fraction had covered events?" is a single-table
+query, which is how the $2/$10 amounts and the classifier thresholds get
+tuned from evidence. (It is deliberately NOT a model training set — it
+only covers insured flights. A weather-aware model v4 would train on BTS
++ retroactive NOAA history, which already exists.)
 
 ### Human oversight
 
-Admins never touch the chain by hand either — they write facts and let the pipeline
-act. All admin APIs (`dapp/api/admin/*`) are gated by `verifyAdmin`: a Supabase Auth
-JWT verified live via `auth.getUser`, then checked against an `ADMIN_EMAILS`
-allowlist (Supabase Auth is used for **identity only**; data access stays on the
-deny-all pooler).
+All admin APIs (`dapp/api/admin/*`) are gated by `verifyAdmin`: a Supabase
+Auth JWT verified live via `auth.getUser`, then checked against an
+`ADMIN_EMAILS` allowlist (Supabase Auth is used for **identity only**; data
+access stays on the deny-all pooler).
 
-- **`/admin`** (`src/pages/Admin.tsx`, hidden "Route Control" board) — declare/clear
-  **signals** (facts, picked up next reconciler tick — *not* direct chain calls),
-  pin/unpin routes, set lifecycle, run direct ops (which still go through
-  `GovSubmitter`, actor `admin:<email>`), and watch the job board + `actions_log`.
+- **`/admin`** (`src/pages/Admin.tsx`, hidden "Route Control" board) — the
+  interventions ledger (everything paused + why, one-click revive, and
+  "pause a route" = an `admin` hold nothing auto-revives), pin/unpin,
+  lifecycle, direct ops (still through `GovSubmitter`, actor
+  `admin:<email>`), the job board, and `actions_log`.
 - **`/status`** (`src/pages/Status.tsx`, public) — the sanitized job-health board.
-- **`GOV_DRY_RUN=true`** — while set (current testnet state, pending the on-chain
-  `add_admin`), the reconciler decides and logs every action but submits nothing and
-  writes no mirror rows — a safe rollout switch.
+- **`GOV_DRY_RUN=true`** — every detector computes and logs its decisions
+  but touches nothing — a safe rollout switch.
 
 ```
-SIGNAL INGESTION      collectors + admins  --INSERT-->  signals (facts)
-                        gov_signals (hourly :05): ONE AeroAPI /airports/delays
-                        call covers the whole network — red airport -> severe
-                        (pause), yellow -> elevated (premium multiplier), two
-                        scoped rows per airport (origin + dest), self-expiring
+DETECTORS             each owns ONE danger, fires on its own evidence
+  guard (buy click)     dead flight: 2-call 5-day sweep, all days dead
+  gov_exposure (1h)     ≥50% of vault capacity on one route/airport
+  weather (2h)          EXTREME forecast (≥120 km/h gusts / ≥40 cm snow)
+  reprice (monthly)     honest ML price above the base cap on a live route
+  admin (/admin)        human hold — never auto-revived
         |
         v
-RULES (hourly :10)    reconciler: readStatus(on-chain) + decideReconcileAction(pure)
-        |                 pin? noop | severe? disable | cleared+hysteresis? enable
-        |                 elevated? base x Pi(factors), clamp, guards
-        v
-ML PRICING            anchor: p_covered from Render /predict × payoff × margin, rails-clamped
-        |
-        v
-SUBMITTER             GovSubmitter: before-snap -> disable/enable/update_route_terms
-        |                          -> after-snap -> actions_log   (gov-admin key)
+EXECUTOR              pauseRoute(): gov_frozen? pinned? per-run cap?
+ (interventions.ts)     -> GovSubmitter.disable (audited: actions_log)
+        |               -> ONE open row in the `interventions` ledger
         v
 ON-CHAIN              GovernanceModule  (+ owner term-limits backstop)
-        |             + DB mirror: pause_events / premium_adjustments
+        ^
+        |
+REVIVE (hourly :40)   per-cause predicate on every open row:
+                        sweep finds a live day | concentration eased ×2 |
+                        forecast cleared | repriced under cap | admin click
+                      last row closed -> GovSubmitter.enable
+        |
         v
-OVERSIGHT             /admin (declare signals, pin, direct ops) | /status (public)
+OVERSIGHT             /admin (ledger, revive, admin holds) | /status (public)
+
+(Premiums never enter the ledger: jobs/weather.ts every ~2h recomputes
+fleet-file base + flat forecast surcharge -> update_route_terms through
+the same GovSubmitter; jobs/repricer.ts monthly -> ADVISORY proposal into
+pricing_runs, applied only by the admin's seeding ritual.)
 ```
 
 ### The autonomy ladder (L1 → L3)
 
 Governance is designed to become **fully automated** in staged levels — each
 level keeps the same inversion (facts in, one audited actor out) and adds
-capability, never new trust. The task-level plan lives in
-[TODO.md §D](TODO.md); the architecture-level intent:
+capability, never new trust. The architecture-level intent:
 
-**L1 — rules on weather.** The reconciler acts on airport-delay
-signals (`gov_signals`) and admin-declared facts. Humans still do route
-onboarding, base terms, non-weather signals, and signal clearing.
-(`route_agent` was absorbed 2026-07-27: it is now a facts-only collector —
-ML `pricing` + Open-Meteo `weather` signals, zero chain writes.)
+**L1 — rules on facts** (history). The original design: collectors wrote
+facts into a `signals` table and a reconciler acted on them hourly.
+`route_agent` was absorbed 2026-07-27, DELETED 2026-07-30 (weather-v2
+replaced the signal→multiplier premium path with the stateless surcharge);
+`gov_signals` and `gov_schedule_check` — both AeroAPI pollers — DELETED
+2026-07-31 (the demand-driven rework); the `signals` table + reconciler
+themselves DELETED 2026-08-01 when the interventions unification made
+every pause detector→executor direct.
 
-**L2 — the complete deterministic pipeline (no LLM).** *Status 2026-07-27:
-three of the four additions below are IMPLEMENTED (`gov_onboard`, the
-exposure collector as `gov_exposure`, and the fleet guardrails — runtime
-freeze flag `ops_flags.gov_frozen` + admin endpoint, mass-disable circuit
-breaker, flap damping). Remaining: `gov_schedule_check` (needs AeroAPI) and
-the route_agent absorption.* Four additions close every routine human loop:
+**L2 — the complete deterministic pipeline (no LLM).** *Status 2026-08-01:
+IMPLEMENTED, in its unified form.* What closed the routine human loops:
 - `gov_onboard` — fleet STATUS sync (file/chain→DB), closing the
   *invisibility gap*: routes whitelisted by script but absent from the DB
-  are invisible to the reconciler. NOTE (2026-07-29 product decision):
+  are invisible to the detectors. NOTE (2026-07-29 product decision):
   route INTAKE is permanently out of scope for automation — new routes
   enter only through the manual admin pipeline (`scripts/`: discover →
   ML price → admin review → seed); the earlier candidate-ingest +
   auto-promote design was removed.
-- **Exposure collector** — `InsuranceBought` events ingested from RPC into
-  `policies` (resume via `ingest_cursors`), projected as `exposure`
-  signals when a route/airport concentration crosses thresholds.
-- `gov_schedule_check` — published-schedule drift vs the stored canonical
-  schedule → `schedule_drift` signals.
-- **Fleet-level guardrails** — a mass-disable circuit breaker (beyond
-  per-route hysteresis), a runtime freeze flag (kill switch without a
-  redeploy), and disable/enable flap damping.
+- **The four automated pause causes** — cancellation (route guard),
+  exposure (`InsuranceBought` events mirrored into `policies`, hourly
+  concentration vs vault capacity), extreme weather, and over-cap pricing
+  — each detector→executor→ledger→revive, end to end.
+- **Fleet-level guardrails, enforced once in the executor** — the
+  mass-disable circuit breaker, the runtime freeze flag (kill switch
+  without a redeploy), pins, and per-cause revive hysteresis.
 After L2 the only human actions left are appetite changes (rails, defaults,
-term limits — owner), emergencies (pause, pins), and — if propose-only mode
-is chosen — approving onboarding candidates.
+term limits — owner), emergencies (admin holds, pins, freeze), and route
+onboarding.
 
 **L3 — the agentic layer.** An LLM **analyst agent** joins as *just another
-collector*: it reads signals, exposure, run health, and open-web context
-(storms, geopolitics, airline disruptions) and writes ONLY schema-validated
-facts — `signals` rows with rationale in the payload, candidate-route
-annotations. It holds no keys and never calls the chain; the reconciler
-remains the sole actor. A read-only **auditor agent** reviews the actions
-log for anomalies (premium oscillation, over-pausing) and reports to the
-admin console.
+detector*: it reads the ledger, exposure, run health, and open-web context
+(storms, geopolitics, airline disruptions) and proposes ONLY
+schema-validated facts — e.g. admin-style holds with rationale in the
+evidence field, candidate-route annotations. It holds no keys and never
+calls the chain; the executor remains the sole actor. A read-only
+**auditor agent** reviews the actions log for anomalies (over-pausing,
+flapping) and reports to the admin console.
 
 **Why full autonomy is safe here — three nested cages:**
 
 ```
 on-chain     term limits, payoff ratio, gov key is admin-not-owner, pausable
-  └ rules    rails clamps, hysteresis, 1-change/day, fleet breaker, pins win
+  └ executor gov_frozen kill switch, pins win, per-run disable cap,
+             per-cause revive hysteresis, rails clamps on every price
      └ agent facts only, JSON-schema validated, per-run caps, fully logged
 ```
 
@@ -2291,14 +2565,20 @@ Every mechanism in this document exists to serve this one story. Flight `UA100`
 DEN→SFO on March 3, premium $10, payoff $50, delay threshold 2h:
 
 ```
- 1. LISTED     Governance admin (or the reconciler, via GovSubmitter) calls
+ 1. LISTED     Governance admin (via GovSubmitter) calls
                governance.whitelist_route(UA100, DEN, SFO, $10, $50, 2h).
                Nothing else happens — no flight entry exists yet.
 
- 2. ATTESTED   sale_authorizer (oracle key, every 2h) verifies with AeroAPI that
-               March 3's UA100 is scheduled and not cancelled, then stamps a
-               sale window: oracle.open_sale(UA100, Mar3, expires_at = now+6h).
-               No live window -> no sale, ever. Fail closed.
+ 2. ATTESTED   The traveler clicks buy -> the frontend POSTs
+               /api/sale-auth/request (JIT, oracle key). The endpoint
+               verifies March 3's UA100 with ONE AeroAPI call (live data
+               inside 2 days, published schedule further out), refuses
+               anything departing <24h out, then stamps the sale window:
+               oracle.open_sale(UA100, Mar3, expires_at =
+               min(now+6h, departure−24h)) and saves the scheduled arrival
+               as the settle sweep's timing hint. No live window -> no
+               sale, ever. Fail closed. (Later buyers inside the window's
+               validity skip straight to step 3 — zero API calls.)
 
  3. BOUGHT     Traveler signs controller.buy_insurance(UA100, DEN, SFO, Mar3):
                  governance.route_status()        -> Active($10/$50/2h)
@@ -2313,12 +2593,15 @@ DEN→SFO on March 3, premium $10, payoff $50, delay threshold 2h:
                  pool.add_buyer(UA100, Mar3, traveler)
                (Each later buyer repeats from the solvency check down.)
 
- 4. TRACKED    fetcher (oracle key, every 2h) writes the published schedule:
-               oracle.set_estimated_arrival(scheduled_in). NotInitiated -> Active.
-               Then silence until landing time.
+ 4. QUIET      Nothing happens — and nothing is spent. The settle sweep
+               (fetcher, every 2h) skips the flight without an API call
+               until scheduled arrival + 5h, however far ahead it was
+               bought.
 
- 5. LANDED     March 3, UA100 lands 3h07m late. On its next pass (ETA+1h buffer)
-               the fetcher writes oracle.set_landed(actual). Active -> Landed.
+ 5. LANDED     March 3, UA100 lands 3h07m late. On its first pass after
+               ETA+5h the sweep's ONE AeroAPI call resolves everything:
+               oracle.set_estimated_arrival(scheduled_in)  NotInitiated -> Active
+               oracle.set_landed(actual)                   Active -> Landed
                >>> BARRIER ON: oracle PendingOutcomes > 0 — the vault refuses to
                price ANY LP deposit/withdrawal until this outcome settles. <<<
 
@@ -2346,7 +2629,7 @@ DEN→SFO on March 3, premium $10, payoff $50, delay threshold 2h:
   oracle.set_settled. No step 7 — travelers get nothing back.)
 ```
 
-The keeper internals of steps 4–6 are specified in [Cron #1](#cron-1--flightdatafetcher-oracle-every-2-hours)
+The keeper internals of steps 4–6 are specified in [Cron #1](#cron-1--the-settle-sweep-oracle-every-2-hours)
 – [Cron #3b](#cron-3b--queuemaintainer-keeper-every-5-minutes) above; the exact
 money movements per outcome are in the
 [FlightPoolManager payout example](#flightpoolmanager). The remaining flows below
@@ -2373,9 +2656,11 @@ cron, no auto-promote, no schedule; an admin runs it ad hoc):**
 2. PRICE      npx tsx ../scripts/price_routes.ts
               Every catalog candidate is priced by the LIVE ML service
               (/predict with its real local departure time + great-circle
-              distance): premium = clamp(p_covered × $100 × 1.3, $10–$30),
-              payoff $100, delay 3h → staged into
-              config/route_whitelist.json with p_covered + model version.
+              distance): whole-dollar base premium (p_covered × $100 ×
+              1.3, rounded up, floor $10; honest price > $20 → EXCLUDED,
+              never clamped), payoff $100, delay 3h → staged into
+              config/route_whitelist.json with p_covered + model version;
+              run logged to pricing_runs when a DB is configured.
 
 3. REVIEW     THE ADMIN LOOKS AT route_whitelist.json AND SAYS GO.
               (git diff, or seed_routes --dry-run for the table view.)
@@ -2385,12 +2670,13 @@ cron, no auto-promote, no schedule; an admin runs it ad hoc):**
               Whitelists each staged route on-chain with its EXACT staged
               terms (Set premium/payoff/delay — what was reviewed is what
               the chain gets), via the audited GovSubmitter. Idempotent:
-              Active → noop (terms drift reported, never auto-fixed),
-              Disabled → skipped (governance decision respected). Seeded
-              routes are mirrored into config/routes.testnet.json — the
-              operational fleet file the sale_authorizer reads — and
-              gov_onboard's status sync mirrors them into the DB so the
-              reconciler manages them.
+              Active → noop (terms drift reported; --apply-terms updates
+              it — the monthly repricing ritual), Disabled → skipped
+              (governance decision respected). Seeded routes are mirrored
+              into config/routes.testnet.json — the operational fleet
+              file the JIT sale-auth endpoint AND the weather surcharge
+              job read — and gov_onboard's status sync mirrors them into
+              the DB so the governance detectors manage them.
 ```
 
 Re-running any step against already-listed routes is harmless: discovery
@@ -2602,8 +2888,9 @@ withdrawable_capital = max(total_managed_assets - ceil(locked_capital * solvency
          Owner  (owner txns: set defaults / term limits / add_admin / rotate signer keys)
            |
            v
-      GovernanceModule <---- gov_reconcile / route_agent  (gov-admin key, off-chain:
-           |                    signals -> rules -> GovSubmitter -> disable/enable/update_route_terms)
+      GovernanceModule <---- detectors + revive / weather  (gov-admin key, off-chain:
+           |                    interventions executor -> GovSubmitter -> disable/enable;
+           |                    forecast -> surcharge -> GovSubmitter -> update_route_terms)
            |  resolved terms (cross-contract client)
            v
           Controller  <---- classifier       (keeper, hourly)
@@ -2611,8 +2898,9 @@ withdrawable_capital = max(total_managed_assets - ceil(locked_capital * solvency
           |    |    |  <---- queue_maintainer (keeper, every 5 min)
     +-----+    |    +------------+
     v          v                 v
-RiskVault  FlightPoolManager   OracleAggregator  <---- fetcher + sale_authorizer
-(OZ Vault)                          ^                    (oracle key, every 2 hr)
+RiskVault  FlightPoolManager   OracleAggregator  <---- settle sweep (2h cron) +
+(OZ Vault)                          ^                    JIT sale-auth endpoint
+                                    |                    (oracle key)
                                     |
                              ttl_extender: extend_ttl x5 + prune_settled (daily, ttl key)
 
@@ -2823,7 +3111,7 @@ inaccessible until restored" rather than "permanently lost."
   1. **Oracle-pipeline outage longer than the delay** — outcomes stay unwritten past
      request maturity and matured requests price stale. **Operational requirement:** on
      an oracle/fetcher outage approaching the pricing delay, pause the vault (queue
-     processing stops with it); the sale authorizer's fail-closed windows already stop
+     processing stops with it); the sale windows' fail-closed expiry already stops
      new exposure in the same outage.
   2. **Pre-landing delay foreknowledge (healthy pipeline).** For delay outcomes the
      earliest possible oracle write is the landing itself, but the outcome is often
@@ -2862,16 +3150,20 @@ inaccessible until restored" rather than "permanently lost."
   oracle executor's own health directly. The void events (`sentinel.voided` for
   dataless rows, `sentinel.timed_out` for stuck-`Active` rows) are the after-the-fact
   audit trail.
-- **Sale availability depends on the authorizer.** `buy_insurance` requires a live
-  oracle sale authorization (max validity 24h), so sales are only as available as the
-  SaleAuthorizer cron: if it stops, every window lapses within its validity and new
-  purchases halt protocol-wide (existing policies settle normally). This is the intended
-  failure direction — an oracle that cannot verify flights must not admit new risk. The
-  residual purchase-time exposure is bounded by the authorization's remaining validity
-  plus the authorizer's observation cadence: a cancellation that becomes public
-  immediately after a refresh stays purchasable until the next authorizer pass writes
-  the tombstone (or the window lapses), so keep the cadence tight relative to
-  `SALE_AUTH_VALIDITY_SECS`.
+- **Sale availability depends on the JIT sale-auth endpoint.** `buy_insurance`
+  requires a live oracle sale authorization (max validity 24h), so sales are only as
+  available as `POST /api/sale-auth/request`: if it is down, every window lapses
+  within its validity and new purchases halt protocol-wide (existing policies settle
+  normally). This is the intended failure direction — an oracle that cannot verify
+  flights must not admit new risk. The residual purchase-time exposure is bounded by
+  a window's remaining validity: a cancellation that becomes public immediately
+  after a clean JIT check stays purchasable until that window lapses
+  (≤ `SALE_AUTH_VALIDITY_SECS`, default 6h) — the next buy attempt re-verifies and
+  writes the tombstone. Beyond live-tracking visibility (>2 days out) the check is
+  published-schedule presence only; an operational cancellation announced days ahead
+  that the timetable hasn't dropped yet is briefly purchasable — bounded per-flight
+  by the payoff cap, and serial exploitation of a dead route is cut by the route
+  guard's 5-day sweep pausing it.
 - **Correlated event risk** — simultaneous delays across many flights are protected only
   by `minimum_solvency_ratio`. At 100% the vault covers all; underwriters bear correlated risk.
 - **No per-underwriter capital attribution** — `locked_capital` is pool-level.
@@ -3170,7 +3462,7 @@ against `route_status`.
 7. Register signer addresses on-chain:
         OracleAggregator.set_oracle(ORACLE_EXECUTOR_ADDRESS)
         Controller.set_keeper(KEEPER_EXECUTOR_ADDRESS)
-        GovernanceModule.add_admin(GOV_ADMIN_ADDRESS)   <- gates gov-reconcile / route_agent
+        GovernanceModule.add_admin(GOV_ADMIN_ADDRESS)   <- gates gov-reconcile / weather / seeding
         (until add_admin lands, run the governance jobs with GOV_DRY_RUN=true)
 
 8. Fund the signer accounts with XLM (oracle, keeper, ttl, gov-admin) for tx fees.
@@ -3276,10 +3568,14 @@ npx tsx ../scripts/price_routes.ts               # live ML call per route
 
 Prices every catalog candidate with the deployed prediction service
 (`/predict` with the flight's local departure time and great-circle
-distance) and stages `config/route_whitelist.json`:
-`premium = clamp(p_covered × $100 × 1.3, $10–$30)`, payoff $100, delay
-threshold 3h, model version stamped. Prints the premium distribution.
-Aborts (writes nothing) if the ML service is unreachable.
+distance) and stages `config/route_whitelist.json`: whole-dollar base
+premium (`p_covered × $100 × 1.3`, rounded up, floor $10), payoff $100,
+delay threshold 3h, model version stamped. Routes whose honest price
+exceeds the **$20 base cap are EXCLUDED** (listed in the file's
+`excluded` array and printed — the protocol never sells at a known
+expected loss). Prints the premium distribution; logs the run to the
+`pricing_runs` DB table when `GOVERNANCE_DB_URL` is set. Aborts (writes
+nothing) if the ML service is unreachable.
 
 ### Step 3 — REVIEW (the human gate)
 
@@ -3301,18 +3597,37 @@ npx tsx ../scripts/seed_routes.ts                # gov-admin signed, idempotent
 Whitelists each staged route on-chain with its EXACT staged terms
 (`Set premium / Set payoff / Set delay` — what you reviewed is what the
 chain gets) through the audited GovSubmitter, then mirrors seeded routes
-into `config/routes.testnet.json` (the operational fleet file the sale
-authorizer reads). The DB picks them up on `gov_onboard`'s next status
-sync. Idempotent semantics:
+into `config/routes.testnet.json` (the operational fleet file the JIT
+sale-auth endpoint reads). The DB picks them up on `gov_onboard`'s next
+status sync. Idempotent semantics:
 
 | On-chain state | Action |
 |---|---|
 | Unknown | `whitelist_route` with staged terms |
-| Active | no-op — terms drift is REPORTED, never auto-fixed (repricing a live route is a separate governance decision) |
+| Active | no-op — terms drift is REPORTED, never auto-fixed. With `--apply-terms`, drifted routes are UPDATED to the staged terms (the monthly repricing ritual) |
 | Disabled | skipped — governance disabled it for a reason |
 
 Commit the updated JSON files afterwards; the file history is the audit
 trail of every intake batch.
+
+### Monthly repricing ritual (seasonality)
+
+On the 1st the advisory `reprice` cron stages a seasonal proposal in the
+`pricing_runs` DB table (proposed base changes + routes newly over the
+cap). It never touches the chain. To apply it, run the same pipeline with
+the apply flag — steps 2–4 only, no discovery needed:
+
+```sh
+npx tsx ../scripts/price_routes.ts               # fresh staged whitelist
+git diff dapp/config/route_whitelist.json        # REVIEW the changes
+npx tsx ../scripts/seed_routes.ts --apply-terms  # update drifted live routes
+```
+
+`--apply-terms` also syncs the fleet file's overrides, which matters:
+the fleet file is the base the weather surcharge job builds on. Routes
+now over the cap are NOT auto-disabled — disabling is your decision.
+Remember the term-snapshot rule: new terms affect newly opened
+flight-date buckets only.
 
 ### Starting over (full wipe)
 
@@ -3333,13 +3648,13 @@ Three test layers, from fast to real:
 | Suite | Chain | AeroAPI | ML API | DB | Run |
 |---|---|---|---|---|---|
 | Agent unit tests | — | — | local model | — | `cd agent && make test` |
-| Hermetic E2E (64 checks) | in-memory fake | mock | — | **none (enforced)** | `cd dapp && npm run test:e2e` |
+| Hermetic E2E (63 checks) | in-memory fake | mock | — | **none (enforced)** | `cd dapp && npm run test:e2e` |
 | **Real-chain E2E** | **real contracts, testnet** | mock (runtime-scripted) | **live Render service** | **none (enforced)** | `cd dapp && npm run test:e2e:testnet` |
 
 ### The real-chain suite (`dapp/scripts/test_testnet_e2e.ts`)
 
-Runs the REAL job code (authorizer, fetcher, classifier, settler, queue,
-ttl) and REAL `GovSubmitter` against a **dedicated throwaway contract
+Runs the REAL job code (JIT sale-auth, settle sweep, classifier, settler,
+queue, ttl) and REAL `GovSubmitter` against a **dedicated throwaway contract
 deployment on testnet** (bootstrap: `npm run test:e2e:testnet:bootstrap`;
 the live deployment is never touched), with `tools/mock-aeroapi` scripting
 the flight world and the **deployed
@@ -3347,30 +3662,33 @@ the flight world and the **deployed
 predictions. **Deliberately DB-less**: `GOVERNANCE_DB_URL` is deleted at
 startup, so every run also proves the DB-optional invariant — governance
 here is exercised the way manual-mode governance actually works (admin
-calls through the same audited `GovSubmitter` choke point the reconciler
-uses). Two phases, because the real oracle enforces `date ≤ ETA` /
+calls through the same audited `GovSubmitter` choke point the
+interventions executor uses). Two phases, because the real oracle enforces `date ≤ ETA` /
 `date ≤ actual_arrival`: **buy day** (sales, purchases, governance,
 cancellations) and **flight day** (landings, remaining claims, final
 ledger), resumed automatically from cached state.
 
 **Scenarios covered (terms: $15 base premium, $100 payoff, 3h threshold):**
 
-- **A. Flight outcomes** — A1 lands 5 min early → `SettledOnTime`, claim
+- **A. Flight outcomes** (all resolve on the flight day — the settle sweep
+  spends zero calls before scheduled arrival + settle delay, even on
+  flights that will cancel) — A1 lands 5 min early → `SettledOnTime`, claim
   rejected · A2 lands 3h30 late (>3h) → `SettledDelayed`, claim pays $100 ·
   A3 lands 2h00 late (<3h, the boundary) → `SettledOnTime`, claim
-  rejected · A4 corroborated cancellation → `SettledCancelled` same day,
-  claim pays · A5 diverted → pays as cancellation, never attested as
-  landed · A6 tracking-lost (bare `cancelled` flag) → **no tombstone
-  written**, then tracking recovers and the flight settles normally.
-- **B. Sales coupling** — real authorizer opens every window before
-  purchase; each purchase pays **exactly** the current on-chain premium
-  and locks exactly the payoff; purchase on a disabled route is rejected
-  by the contract gate.
+  rejected · A4 corroborated cancellation → `SettledCancelled`, claim
+  pays · A5 diverted → pays as cancellation, never attested as landed ·
+  A6 tracking-lost (bare `cancelled` flag) → **no tombstone written**,
+  then tracking recovers and the flight settles in the same pass.
+- **B. Sales coupling** — the JIT sale-auth path verifies and opens every
+  window before purchase; each purchase pays **exactly** the current
+  on-chain premium and locks exactly the payoff; purchase on a disabled
+  route is rejected by the contract gate.
 - **C. Governance (manual mode, no DB)** — storm: `disable_route` → buy
-  fails → recovery: `enable_route` → the same buy succeeds · elevated:
-  premium ×1.25 on-chain → a purchase opening a **fresh** flight bucket
-  pays $18.75 while a buyer joining an **already-open** bucket pays its
-  snapshotted $15 → revert → terms read back at base.
+  fails → recovery: `enable_route` → the same buy succeeds · surcharge:
+  premium raised on-chain ($15 → $18.75 via `update_route_terms`) → a
+  purchase opening a **fresh** flight bucket pays the raised premium
+  while a buyer joining an **already-open** bucket pays its snapshotted
+  $15 → revert → terms read back at base.
 - **E. ML pricing** — the live `/predict` API prices a route; the anchor
   is computed with the real protocol functions
   (`expectedLossPremiumUnits` + `clampPremium`), pushed on-chain, and a
@@ -3391,9 +3709,8 @@ applies to newly opened flight-date buckets, while buyers joining an
 already-open bucket pay its original premium (every buyer of one
 flight-date pays the same price).
 
-**Deferred to a with-DB suite:** the signals lifecycle (collectors
-writing, expiry, source-owned clearing), reconciler decisions,
-`gov_frozen` freeze brake, mass-disable circuit breaker, and
-hysteresis/step-clamp behavior — i.e., everything whose substrate IS the
-database. Those run against an isolated Postgres, never the live
-Supabase.
+**Deferred to a with-DB suite:** the interventions ledger lifecycle
+(detector opens, per-cause revive predicates, the exposure clear-streak
+hysteresis), the `gov_frozen` freeze brake, pins, and the mass-disable
+circuit breaker — i.e., everything whose substrate IS the database. Those
+run against an isolated Postgres, never the live Supabase.

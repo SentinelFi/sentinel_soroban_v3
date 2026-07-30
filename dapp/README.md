@@ -68,15 +68,15 @@ with no Vercel dependency. The crons below are just *our* schedule for them:
 ```sh
 npm run bot -- fetcher          # single-shot run, prints the RunLogEntry JSON
 npm run bot -- settler          # exit 0 = success, 1 = failure
-npm run bot -- gov_signals
+npm run bot -- gov_exposure
 ```
 
 The bots fall into **three tiers with different decentralization stories**:
 
 | Tier | Bots | Who runs them |
 |---|---|---|
-| **Governance** | `gov_signals`, `gov_reconcile`, `route_agent` | **Centralized (us), by design** — writes route policy with the gov-admin key, backed by the governance DB |
-| **Oracle** | `fetcher`, `sale_authorizer` | **Centralized (us), by design** — the trust root: they spend AeroAPI calls and attest real-world facts with the `authorized_oracle` key |
+| **Governance** | `gov_exposure`, `gov_onboard`, `weather`, `reprice`, `revive` | **Centralized (us), by design** — writes route policy with the gov-admin key, backed by the governance DB |
+| **Oracle** | `fetcher` (the settle sweep) — plus the JIT sale-auth endpoint `POST /api/sale-auth/request`, which is a request handler, not a bot | **Centralized (us), by design** — the trust root: they spend AeroAPI calls and attest real-world facts with the `authorized_oracle` key |
 | **Keepers / liquidators** | `classifier`, `settler`, `queue_maintainer`, `ttl_extender` | **The decentralization target** — they move no new information on-chain, only execute what the oracle already attested |
 
 - **Keepers are the open-source, anyone-can-run tier.** `ttl_extender` (and
@@ -85,7 +85,8 @@ The bots fall into **three tiers with different decentralization stories**:
   currently require the `authorized_keeper` key (spam control, not
   integrity — classification is deterministic from attested oracle data);
   the planned contract upgrade makes them permissionless with per-flight
-  bounties so third-party keeper bots earn for running them (spec/TODO.md §E).
+  bounties so third-party keeper bots earn for running them (see the
+  Decentralization Roadmap in spec/architecture.md).
 - **Keys decide authority, not the runner.** A third-party bot run only lands
   writes if its signing address is authorized on-chain — publishing the code
   gives away no power.
@@ -157,7 +158,7 @@ and live testnet.
 
 ## Serverless crons (Vercel)
 
-Eight cron jobs run as Vercel serverless functions inside this app, so a single Vercel deployment can serve the frontend **and** keep the protocol running. All jobs share one transaction pattern: simulate → assemble (with 40% resource-fee bump) → sign → send → poll.
+Ten cron jobs run as Vercel serverless functions inside this app, so a single Vercel deployment can serve the frontend **and** keep the protocol running. All jobs share one transaction pattern: simulate → assemble (with 40% resource-fee bump) → sign → send → poll.
 
 > **Current deploy state:** the checked-in `vercel.json` has the `crons` block
 > **removed** and `.vercelignore` excludes `api/` — the present deployment is
@@ -178,10 +179,13 @@ api/
     aeroapi_client.ts AeroAPI fetch with retry/backoff + ambiguity guard
     handler.ts        auth + makeCronHandler wrapper
     types.ts          RunLogEntry / FlightStatus / Config (executor shapes)
-    jobs/             authorizer, fetcher, classifier, settler, queue, ttl, route_agent — each exports run(config)
+    sale_auth.ts      JIT sale authorization core (the buy-click check)
+    route_guard.ts    anomaly-triggered 5-day cancellation sweep (opens `cancellation` interventions)
+    jobs/             fetcher (settle sweep), classifier, settler, queue, ttl, weather, repricer, revive — each exports run(config)
     governance/       DB-driven governance layer: reconciler, rules, submitter, run recorder
   cron/               routed functions
-    authorize.ts  fetcher.ts  classify.ts  settle.ts  queue.ts  agent.ts  ttl.ts  gov-reconcile.ts  health.ts
+    fetcher.ts  classify.ts  settle.ts  queue.ts  ttl.ts  weather.ts  reprice.ts  revive.ts  gov-*.ts  health.ts
+  sale-auth/          request.ts — the public JIT buy-click endpoint
   admin/              /admin console API (Supabase Auth identity + ADMIN_EMAILS allowlist)
   status/             public cron-run health backing /status
 vercel.json           deploy config (crons block currently removed — see note above)
@@ -192,19 +196,29 @@ tsconfig.api.json     type-checks api/ with node types (wired into tsc -b)
 
 | Endpoint             | Schedule       | Job                                             |
 | -------------------- | -------------- | ----------------------------------------------- |
-| `/api/cron/authorize`| `30 */2 * * *` | Sale authorizer (cron #0) — attests sale windows for the enabled flights in `config/routes.testnet.json`. Days 1–2 from live `/flights` data (cancellation tombstones need a corroborating status, not just the `cancelled` flag); days 3+ from published `/schedules` in ≤20-day chunks (~2 + ceil((horizon−2)/20) API calls per flight per run instead of one per day). Fail closed throughout |
-| `/api/cron/fetcher`  | `0 */2 * * *`  | AeroAPI → oracle (ETA / landed / cancelled), phase-gated: ETA fetched at T-2d (AeroAPI's future-visibility limit), then ZERO calls until `FETCHER_WATCH_SECS` (default 6h) before the recorded arrival; corroborated diversions pay as cancellations (policy), uncorroborated cancelled/diverted flags are never attested; outcomes drive targeted classify+settle immediately |
+| `/api/cron/fetcher`  | `0 */2 * * *`  | The settle sweep — insured flights past scheduled arrival + `SETTLE_AFTER_ETA_SECS` (default 5h): ONE AeroAPI call resolves the outcome (schedule + landing from the same response, or a corroborated cancellation/diversion — bare flags are never attested); outcomes drive targeted classify+settle immediately. Promise: settled within 24h of ETA |
 | `/api/cron/classify` | `0 * * * *`    | `Controller.classify_flights` — skips (no tx) when the active set is empty |
 | `/api/cron/settle`   | `*/5 * * * *`  | Drains pending outcomes: skips (no tx) when `get_pending_outcomes()==0`, else loops classify+settle passes until zero/stall, falling back to `execute_settlements_bounded` (3→1) on resource-budget failures |
 | `/api/cron/queue`    | `2-59/5 * * * *` | `Controller.run_queue_maintenance` — skips (no tx) while the settlement barrier is engaged or when queues are empty + today's snapshot exists; off-tempo from settle (txBadSeq retried once in the client) |
-| `/api/cron/agent`    | `0 6 * * *`    | Route agent — ML baseline premium (Python service) + Open-Meteo weather rules (elevated → premium × multiplier, severe → disable) + 24h re-evaluation of disabled routes; all writes clamped to the routes-file rails and the on-chain term limits |
+| `/api/cron/weather`  | `20 */2 * * *` | Storm surcharge — stateless: fleet-file base + flat Open-Meteo forecast surcharge → `update_route_terms` (no DB) |
+| `/api/cron/reprice`  | `0 8 1 * *`    | Monthly ADVISORY seasonal repricing — proposal → `pricing_runs`; the admin applies it via `seed_routes --apply-terms` (no chain writes) |
+| `/api/cron/revive`   | `40 * * * *`   | The unified revive engine — re-checks every open row in the `interventions` ledger with its cause's own predicate (cancellation: ~daily sweep · exposure: eased 2 checks · weather: forecast cleared); last hold cleared → `enable_route` |
 | `/api/cron/ttl`      | `0 0 * * *`    | `extend_ttl` on all 5 contracts + `prune_settled` in a drain loop (repeats while the active count drops) |
-| `/api/cron/gov-signals` | `5 * * * *` | Airport-delay collector — ONE AeroAPI `/airports/delays` call covers the whole network; projects red→`severe` / yellow→`elevated` signals (origin+dest scoped, self-expiring) into the governance DB for the airports enabled routes touch. Facts only, no chain writes; runs 5 min before the reconciler |
-| `/api/cron/gov-exposure` | `7 * * * *` | Exposure collector — reads on-chain liability (payoff × buyers per active flight vs vault capacity, no AeroAPI) and projects route/airport concentration `exposure` signals (≥25% elevated, ≥50% severe; env-tunable). Facts only, no chain writes |
+| `/api/cron/gov-exposure` | `7 * * * *` | Exposure brake — reads on-chain liability (payoff × buyers per active flight vs vault capacity, no AeroAPI); a route/airport at ≥50% opens an `exposure` intervention (pause, per-run cap), ≥25% is advisory (env-tunable). Also ingests the policies event mirror |
 | `/api/cron/gov-onboard` | `15 */6 * * *` | Fleet status sync — file/on-chain routes → DB so the reconciler manages every real route. Route INTAKE is deliberately NOT here: whitelisting is the manual admin pipeline in `scripts/` (discover → price → review → seed) |
-| `/api/cron/gov-reconcile` | `10 * * * *` | Governance reconciler — recomputes each managed route's desired state from DB signals (admin pins win, pauses expand, multipliers stack, hysteresis damps) and submits the minimal on-chain diff; `GOV_DRY_RUN=true` logs decisions without submitting |
 
 `/api/cron/health` is an unauthenticated GET that returns the network, contract IDs, and `hasKeys` booleans (secrets are never echoed).
+
+**Not a cron:** `POST /api/sale-auth/request { flight_id, date }` — the JIT
+sale authorization the frontend calls on every buy click. It verifies the
+flight just-in-time (live `/flights` inside 2 days, published `/schedules`
+presence further out; refuses anything departing <24h out), opens the
+on-chain sale window with expiry `min(now+validity, departure−24h)`, and
+fires the route guard's 2-call 5-day sweep when a buy attempt hits a
+cancelled/vanished flight (all 5 days dead → route disabled + an open row
+in the `interventions` ledger; the hourly revive engine heals it). Idle
+whitelisted routes cost ZERO
+AeroAPI calls.
 
 ### Env vars
 
@@ -214,10 +228,11 @@ Server-side (no `PUBLIC_` prefix — set in Vercel project settings, never bundl
 - `ORACLE_AGGREGATOR_ID`, `CONTROLLER_ID`, `RISK_VAULT_ID`, `GOVERNANCE_ID`, `FLIGHT_POOL_MANAGER_ID` — default to `deployments/testnet.json`
 - `ORACLE_SECRET_KEY`, `KEEPER_SECRET_KEY`, `TTL_EXTENDER_SECRET_KEY` — **required**, no defaults
 - `AEROAPI_BASE_URL` (defaults to the real FlightAware API), `AEROAPI_KEY`
-- `GOVERNANCE_ADMIN_SECRET_KEY` — 4th identity for the route agent + whitelist script; must be a `GovernanceModule` admin (owner runs `add_admin` once), never the owner key
-- `AGENT_BASE_URL`, `AGENT_TOKEN` — the Python pricing service (`agent/` on Render); unset = route agent prices from the routes file
-- `SALE_AUTH_HORIZON_DAYS`, `SALE_AUTH_VALIDITY_SECS` — sale-authorizer overrides (horizon defaults to the routes file's `sale_horizon_days`)
-- `FETCHER_WATCH_SECS` — how long before a flight's recorded scheduled arrival the fetcher starts polling AeroAPI (default 21600 = 6h; outside the window a flight costs zero API calls)
+- `GOVERNANCE_ADMIN_SECRET_KEY` — 4th identity for the governance jobs, the route guard's pause path, + the whitelist script; must be a `GovernanceModule` admin (owner runs `add_admin` once), never the owner key
+- `AGENT_BASE_URL`, `AGENT_TOKEN` — the Python pricing service (`agent/` on Render); used by the intake pipeline + the monthly repricer
+- `SALE_AUTH_HORIZON_DAYS`, `SALE_AUTH_VALIDITY_SECS` — JIT sale-auth overrides (horizon defaults to the routes file's `sale_horizon_days`; validity default 6h, on-chain cap 24h)
+- `SALE_MIN_LEAD_SECS` — the purchase cutoff vs scheduled departure (default 86400 = 24h; no sale window ever authorizes a buy inside it)
+- `SETTLE_AFTER_ETA_SECS` — how long after a flight's scheduled arrival the settle sweep makes its first (usually only) AeroAPI call (default 18000 = 5h; before it a flight costs zero API calls)
 - `ROUTES_CONFIG_PATH` — alternate routes file (tests / other networks); defaults to the bundled `config/routes.testnet.json`
 - `WEATHER_BASE_URL` — Open-Meteo override (keyless; testing only)
 - `CRON_SECRET` — shared secret guarding the cron endpoints (recommended)

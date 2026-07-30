@@ -2,6 +2,8 @@ import { SorobanClient } from "../soroban_client";
 import { AeroApiClient, isConfirmedCancellation, isConfirmedDiversion } from "../aeroapi_client";
 import { classifyAndSettleFlight } from "../targeted_settlement";
 import { parseFlightStatus } from "../status";
+import { logFlightOutcome } from "../outcome_log";
+import { readScheduledArrival } from "../flight_schedules";
 import {
   FlightStatus,
   type ActiveFlight,
@@ -10,12 +12,15 @@ import {
   type FetcherAction,
 } from "../types";
 
-const ONE_HOUR_SECS = 3600n;
 // AeroAPI /flights/{ident} visibility: start/end must be within 10 days past
 // and 2 days future — queries outside that window are a 400 and can never
-// return data. Both bounds gate our API spend.
-const VISIBILITY_FUTURE_SECS = 2n * 86_400n;
+// return data. Past this horizon the classify sweep's stale-void timeout
+// (day 14) reclaims the flight; spending calls there is pure waste.
 const VISIBILITY_PAST_SECS = 10n * 86_400n;
+// No settle hint anywhere (no DB row, no on-chain ETA): assume the flight
+// arrived by the end of its departure day + a landing buffer. 30h past the
+// UTC-midnight bucket covers any same-day departure's arrival.
+const FALLBACK_ARRIVAL_AFTER_DATE_SECS = 30n * 3600n;
 
 /** Optional dependency injection seam — tests pass fakes, production omits. */
 export interface FetcherDeps {
@@ -24,52 +29,44 @@ export interface FetcherDeps {
 }
 
 /**
- * Cron #1 — FlightDataFetcher (every 2 hours)
+ * Cron #1 — the SETTLE SWEEP (every 2 hours).
  *
- * 1. Read active flights from OracleAggregator
- * 2. For NotInitiated flights INSIDE AeroAPI's schedule-visibility window
- *    (flight date ≤ now + 2d): call AeroAPI; a corroborated cancellation is
- *    pushed immediately (set_cancelled), otherwise scheduled arrival →
- *    set_estimated_arrival. Flights further out are skipped WITHOUT an API
- *    call — /flights/{ident} cannot see past 2 days of future schedule, so
- *    the call could never succeed.
- * 3. For Active flights INSIDE the watch window (now ≥ ETA − FETCHER_WATCH_SECS,
- *    default 6h): call AeroAPI each cycle; a corroborated cancellation is
- *    pushed immediately, landed resolution waits for ETA + 1hr buffer →
- *    set_landed. Before the watch window opens the flight is skipped WITHOUT
- *    an API call — nothing before departure needs a data point except the
- *    pre-departure cancellation check, which the watch window covers.
+ * 2026-07-31 rework: the old fetcher's phase machinery (T−2d ETA write,
+ * ETA−6h watch window, per-phase visibility gates) is gone. The public
+ * promise is simply "insured flights settle autonomously within 24h of
+ * their scheduled arrival", and this job is that promise:
  *
- * Call-economy invariant: a flight costs API calls only near its own
- * departure/arrival — ~1 call at T-2d (ETA write), then ~3-6 calls inside
- * the watch window until landing resolves. A flight bought 60 days out
- * costs ZERO calls for 58 days.
+ * 1. Read the insured set from the oracle (get_active_flights — every
+ *    purchase registers its flight, so this IS "flights someone paid for").
+ * 2. Skip any flight before scheduled arrival + SETTLE_AFTER_ETA_SECS
+ *    (default 5h) — ZERO API calls while a flight is in the future or in
+ *    the air. The scheduled arrival comes from, in order: the on-chain
+ *    ETA (a prior run already wrote it), the flight_schedules row the JIT
+ *    sale-auth endpoint saved at buy time, or date + 30h as the no-hint
+ *    fallback.
+ * 3. Past the gate: ONE /flights call resolves the outcome —
+ *      - corroborated cancellation → set_cancelled;
+ *      - corroborated diversion    → set_cancelled (policy: a diverted
+ *        journey pays as a cancellation — the insured trip to the filed
+ *        destination did not happen; never attest its actual_in, that is
+ *        the DIVERSION airport's arrival);
+ *      - landed (actual_in set)    → set_estimated_arrival (the contract's
+ *        forward-only machine requires NotInitiated → Active before
+ *        Landed, and the delay math needs the schedule) + set_landed;
+ *      - still en route / no data  → retry next tick (typically a heavy
+ *        delay; the 2h cadence keeps the 24h promise with room to spare).
+ *    The bare `cancelled` flag WITHOUT a corroborating status is a
+ *    tracking gap, not an outcome — the payout-minting tombstone is never
+ *    written from it (logged + retried; persistent cases surface to ops).
  *
- * Cancellations must reach the chain in the same cycle they become visible
- * WITHIN the watched phases: the on-chain purchase gate can only reject
- * buyers once the oracle records the cancellation, and every purchase of an
- * already-cancelled flight is a guaranteed claim against the vault. (Sale
- * windows are the primary purchase gate and never extend past the departure
- * day, so the watch-window gap does not extend purchasability.)
+ * After every outcome write the sweep drives the exact tuple through
+ * classify_flight + settle_flight (targeted settlement) and appends the
+ * flight_outcomes row (outcome + that day's actual weather at both
+ * airports — the same API response, zero extra AeroAPI calls).
  *
- * Cancellation corroboration: AeroAPI's `cancelled` flag alone means "no
- * longer tracked", which is NOT always an airline cancellation. The
- * irreversible, payout-minting set_cancelled tombstone is only written when
- * the status text corroborates it (isConfirmedCancellation); a bare flag is
- * logged and retried — if it persists, it surfaces in run logs for ops.
- *
- * Diverted flights PAY AS CANCELLATIONS (product policy): the insured
- * journey to the filed destination did not happen as sold, and the on-chain
- * Cancelled outcome already moves exactly the right money (full payoff per
- * buyer) — no contract change needed. A diverted leg is never attested as
- * landed (its actual_in is the DIVERSION airport's arrival); once the
- * diversion is corroborated (isConfirmedDiversion) the fetcher writes
- * set_cancelled instead. An uncorroborated diverted flag is retried, same
- * as cancellations.
- *
- * After every outcome write the fetcher drives the exact tuple through
- * classify_flight + settle_flight (targeted settlement) so the vault's
- * settlement barrier lifts in seconds instead of waiting for sweeps.
+ * Call economy: an insured flight costs ~1 API call in its lifetime here
+ * (plus retries while a very late flight resolves), and nothing at all
+ * until 5h past its scheduled arrival.
  */
 export async function run(config: Config, deps: FetcherDeps = {}): Promise<RunLogEntry> {
   const start = Date.now();
@@ -82,13 +79,13 @@ export async function run(config: Config, deps: FetcherDeps = {}): Promise<RunLo
     const oracleId = config.oracleAggregatorId;
     const oraclePublicKey = client.publicKeyFromSecret(config.oracleSecretKey);
 
-    console.log("[fetcher] Starting flight data fetch...");
+    console.log("[settle-sweep] Starting...");
 
-    // 1. Read active flights
+    // 1. The insured set.
     const rawFlights = await client.readContract(oracleId, "get_active_flights");
 
     if (!rawFlights || rawFlights.length === 0) {
-      console.log("[fetcher] No active flights.");
+      console.log("[settle-sweep] No insured flights.");
       return {
         timestamp: new Date().toISOString(),
         job: "fetcher",
@@ -105,121 +102,125 @@ export async function run(config: Config, deps: FetcherDeps = {}): Promise<RunLo
     }));
     activeFlightCount = flights.length;
 
-    console.log(`[fetcher] ${flights.length} active flight(s): ${flights.map((f) => f.flight_id).join(", ")}`);
+    console.log(`[settle-sweep] ${flights.length} insured flight(s): ${flights.map((f) => f.flight_id).join(", ")}`);
 
     const nowSecs = BigInt(Math.floor(Date.now() / 1000));
-    const watchSecs = BigInt(config.fetcherWatchSecs);
+    const settleDelay = BigInt(config.settleAfterEtaSecs);
 
     for (const flight of flights) {
       try {
-        // 2. Read current flight data from oracle
         const data = await client.readContract(oracleId, "get_flight_data", [
           client.symbolToScVal(flight.flight_id),
           client.u64ToScVal(flight.date),
         ]);
 
         const status = parseFlightStatus(data.status);
-        const estimatedArrival = BigInt(data.estimated_arrival_time ?? 0);
+        if (status !== FlightStatus.NotInitiated && status !== FlightStatus.Active) {
+          actions.push({ flight: flight.flight_id, skipped: `Already ${status}` });
+          continue;
+        }
 
-        // Convert date (u64, yyyymmdd or unix) to a date string for AeroAPI
+        // 2. The timing gate — the ONLY thing that spends API calls.
+        const onChainEta = BigInt(data.estimated_arrival_time ?? 0);
+        const scheduledArrival =
+          onChainEta > 0n
+            ? onChainEta
+            : ((await readScheduledArrival(flight.flight_id, flight.date)) ??
+              flight.date + FALLBACK_ARRIVAL_AFTER_DATE_SECS);
+
+        if (nowSecs < scheduledArrival + settleDelay) {
+          actions.push({ flight: flight.flight_id, skipped: "Before scheduled arrival + settle delay" });
+          continue;
+        }
+        // Data gap: past AeroAPI's history window the API cannot answer;
+        // stop calling and let the stale-void timeout reclaim it.
+        if (nowSecs > scheduledArrival + VISIBILITY_PAST_SECS) {
+          actions.push({ flight: flight.flight_id, skipped: "Past AeroAPI history window — awaiting void" });
+          continue;
+        }
+
+        // 3. Resolve the outcome.
         const dateStr = dateToString(flight.date);
+        console.log(`[settle-sweep] ${flight.flight_id} ${dateStr}: past settle gate → fetching outcome...`);
 
+        const apiData = await aeroApi.getFlightData(flight.flight_id, dateStr);
+        if (!apiData) {
+          console.log(`[settle-sweep] ${flight.flight_id}: No AeroAPI data, will retry next cycle.`);
+          actions.push({ flight: flight.flight_id, skipped: "No AeroAPI data, will retry" });
+          continue;
+        }
+
+        if (apiData.cancelled) {
+          if (!isConfirmedCancellation(apiData)) {
+            console.warn(
+              `[settle-sweep] ${flight.flight_id}: cancelled flag WITHOUT corroborating status ` +
+                `("${apiData.status}") — tracking gap? Skipping tombstone; will retry. ` +
+                `If this persists, investigate manually.`
+            );
+            actions.push({ flight: flight.flight_id, skipped: `Uncorroborated cancellation (status "${apiData.status}")` });
+            continue;
+          }
+          console.log(`[settle-sweep] ${flight.flight_id}: Cancelled`);
+          await client.invokeContract(
+            oracleId,
+            "set_cancelled",
+            [
+              client.addressToScVal(oraclePublicKey),
+              client.symbolToScVal(flight.flight_id),
+              client.u64ToScVal(flight.date),
+            ],
+            config.oracleSecretKey
+          );
+          actions.push({ flight: flight.flight_id, transition: `${status} → Cancelled` });
+          await logFlightOutcome({ flightId: flight.flight_id, dateUnix: flight.date, outcome: "cancelled", delayMinutes: null });
+          await classifyAndSettleFlight(client, config, flight.flight_id, flight.date, flight.flight_id, actions);
+          continue;
+        }
+
+        if (apiData.diverted) {
+          if (!isConfirmedDiversion(apiData)) {
+            console.warn(
+              `[settle-sweep] ${flight.flight_id}: diverted flag not yet corroborated ` +
+                `(status "${apiData.status}") — will retry.`
+            );
+            actions.push({ flight: flight.flight_id, skipped: `Uncorroborated diversion (status "${apiData.status}")` });
+            continue;
+          }
+          console.log(`[settle-sweep] ${flight.flight_id}: DIVERTED (status "${apiData.status}") → pays as cancellation (policy)`);
+          await client.invokeContract(
+            oracleId,
+            "set_cancelled",
+            [
+              client.addressToScVal(oraclePublicKey),
+              client.symbolToScVal(flight.flight_id),
+              client.u64ToScVal(flight.date),
+            ],
+            config.oracleSecretKey
+          );
+          actions.push({ flight: flight.flight_id, transition: `${status} → Cancelled (diverted)` });
+          await logFlightOutcome({ flightId: flight.flight_id, dateUnix: flight.date, outcome: "diverted", delayMinutes: null });
+          await classifyAndSettleFlight(client, config, flight.flight_id, flight.date, flight.flight_id, actions);
+          continue;
+        }
+
+        if (!apiData.actual_in) {
+          // Heavily delayed / still airborne — the 2h cadence retries.
+          console.log(`[settle-sweep] ${flight.flight_id}: Status "${apiData.status}", no actual_in yet. Will retry.`);
+          actions.push({ flight: flight.flight_id, skipped: `Still ${apiData.status}` });
+          continue;
+        }
+
+        // Landed. The delay classification is scheduled-vs-actual per the
+        // published schedule, so the schedule write and the landing write
+        // come from the SAME response — one API call end to end.
+        const scheduledIn = aeroApi.parseTimestamp(apiData.scheduled_in);
+        const actualArrival = aeroApi.parseTimestamp(apiData.actual_in);
         if (status === FlightStatus.NotInitiated) {
-          // Phase gate A — schedule visibility. /flights/{ident} cannot see
-          // beyond 2 days of future schedule; querying earlier burns a call
-          // that can never succeed. Skip WITHOUT calling the API.
-          if (flight.date > nowSecs + VISIBILITY_FUTURE_SECS) {
-            actions.push({ flight: flight.flight_id, skipped: "Outside AeroAPI visibility (ETA fetch begins T-2d)" });
+          if (scheduledIn === 0n) {
+            console.log(`[settle-sweep] ${flight.flight_id}: landed but no scheduled_in — cannot classify; will retry.`);
+            actions.push({ flight: flight.flight_id, skipped: "Landed without scheduled_in" });
             continue;
           }
-          // Phase gate B — history horizon. Past date+10d the API can no
-          // longer return the flight; stop spending calls and let the
-          // stale-void timeout reclaim it (classify_flights, day 14).
-          if (nowSecs > flight.date + VISIBILITY_PAST_SECS) {
-            actions.push({ flight: flight.flight_id, skipped: "Past AeroAPI history window — awaiting stale-void" });
-            continue;
-          }
-
-          // Step A: Fetch scheduled arrival time
-          console.log(`[fetcher] ${flight.flight_id}: NotInitiated → fetching ETA from AeroAPI...`);
-
-          const apiData = await aeroApi.getFlightData(flight.flight_id, dateStr);
-          if (!apiData) {
-            console.log(`[fetcher] ${flight.flight_id}: No AeroAPI data, skipping.`);
-            actions.push({ flight: flight.flight_id, skipped: "No AeroAPI data" });
-            continue;
-          }
-
-          if (apiData.cancelled) {
-            if (!isConfirmedCancellation(apiData)) {
-              // Tracking-lost, not a corroborated cancellation — never
-              // tombstone (that pays every buyer) off the bare flag.
-              console.warn(
-                `[fetcher] ${flight.flight_id}: cancelled flag WITHOUT corroborating status ` +
-                  `("${apiData.status}") — tracking gap? Skipping tombstone; will retry. ` +
-                  `If this persists, investigate manually.`
-              );
-              actions.push({ flight: flight.flight_id, skipped: `Uncorroborated cancellation (status "${apiData.status}")` });
-              continue;
-            }
-            // Already cancelled before ever going Active — push it now so the
-            // purchase gate closes; never store an ETA for a dead flight.
-            console.log(`[fetcher] ${flight.flight_id}: Cancelled (pre-active)`);
-            await client.invokeContract(
-              oracleId,
-              "set_cancelled",
-              [
-                client.addressToScVal(oraclePublicKey),
-                client.symbolToScVal(flight.flight_id),
-                client.u64ToScVal(flight.date),
-              ],
-              config.oracleSecretKey
-            );
-            console.log(`[fetcher] ${flight.flight_id}: NotInitiated → Cancelled ✓`);
-            actions.push({ flight: flight.flight_id, transition: "NotInitiated → Cancelled" });
-            // A written outcome engages the vault's settlement barrier —
-            // drive this exact tuple through classify + settle right away.
-            await classifyAndSettleFlight(client, config, flight.flight_id, flight.date, flight.flight_id, actions);
-            continue;
-          }
-
-          if (apiData.diverted) {
-            // Diverted before the ETA was ever written (day-of purchase +
-            // early diversion). Policy: pays as cancellation once
-            // corroborated; never store an ETA for a diverted flight.
-            if (!isConfirmedDiversion(apiData)) {
-              console.warn(
-                `[fetcher] ${flight.flight_id}: diverted flag not yet corroborated ` +
-                  `(status "${apiData.status}") — will retry.`
-              );
-              actions.push({ flight: flight.flight_id, skipped: `Uncorroborated diversion (status "${apiData.status}")` });
-              continue;
-            }
-            console.log(`[fetcher] ${flight.flight_id}: DIVERTED (pre-active) → pays as cancellation (policy)`);
-            await client.invokeContract(
-              oracleId,
-              "set_cancelled",
-              [
-                client.addressToScVal(oraclePublicKey),
-                client.symbolToScVal(flight.flight_id),
-                client.u64ToScVal(flight.date),
-              ],
-              config.oracleSecretKey
-            );
-            actions.push({ flight: flight.flight_id, transition: "NotInitiated → Cancelled (diverted)" });
-            await classifyAndSettleFlight(client, config, flight.flight_id, flight.date, flight.flight_id, actions);
-            continue;
-          }
-
-          const eta = aeroApi.parseTimestamp(apiData.scheduled_in);
-          if (eta === 0n) {
-            console.log(`[fetcher] ${flight.flight_id}: No scheduled_in, skipping.`);
-            actions.push({ flight: flight.flight_id, skipped: "No scheduled_in" });
-            continue;
-          }
-
-          // Submit: set_estimated_arrival(oracle, flight_id, date, eta)
-          console.log(`[fetcher] ${flight.flight_id}: Setting estimated arrival = ${eta}`);
           await client.invokeContract(
             oracleId,
             "set_estimated_arrival",
@@ -227,134 +228,41 @@ export async function run(config: Config, deps: FetcherDeps = {}): Promise<RunLo
               client.addressToScVal(oraclePublicKey),
               client.symbolToScVal(flight.flight_id),
               client.u64ToScVal(flight.date),
-              client.u64ToScVal(eta),
+              client.u64ToScVal(scheduledIn),
             ],
             config.oracleSecretKey
           );
-          console.log(`[fetcher] ${flight.flight_id}: NotInitiated → Active ✓`);
-          actions.push({ flight: flight.flight_id, transition: "NotInitiated → Active" });
-        } else if (status === FlightStatus.Active) {
-          // Phase gate C — watch window. Between the ETA write (T-2d) and
-          // ETA − watchSecs there is nothing to fetch: the flight hasn't
-          // departed, and the pre-departure cancellation check lives inside
-          // the watch window. Skip WITHOUT calling the API.
-          if (estimatedArrival > 0n && nowSecs + watchSecs < estimatedArrival) {
-            actions.push({ flight: flight.flight_id, skipped: "Before watch window (ETA − watch)" });
-            continue;
-          }
-          // Phase gate D — history horizon (data gap: ETA long past, still
-          // no outcome). Past visibility the API cannot answer; stop calling
-          // and let the active-void timeout reclaim it.
-          if (estimatedArrival > 0n && nowSecs > estimatedArrival + VISIBILITY_PAST_SECS) {
-            actions.push({ flight: flight.flight_id, skipped: "Past AeroAPI history window — awaiting active-void" });
-            continue;
-          }
-
-          // Step B: inside the watch window, fetch every cycle. Cancellation
-          // is checked FIRST, before the ETA gate — a flight can be cancelled
-          // before departure, and the tombstone must land the same cycle.
-          console.log(`[fetcher] ${flight.flight_id}: Active → fetching current status...`);
-
-          const apiData = await aeroApi.getFlightData(flight.flight_id, dateStr);
-          if (!apiData) {
-            console.log(`[fetcher] ${flight.flight_id}: No AeroAPI data, will retry next cycle.`);
-            actions.push({ flight: flight.flight_id, skipped: "No AeroAPI data, will retry" });
-            continue;
-          }
-
-          if (apiData.cancelled) {
-            if (!isConfirmedCancellation(apiData)) {
-              console.warn(
-                `[fetcher] ${flight.flight_id}: cancelled flag WITHOUT corroborating status ` +
-                  `("${apiData.status}") — tracking gap? Skipping tombstone; will retry. ` +
-                  `If this persists, investigate manually.`
-              );
-              actions.push({ flight: flight.flight_id, skipped: `Uncorroborated cancellation (status "${apiData.status}")` });
-              continue;
-            }
-            console.log(`[fetcher] ${flight.flight_id}: Cancelled`);
-            await client.invokeContract(
-              oracleId,
-              "set_cancelled",
-              [
-                client.addressToScVal(oraclePublicKey),
-                client.symbolToScVal(flight.flight_id),
-                client.u64ToScVal(flight.date),
-              ],
-              config.oracleSecretKey
-            );
-            console.log(`[fetcher] ${flight.flight_id}: Active → Cancelled ✓`);
-            actions.push({ flight: flight.flight_id, transition: "Active → Cancelled" });
-            await classifyAndSettleFlight(client, config, flight.flight_id, flight.date, flight.flight_id, actions);
-          } else if (apiData.diverted) {
-            // POLICY: diverted pays as cancellation. A diverted flight's
-            // actual_in is the diversion airport's gate arrival — never
-            // attest it as a normal landing. Once corroborated, write the
-            // same Cancelled outcome as an airline cancellation: on-chain
-            // it moves exactly the payout the policy owes (full payoff per
-            // buyer), with no contract change.
-            if (!isConfirmedDiversion(apiData)) {
-              console.warn(
-                `[fetcher] ${flight.flight_id}: diverted flag not yet corroborated ` +
-                  `(status "${apiData.status}") — will retry.`
-              );
-              actions.push({ flight: flight.flight_id, skipped: `Uncorroborated diversion (status "${apiData.status}")` });
-              continue;
-            }
-            console.log(`[fetcher] ${flight.flight_id}: DIVERTED (status "${apiData.status}") → pays as cancellation (policy)`);
-            await client.invokeContract(
-              oracleId,
-              "set_cancelled",
-              [
-                client.addressToScVal(oraclePublicKey),
-                client.symbolToScVal(flight.flight_id),
-                client.u64ToScVal(flight.date),
-              ],
-              config.oracleSecretKey
-            );
-            console.log(`[fetcher] ${flight.flight_id}: Active → Cancelled (diverted) ✓`);
-            actions.push({ flight: flight.flight_id, transition: "Active → Cancelled (diverted)" });
-            await classifyAndSettleFlight(client, config, flight.flight_id, flight.date, flight.flight_id, actions);
-          } else if (estimatedArrival + ONE_HOUR_SECS > nowSecs) {
-            // Not cancelled and not yet due — landed resolution waits.
-            console.log(`[fetcher] ${flight.flight_id}: Active, not cancelled, ETA+1hr not passed yet.`);
-            actions.push({ flight: flight.flight_id, skipped: "ETA+1hr not passed" });
-          } else if (apiData.actual_in) {
-            // Landed — actual_in is non-null only after gate arrival.
-            // Don't match on status string ("Landed", "Arrived / Gate Arrival", etc.)
-            const actualArrival = aeroApi.parseTimestamp(apiData.actual_in);
-            console.log(`[fetcher] ${flight.flight_id}: Landed at ${actualArrival} (status: "${apiData.status}")`);
-            await client.invokeContract(
-              oracleId,
-              "set_landed",
-              [
-                client.addressToScVal(oraclePublicKey),
-                client.symbolToScVal(flight.flight_id),
-                client.u64ToScVal(flight.date),
-                client.u64ToScVal(actualArrival),
-              ],
-              config.oracleSecretKey
-            );
-            console.log(`[fetcher] ${flight.flight_id}: Active → Landed ✓`);
-            actions.push({ flight: flight.flight_id, transition: "Active → Landed" });
-            await classifyAndSettleFlight(client, config, flight.flight_id, flight.date, flight.flight_id, actions);
-          } else {
-            // Still in flight — no actual arrival yet
-            console.log(`[fetcher] ${flight.flight_id}: Status "${apiData.status}", no actual_in yet. Will retry.`);
-            actions.push({ flight: flight.flight_id, skipped: `Still ${apiData.status}` });
-          }
-        } else {
-          // Already Landed/Cancelled/ToBeSettled*/Settled — skip
-          console.log(`[fetcher] ${flight.flight_id}: Status ${status}, nothing to do.`);
-          actions.push({ flight: flight.flight_id, skipped: `Already ${status}` });
+          actions.push({ flight: flight.flight_id, transition: "NotInitiated → Active (schedule written)" });
         }
+
+        console.log(`[settle-sweep] ${flight.flight_id}: Landed at ${actualArrival} (status: "${apiData.status}")`);
+        await client.invokeContract(
+          oracleId,
+          "set_landed",
+          [
+            client.addressToScVal(oraclePublicKey),
+            client.symbolToScVal(flight.flight_id),
+            client.u64ToScVal(flight.date),
+            client.u64ToScVal(actualArrival),
+          ],
+          config.oracleSecretKey
+        );
+        actions.push({ flight: flight.flight_id, transition: "Active → Landed" });
+        const delayMin = scheduledIn > 0n ? Math.round(Number(actualArrival - scheduledIn) / 60) : null;
+        await logFlightOutcome({
+          flightId: flight.flight_id,
+          dateUnix: flight.date,
+          outcome: delayMin !== null && delayMin >= 180 ? "delayed" : "ontime",
+          delayMinutes: delayMin,
+        });
+        await classifyAndSettleFlight(client, config, flight.flight_id, flight.date, flight.flight_id, actions);
       } catch (err) {
-        console.error(`[fetcher] ${flight.flight_id}: Error — ${err}. Will retry next cycle.`);
+        console.error(`[settle-sweep] ${flight.flight_id}: Error — ${err}. Will retry next cycle.`);
         actions.push({ flight: flight.flight_id, error: String(err) });
       }
     }
 
-    console.log("[fetcher] Done.");
+    console.log("[settle-sweep] Done.");
     return {
       timestamp: new Date().toISOString(),
       job: "fetcher",
@@ -364,7 +272,7 @@ export async function run(config: Config, deps: FetcherDeps = {}): Promise<RunLo
       actions,
     };
   } catch (err) {
-    console.error(`[fetcher] Fatal error: ${err}`);
+    console.error(`[settle-sweep] Fatal error: ${err}`);
     return {
       timestamp: new Date().toISOString(),
       job: "fetcher",

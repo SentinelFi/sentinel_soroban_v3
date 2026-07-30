@@ -28,12 +28,16 @@ export interface RouteEntry {
 }
 
 export interface RouteRails {
-  premiumMin: bigint; // base units
-  premiumMax: bigint; // base units
+  premiumMin: bigint; // base units — floor for any premium
+  premiumMax: bigint; // base units — TOTAL on-chain ceiling (base + weather surcharge)
+  /** ML base-premium cap, base units. Routes whose honest expected-loss
+   *  price exceeds this are EXCLUDED from whitelisting, never clamped —
+   *  the protocol does not sell at a known expected loss. */
+  basePremiumMax: bigint;
+  /** Flat additive weather surcharges, base units (whole dollars). */
+  weatherSurcharge: { elevated: bigint; severe: bigint };
   payoffMin: bigint;
   payoffMax: bigint;
-  maxDailyPremiumChangePct: number;
-  elevatedWeatherMultiplier: number;
 }
 
 export interface RoutesConfig {
@@ -41,6 +45,10 @@ export interface RoutesConfig {
   defaults: { premiumUsdc: number; payoffUsdc: number; delayHours: number };
   rails: RouteRails;
   saleHorizonDays: number;
+  /** Forecast look-ahead for the weather surcharge job (days). Kept short
+   *  (~3): storm forecasts have no skill beyond that, and neither do
+   *  buyers — which is exactly the adverse-selection window to price. */
+  weatherHorizonDays: number;
   routes: RouteEntry[];
 }
 
@@ -65,11 +73,12 @@ export function loadRoutesConfig(): RoutesConfig {
     defaults: { premium_usdc: number; payoff_usdc: number; delay_hours: number };
     rails: {
       premium_usdc: { min: number; max: number };
+      base_premium_max_usdc: number;
+      weather_surcharge_usdc: { elevated: number; severe: number };
       payoff_usdc: { min: number; max: number };
-      max_daily_premium_change_pct: number;
-      elevated_weather_multiplier: number;
     };
     sale_horizon_days: number;
+    weather_horizon_days: number;
     routes: RouteEntry[];
   };
 
@@ -83,12 +92,16 @@ export function loadRoutesConfig(): RoutesConfig {
     rails: {
       premiumMin: usdcToBaseUnits(c.rails.premium_usdc.min),
       premiumMax: usdcToBaseUnits(c.rails.premium_usdc.max),
+      basePremiumMax: usdcToBaseUnits(c.rails.base_premium_max_usdc),
+      weatherSurcharge: {
+        elevated: usdcToBaseUnits(c.rails.weather_surcharge_usdc.elevated),
+        severe: usdcToBaseUnits(c.rails.weather_surcharge_usdc.severe),
+      },
       payoffMin: usdcToBaseUnits(c.rails.payoff_usdc.min),
       payoffMax: usdcToBaseUnits(c.rails.payoff_usdc.max),
-      maxDailyPremiumChangePct: c.rails.max_daily_premium_change_pct,
-      elevatedWeatherMultiplier: c.rails.elevated_weather_multiplier,
     },
     saleHorizonDays: c.sale_horizon_days,
+    weatherHorizonDays: c.weather_horizon_days ?? 3,
     routes: c.routes,
   };
 }

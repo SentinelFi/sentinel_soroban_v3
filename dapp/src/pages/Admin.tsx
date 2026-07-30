@@ -14,8 +14,9 @@ import { supabase } from "../lib/supabase"
  *
  * Everything here is identity + display; all real work happens in
  * api/admin/* (Supabase JWT → ADMIN_EMAILS allowlist → GovSubmitter
- * pipeline → actions_log). Declaring a signal never touches the chain
- * directly — the reconciler acts on it within the hour.
+ * pipeline → actions_log). Pauses and revives go through the same
+ * interventions executor every automated detector uses — an admin pause
+ * is just a ledger row with cause 'admin' that nothing auto-revives.
  */
 
 /* ── plumbing ─────────────────────────────────────────────────────── */
@@ -132,7 +133,7 @@ function BoardClock() {
 function BoardHeader({
 	figures,
 }: {
-	figures: { routes: number; onchain: number; signals: number; pauses: number } | null
+	figures: { routes: number; onchain: number; pauses: number } | null
 }) {
 	return (
 		<header className="panel-raised relative mb-8 overflow-hidden px-5 py-4">
@@ -145,7 +146,6 @@ function BoardHeader({
 			<div className="mt-3 flex flex-wrap items-end gap-x-8 gap-y-2">
 				<BoardStat label="Routes" value={figures ? String(figures.routes) : "--"} />
 				<BoardStat label="On-chain" value={figures ? String(figures.onchain) : "--"} />
-				<BoardStat label="Live signals" value={figures ? String(figures.signals) : "--"} />
 				<BoardStat label="Open pauses" value={figures ? String(figures.pauses) : "--"} tone={figures && figures.pauses > 0 ? "loss" : undefined} />
 				<BoardClock />
 			</div>
@@ -233,9 +233,9 @@ function Console({ session }: { session: Session }) {
 		queryFn: () => api("/api/admin/routes?chain=1", token),
 		refetchInterval: 60_000,
 	})
-	const signalsQ = useQuery({
-		queryKey: ["admin-signals"],
-		queryFn: () => api("/api/admin/signals", token),
+	const interventionsQ = useQuery({
+		queryKey: ["admin-interventions"],
+		queryFn: () => api("/api/admin/interventions", token),
 		refetchInterval: 60_000,
 	})
 	const logQ = useQuery({
@@ -244,20 +244,19 @@ function Console({ session }: { session: Session }) {
 		refetchInterval: 60_000,
 	})
 
-	const unauthorized = [routesQ, signalsQ, logQ].some(
+	const unauthorized = [routesQ, interventionsQ, logQ].some(
 		(q) => q.error instanceof Error && q.error.message === "Unauthorized"
 	)
 
 	const routes: any[] = routesQ.data?.routes ?? []
-	const signals: any[] = signalsQ.data?.active ?? []
+	const interventions: any[] = interventionsQ.data?.open ?? []
 	const figures = useMemo(
 		() => ({
 			routes: routes.length,
 			onchain: routes.filter((r) => r.on_chain?.status !== "Unknown").length,
-			signals: signals.length,
-			pauses: signals.filter((s) => s.severity === "severe").length,
+			pauses: interventions.length,
 		}),
-		[routes, signals]
+		[routes, interventions]
 	)
 
 	return (
@@ -289,7 +288,7 @@ function Console({ session }: { session: Session }) {
 						onDone={invalidate}
 					/>
 					<RoutesBoard routes={routes} loading={routesQ.isLoading} token={token} onDone={invalidate} />
-					<SignalsPanel signals={signals} loading={signalsQ.isLoading} token={token} onDone={invalidate} />
+					<InterventionsPanel interventions={interventions} loading={interventionsQ.isLoading} token={token} onDone={invalidate} />
 					<ActionLog log={logQ.data?.log ?? []} loading={logQ.isLoading} />
 				</div>
 			)}
@@ -631,104 +630,73 @@ function AddRoute({ token, onDone }: { token: string; onDone: () => void }) {
 	)
 }
 
-/* ── signals ──────────────────────────────────────────────────────── */
+/* ── interventions (the unified pause ledger) ─────────────────────── */
 
-function SignalsPanel({
-	signals,
+function InterventionsPanel({
+	interventions,
 	loading,
 	token,
 	onDone,
 }: {
-	signals: any[]
+	interventions: any[]
 	loading: boolean
 	token: string
 	onDone: () => void
 }) {
-	const clear = useMutation({
+	const revive = useMutation({
 		mutationFn: (id: string) =>
-			api("/api/admin/signals", token, { method: "PATCH", body: JSON.stringify({ id }) }),
+			api("/api/admin/interventions", token, { method: "PATCH", body: JSON.stringify({ id }) }),
 		onSuccess: onDone,
 	})
 
 	return (
 		<section>
-			<h2 className="h-section mb-3">Signals · pauses &amp; adjustments</h2>
+			<h2 className="h-section mb-3">Interventions · what's paused &amp; why</h2>
 			<div className="panel px-4 py-3">
-				{loading && <p className="font-body text-[13px] text-mute">Reading signals…</p>}
-				{!loading && signals.length === 0 && (
+				{loading && <p className="font-body text-[13px] text-mute">Reading the ledger…</p>}
+				{!loading && interventions.length === 0 && (
 					<p className="font-body text-[13px] text-mute">
-						No live signals. The reconciler is holding all routes at base terms.
+						Nothing paused. Every whitelisted route is selling.
 					</p>
 				)}
 				<ul className="divide-y divide-line/60">
-					{signals.map((s) => (
+					{interventions.map((s) => (
 						<li key={s.id} className="flex flex-wrap items-center gap-3 py-2.5">
-							<Lamp tone={s.severity === "severe" ? "loss" : s.severity === "elevated" ? "gold" : "blip"} blink={s.severity === "severe"} />
-							<span className="status-px text-ink">{s.type}</span>
+							<Lamp tone={s.cause === "admin" ? "gold" : "loss"} blink={s.cause !== "admin"} />
+							<span className="status-px text-ink">{s.cause}</span>
 							<span className="font-board text-[17px] text-dim">
-								{s.scope_kind === "route"
-									? `${s.flight_id} ${s.origin}→${s.dest}`
-									: s.scope_kind === "origin"
-										? `${s.origin} → ✱`
-										: `✱ → ${s.dest}`}
+								{s.flight_id} {s.origin}→{s.dest}
 							</span>
-							<span className="status-px text-mute">{s.severity}</span>
-							{s.payload?.factor && (
-								<span className="font-board text-[17px] text-gold">×{s.payload.factor}</span>
-							)}
-							<span className="font-body text-[12px] text-mute">{s.source}</span>
-							{s.expires_at && (
-								<span className="font-body text-[12px] text-mute">
-									until {new Date(s.expires_at).toUTCString().slice(5, 22)}
-								</span>
-							)}
+							<span className="font-body text-[12px] text-mute">by {s.opened_by}</span>
+							<span className="font-body text-[12px] text-mute">
+								since {new Date(s.opened_at).toUTCString().slice(5, 22)}
+							</span>
+							<span className="font-body text-[12px] text-mute">
+								checked {new Date(s.last_checked_at).toUTCString().slice(5, 22)}
+							</span>
 							<button
 								className="btn-px btn-ghost btn-sm ml-auto"
-								disabled={clear.isPending}
-								onClick={() => clear.mutate(s.id)}
+								disabled={revive.isPending}
+								onClick={() => revive.mutate(s.id)}
 							>
-								Clear
+								Revive
 							</button>
 						</li>
 					))}
 				</ul>
 			</div>
-			<DeclareSignal token={token} onDone={onDone} />
+			<AdminPause token={token} onDone={onDone} />
 		</section>
 	)
 }
 
-function DeclareSignal({ token, onDone }: { token: string; onDone: () => void }) {
-	const [form, setForm] = useState({
-		type: "geopolitical",
-		severity: "severe",
-		scope_kind: "dest",
-		flight_id: "",
-		origin: "",
-		dest: "",
-		factor: "1.25",
-		hours: "24",
-		note: "",
-	})
+function AdminPause({ token, onDone }: { token: string; onDone: () => void }) {
+	const [form, setForm] = useState({ flight_id: "", origin: "", dest: "", reason: "" })
 	const m = useMutation({
 		mutationFn: () =>
-			api("/api/admin/signals", token, {
+			api("/api/admin/interventions", token, {
 				method: "POST",
-				body: JSON.stringify({
-					type: form.type,
-					severity: form.severity,
-					scope_kind: form.scope_kind,
-					flight_id: form.scope_kind === "route" ? form.flight_id : null,
-					origin: form.scope_kind !== "dest" ? form.origin : null,
-					dest: form.scope_kind !== "origin" ? form.dest : null,
-					payload:
-						form.severity === "elevated"
-							? { factor: Number(form.factor), note: form.note }
-							: { note: form.note },
-					expires_at: form.hours
-						? new Date(Date.now() + Number(form.hours) * 3600_000).toISOString()
-						: null,
-				}),
+				body: JSON.stringify(form),
 			}),
 		onSuccess: onDone,
 	})
@@ -744,68 +712,19 @@ function DeclareSignal({ token, onDone }: { token: string; onDone: () => void })
 				m.mutate()
 			}}
 		>
-			<Sel label="Type" value={form.type} onChange={upd("type")} opts={["geopolitical", "weather", "manual"]} />
-			<Sel
-				label="Effect"
-				value={form.severity}
-				onChange={upd("severity")}
-				opts={["severe", "elevated"]}
-				names={["pause", "premium ×"]}
-			/>
-			<Sel
-				label="Scope"
-				value={form.scope_kind}
-				onChange={upd("scope_kind")}
-				opts={["dest", "origin", "route"]}
-			/>
-			{form.scope_kind === "route" && (
-				<Txt label="Flight" value={form.flight_id} onChange={upd("flight_id")} ph="AA100" />
-			)}
-			{form.scope_kind !== "dest" && (
-				<Txt label="From" value={form.origin} onChange={upd("origin")} ph="JFK" />
-			)}
-			{form.scope_kind !== "origin" && (
-				<Txt label="To" value={form.dest} onChange={upd("dest")} ph="LAX" />
-			)}
-			{form.severity === "elevated" && (
-				<Txt label="Factor" value={form.factor} onChange={upd("factor")} ph="1.25" w="w-20" />
-			)}
-			<Txt label="Expires (h)" value={form.hours} onChange={upd("hours")} ph="24" w="w-24" />
-			<Txt label="Note" value={form.note} onChange={upd("note")} ph="why" w="w-40" />
+			<span className="label-px mr-1">Pause a route (admin hold — never auto-revived)</span>
+			<Txt label="Flight" value={form.flight_id} onChange={upd("flight_id")} ph="AA100" />
+			<Txt label="From" value={form.origin} onChange={upd("origin")} ph="JFK" />
+			<Txt label="To" value={form.dest} onChange={upd("dest")} ph="LAX" />
+			<Txt label="Reason" value={form.reason} onChange={upd("reason")} ph="why" w="w-48" />
 			<button type="submit" className="btn-px btn-loss" disabled={m.isPending}>
-				{m.isPending ? "…" : "Declare"}
+				{m.isPending ? "…" : "Pause"}
 			</button>
 			{m.error && <p className="w-full font-body text-[13px] text-loss">{String(m.error)}</p>}
 		</form>
 	)
 }
 
-function Sel({
-	label,
-	value,
-	onChange,
-	opts,
-	names,
-}: {
-	label: string
-	value: string
-	onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void
-	opts: string[]
-	names?: string[]
-}) {
-	return (
-		<label className="block">
-			<span className="label-px mb-1 block">{label}</span>
-			<select className="field-px w-auto" value={value} onChange={onChange}>
-				{opts.map((o, i) => (
-					<option key={o} value={o}>
-						{names?.[i] ?? o}
-					</option>
-				))}
-			</select>
-		</label>
-	)
-}
 
 function Txt({
 	label,
