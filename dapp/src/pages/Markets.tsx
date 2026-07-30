@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import type { FlightData } from "oracle_aggregator"
 import {
 	controllerClient,
@@ -15,13 +15,14 @@ import {
 	useWhitelistEnabled,
 } from "../hooks/useContracts"
 import type { UiRoute } from "../hooks/useContracts"
-import { CANDIDATE_ROUTES } from "../config/routes"
+import { DEMO_ROUTES } from "../config/routes"
 import { useWallet } from "../hooks/useWallet"
 import { useNotification } from "../hooks/useNotification"
 import { PixelArt } from "../components/PixelArt"
 import { SeriousIcon } from "../components/SeriousIcon"
 import { HowItWorksBubble } from "../components/InfoBubble"
 import { TransactionButton } from "../components/TransactionButton"
+import { TxProgress } from "../components/TxProgress"
 import { RiskBar } from "../components/RiskBar"
 import { FlightCalendar } from "../components/FlightCalendar"
 import {
@@ -32,6 +33,7 @@ import {
 } from "../data"
 import { useTheme } from "../providers/ThemeProvider"
 import { useCopy } from "../copy"
+import { useCountUp } from "../hooks/useCountUp"
 import type { TxState } from "../types"
 
 /** Midnight-UTC-aligned unix timestamp (u64) for a YYYY-MM-DD date string. */
@@ -69,10 +71,11 @@ function oddsFor(route: UiRoute, defaults?: Defaults): string {
 /**
  * Shown while the chain scan streams in, and whenever the chain has no
  * whitelisted routes (same fallback the classic frontend uses) — clearly
- * flagged as DEMO on the board. The full 200-flight candidate list keeps
- * the board searchable even before any route resolves on-chain.
+ * flagged as DEMO on the board. DEMO_ROUTES (not CANDIDATE_ROUTES) so the
+ * board still has something to show even if the fleet file itself is
+ * momentarily empty (a fresh deploy before the first seed run).
  */
-const SAMPLE_ROUTES: UiRoute[] = CANDIDATE_ROUTES.map((route) => ({
+const SAMPLE_ROUTES: UiRoute[] = DEMO_ROUTES.map((route) => ({
 	...route,
 	status: "Active",
 	terms: null,
@@ -166,17 +169,18 @@ function Ticker({
 }: {
 	liveFlights: Array<{ flightId: string; tag: OracleTag | null }>
 }) {
-	const chips =
-		liveFlights.length > 0
-			? liveFlights.map((f) => ({
-					code: f.flightId,
-					status: f.tag ? LIVE_STATUS[f.tag] : LIVE_STATUS.NotInitiated,
-				}))
-			: [
-					{ code: "AA100", status: LIVE_STATUS.ToBeSettledDelayed },
-					{ code: "UA200", status: LIVE_STATUS.ToBeSettledOnTime },
-					{ code: "DL300", status: LIVE_STATUS.Active },
-				]
+	const t = useCopy()
+	const isDemo = liveFlights.length === 0
+	const chips = !isDemo
+		? liveFlights.map((f) => ({
+				code: f.flightId,
+				status: f.tag ? LIVE_STATUS[f.tag] : LIVE_STATUS.NotInitiated,
+			}))
+		: [
+				{ code: "AA100", status: LIVE_STATUS.ToBeSettledDelayed },
+				{ code: "UA200", status: LIVE_STATUS.ToBeSettledOnTime },
+				{ code: "DL300", status: LIVE_STATUS.Active },
+			]
 
 	// duplicate content for a seamless -50% marquee loop
 	const loop = [...chips, ...chips, ...chips, ...chips]
@@ -184,8 +188,12 @@ function Ticker({
 	return (
 		<div className="ticker flex items-center gap-3 overflow-hidden border-2 border-line bg-inset py-2">
 			<span className="z-10 flex shrink-0 items-center gap-2 border-r-2 border-line bg-inset pl-3 pr-3">
-				<span className="blink inline-block h-2 w-2 bg-win" />
-				<span className="label-px text-win">LIVE</span>
+				<span
+					className={`inline-block h-2 w-2 ${isDemo ? "blink bg-gold" : "breathe bg-win"}`}
+				/>
+				<span className={`label-px ${isDemo ? "text-gold" : "text-win"}`}>
+					{isDemo ? t.markets.statusDemo : "LIVE"}
+				</span>
 			</span>
 			<div className="marquee-track gap-6">
 				{loop.map((chip, i) => (
@@ -210,16 +218,53 @@ function Ticker({
 
 /* ── stats ticker (real protocol numbers) ───────────────────── */
 
+interface PublicStats {
+	flights_insured: number
+	insurances_paid: number | null
+	delayed_count: number | null
+	cancelled_count: number | null
+	total_paid_out: string
+	db_available: boolean
+	as_of: string
+}
+
+/** Sanitized chain + DB stats from the public `/api/status/stats` endpoint
+ *  (DB-optional — insurances_paid/delayed_count/cancelled_count are null
+ *  if the DB is unavailable, chain-only fields still answer). */
+function usePublicStats() {
+	return useQuery({
+		queryKey: ["status", "stats"],
+		queryFn: async () => {
+			const res = await fetch("/api/status/stats")
+			if (!res.ok) throw new Error(`HTTP ${res.status}`)
+			return (await res.json()) as PublicStats
+		},
+		refetchInterval: 60_000,
+		retry: 1,
+	})
+}
+
 /**
  * Scrolling strip of REAL, live protocol numbers pulled from the data facade
- * (TVL, free capital, premiums, travelers, open-markets count). Same pixel
- * marquee mechanic as the flight ticker; the serious skin rounds the rail.
+ * (TVL, free capital, premiums, travelers, open-markets count) plus the
+ * sanitized public stats endpoint (insurances paid, delayed/cancelled
+ * counts, total paid out). Same pixel marquee mechanic as the flight
+ * ticker; the serious skin rounds the rail.
  */
 function StatsTicker({ openMarkets }: { openMarkets: number }) {
 	const t = useCopy()
 	const { data: stats } = useProtocolStats()
 	const { data: tvl } = useTotalAssets()
 	const { data: free } = useFreeCapital()
+	const { data: publicStats } = usePublicStats()
+
+	// Whole-number counters animate up to their new value; currency figures
+	// stay static (not worth the bigint-interpolation complexity).
+	const policiesSoldCount = useCountUp(stats?.totalPoliciesSold ?? 0)
+	const openMarketsCount = useCountUp(openMarkets)
+	const insurancesPaidCount = useCountUp(publicStats?.insurances_paid ?? 0)
+	const delayedCountUp = useCountUp(publicStats?.delayed_count ?? 0)
+	const cancelledCountUp = useCountUp(publicStats?.cancelled_count ?? 0)
 
 	const items: Array<{ label: string; value: string }> = [
 		{
@@ -232,13 +277,37 @@ function StatsTicker({ openMarkets }: { openMarkets: number }) {
 		},
 		{
 			label: t.statsTicker.premiums,
-			value: `${stats ? formatUsdc(stats.totalPremiums) : "…"} USDC`,
+			value: `${stats ? formatUsdc(stats.totalPremiumsCollected) : "…"} USDC`,
 		},
 		{
-			label: t.statsTicker.travelers,
-			value: stats ? stats.totalTravelers.toLocaleString() : "…",
+			label: t.statsTicker.policiesSold,
+			value: stats ? policiesSoldCount.toLocaleString() : "…",
 		},
-		{ label: t.statsTicker.openMarkets, value: openMarkets.toLocaleString() },
+		{ label: t.statsTicker.openMarkets, value: openMarketsCount.toLocaleString() },
+		{
+			label: t.statsTicker.paidOut,
+			value: publicStats
+				? `${formatUsdc(BigInt(publicStats.total_paid_out))} USDC`
+				: "…",
+		},
+		{
+			label: t.statsTicker.insurancesPaid,
+			value: !publicStats
+				? "…"
+				: (publicStats.insurances_paid != null ? insurancesPaidCount.toLocaleString() : "—"),
+		},
+		{
+			label: t.statsTicker.delayed,
+			value: !publicStats
+				? "…"
+				: (publicStats.delayed_count != null ? delayedCountUp.toLocaleString() : "—"),
+		},
+		{
+			label: t.statsTicker.cancelled,
+			value: !publicStats
+				? "…"
+				: (publicStats.cancelled_count != null ? cancelledCountUp.toLocaleString() : "—"),
+		},
 	]
 
 	const loop = [...items, ...items, ...items, ...items]
@@ -296,15 +365,34 @@ function BetSlip({
 
 	const placeBet = async () => {
 		if (!address || !flightDate || whitelistBlocked) return
-		setTxState("awaiting")
+		setTxState("verifying")
 		setError(null)
 		try {
+			const date = dateStrToMidnightUtc(flightDate)
+			const authRes = await fetch("/api/sale-auth/request", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ flight_id: route.flightId, date: Number(date) }),
+			})
+			const auth = (await authRes.json()) as {
+				authorized?: boolean
+				reason?: string
+				error?: string
+			}
+			if (!authRes.ok) {
+				throw new Error(auth.error ?? "Sale authorization request failed")
+			}
+			if (!auth.authorized) {
+				throw new Error(auth.reason ?? "Sale not authorized")
+			}
+
+			setTxState("awaiting")
 			const tx = await controllerClient.buy_insurance({
 				traveler: address,
 				flight_id: route.flightId,
 				origin: route.origin,
 				dest: route.dest,
-				date: dateStrToMidnightUtc(flightDate),
+				date,
 			})
 			setTxState("confirming")
 			await tx.signAndSend({ signTransaction })
@@ -422,6 +510,12 @@ function BetSlip({
 				>
 					{t.slip.cta(premium !== undefined ? formatUsdc(premium) : "…")}
 				</TransactionButton>
+				<TxProgress
+					state={txState}
+					steps={["verifying", "awaiting", "confirming"]}
+					error={error}
+					stamps={{ success: "stamp-covered", fail: "stamp-denied" }}
+				/>
 
 				{!address && (
 					<p className="font-body text-[13px] text-gold">
@@ -498,11 +592,21 @@ export default function Markets() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [deepLinkFlight, displayRoutes.length])
 
-	const liveRows = (flightData ?? []).map((f) => ({
-		flightId: f.flightId,
-		date: f.date,
-		tag: f.data ? f.data.status.tag : null,
-	}))
+	// The on-chain active set only drops a flight once the daily prune_settled
+	// sweep runs, so a Settled or already-claimable (ToBeSettledDelayed)
+	// flight can sit in `activeFlights` for up to ~24h. Filter both out here
+	// (same rule useTrackedFlights uses for the globe) so the "LIVE" ticker
+	// never shows a flight whose outcome is already fully resolved.
+	const liveRows = (flightData ?? [])
+		.filter((f) => {
+			const tag = f.data?.status.tag
+			return tag !== "Settled" && tag !== "ToBeSettledDelayed"
+		})
+		.map((f) => ({
+			flightId: f.flightId,
+			date: f.date,
+			tag: f.data ? f.data.status.tag : null,
+		}))
 
 	// Top horizontal scrollbar for the board: a thin rail above the table
 	// mirroring the wrap's scrollWidth, kept in sync both ways so either
@@ -767,7 +871,7 @@ export default function Markets() {
 							{visible.map((route) => (
 								<tr
 									key={`${route.flightId}-${route.origin}-${route.dest}`}
-									className="border-b-2 border-line/60 hover:bg-raised/60"
+									className="board-row-in border-b-2 border-line/60 hover:bg-raised/60"
 								>
 									<td className="px-4 py-3">
 										<a
@@ -791,13 +895,19 @@ export default function Markets() {
 									<td className="px-4 py-3">
 										<div className="flex flex-col items-start gap-1.5">
 											{isDemo ? (
-												<span className="status-px text-gold">
+												<span
+													key={scanning ? "scan" : "demo"}
+													className="status-px status-flap text-gold"
+												>
 													{scanning
 														? t.markets.statusScanning
 														: t.markets.statusDemo}
 												</span>
 											) : (
-												<span className="status-px text-win">
+												<span
+													key="boarding"
+													className="status-px status-flap text-win"
+												>
 													{t.markets.statusBoarding}
 												</span>
 											)}

@@ -32,6 +32,11 @@ const ASSETS: Record<string, { alt: string; scene?: boolean }> = {
 	"coin-usdc": { alt: "Gold coin with dollar sign" },
 	"weather-storm": { alt: "Storm cloud with lightning bolt" },
 	"weather-sun": { alt: "Golden sun" },
+	"radar-sweep": { alt: "Radar dish with a sweeping green tracking line" },
+	"stamp-covered": { alt: "Green rubber stamp reading COVERED" },
+	"stamp-denied": { alt: "Red rubber stamp reading DENIED" },
+	"stamp-paid": { alt: "Gold rubber stamp reading PAID" },
+	"ticket-tear": { alt: "Perforated torn edge of a paper ticket" },
 }
 
 export function PixelArt({

@@ -38,6 +38,18 @@
 .globe-node-fun {
 	stroke: var(--color-page);
 	stroke-width: 2;
+	transform-box: fill-box;
+	transform-origin: center;
+	animation: globe-pulse-fun 1800ms steps(6, end) infinite;
+}
+@keyframes globe-pulse-fun {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.55;
+	}
 }
 .globe-node-fun.is-selected {
 	stroke: var(--color-ink);
@@ -91,6 +103,20 @@
 }
 .globe-node-serious {
 	stroke: none;
+	transform-box: fill-box;
+	transform-origin: center;
+	animation: globe-pulse-serious 2200ms ease-in-out infinite;
+}
+@keyframes globe-pulse-serious {
+	0%,
+	100% {
+		transform: scale(1);
+		opacity: 1;
+	}
+	50% {
+		transform: scale(1.18);
+		opacity: 0.75;
+	}
 }
 .globe-node-serious.is-selected {
 	stroke: var(--color-ink);

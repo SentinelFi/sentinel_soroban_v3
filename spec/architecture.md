@@ -3378,6 +3378,53 @@ against `route_status`.
 > through a curated function registry (no generated bindings) — still exists in the
 > repo but is **superseded** by `dapp/` and is no longer the shipped frontend.
 
+### Local dev: `/api` doesn't run under Vite, and `vercel dev` can't serve it either
+
+`npm run dev` (`vite --port 5175`) is an SPA-only dev server — it has no idea
+`dapp/api/**/*.ts` exists, so every `/api/*` call (JIT sale-auth, every admin
+panel fetch) 404s under plain Vite. The fix looks like it should be "run
+`vercel dev` alongside it, proxy `/api` there" — that's what a Vite + Vercel
+project normally does. **It doesn't work in this repo**, confirmed on Vercel
+CLI 50.35.0 and again after upgrading to 58.4.0:
+
+- Bare `vercel dev`, zero custom config: hitting `/api/status/runs` returns
+  the handler's **transpiled source as `text/javascript`**, not JSON. Vercel's
+  local dev server is supposed to route `/api/**` to the function runtime
+  ahead of the framework dev command, but for this project (Vite + a nested
+  `api/` dir + npm workspaces) that priority never kicks in — every request
+  just falls through to the Vite child process `vercel dev` spawns.
+- Adding a naive `vite.config.ts` `server.proxy: { "/api": "http://localhost:3000" }`
+  makes it worse: `vercel dev` launches its internal Vite on port 3000 by
+  default — the same port the proxy target hardcodes — so `/api/*` requests
+  loop back into themselves through Vite's own proxy, each hop compounding
+  headers until Node's 16KB limit trips (`431 Request Header Fields Too
+  Large`).
+- Running on a different port (`vercel dev --listen 8080`) turns the loop
+  into a clean `ECONNREFUSED` instead (nothing listens on the hardcoded
+  proxy target) — better failure, still broken.
+- Pointing `vercel dev` at a `vercel.json` with no `"framework"` key (via
+  `-A`/`--local-config`, to stop it wrapping Vite at all) makes it treat the
+  persistent dev server as a one-shot **build** step — it just hangs.
+
+**The actual fix (shipped 2026-07-30, off_chain_fixes): don't use `vercel dev`
+for local `/api` at all.** `dapp/scripts/dev_api.ts` is a ~130-line
+zero-dependency local server: it walks `api/**/*.ts` (skipping `_lib/`),
+maps each file to its route (`api/admin/routes.ts` → `/api/admin/routes`),
+and on each request dynamically imports the handler and calls it with a
+bridged `VercelRequest`/`VercelResponse` (query, JSON body, `.status().json()`)
+— the same `export default handler(req, res)` shape Vercel's Node runtime
+uses in production. `npm run dev:api` runs it on `:3000`; `vite.config.ts`'s
+`server.proxy` forwards `/api/*` there from the `:5175` SPA dev server.
+`scripts/env.ts`'s existing `loadDotEnv()` (already used by `npm run bot`)
+supplies the same `.env` `vercel dev` would have read.
+
+**This has no bearing on production.** `vercel dev` is purely a local
+emulation code path; real deploys go through Vercel's own build+runtime
+pipeline (`@vercel/node` builds `api/**` independently of anything the local
+CLI does), which was never in question here. `scripts/dev_api.ts` lives
+outside `api/`, so it is never itself deployed as a function — it only
+type-checks as part of `tsc -b` (same as `scripts/run_bot.ts` always has).
+
 ---
 
 ## Deployment Order

@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import type { Session } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
+import { TxProgress } from "../components/TxProgress"
+import type { TxState } from "../types"
 
 /**
  * ROUTE CONTROL — the hidden /admin dispatch tower behind the arcade.
@@ -218,45 +220,111 @@ function SignIn() {
 
 /* ── console ──────────────────────────────────────────────────────── */
 
+/** Only routes/interventions poll unconditionally — they feed the
+ *  always-visible header dashboard. Jobs/outcomes/log are lazy: each
+ *  fetches only while its own tab is the active one, so an admin sitting
+ *  on one tab isn't silently paying for four background pollers. */
+type AdminTab = "jobs" | "routes" | "interventions" | "outcomes" | "log"
+
+const ADMIN_TABS: Array<{ key: AdminTab; label: string }> = [
+	{ key: "jobs", label: "Jobs" },
+	{ key: "routes", label: "Routes" },
+	{ key: "interventions", label: "Interventions" },
+	{ key: "outcomes", label: "Outcomes" },
+	{ key: "log", label: "Action log" },
+]
+
 function Console({ session }: { session: Session }) {
 	const token = session.access_token
 	const qc = useQueryClient()
 	const invalidate = () => qc.invalidateQueries()
+	const [activeTab, setActiveTab] = useState<AdminTab>("jobs")
 
 	const jobsQ = useQuery({
 		queryKey: ["admin-jobs"],
 		queryFn: () => api("/api/admin/jobs", token),
+		enabled: activeTab === "jobs",
+		staleTime: 30_000,
 		refetchInterval: 60_000,
 	})
+	const [routeQuery, setRouteQuery] = useState("")
+	const [routePage, setRoutePage] = useState(1)
+	const [adminPausedOnly, setAdminPausedOnly] = useState(false)
+	const routeLimit = 50
+
 	const routesQ = useQuery({
-		queryKey: ["admin-routes"],
-		queryFn: () => api("/api/admin/routes?chain=1", token),
+		queryKey: ["admin-routes", routeQuery, routePage, adminPausedOnly],
+		queryFn: () => {
+			const params = new URLSearchParams({
+				chain: "1",
+				page: String(routePage),
+				limit: String(routeLimit),
+			})
+			if (routeQuery) params.set("q", routeQuery)
+			if (adminPausedOnly) params.set("cause", "admin")
+			return api(`/api/admin/routes?${params}`, token)
+		},
+		staleTime: 30_000,
 		refetchInterval: 60_000,
 	})
+	const [interventionState, setInterventionState] = useState<"open" | "closed">("open")
+	const [interventionCause, setInterventionCause] = useState("")
+	const [interventionPage, setInterventionPage] = useState(1)
+	const interventionLimit = 25
+
 	const interventionsQ = useQuery({
-		queryKey: ["admin-interventions"],
-		queryFn: () => api("/api/admin/interventions", token),
+		queryKey: ["admin-interventions", interventionState, interventionCause, interventionPage],
+		queryFn: () => {
+			const params = new URLSearchParams({
+				state: interventionState,
+				page: String(interventionPage),
+				limit: String(interventionLimit),
+			})
+			if (interventionCause) params.set("cause", interventionCause)
+			return api(`/api/admin/interventions?${params}`, token)
+		},
+		staleTime: 30_000,
 		refetchInterval: 60_000,
 	})
 	const logQ = useQuery({
 		queryKey: ["admin-log"],
 		queryFn: () => api("/api/admin/actions?limit=100", token),
+		enabled: activeTab === "log",
+		staleTime: 30_000,
 		refetchInterval: 60_000,
 	})
 
-	const unauthorized = [routesQ, interventionsQ, logQ].some(
+	const [outcomeFilter, setOutcomeFilter] = useState("")
+	const [outcomePage, setOutcomePage] = useState(1)
+	const outcomeLimit = 50
+
+	const outcomesQ = useQuery({
+		queryKey: ["admin-outcomes", outcomeFilter, outcomePage],
+		queryFn: () => {
+			const params = new URLSearchParams({ page: String(outcomePage), limit: String(outcomeLimit) })
+			if (outcomeFilter) params.set("outcome", outcomeFilter)
+			return api(`/api/admin/outcomes?${params}`, token)
+		},
+		enabled: activeTab === "outcomes",
+		staleTime: 30_000,
+		refetchInterval: 60_000,
+	})
+
+	const unauthorized = [routesQ, interventionsQ, logQ, outcomesQ].some(
 		(q) => q.error instanceof Error && q.error.message === "Unauthorized"
 	)
 
 	const routes: any[] = routesQ.data?.routes ?? []
-	const interventions: any[] = interventionsQ.data?.open ?? []
+	const interventions: any[] = interventionsQ.data?.rows ?? []
+	// Fleet-wide, DB-only counts (never a full chain scan or the current
+	// tab/filter) so the header stays a whole-fleet summary.
 	const figures = useMemo(
 		() => ({
-			routes: routes.length,
-			onchain: routes.filter((r) => r.on_chain?.status !== "Unknown").length,
-			pauses: interventions.length,
+			routes: routesQ.data?.fleet_total ?? 0,
+			onchain: routesQ.data?.fleet_active ?? 0,
+			pauses: interventionsQ.data?.open_count ?? 0,
 		}),
-		[routes, interventions]
+		[routesQ.data, interventionsQ.data]
 	)
 
 	return (
@@ -279,17 +347,92 @@ function Console({ session }: { session: Session }) {
 					</p>
 				</div>
 			) : (
-				<div className="space-y-10">
-					<JobsBoard
-						registry={jobsQ.data?.registry ?? []}
-						latest={jobsQ.data?.latest ?? []}
-						loading={jobsQ.isLoading}
-						token={token}
-						onDone={invalidate}
-					/>
-					<RoutesBoard routes={routes} loading={routesQ.isLoading} token={token} onDone={invalidate} />
-					<InterventionsPanel interventions={interventions} loading={interventionsQ.isLoading} token={token} onDone={invalidate} />
-					<ActionLog log={logQ.data?.log ?? []} loading={logQ.isLoading} />
+				<div>
+					<div className="mb-6 flex flex-wrap gap-1.5">
+						{ADMIN_TABS.map((tab) => (
+							<button
+								key={tab.key}
+								type="button"
+								className={`btn-px btn-sm ${activeTab === tab.key ? "btn-gold" : "btn-ghost"}`}
+								onClick={() => setActiveTab(tab.key)}
+							>
+								{tab.label}
+							</button>
+						))}
+					</div>
+
+					{activeTab === "jobs" && (
+						<JobsBoard
+							registry={jobsQ.data?.registry ?? []}
+							latest={jobsQ.data?.latest ?? []}
+							recent={jobsQ.data?.recent ?? []}
+							loading={jobsQ.isLoading}
+							token={token}
+							onDone={invalidate}
+						/>
+					)}
+					{activeTab === "routes" && (
+						<RoutesBoard
+							routes={routes}
+							loading={routesQ.isLoading}
+							token={token}
+							onDone={invalidate}
+							query={routeQuery}
+							onQueryChange={(q) => {
+								setRouteQuery(q)
+								setRoutePage(1)
+							}}
+							adminPausedOnly={adminPausedOnly}
+							onAdminPausedOnlyChange={(v) => {
+								setAdminPausedOnly(v)
+								setRoutePage(1)
+							}}
+							page={routePage}
+							onPageChange={setRoutePage}
+							total={routesQ.data?.total ?? 0}
+							limit={routeLimit}
+						/>
+					)}
+					{activeTab === "interventions" && (
+						<InterventionsPanel
+							interventions={interventions}
+							loading={interventionsQ.isLoading}
+							token={token}
+							onDone={invalidate}
+							state={interventionState}
+							onStateChange={(s) => {
+								setInterventionState(s)
+								setInterventionPage(1)
+							}}
+							cause={interventionCause}
+							onCauseChange={(c) => {
+								setInterventionCause(c)
+								setInterventionPage(1)
+							}}
+							page={interventionPage}
+							onPageChange={setInterventionPage}
+							total={interventionsQ.data?.total ?? 0}
+							limit={interventionLimit}
+						/>
+					)}
+					{activeTab === "outcomes" && (
+						<OutcomesPanel
+							outcomes={outcomesQ.data?.rows ?? []}
+							loading={outcomesQ.isLoading}
+							filter={outcomeFilter}
+							onFilterChange={(o) => {
+								setOutcomeFilter(o)
+								setOutcomePage(1)
+							}}
+							page={outcomePage}
+							onPageChange={setOutcomePage}
+							total={outcomesQ.data?.total ?? 0}
+							limit={outcomeLimit}
+						/>
+					)}
+					{activeTab === "log" && (
+						<ActionLog log={logQ.data?.log ?? []} loading={logQ.isLoading} />
+					)}
 				</div>
 			)}
 		</div>
@@ -314,34 +457,44 @@ function jobTone(
 function JobsBoard({
 	registry,
 	latest,
+	recent,
 	loading,
 	token,
 	onDone,
 }: {
 	registry: any[]
 	latest: any[]
+	recent: any[]
 	loading: boolean
 	token: string
 	onDone: () => void
 }) {
 	const [busy, setBusy] = useState<string | null>(null)
 	const [note, setNote] = useState<string | null>(null)
+	const [runTxState, setRunTxState] = useState<TxState>("idle")
+	const [expanded, setExpanded] = useState<string | null>(null)
 	const byJob = new Map(latest.map((r: any) => [r.job, r]))
 
 	async function runNow(job: string) {
 		setBusy(job)
 		setNote(null)
+		setRunTxState("confirming")
 		try {
 			const entry = await api("/api/admin/jobs", token, {
 				method: "POST",
 				body: JSON.stringify({ job }),
 			})
 			setNote(`${job}: ${entry.success ? "completed" : "FAILED"} in ${entry.duration_ms}ms`)
+			setRunTxState(entry.success ? "success" : "error")
 			onDone()
 		} catch (err) {
 			setNote(`${job}: ${err instanceof Error ? err.message : String(err)}`)
+			setRunTxState("error")
 		} finally {
-			setBusy(null)
+			setTimeout(() => {
+				setBusy(null)
+				setRunTxState("idle")
+			}, 1800)
 		}
 	}
 
@@ -370,39 +523,83 @@ function JobsBoard({
 						{registry.map((info: any) => {
 							const last = byJob.get(info.job)
 							const { tone, word } = jobTone(last, info.intervalMinutes)
+							const isOpen = expanded === info.job
+							const history = recent.filter((r: any) => r.job === info.job).slice(0, 8)
 							return (
-								<tr key={info.job} className="border-b border-line/60 last:border-b-0">
-									<td className="px-3 py-2">
-										<span className="flex items-center gap-2">
-											<Lamp tone={tone} blink={tone === "loss"} />
-											<span className="status-px text-mute">{word}</span>
-										</span>
-									</td>
-									<td className="px-3 py-2">
-										<span className="font-board text-[17px] text-ink">{info.job}</span>
-										<span className="block text-[12px] text-mute">{info.description}</span>
-									</td>
-									<td className="px-3 py-2 whitespace-nowrap">
-										<span className="font-board text-[16px] text-sky">{info.schedule}</span>
-									</td>
-									<td className="px-3 py-2 text-dim">{info.signer}</td>
-									<td className="px-3 py-2 whitespace-nowrap text-dim">{relTime(last?.ran_at ?? null)}</td>
-									<td className="px-3 py-2 whitespace-nowrap text-mute">
-										{last ? `${last.duration_ms}ms` : "—"}
-									</td>
-									<td className="px-3 py-2 text-mute">{last?.trigger ?? "—"}</td>
-									<td className="px-3 py-2">
-										{info.manualRunnable && (
-											<button
-												className="btn-px btn-blip btn-sm"
-												disabled={busy !== null}
-												onClick={() => runNow(info.job)}
-											>
-												{busy === info.job ? "Running…" : "Run"}
-											</button>
-										)}
-									</td>
-								</tr>
+								<Fragment key={info.job}>
+									<tr className="border-b border-line/60 last:border-b-0">
+										<td className="px-3 py-2">
+											<span className="flex items-center gap-2">
+												<Lamp tone={tone} blink={tone === "loss"} />
+												<span className="status-px text-mute">{word}</span>
+											</span>
+										</td>
+										<td className="px-3 py-2">
+											<span className="font-board text-[17px] text-ink">{info.job}</span>
+											<span className="block text-[12px] text-mute">{info.description}</span>
+										</td>
+										<td className="px-3 py-2 whitespace-nowrap">
+											<span className="font-board text-[16px] text-sky">{info.schedule}</span>
+										</td>
+										<td className="px-3 py-2 text-dim">{info.signer}</td>
+										<td className="px-3 py-2 whitespace-nowrap text-dim">{relTime(last?.ran_at ?? null)}</td>
+										<td className="px-3 py-2 whitespace-nowrap text-mute">
+											{last ? `${last.duration_ms}ms` : "—"}
+										</td>
+										<td className="px-3 py-2 text-mute">{last?.trigger ?? "—"}</td>
+										<td className="px-3 py-2">
+											<div className="flex flex-wrap gap-1.5">
+												{info.manualRunnable && (
+													<button
+														className="btn-px btn-blip btn-sm"
+														disabled={busy !== null}
+														onClick={() => runNow(info.job)}
+													>
+														{busy === info.job ? "Running…" : "Run"}
+													</button>
+												)}
+												<button
+													className="btn-px btn-ghost btn-sm"
+													onClick={() => setExpanded(isOpen ? null : info.job)}
+												>
+													{isOpen ? "Hide" : "Details"}
+												</button>
+											</div>
+											{busy === info.job && (
+												<TxProgress state={runTxState} steps={["confirming"]} />
+											)}
+										</td>
+									</tr>
+									{isOpen && (
+										<tr className="border-b border-line/60 last:border-b-0">
+											<td colSpan={8} className="px-3 py-3">
+												{last?.success === false && (
+													<p className="mb-2 font-body text-[12px] text-loss">
+														Last error: {last.error ?? "(no message recorded)"}
+													</p>
+												)}
+												{history.length === 0 ? (
+													<p className="font-body text-[12px] text-mute">
+														No recent run history.
+													</p>
+												) : (
+													<div className="flex flex-wrap items-center gap-2">
+														<span className="label-px text-mute">Recent runs</span>
+														{history.map((r: any, i: number) => (
+															<span
+																key={i}
+																className={`status-px ${r.success ? "text-mute" : "text-loss"}`}
+																title={`${r.trigger} · ${new Date(r.ran_at).toISOString()}${r.error ? ` · ${r.error}` : ""}`}
+															>
+																{r.duration_ms}ms
+															</span>
+														))}
+													</div>
+												)}
+											</td>
+										</tr>
+									)}
+								</Fragment>
 							)
 						})}
 					</tbody>
@@ -420,14 +617,31 @@ function RoutesBoard({
 	loading,
 	token,
 	onDone,
+	query,
+	onQueryChange,
+	adminPausedOnly,
+	onAdminPausedOnlyChange,
+	page,
+	onPageChange,
+	total,
+	limit,
 }: {
 	routes: any[]
 	loading: boolean
 	token: string
 	onDone: () => void
+	query: string
+	onQueryChange: (q: string) => void
+	adminPausedOnly: boolean
+	onAdminPausedOnlyChange: (v: boolean) => void
+	page: number
+	onPageChange: (page: number) => void
+	total: number
+	limit: number
 }) {
 	const [busy, setBusy] = useState<string | null>(null)
 	const [error, setError] = useState<string | null>(null)
+	const pageCount = Math.max(1, Math.ceil(total / limit))
 
 	async function act(label: string, fn: () => Promise<unknown>) {
 		setBusy(label)
@@ -446,10 +660,49 @@ function RoutesBoard({
 		api("/api/admin/actions", token, { method: "POST", body: JSON.stringify(body) })
 	const patch = (body: object) =>
 		api("/api/admin/routes", token, { method: "PATCH", body: JSON.stringify(body) })
+	const intervene = (body: object) =>
+		api("/api/admin/interventions", token, { method: "POST", body: JSON.stringify(body) })
+	const revive = (id: string) =>
+		api("/api/admin/interventions", token, { method: "PATCH", body: JSON.stringify({ id }) })
+
+	function halt(r: any, id: string, key: object) {
+		const reason = window.prompt(`Reason for pausing ${r.flight_id} ${r.origin}→${r.dest}:`)
+		if (!reason) return
+		void act(id, () => intervene({ ...key, reason }))
+	}
+
+	function resume(r: any, id: string, key: object) {
+		// Prefer reviving the open intervention row (audited, cause-tracked);
+		// fall back to the raw on-chain enable for routes disabled before the
+		// interventions ledger existed (no open row to revive).
+		if (r.open_intervention_id) {
+			void act(id, () => revive(r.open_intervention_id))
+		} else {
+			void act(id, () => post({ op: "enable", ...key }))
+		}
+	}
 
 	return (
 		<section>
 			<h2 className="h-section mb-3">Departures · managed routes</h2>
+			<div className="mb-3 flex flex-wrap items-center gap-3">
+				<input
+					type="text"
+					value={query}
+					onChange={(e) => onQueryChange(e.target.value)}
+					placeholder="Search flight / origin / dest / carrier…"
+					className="field-px w-64 px-2 py-1 text-[13px]"
+					aria-label="Search routes"
+				/>
+				<label className="flex items-center gap-1.5 font-body text-[13px] text-dim">
+					<input
+						type="checkbox"
+						checked={adminPausedOnly}
+						onChange={(e) => onAdminPausedOnlyChange(e.target.checked)}
+					/>
+					Admin-paused only
+				</label>
+			</div>
 			<div className="panel overflow-x-auto">
 				<table className="w-full border-collapse text-left">
 					<thead>
@@ -498,7 +751,12 @@ function RoutesBoard({
 									<td className="px-3 py-2">
 										<span className="flex items-center gap-2">
 											<Lamp tone={chainTone(chain)} />
-											<span className="status-px text-dim">{chain}</span>
+											<span className="status-px text-dim">
+												{chain}
+												{r.open_cause && (
+													<span className="text-mute"> ·{r.open_cause}</span>
+												)}
+											</span>
 										</span>
 									</td>
 									<td className="px-3 py-2 text-gold">{usd(r.on_chain?.terms?.premium)}</td>
@@ -531,7 +789,7 @@ function RoutesBoard({
 												<button
 													className="btn-px btn-loss btn-sm"
 													disabled={busy !== null}
-													onClick={() => act(id, () => post({ op: "disable", ...key }))}
+													onClick={() => halt(r, id, key)}
 												>
 													{busy === id ? "…" : "Halt"}
 												</button>
@@ -540,7 +798,7 @@ function RoutesBoard({
 												<button
 													className="btn-px btn-win btn-sm"
 													disabled={busy !== null}
-													onClick={() => act(id, () => post({ op: "enable", ...key }))}
+													onClick={() => resume(r, id, key)}
 												>
 													{busy === id ? "…" : "Resume"}
 												</button>
@@ -571,6 +829,34 @@ function RoutesBoard({
 					</tbody>
 				</table>
 			</div>
+			{total > 0 && (
+				<div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+					<span className="font-body text-[13px] text-mute">
+						{total.toLocaleString()} route{total === 1 ? "" : "s"}
+					</span>
+					<div className="flex items-center gap-3">
+						<button
+							type="button"
+							className="btn-px btn-ghost btn-sm"
+							disabled={page <= 1}
+							onClick={() => onPageChange(page - 1)}
+						>
+							‹ Prev
+						</button>
+						<span className="font-body text-[13px] text-mute">
+							Page {page} / {pageCount}
+						</span>
+						<button
+							type="button"
+							className="btn-px btn-ghost btn-sm"
+							disabled={page >= pageCount}
+							onClick={() => onPageChange(page + 1)}
+						>
+							Next ›
+						</button>
+					</div>
+				</div>
+			)}
 			{error && <p className="mt-2 font-body text-[13px] text-loss">{error}</p>}
 			<AddRoute token={token} onDone={onDone} />
 		</section>
@@ -632,17 +918,37 @@ function AddRoute({ token, onDone }: { token: string; onDone: () => void }) {
 
 /* ── interventions (the unified pause ledger) ─────────────────────── */
 
+const INTERVENTION_CAUSES = ["cancellation", "exposure", "weather", "pricing", "admin"]
+
 function InterventionsPanel({
 	interventions,
 	loading,
 	token,
 	onDone,
+	state,
+	onStateChange,
+	cause,
+	onCauseChange,
+	page,
+	onPageChange,
+	total,
+	limit,
 }: {
 	interventions: any[]
 	loading: boolean
 	token: string
 	onDone: () => void
+	state: "open" | "closed"
+	onStateChange: (state: "open" | "closed") => void
+	cause: string
+	onCauseChange: (cause: string) => void
+	page: number
+	onPageChange: (page: number) => void
+	total: number
+	limit: number
 }) {
+	const [expanded, setExpanded] = useState<string | null>(null)
+	const pageCount = Math.max(1, Math.ceil(total / limit))
 	const revive = useMutation({
 		mutationFn: (id: string) =>
 			api("/api/admin/interventions", token, { method: "PATCH", body: JSON.stringify({ id }) }),
@@ -652,39 +958,126 @@ function InterventionsPanel({
 	return (
 		<section>
 			<h2 className="h-section mb-3">Interventions · what's paused &amp; why</h2>
+			<div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+				<div className="flex gap-1.5">
+					{(["open", "closed"] as const).map((s) => (
+						<button
+							key={s}
+							type="button"
+							className={`btn-px btn-sm ${state === s ? "btn-gold" : "btn-ghost"}`}
+							onClick={() => onStateChange(s)}
+						>
+							{s === "open" ? "Open" : "History"}
+						</button>
+					))}
+				</div>
+				<div className="flex flex-wrap gap-1.5">
+					<button
+						type="button"
+						className={`btn-px btn-sm ${cause === "" ? "btn-gold" : "btn-ghost"}`}
+						onClick={() => onCauseChange("")}
+					>
+						All
+					</button>
+					{INTERVENTION_CAUSES.map((c) => (
+						<button
+							key={c}
+							type="button"
+							className={`btn-px btn-sm ${cause === c ? "btn-gold" : "btn-ghost"}`}
+							onClick={() => onCauseChange(c)}
+						>
+							{c}
+						</button>
+					))}
+				</div>
+			</div>
 			<div className="panel px-4 py-3">
 				{loading && <p className="font-body text-[13px] text-mute">Reading the ledger…</p>}
 				{!loading && interventions.length === 0 && (
 					<p className="font-body text-[13px] text-mute">
-						Nothing paused. Every whitelisted route is selling.
+						{state === "open"
+							? "Nothing paused. Every whitelisted route is selling."
+							: "No history for this filter yet."}
 					</p>
 				)}
 				<ul className="divide-y divide-line/60">
-					{interventions.map((s) => (
-						<li key={s.id} className="flex flex-wrap items-center gap-3 py-2.5">
-							<Lamp tone={s.cause === "admin" ? "gold" : "loss"} blink={s.cause !== "admin"} />
-							<span className="status-px text-ink">{s.cause}</span>
-							<span className="font-board text-[17px] text-dim">
-								{s.flight_id} {s.origin}→{s.dest}
-							</span>
-							<span className="font-body text-[12px] text-mute">by {s.opened_by}</span>
-							<span className="font-body text-[12px] text-mute">
-								since {new Date(s.opened_at).toUTCString().slice(5, 22)}
-							</span>
-							<span className="font-body text-[12px] text-mute">
-								checked {new Date(s.last_checked_at).toUTCString().slice(5, 22)}
-							</span>
-							<button
-								className="btn-px btn-ghost btn-sm ml-auto"
-								disabled={revive.isPending}
-								onClick={() => revive.mutate(s.id)}
-							>
-								Revive
-							</button>
-						</li>
-					))}
+					{interventions.map((s) => {
+						const isOpen = expanded === s.id
+						return (
+							<li key={s.id} className="py-2.5">
+								<div className="flex flex-wrap items-center gap-3">
+									<Lamp tone={s.cause === "admin" ? "gold" : "loss"} blink={state === "open" && s.cause !== "admin"} />
+									<span className="status-px text-ink">{s.cause}</span>
+									<span className="font-board text-[17px] text-dim">
+										{s.flight_id} {s.origin}→{s.dest}
+									</span>
+									<span className="font-body text-[12px] text-mute">by {s.opened_by}</span>
+									<span className="font-body text-[12px] text-mute">
+										since {new Date(s.opened_at).toUTCString().slice(5, 22)}
+									</span>
+									{state === "open" ? (
+										<span className="font-body text-[12px] text-mute">
+											checked {new Date(s.last_checked_at).toUTCString().slice(5, 22)}
+										</span>
+									) : (
+										<span className="font-body text-[12px] text-mute">
+											revived {new Date(s.revived_at).toUTCString().slice(5, 22)} by {s.revived_by}
+										</span>
+									)}
+									<button
+										className="btn-px btn-ghost btn-sm"
+										onClick={() => setExpanded(isOpen ? null : s.id)}
+									>
+										{isOpen ? "Hide evidence" : "Evidence"}
+									</button>
+									{state === "open" && (
+										<button
+											className="btn-px btn-ghost btn-sm ml-auto"
+											disabled={revive.isPending}
+											onClick={() => revive.mutate(s.id)}
+										>
+											Revive
+										</button>
+									)}
+								</div>
+								{isOpen && (
+									<pre className="panel-inset mt-2 overflow-x-auto px-3 py-2 font-body text-[12px] text-dim">
+										{JSON.stringify(s.evidence ?? null, null, 2)}
+									</pre>
+								)}
+							</li>
+						)
+					})}
 				</ul>
 			</div>
+			{total > 0 && (
+				<div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+					<span className="font-body text-[13px] text-mute">
+						{total.toLocaleString()} {state === "open" ? "open" : "closed"}
+					</span>
+					<div className="flex items-center gap-3">
+						<button
+							type="button"
+							className="btn-px btn-ghost btn-sm"
+							disabled={page <= 1}
+							onClick={() => onPageChange(page - 1)}
+						>
+							‹ Prev
+						</button>
+						<span className="font-body text-[13px] text-mute">
+							Page {page} / {pageCount}
+						</span>
+						<button
+							type="button"
+							className="btn-px btn-ghost btn-sm"
+							disabled={page >= pageCount}
+							onClick={() => onPageChange(page + 1)}
+						>
+							Next ›
+						</button>
+					</div>
+				</div>
+			)}
 			<AdminPause token={token} onDone={onDone} />
 		</section>
 	)
@@ -748,6 +1141,153 @@ function Txt({
 }
 
 /* ── action log ───────────────────────────────────────────────────── */
+
+const OUTCOME_FILTERS = ["ontime", "delayed", "cancelled", "diverted"]
+const OUTCOME_TONE: Record<string, "win" | "loss" | "gold"> = {
+	ontime: "win",
+	delayed: "gold",
+	cancelled: "loss",
+	diverted: "loss",
+}
+
+function weatherCell(gust: number | null, snow: number | null, precip: number | null) {
+	if (gust == null && snow == null && precip == null) return "—"
+	const parts = []
+	if (gust != null) parts.push(`${Math.round(gust)}km/h gust`)
+	if (snow != null && snow > 0) parts.push(`${snow.toFixed(1)}cm snow`)
+	if (precip != null) parts.push(`${Math.round(precip)}% precip`)
+	return parts.join(" · ") || "—"
+}
+
+function OutcomesPanel({
+	outcomes,
+	loading,
+	filter,
+	onFilterChange,
+	page,
+	onPageChange,
+	total,
+	limit,
+}: {
+	outcomes: any[]
+	loading: boolean
+	filter: string
+	onFilterChange: (outcome: string) => void
+	page: number
+	onPageChange: (page: number) => void
+	total: number
+	limit: number
+}) {
+	const pageCount = Math.max(1, Math.ceil(total / limit))
+
+	return (
+		<section>
+			<h2 className="h-section mb-3">Flight outcomes · weather-learnability log</h2>
+			<div className="mb-3 flex flex-wrap gap-1.5">
+				<button
+					type="button"
+					className={`btn-px btn-sm ${filter === "" ? "btn-gold" : "btn-ghost"}`}
+					onClick={() => onFilterChange("")}
+				>
+					All
+				</button>
+				{OUTCOME_FILTERS.map((o) => (
+					<button
+						key={o}
+						type="button"
+						className={`btn-px btn-sm ${filter === o ? "btn-gold" : "btn-ghost"}`}
+						onClick={() => onFilterChange(o)}
+					>
+						{o}
+					</button>
+				))}
+			</div>
+			<div className="panel overflow-x-auto">
+				<table className="w-full border-collapse text-left">
+					<thead>
+						<tr className="border-b-2 border-line">
+							{["Flight", "Route", "Date", "Outcome", "Delay", "Origin weather", "Dest weather"].map(
+								(h) => (
+									<th key={h} className="label-px px-3 py-2 whitespace-nowrap">
+										{h}
+									</th>
+								)
+							)}
+						</tr>
+					</thead>
+					<tbody className="font-body text-[13px]">
+						{loading && (
+							<tr>
+								<td colSpan={7} className="px-3 py-4 text-mute">
+									Reading the log…
+								</td>
+							</tr>
+						)}
+						{!loading && outcomes.length === 0 && (
+							<tr>
+								<td colSpan={7} className="px-3 py-4 text-mute">
+									No outcomes logged for this filter yet.
+								</td>
+							</tr>
+						)}
+						{outcomes.map((o) => (
+							<tr key={o.id} className="border-b border-line/60 last:border-b-0">
+								<td className="px-3 py-2 text-ink">{o.flight_id}</td>
+								<td className="px-3 py-2 whitespace-nowrap text-dim">
+									{o.origin}→{o.dest}
+								</td>
+								<td className="px-3 py-2 whitespace-nowrap text-mute">{o.flight_date}</td>
+								<td className="px-3 py-2">
+									<span className="flex items-center gap-2">
+										<Lamp tone={OUTCOME_TONE[o.outcome] ?? "gold"} />
+										<span className="status-px text-dim">{o.outcome}</span>
+									</span>
+								</td>
+								<td className="px-3 py-2 text-mute">
+									{o.delay_minutes != null ? `${o.delay_minutes}m` : "—"}
+								</td>
+								<td className="px-3 py-2 whitespace-nowrap text-mute">
+									{weatherCell(o.origin_gust_kmh, o.origin_snow_cm, o.origin_precip_prob_pct)}
+								</td>
+								<td className="px-3 py-2 whitespace-nowrap text-mute">
+									{weatherCell(o.dest_gust_kmh, o.dest_snow_cm, o.dest_precip_prob_pct)}
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
+			{total > 0 && (
+				<div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+					<span className="font-body text-[13px] text-mute">
+						{total.toLocaleString()} outcome{total === 1 ? "" : "s"}
+					</span>
+					<div className="flex items-center gap-3">
+						<button
+							type="button"
+							className="btn-px btn-ghost btn-sm"
+							disabled={page <= 1}
+							onClick={() => onPageChange(page - 1)}
+						>
+							‹ Prev
+						</button>
+						<span className="font-body text-[13px] text-mute">
+							Page {page} / {pageCount}
+						</span>
+						<button
+							type="button"
+							className="btn-px btn-ghost btn-sm"
+							disabled={page >= pageCount}
+							onClick={() => onPageChange(page + 1)}
+						>
+							Next ›
+						</button>
+					</div>
+				</div>
+			)}
+		</section>
+	)
+}
 
 function ActionLog({ log, loading }: { log: any[]; loading: boolean }) {
 	return (

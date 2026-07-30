@@ -17,7 +17,7 @@ import {
 	useActiveFlights,
 	useFlightDataBatch,
 } from "../hooks/useContracts"
-import { CANDIDATE_ROUTES } from "../config/routes"
+import { CANDIDATE_ROUTES, DEMO_ROUTES } from "../config/routes"
 
 /* ── deterministic hashing ─────────────────────────────────────────── */
 
@@ -346,27 +346,21 @@ const ROUTE_BY_ID: Record<string, { origin: string; dest: string }> =
 	)
 
 /**
- * A small, stable DEMO set of "in-air, being tracked" flights, used when the
- * oracle's active list is empty (the usual testnet case — nothing whitelisted).
- * Deterministic: a hashed subset flips to `delayed`. Clearly labelled demo in UI.
+ * A small DEMO set of "in-air, being tracked" flights, used when the
+ * oracle's active list is empty (the usual testnet case — nothing
+ * whitelisted). Built from DEMO_ROUTES (not CANDIDATE_ROUTES/ROUTE_BY_ID)
+ * so this still has something to show even if the fleet file itself is
+ * momentarily empty. Clearly labelled demo in UI.
  */
-const DEMO_TRACKED_IDS = [
-	"AA100", "UA200", "DL300", "B6168", "AS1069",
-	"DL947", "F92159", "UA815", "NK603", "AA97",
-	"AA196", "AA273", "AA324", "WN57",
-] as const
-
 function demoTracked(): TrackedFlight[] {
 	// A tracking board: mostly live in the air, with one recently-cancelled
 	// flight still in its 24h grace window. Nothing marked delayed (those move
 	// to My Policies to be claimed). More than the map cap, so the "all in the
 	// list, first 10 on the map" split is visible.
-	return DEMO_TRACKED_IDS.flatMap((flightId) => {
-		const route = ROUTE_BY_ID[flightId]
-		if (!route || !airportCoords[route.origin] || !airportCoords[route.dest])
-			return []
-		const status: TrackedStatus = flightId === "WN57" ? "cancelled" : "in_air"
-		return [{ flightId, origin: route.origin, dest: route.dest, status }]
+	return DEMO_ROUTES.flatMap((route, i) => {
+		if (!airportCoords[route.origin] || !airportCoords[route.dest]) return []
+		const status: TrackedStatus = i === DEMO_ROUTES.length - 1 ? "cancelled" : "in_air"
+		return [{ flightId: route.flightId, origin: route.origin, dest: route.dest, status }]
 	})
 }
 

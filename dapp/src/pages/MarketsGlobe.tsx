@@ -582,7 +582,7 @@ export default function MarketsGlobe() {
 					</p>
 				</div>
 				<span className="label-px flex items-center gap-2 text-sky">
-					<span className="blink inline-block h-2 w-2 bg-win" />
+					<span className="breathe inline-block h-2 w-2 bg-win" />
 					{t.globe.hint(plottable.length)}
 				</span>
 			</div>
@@ -590,10 +590,13 @@ export default function MarketsGlobe() {
 			<div className="grid gap-6 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
 				{/* LEFT — scrollable flight list (what's being tracked) */}
 				<section className="order-2 lg:order-1">
-					<div className="mb-3 flex items-center justify-between">
+					<div className="mb-3 flex items-center justify-between gap-2">
 						<h2 className="h-section">{t.globe.listTitle}</h2>
-						<span className="label-px">
-							{filtered.length}
+						<span className="flex items-center gap-2">
+							{isDemo && (
+								<span className="status-px text-gold">{t.markets.statusDemo}</span>
+							)}
+							<span className="label-px">{filtered.length}</span>
 						</span>
 					</div>
 					<input

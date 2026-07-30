@@ -40,7 +40,7 @@ export function RiskBar({
 			<div className="riskbar" title={title}>
 				<div className="riskbar-track riskbar-track-serious">
 					<div
-						className="riskbar-fill-serious"
+						className="riskbar-fill-serious riskbar-fill-grow"
 						style={{
 							width: `${delayedPct}%`,
 							background: `linear-gradient(90deg, color-mix(in oklab, ${color} 73%, transparent), ${color})`,
@@ -64,9 +64,10 @@ export function RiskBar({
 				{Array.from({ length: cells }, (_, i) => (
 					<span
 						key={i}
-						className="riskbar-cell"
+						className="riskbar-cell riskbar-cell-pop"
 						style={{
 							background: i < filled ? color : "var(--color-line)",
+							animationDelay: `${i * 35}ms`,
 						}}
 					/>
 				))}

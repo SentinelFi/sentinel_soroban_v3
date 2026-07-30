@@ -665,14 +665,398 @@ input.field-px[type="date"] {
 	animation: px-flash 1200ms steps(2, end) infinite;
 }
 
+/* ── tx progress stepper ──────────────────────────────────────────
+   Serious: opacity/transform, 150–300ms, ease. Fun: steps() pixel
+   motion. Shared box model; the two skins otherwise render nothing
+   alike (see TxProgress.tsx). */
+
+.tx-progress {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 10px 0;
+}
+
+/* -- serious: 3-dot stepper -- */
+.tx-progress-serious .tx-dot {
+	display: flex;
+	height: 22px;
+	width: 22px;
+	align-items: center;
+	justify-content: center;
+	border-radius: 999px;
+	border: 1.5px solid var(--color-line-mid);
+	color: var(--color-mute);
+	transition:
+		border-color 200ms ease,
+		color 200ms ease,
+		background-color 200ms ease;
+}
+.tx-progress-serious .tx-dot.is-active {
+	border-color: var(--color-sky);
+	color: var(--color-sky);
+	animation: tx-shimmer 1400ms ease-in-out infinite;
+}
+.tx-progress-serious .tx-dot.is-done {
+	border-color: var(--color-win);
+	background: color-mix(in srgb, var(--color-win) 16%, transparent);
+	color: var(--color-win);
+}
+.tx-progress-serious .tx-dot.is-failed {
+	border-color: var(--color-loss);
+	color: var(--color-loss);
+}
+.tx-progress-serious .tx-dot-line {
+	height: 1.5px;
+	width: 28px;
+	background: var(--color-line-mid);
+	transition: background-color 250ms ease;
+}
+.tx-progress-serious .tx-dot-line.is-done {
+	background: var(--color-win);
+}
+@keyframes tx-shimmer {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.45;
+	}
+}
+
+/* -- fun: boarding-pass runway -- */
+.tx-progress-fun .tx-runway {
+	position: relative;
+	height: 40px;
+	width: 100%;
+	max-width: 220px;
+}
+.tx-progress-fun .tx-runway-strip {
+	position: absolute;
+	top: 50%;
+	left: 0;
+	right: 0;
+	height: 2px;
+	background: repeating-linear-gradient(
+		to right,
+		var(--color-line-mid) 0 8px,
+		transparent 8px 16px
+	);
+	transform: translateY(-50%);
+}
+.tx-progress-fun .tx-runway-plane {
+	position: absolute;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	transition: left 500ms steps(6, end);
+}
+.tx-progress-fun .tx-radar {
+	position: absolute;
+	top: 0;
+	right: 0;
+	animation: tx-radar-pulse 900ms steps(4, end) infinite;
+}
+@keyframes tx-radar-pulse {
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.6;
+		transform: scale(1.15);
+	}
+}
+.tx-progress-fun .tx-stamp-pop {
+	position: relative;
+	animation: tx-stamp-drop 360ms steps(5, end);
+}
+@keyframes tx-stamp-drop {
+	0% {
+		opacity: 0;
+		transform: scale(1.8) rotate(-14deg);
+	}
+	60% {
+		opacity: 1;
+		transform: scale(0.92) rotate(-4deg);
+	}
+	100% {
+		opacity: 1;
+		transform: scale(1) rotate(-6deg);
+	}
+}
+
+.tx-confetti {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+}
+.tx-confetti-piece {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	height: 5px;
+	width: 5px;
+	background: var(--color-gold);
+	animation: tx-confetti-burst 700ms steps(6, end) forwards;
+}
+@keyframes tx-confetti-burst {
+	to {
+		transform: rotate(var(--tx-angle, 0deg)) translateY(-46px);
+		opacity: 0;
+	}
+}
+.tx-confetti-piece:nth-child(1) {
+	--tx-angle: 0deg;
+	background: var(--color-gold);
+}
+.tx-confetti-piece:nth-child(2) {
+	--tx-angle: 30deg;
+	background: var(--color-win);
+}
+.tx-confetti-piece:nth-child(3) {
+	--tx-angle: 60deg;
+	background: var(--color-sky);
+}
+.tx-confetti-piece:nth-child(4) {
+	--tx-angle: 90deg;
+	background: var(--color-gold);
+}
+.tx-confetti-piece:nth-child(5) {
+	--tx-angle: 120deg;
+	background: var(--color-win);
+}
+.tx-confetti-piece:nth-child(6) {
+	--tx-angle: 150deg;
+	background: var(--color-sky);
+}
+.tx-confetti-piece:nth-child(7) {
+	--tx-angle: 180deg;
+	background: var(--color-gold);
+}
+.tx-confetti-piece:nth-child(8) {
+	--tx-angle: 210deg;
+	background: var(--color-win);
+}
+.tx-confetti-piece:nth-child(9) {
+	--tx-angle: 240deg;
+	background: var(--color-sky);
+}
+.tx-confetti-piece:nth-child(10) {
+	--tx-angle: 270deg;
+	background: var(--color-gold);
+}
+.tx-confetti-piece:nth-child(11) {
+	--tx-angle: 300deg;
+	background: var(--color-win);
+}
+.tx-confetti-piece:nth-child(12) {
+	--tx-angle: 330deg;
+	background: var(--color-sky);
+}
+.tx-confetti-piece:nth-child(13) {
+	--tx-angle: 15deg;
+	background: var(--color-gold);
+}
+.tx-confetti-piece:nth-child(14) {
+	--tx-angle: 195deg;
+	background: var(--color-win);
+}
+
+/* ── micro-animations (fun more, serious less) ────────────────────
+   Serious = opacity/transform, 150–300ms, ease. Fun = steps() pixel
+   motion. Admin intentionally does not use any of these — it stays
+   minimal (see Admin.tsx). */
+
+/* status-lamp breathing — a calmer alternative to .blink for "alive and
+   updating" indicators (LIVE dots), as opposed to .blink's harder flash
+   reserved for states that want conscious attention (DEMO/error). */
+@keyframes px-breathe {
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.55;
+		transform: scale(0.85);
+	}
+}
+.breathe {
+	animation: px-breathe 2200ms ease-in-out infinite;
+}
+
+/* split-flap status chips — plays on mount, so callers key the chip on
+   its displayed text: a genuine content change remounts it and replays
+   the flap. Fun = a snappy vertical squeeze (steps); serious = a soft
+   fade + tiny rise. */
+@keyframes px-flap-fun {
+	0% {
+		transform: scaleY(0.2);
+		opacity: 0;
+	}
+	60% {
+		transform: scaleY(1.15);
+		opacity: 1;
+	}
+	100% {
+		transform: scaleY(1);
+	}
+}
+@keyframes px-flap-serious {
+	from {
+		transform: translateY(3px);
+		opacity: 0;
+	}
+	to {
+		transform: translateY(0);
+		opacity: 1;
+	}
+}
+.status-flap {
+	transform-origin: center;
+	animation: px-flap-fun 260ms steps(5, end) both;
+}
+[data-theme="serious"] .status-flap {
+	animation: px-flap-serious 220ms ease-out both;
+}
+
+/* board row stream-in — plays once per row on mount (i.e. when it first
+   enters the visible page/search/sort set, not on background refetches
+   of unchanged rows, since those keep the same key). */
+@keyframes px-row-in {
+	from {
+		transform: translateY(6px);
+		opacity: 0;
+	}
+	to {
+		transform: translateY(0);
+		opacity: 1;
+	}
+}
+.board-row-in {
+	animation: px-row-in 320ms ease-out both;
+}
+[data-theme="fun"] .board-row-in {
+	animation-timing-function: steps(6, end);
+}
+.board-row-in:nth-child(1) {
+	animation-delay: 0ms;
+}
+.board-row-in:nth-child(2) {
+	animation-delay: 30ms;
+}
+.board-row-in:nth-child(3) {
+	animation-delay: 60ms;
+}
+.board-row-in:nth-child(4) {
+	animation-delay: 90ms;
+}
+.board-row-in:nth-child(5) {
+	animation-delay: 120ms;
+}
+.board-row-in:nth-child(6) {
+	animation-delay: 150ms;
+}
+.board-row-in:nth-child(7) {
+	animation-delay: 180ms;
+}
+.board-row-in:nth-child(8) {
+	animation-delay: 210ms;
+}
+.board-row-in:nth-child(9) {
+	animation-delay: 240ms;
+}
+.board-row-in:nth-child(10) {
+	animation-delay: 270ms;
+}
+.board-row-in:nth-child(11) {
+	animation-delay: 300ms;
+}
+.board-row-in:nth-child(12) {
+	animation-delay: 330ms;
+}
+
+/* MyBets claim-button gold pulse — distinct from the card's existing
+   .win-flash border flash; draws the eye specifically to the action. */
+@keyframes px-claim-pulse {
+	0%,
+	100% {
+		box-shadow: 0 0 0 0 rgba(245, 193, 58, 0.55);
+	}
+	50% {
+		box-shadow: 0 0 0 6px rgba(245, 193, 58, 0);
+	}
+}
+.claim-btn-pulse {
+	animation: px-claim-pulse 1600ms ease-in-out infinite;
+}
+[data-theme="fun"] .claim-btn-pulse {
+	animation-timing-function: steps(4, end);
+}
+
+/* toast settle — drop in, slight overshoot, settle. Plays on mount
+   (each toast already has a stable per-notification key). */
+@keyframes px-toast-settle {
+	0% {
+		transform: translateY(-14px);
+		opacity: 0;
+	}
+	70% {
+		transform: translateY(2px);
+		opacity: 1;
+	}
+	100% {
+		transform: translateY(0);
+	}
+}
+.toast-px {
+	animation: px-toast-settle 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+[data-theme="fun"] .toast-px {
+	animation-timing-function: steps(6, end);
+}
+
+/* TopBar coin flip (fun only) — plays on mount, so the caller keys the
+   coin sprite on the balance value: a genuine change remounts it. */
+@keyframes px-coin-flip {
+	0% {
+		transform: rotateY(0deg);
+	}
+	100% {
+		transform: rotateY(360deg);
+	}
+}
+.coin-flip {
+	display: inline-block;
+	animation: px-coin-flip 700ms steps(8, end);
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.blink,
 	.marquee-track,
 	.floaty,
 	.land-track,
 	.land-plane,
-	.win-flash {
+	.win-flash,
+	.tx-progress-serious .tx-dot.is-active,
+	.tx-progress-fun .tx-runway-plane,
+	.tx-progress-fun .tx-radar,
+	.tx-progress-fun .tx-stamp-pop,
+	.tx-confetti-piece,
+	.breathe,
+	.status-flap,
+	.board-row-in,
+	.claim-btn-pulse,
+	.toast-px,
+	.coin-flip,
+	.riskbar-fill-grow,
+	.riskbar-cell-pop,
+	.globe-node-fun,
+	.globe-node-serious {
 		animation: none;
+		transition: none;
 	}
 	/* with the loop off, the plane rests parked on the runway — visible */
 }
@@ -752,6 +1136,20 @@ input.field-px[type="date"] {
 	width: 5px;
 	height: 10px;
 }
+.riskbar-cell-pop {
+	transform-origin: bottom;
+	animation: riskbar-cell-pop 260ms steps(4, end) both;
+}
+@keyframes riskbar-cell-pop {
+	from {
+		transform: scaleY(0);
+		opacity: 0;
+	}
+	to {
+		transform: scaleY(1);
+		opacity: 1;
+	}
+}
 .riskbar-value {
 	font-family: var(--font-board);
 	font-size: 16px;
@@ -776,6 +1174,18 @@ input.field-px[type="date"] {
 .riskbar-fill-serious {
 	height: 100%;
 	border-radius: 9999px;
+}
+.riskbar-fill-grow {
+	transform-origin: left;
+	animation: riskbar-fill-grow 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes riskbar-fill-grow {
+	from {
+		transform: scaleX(0);
+	}
+	to {
+		transform: scaleX(1);
+	}
 }
 [data-theme="serious"] .riskbar-value {
 	font-family: var(--font-display);
