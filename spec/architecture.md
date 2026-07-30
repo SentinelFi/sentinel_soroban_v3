@@ -25,6 +25,7 @@
   - [Backend structure](#backend-structure)
   - [Job-Ops Layer](#job-ops-layer)
   - [Backend migration](#backend-migration)
+- [Decentralization Roadmap — from our crons to permissionless keepers](#decentralization-roadmap--from-our-crons-to-permissionless-keepers)
 - [Off-Chain Governance Automation](#off-chain-governance-automation)
 - [Data Flow](#data-flow)
   - [The Life of One Insured Flight](#the-life-of-one-insured-flight)
@@ -1492,7 +1493,9 @@ permissionless today, and the planned bounty upgrade (spec/TODO.md §E) makes
 the remaining keeper entry points permissionless-and-paid. **Governance and
 oracle stay centralized** — the oracle's future trust upgrade is a TEE
 backend (address rotation, unchanged contracts), not permissionless
-operation.
+operation. The full staged plan — and why the beta deliberately runs
+centralized first — is the [Decentralization
+Roadmap](#decentralization-roadmap--from-our-crons-to-permissionless-keepers).
 
 **Optional by design — the system runs without them:**
 
@@ -1967,6 +1970,130 @@ immediately sweep `close_sale` over every window still open (reconstructed from 
 24 h validity horizon — otherwise the attacker's parting attestations (including windows
 on publicly cancelled flights, each a deterministic claim once the cancellation is
 recorded) stay purchasable after the key swap.
+
+## Decentralization Roadmap — from our crons to permissionless keepers
+
+> **In plain terms.** Today, our robots keep the protocol moving. The plan is
+> that anyone's robots can — discovering work from public contract events and
+> getting paid a bounty per settlement — while the oracle and governance stay
+> ours on purpose. This section says exactly what is open today, what the
+> target looks like, why we are *deliberately* not there yet, and what has to
+> be true before we flip the switch.
+
+### Why centralized now — the honest position
+
+Full decentralization of the execution layer is the committed end-state, not
+the starting point — and that ordering is deliberate, not a compromise we
+hope nobody notices. A beta's job is to **measure**: what settlement latency
+really looks like against the 24h promise, how often flights void on the
+14-day timeouts, what a settlement costs in transactions and fees, how often
+competing keepers would race and no-op. Every one of those numbers is an
+input to the bounty economics — and bounty economics written before the data
+exist are guesses that get frozen into contracts that are, by design, hard
+to change. Centralized crons let us:
+
+- **iterate daily** — a cron edit is a redeploy; a keeper-incentive mistake
+  is a contract migration. The last month alone replaced the entire sale
+  authorizer, the fetcher's phase machinery, and the governance pause
+  pipeline — three rewrites that would each have been a migration ceremony
+  in an immutable keeper economy;
+- **fail safely** — every centralized job fails *closed*: a dead sale-auth
+  endpoint halts new sales, a dead settle sweep delays payouts, a dead
+  governance cron freezes the rulebook as-is. None of them can lose money.
+  "Our cron is down" degrades availability, never correctness;
+- **ship v1 in months, not years** — the fast-moving beta phase is exactly
+  when the system should NOT be immutable.
+
+So the position is: **sufficiently decentralized now, fully decentralized on
+evidence.** Sufficient, because the things that matter are already out of
+any operator's hands — custody and settlement rules live on-chain, the
+contracts re-verify every keeper input, no automated actor can exceed the
+owner-set term limits, and the trust-free entry points are already
+permissionless. Full, later, because the remaining step (keeper bounties)
+deserves to be built on beta data instead of faith. We promised complete
+decentralization of execution; this is the sequencing that gets there
+without freezing guesses into immutable infrastructure.
+
+### What is already open today
+
+| Piece | Status |
+|---|---|
+| `extend_ttl` (all 5 contracts), `prune_settled`, `sweep_expired` | **Permissionless now** — any funded key, no registration |
+| The four keeper bots (`classifier`, `settler`, `queue_maintainer`, `ttl_extender`) | Code public + runnable by anyone (`npm run bot -- <name>`: RPC + key, no AeroAPI, no DB); writes land only for the registered `authorized_keeper` (spam control, not integrity) |
+| Every keeper input | Re-verified on-chain — keepers move **no new information**, so publishing the code gives away zero power |
+
+### The trust map — what decentralizes and what never does
+
+| Tier | End state | Why |
+|---|---|---|
+| **Keepers** (classify / settle / voids / queue / TTL) | **Permissionless + paid** | They only execute what the oracle already attested; opening them costs no trust — only incentive design |
+| **Oracle** (JIT sale-auth + settle sweep) | Centralized; trust upgrade = **TEE** (Acurast/Phala) taking over the same `authorized_oracle` address | Real-world facts need a trusted observer; the upgrade hardens the observer, it does not multiply it |
+| **Governance** (interventions, pricing, intake) | Centralized; bounded by on-chain term limits, the executor guardrails, and the owner backstop | Underwriting appetite is a business decision, not a consensus problem |
+
+### The target design — event-driven keepers, no database anywhere
+
+A third-party keeper needs exactly two things: a Stellar RPC URL and a
+funded key. Work discovery comes from the contracts' own event stream (62
+typed events), not from any operator infrastructure:
+
+```
+LISTEN   poll RPC getEvents on the deployed contracts
+           sentinel.flight_status = Landed | Cancelled  → classify work
+           classify outcome (ToBeSettled*)              → settle work
+VERIFY   simulate the call (free) — does the transition actually pend?
+SUBMIT   controller.classify_flight / settle_flight for that exact tuple
+EARN     the contract pays the bounty ONLY when the call's bool reports
+         a real transition — a racing loser's call no-ops at its own fee
+```
+
+Clock-shaped work needs no events at all: the 14-day void timeouts, queue
+snapshots, and TTL upkeep are all derivable from free public state reads
+(`get_active_flights` + dates, queue views). RPC's ~7-day event retention
+is sufficient — keepers chase live work, not history. The entry points are
+already idempotent, tuple-exact, and bool-returning; the loop above works
+against today's contracts minus the key gate.
+
+### The bounty upgrade — the one contract change (Phase B)
+
+Shipped through the contracts' existing owner-gated wasm-upgrade path, on a
+future contracts branch (never `off_chain_fixes`):
+
+1. **Drop the `authorized_keeper` gate** on `classify_flight(s)` /
+   `settle_flight` / `execute_settlements`. Spam control is replaced by
+   economics: a call that does no work no-ops at the caller's own fee.
+2. **Pay on true transitions**: the existing bool returns mark exactly when
+   a call did real work — that is the bounty trigger, nothing new to detect.
+3. **Fund from premiums** (current design lean, final sizing deferred to
+   beta data): a small per-policy skim escrowed at purchase into that
+   flight's bounty pot — buyers fund their own settlement guarantee, and
+   the pot scales 1:1 with the work.
+4. **Scope**: classify + settle + the void timeouts are bountied (the tail
+   nobody runs for fun); queue maintenance and TTL stay unpaid — cheap,
+   already permissionless (TTL), and we keep running them regardless.
+5. **Races are harmless on Stellar**: no public-mempool front-running; the
+   losing transaction no-ops and pays only its own fee, and simulation-first
+   keepers rarely submit losers at all.
+
+### Migration phases — and what the beta must measure first
+
+```
+Phase A (NOW)    gated keepers, our crons, measurement:
+                   - settle latency vs the 24h-of-ETA promise
+                   - txs + fees per settlement (bounty floor)
+                   - no-op / skip ratios per cron (race-waste estimate)
+                   - void frequency (the tail work worth paying for)
+                   - AeroAPI calls per insured flight (oracle cost base)
+Phase B          bounty upgrade via the wasm-upgrade path, sized from
+                 Phase A's numbers; keeper key gate removed
+Phase C          keeper kit published (events-poller + the existing bots);
+                 our crons demoted to ONE BACKSTOP KEEPER among many —
+                 liveness guaranteed by us, delivered by whoever is fastest
+```
+
+Each phase preserves the fail-closed property: at no point does
+decentralizing execution create a state where money moves without the
+contracts' own verification. The task-level checklist lives in
+[TODO.md §E](TODO.md).
 
 ---
 
