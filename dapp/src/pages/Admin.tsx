@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import type { Session } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
+import { relTime } from "../lib/utils"
 import { TxProgress } from "../components/TxProgress"
 import type { TxState } from "../types"
 
@@ -41,15 +42,6 @@ const usd = (units: string | null | undefined) =>
 	units == null ? "—" : `$${(Number(units) / 1e7).toLocaleString()}`
 
 const shortTx = (h: string) => `${h.slice(0, 4)}…${h.slice(-4)}`
-
-export function relTime(iso: string | null): string {
-	if (!iso) return "never"
-	const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000)
-	if (mins < 1) return "just now"
-	if (mins < 60) return `${mins}m ago`
-	if (mins < 48 * 60) return `${Math.floor(mins / 60)}h ago`
-	return `${Math.floor(mins / 1440)}d ago`
-}
 
 /* ── board atoms ──────────────────────────────────────────────────── */
 

@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react"
 import { Link, Route, Routes } from "react-router-dom"
 import { TopBar } from "./components/TopBar"
 import { FlightBackground } from "./components/FlightBackground"
@@ -6,13 +7,27 @@ import { ActivityLog } from "./components/ActivityLog"
 import { useTheme } from "./providers/ThemeProvider"
 import { useCopy } from "./copy"
 import Markets from "./pages/Markets"
-import MarketsGlobe from "./pages/MarketsGlobe"
 import MyBets from "./pages/MyBets"
 import House from "./pages/House"
-import Quant from "./pages/Quant"
-import Admin from "./pages/Admin"
 import Status from "./pages/Status"
 import { Privacy, Terms } from "./pages/Legal"
+
+// Heavy pages load on first navigation, not with the landing page:
+// the globe carries d3-geo + the world-atlas topology, the calculator its
+// Monte Carlo engine, and /admin is the only consumer of supabase-js.
+const MarketsGlobe = lazy(() => import("./pages/MarketsGlobe"))
+const Quant = lazy(() => import("./pages/Quant"))
+const Admin = lazy(() => import("./pages/Admin"))
+
+function PageLoading() {
+	return (
+		<div className="flex min-h-[50vh] items-center justify-center">
+			<p className="font-display text-[11px] tracking-[0.1em] text-mute uppercase">
+				LOADING…
+			</p>
+		</div>
+	)
+}
 
 const GITHUB_URL = "https://github.com/SentinelFi"
 
@@ -26,21 +41,23 @@ export default function App() {
 
 			<TopBar />
 			<main className="relative z-10 flex-1">
-				<Routes>
-					<Route path="/" element={<Markets />} />
-					<Route path="/markets" element={<MarketsGlobe />} />
-					<Route path="/bets" element={<MyBets />} />
-					<Route path="/house" element={<House />} />
-					<Route path="/calculator" element={<Quant />} />
-					{/* legacy alias */}
-					<Route path="/quant" element={<Quant />} />
-					<Route path="/privacy" element={<Privacy />} />
-					<Route path="/terms" element={<Terms />} />
-					<Route path="/status" element={<Status />} />
-					{/* hidden — not linked from any nav; ops only */}
-					<Route path="/admin" element={<Admin />} />
-					<Route path="*" element={<Markets />} />
-				</Routes>
+				<Suspense fallback={<PageLoading />}>
+					<Routes>
+						<Route path="/" element={<Markets />} />
+						<Route path="/markets" element={<MarketsGlobe />} />
+						<Route path="/bets" element={<MyBets />} />
+						<Route path="/house" element={<House />} />
+						<Route path="/calculator" element={<Quant />} />
+						{/* legacy alias */}
+						<Route path="/quant" element={<Quant />} />
+						<Route path="/privacy" element={<Privacy />} />
+						<Route path="/terms" element={<Terms />} />
+						<Route path="/status" element={<Status />} />
+						{/* hidden — not linked from any nav; ops only */}
+						<Route path="/admin" element={<Admin />} />
+						<Route path="*" element={<Markets />} />
+					</Routes>
+				</Suspense>
 			</main>
 
 			<SiteFooter />
