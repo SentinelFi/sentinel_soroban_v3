@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { relTime } from "./Admin"
+import { relTime } from "../lib/utils"
 
 /**
  * SYSTEM STATUS — public job-health board (linked from the footer).

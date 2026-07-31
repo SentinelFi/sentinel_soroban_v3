@@ -20,6 +20,13 @@ export default defineConfig({
 	build: {
 		target: "esnext",
 	},
+	resolve: {
+		// The generated binding packages each declare their own stellar-sdk
+		// dependency — if their version ever drifts from the root's, npm
+		// nests per-package copies and the bundle ships the SDK N times.
+		// Dedupe pins every import to the single root copy.
+		dedupe: ["@stellar/stellar-sdk", "@stellar/stellar-base"],
+	},
 	define: {
 		global: "window",
 	},
