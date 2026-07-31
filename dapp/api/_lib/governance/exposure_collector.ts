@@ -296,6 +296,14 @@ export async function run(config: GovConfig, deps: ExposureDeps = {}): Promise<R
             transition: `ingested ${ingested.policies} policy / ${ingested.settlements} settlement event(s)`,
           });
         }
+        // OCA-L05: a retention gap is permanent mirror data loss — surface
+        // it on the jobs board, not just in a log line.
+        if (ingested.gapLedgers > 0) {
+          actions.push({
+            flight: "-",
+            error: `event-mirror gap: ${ingested.gapLedgers} ledger(s) lost beyond RPC retention (mirror incomplete; live exposure unaffected)`,
+          });
+        }
         console.log(
           `[gov-exposure] event mirror: +${ingested.policies} policies, +${ingested.settlements} settlements ` +
             `(ledgers ${ingested.fromLedger}..${ingested.toLedger})`
