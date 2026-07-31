@@ -8,6 +8,7 @@ import { useTheme } from "./providers/ThemeProvider"
 import { useWallet } from "./hooks/useWallet"
 import { stellarNetwork } from "./contracts/util"
 import { useCopy } from "./copy"
+import { DOCS_URL, GITHUB_URL, STELLAR_URL, X_URL } from "./config/links"
 import Markets from "./pages/Markets"
 import Policies from "./pages/Policies"
 import House from "./pages/House"
@@ -30,8 +31,6 @@ function PageLoading() {
 		</div>
 	)
 }
-
-const GITHUB_URL = "https://github.com/SentinelFi"
 
 /**
  * FSA-L01: warn (non-blocking) when the connected wallet is on a
@@ -96,7 +95,25 @@ export default function App() {
 	)
 }
 
-const X_URL = "https://x.com/sentinel_fi/"
+/** © line — "Soroban" links out to stellar.org; shared by both footer skins. */
+function FooterCopyright() {
+	const t = useCopy()
+	const year = new Date().getFullYear()
+	return (
+		<p className="font-body text-[13px] text-mute">
+			© {year} {t.brand.name} ·{" "}
+			<a
+				href={STELLAR_URL}
+				target="_blank"
+				rel="noopener noreferrer"
+				className="footer-link"
+			>
+				Soroban
+			</a>{" "}
+			testnet · {t.footer.left}
+		</p>
+	)
+}
 
 /** Privacy · Terms · Status · GitHub · X — shared by both footer skins. */
 function FooterLinks({ className }: { className?: string }) {
@@ -147,17 +164,27 @@ function FooterLinks({ className }: { className?: string }) {
 function SiteFooter() {
 	const { theme } = useTheme()
 	const t = useCopy()
-	const year = new Date().getFullYear()
 
 	if (theme === "serious") {
 		return (
 			<footer className="relative z-10 mt-16 border-t border-line/60">
 				<div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-6 text-center sm:flex-row sm:items-center sm:justify-between sm:text-left">
-					<p className="font-body text-[13px] text-mute">
-						© {year} {t.brand.name} · {t.footer.left}
-					</p>
+					<FooterCopyright />
 					<FooterLinks className="flex items-center justify-center gap-3 font-body text-[13px]" />
-					<p className="font-body text-[12px] text-mute">{t.footer.right}</p>
+					<p className="font-body text-[12px] text-mute">
+						{t.footer.right}{" "}
+						<span aria-hidden="true" className="text-mute/50">
+							·
+						</span>{" "}
+						<a
+							href={DOCS_URL}
+							target="_blank"
+							rel="noopener noreferrer"
+							className="footer-link"
+						>
+							Docs
+						</a>
+					</p>
 				</div>
 			</footer>
 		)
@@ -165,13 +192,23 @@ function SiteFooter() {
 
 	return (
 		<footer className="relative z-10 mt-16 overflow-hidden border-t-2 border-line">
-			<div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 py-4 sm:flex-row">
-				<p className="font-body text-[13px] text-mute">
-					© {year} {t.brand.name} · {t.footer.left}
-				</p>
-				<FooterLinks className="flex items-center gap-3 font-display text-[9px] tracking-[0.06em] uppercase" />
+			{/* pixel type is wide — stay stacked until lg or the row overflows */}
+			<div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 py-4 text-center lg:flex-row lg:text-left">
+				<FooterCopyright />
+				<FooterLinks className="flex flex-wrap items-center justify-center gap-3 font-display text-[9px] tracking-[0.06em] uppercase" />
 				<p className="font-body text-[11px] tracking-[0.1em] text-mute">
-					{t.footer.right}
+					{t.footer.right}{" "}
+					<span aria-hidden="true" className="text-mute/50">
+						·
+					</span>{" "}
+					<a
+						href={DOCS_URL}
+						target="_blank"
+						rel="noopener noreferrer"
+						className="footer-link"
+					>
+						DOCS
+					</a>
 				</p>
 			</div>
 			{/* oversized wordmark: whole across the width, flush to the

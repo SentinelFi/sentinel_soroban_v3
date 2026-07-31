@@ -140,7 +140,9 @@ function CoinChip() {
 	}
 
 	return (
-		<div className="hidden items-center gap-2 border-2 border-line bg-raised px-3 py-1.5 sm:flex">
+		// hidden again on md–lg: with the inline nav there the chip is what
+		// pushes the single-row bar past the viewport
+		<div className="hidden items-center gap-2 border-2 border-line bg-raised px-3 py-1.5 sm:flex md:hidden lg:flex">
 			{theme === "fun" ? (
 				<PixelArt
 					key={usdcBalance?.toString() ?? "loading"}
@@ -175,7 +177,10 @@ export function TopBar() {
 
 	return (
 		<header className="topbar sticky top-0 z-20 border-b-2 border-line bg-page">
-			<div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
+			{/* phones may wrap the wallet group to its own line; from md up the
+		    bar stays a single row — squeezed items wrap their own text
+		    ("MY POLICIES" → two lines) instead of breaking the row */}
+		<div className="mx-auto flex max-w-6xl flex-wrap items-center gap-4 px-4 py-3 md:flex-nowrap">
 				{/* logo block */}
 				<NavLink to="/" className="flex items-center gap-3">
 					<span className="floaty font-display text-[16px] text-gold">
@@ -192,7 +197,8 @@ export function TopBar() {
 					</span>
 				</NavLink>
 
-				{/* nav */}
+				{/* nav — multi-word labels ("MY POLICIES") wrap to two centered
+				    lines when squeezed, keeping the whole bar on one row */}
 				<nav className="ml-6 hidden items-center gap-1 md:flex">
 					{NAV.map((item) => (
 						<NavLink
@@ -201,7 +207,7 @@ export function TopBar() {
 							end={item.to === "/"}
 							className={({ isActive }) =>
 								cn(
-									"nav-link px-3 py-2 font-display text-[10px] tracking-[0.04em]",
+									"nav-link px-3 py-2 text-center font-display text-[10px] leading-[1.6] tracking-[0.04em]",
 									isActive
 										? "bg-gold text-page"
 										: "text-dim hover:bg-raised hover:text-ink",
@@ -222,7 +228,7 @@ export function TopBar() {
 						<button
 							type="button"
 							onClick={() => void connectWallet()}
-							className="btn-px btn-gold btn-sm"
+							className="btn-px btn-gold btn-sm whitespace-normal text-center lg:whitespace-nowrap"
 						>
 							{t.wallet.connect}
 						</button>
@@ -231,7 +237,7 @@ export function TopBar() {
 			</div>
 
 			{/* mobile nav */}
-			<nav className="flex items-center justify-center gap-1 border-t-2 border-line px-4 py-2 md:hidden">
+			<nav className="flex flex-wrap items-center justify-center gap-1 border-t-2 border-line px-4 py-2 md:hidden">
 				{NAV.map((item) => (
 					<NavLink
 						key={item.to}
