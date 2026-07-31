@@ -98,7 +98,11 @@ export async function logFlightOutcome(entry: OutcomeLogEntry): Promise<void> {
 
     const sql = getDb();
     await ensureOutcomesTable(sql);
-    await sql`
+    // OCA-L07: first write wins. The on-chain outcome is forward-only and
+    // written once, so a second log for the same key is either an
+    // idempotent retry (harmless) or a divergent value that must NOT
+    // silently rewrite the ML training log — keep the original and warn.
+    const inserted = (await sql`
       insert into flight_outcomes
         (flight_id, origin, dest, flight_date, outcome, delay_minutes,
          origin_gust_kmh, origin_snow_cm, origin_precip_prob_pct, origin_wmo_codes,
@@ -108,9 +112,25 @@ export async function logFlightOutcome(entry: OutcomeLogEntry): Promise<void> {
          ${entry.outcome}, ${entry.delayMinutes},
          ${o.gust}, ${o.snow}, ${o.precip}, ${o.codes},
          ${d.gust}, ${d.snow}, ${d.precip}, ${d.codes})
-      on conflict (flight_id, origin, dest, flight_date) do update
-        set outcome = excluded.outcome, delay_minutes = excluded.delay_minutes
-    `;
+      on conflict (flight_id, origin, dest, flight_date) do nothing
+      returning outcome
+    `) as unknown as unknown[];
+    if (inserted.length === 0) {
+      const existing = (await sql`
+        select outcome, delay_minutes from flight_outcomes
+        where flight_id = ${entry.flightId} and origin = ${route.origin}
+          and dest = ${route.destination} and flight_date = ${dateIso}
+      `) as unknown as Array<{ outcome: string; delay_minutes: number | null }>;
+      const prior = existing[0];
+      if (prior && (prior.outcome !== entry.outcome || prior.delay_minutes !== entry.delayMinutes)) {
+        console.warn(
+          `[outcome-log] ${entry.flightId} ${dateIso}: divergent re-log ` +
+            `(${entry.outcome}/${entry.delayMinutes}m vs stored ${prior.outcome}/${prior.delay_minutes}m) — ` +
+            `keeping the first-written value.`
+        );
+      }
+      return;
+    }
     console.log(`[outcome-log] ${entry.flightId} ${dateIso}: ${entry.outcome}${entry.delayMinutes != null ? ` (${entry.delayMinutes}m)` : ""} logged`);
   } catch (err) {
     console.warn(`[outcome-log] failed for ${entry.flightId} (ignored): ${err}`);

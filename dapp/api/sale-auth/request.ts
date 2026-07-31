@@ -1,5 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { loadConfig } from "../_lib/config";
+import { publicError } from "../_lib/public_error";
+import { allowRequest, clientIp } from "../_lib/rate_limit";
 import { authorizeSale } from "../_lib/sale_auth";
 
 // One AeroAPI call + up to two oracle txs (window or tombstone) + an
@@ -30,6 +32,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     res.status(405).json({ error: "Method not allowed" });
     return;
   }
+  // OCA-M02: each novel (flight, date) can cost a billed AeroAPI call and
+  // oracle-signed chain writes — throttle anonymous callers. A real buyer
+  // clicks a handful of times a minute; 10/min/IP is generous for humans
+  // and starves a flight×date space walk.
+  if (!(await allowRequest("sale-auth", clientIp(req), 10))) {
+    res.setHeader("Retry-After", "60");
+    res.status(429).json({ error: "rate limit exceeded — retry in a minute" });
+    return;
+  }
   const { flight_id, date } = (req.body ?? {}) as { flight_id?: unknown; date?: unknown };
   const dateNum = Number(date);
   if (
@@ -53,6 +64,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       ...(result.scheduledIn !== undefined ? { scheduled_in: result.scheduledIn } : {}),
     });
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    res.status(500).json({ error: publicError("sale-auth", err) });
   }
 }

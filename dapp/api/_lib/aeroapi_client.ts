@@ -99,10 +99,39 @@ export class AeroApiClient {
    * cycles. Callers already fail safe on null.
    */
   private quotaExhausted = false;
+  /**
+   * OCA-M04: absolute wall-clock deadline (epoch ms). Serverless jobs run
+   * under a hard maxDuration kill; a single flight's 429 cooldowns
+   * (~65s × 3) must never sleep the function into that kill mid-loop.
+   * When a retry sleep would cross the deadline the call gives up (null —
+   * every caller fails safe) WITHOUT tripping the quota breaker.
+   */
+  private deadlineMs: number | null = null;
 
   constructor(config: Pick<Config, "aeroApiBaseUrl" | "aeroApiKey">) {
     this.baseUrl = config.aeroApiBaseUrl;
     this.apiKey = config.aeroApiKey;
+  }
+
+  setDeadline(epochMs: number): void {
+    this.deadlineMs = epochMs;
+  }
+
+  // OCA-L06: the client validates and encodes its own inputs instead of
+  // trusting every caller's discipline — several internal callers (route
+  // guard, admin routes) reach here with values that were never
+  // regex-checked upstream. Invalid input → null, same fail-soft contract
+  // as every other client error.
+  private static IDENT_RE = /^[A-Z0-9]{2,10}$/i;
+  private static DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  private badInput(kind: string, value: unknown): null {
+    console.warn(`[aeroapi] invalid ${kind} ${JSON.stringify(value)} — refusing to build request`);
+    return null;
+  }
+
+  private wouldCrossDeadline(pendingSleepMs: number): boolean {
+    return this.deadlineMs !== null && Date.now() + pendingSleepMs > this.deadlineMs;
   }
 
   /**
@@ -125,7 +154,11 @@ export class AeroApiClient {
    * Retries on 429 (rate limit) and 5xx with exponential backoff.
    */
   async getFlightData(ident: string, dateStr: string): Promise<AeroApiFlight | null> {
-    const url = `${this.baseUrl}/flights/${ident}?start=${dateStr}T00:00:00Z&end=${dateStr}T23:59:59Z`;
+    if (!AeroApiClient.IDENT_RE.test(ident)) return this.badInput("ident", ident);
+    if (!AeroApiClient.DATE_RE.test(dateStr)) return this.badInput("date", dateStr);
+    const url =
+      `${this.baseUrl}/flights/${encodeURIComponent(ident)}` +
+      `?start=${encodeURIComponent(`${dateStr}T00:00:00Z`)}&end=${encodeURIComponent(`${dateStr}T23:59:59Z`)}`;
     const data = await this.requestJson<AeroApiResponse>(url, `${ident} on ${dateStr}`);
     if (!data) return null;
 
@@ -159,7 +192,12 @@ export class AeroApiClient {
     startIso: string,
     endIso: string
   ): Promise<AeroApiFlight[] | null> {
-    const url = `${this.baseUrl}/flights/${ident}?start=${startIso}&end=${endIso}`;
+    if (!AeroApiClient.IDENT_RE.test(ident)) return this.badInput("ident", ident);
+    if (Number.isNaN(Date.parse(startIso))) return this.badInput("startIso", startIso);
+    if (Number.isNaN(Date.parse(endIso))) return this.badInput("endIso", endIso);
+    const url =
+      `${this.baseUrl}/flights/${encodeURIComponent(ident)}` +
+      `?start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(endIso)}`;
     const data = await this.requestJson<AeroApiResponse>(url, `${ident} ${startIso}..${endIso}`);
     if (!data) return null;
     return data.flights ?? [];
@@ -200,6 +238,8 @@ export class AeroApiClient {
       maxPages?: number;
     }
   ): Promise<AeroApiSchedulesResponse | null> {
+    if (!AeroApiClient.DATE_RE.test(dateStartStr)) return this.badInput("dateStart", dateStartStr);
+    if (!AeroApiClient.DATE_RE.test(dateEndStr)) return this.badInput("dateEnd", dateEndStr);
     // max_pages is clamped: values above ~5 have been observed answering
     // with quota errors / empty sets on lower tiers. Busy windows beyond
     // the first response are collected by FOLLOWING links.next cursors,
@@ -256,6 +296,10 @@ export class AeroApiClient {
     if (this.quotaExhausted) {
       return null; // breaker tripped — no point burning more calls this run
     }
+    if (this.wouldCrossDeadline(0)) {
+      console.warn(`[aeroapi] run deadline reached — skipping ${label}.`);
+      return null;
+    }
     const headers: Record<string, string> = {};
     if (this.apiKey) {
       headers["x-apikey"] = this.apiKey;
@@ -291,6 +335,13 @@ export class AeroApiClient {
         // does not. Cool down past the window and retry; only a 429 that
         // SURVIVES the cooldown trips the permanent run-level breaker.
         if (resp.status === 429) {
+          if (this.wouldCrossDeadline(RATE_LIMIT_COOLDOWN_MS)) {
+            console.warn(
+              `[aeroapi] 429 for ${label} but a cooldown would cross the run deadline — ` +
+                `giving up on this call (quota breaker NOT tripped).`
+            );
+            return null;
+          }
           if (attempt < MAX_RETRIES) {
             console.warn(
               `[aeroapi] HTTP 429 for ${label} — rate-limit/quota ambiguous; ` +
@@ -311,6 +362,10 @@ export class AeroApiClient {
         if (resp.status >= 500) {
           if (attempt < MAX_RETRIES) {
             const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+            if (this.wouldCrossDeadline(delay)) {
+              console.warn(`[aeroapi] HTTP ${resp.status} for ${label} — retry would cross the run deadline, giving up.`);
+              return null;
+            }
             console.warn(`[aeroapi] HTTP ${resp.status} for ${label}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})...`);
             await sleep(delay);
             continue;
@@ -326,6 +381,10 @@ export class AeroApiClient {
         // Network errors — retry
         if (attempt < MAX_RETRIES) {
           const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+          if (this.wouldCrossDeadline(delay)) {
+            console.warn(`[aeroapi] Network error for ${label}: ${err} — retry would cross the run deadline, giving up.`);
+            return null;
+          }
           console.warn(`[aeroapi] Network error for ${label}: ${err}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})...`);
           await sleep(delay);
           continue;

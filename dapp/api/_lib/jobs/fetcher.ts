@@ -21,6 +21,11 @@ const VISIBILITY_PAST_SECS = 10n * 86_400n;
 // arrived by the end of its departure day + a landing buffer. 30h past the
 // UTC-midnight bucket covers any same-day departure's arrival.
 const FALLBACK_ARRIVAL_AFTER_DATE_SECS = 30n * 3600n;
+// OCA-M04: stop starting new flights past this run age. The cron's
+// maxDuration is 300s; one flight's stacked 429 cooldowns must never push
+// the function into the platform's hard kill mid-chain-write. Flights not
+// reached are logged and picked up by the next sweep.
+const RUN_BUDGET_MS = 240_000;
 
 /** Optional dependency injection seam — tests pass fakes, production omits. */
 export interface FetcherDeps {
@@ -75,7 +80,9 @@ export async function run(config: Config, deps: FetcherDeps = {}): Promise<RunLo
 
   try {
     const client = deps.soroban ?? new SorobanClient(config);
+    const deadline = start + RUN_BUDGET_MS;
     const aeroApi = deps.aero ?? new AeroApiClient(config);
+    aeroApi.setDeadline(deadline);
     const oracleId = config.oracleAggregatorId;
     const oraclePublicKey = client.publicKeyFromSecret(config.oracleSecretKey);
 
@@ -108,6 +115,10 @@ export async function run(config: Config, deps: FetcherDeps = {}): Promise<RunLo
     const settleDelay = BigInt(config.settleAfterEtaSecs);
 
     for (const flight of flights) {
+      if (Date.now() > deadline) {
+        actions.push({ flight: flight.flight_id, skipped: "run time budget exhausted — deferred to next sweep" });
+        continue;
+      }
       try {
         const data = await client.readContract(oracleId, "get_flight_data", [
           client.symbolToScVal(flight.flight_id),

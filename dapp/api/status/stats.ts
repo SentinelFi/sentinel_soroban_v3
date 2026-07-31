@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { loadConfig } from "../_lib/config";
 import { getDb } from "../_lib/governance/db";
+import { publicError } from "../_lib/public_error";
 import { SorobanClient } from "../_lib/soroban_client";
 import { FlightStatus } from "../_lib/types";
 
@@ -69,6 +70,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       as_of: new Date().toISOString(),
     });
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    res.status(500).json({ error: publicError("status-stats", err) });
   }
 }

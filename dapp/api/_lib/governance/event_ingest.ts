@@ -31,6 +31,9 @@ export interface IngestResult {
   settlements: number;
   fromLedger: number;
   toLedger: number;
+  /** OCA-L05: ledgers permanently skipped because the ingest was down
+   *  longer than RPC retention — 0 in normal operation. */
+  gapLedgers: number;
 }
 
 export function nativeTopics(topics: xdr.ScVal[]): unknown[] {
@@ -56,6 +59,18 @@ export async function ingestChainEvents(
   `) as unknown as Array<{ cursor: string }>;
   const floor = Math.max(latest.sequence - RETENTION_LEDGERS, 1);
   const fromLedger = stored.length > 0 ? Math.max(Number(stored[0].cursor) + 1, floor) : floor;
+  // OCA-L05: if the ingest was down longer than RPC retention, everything
+  // between the stored cursor and the floor is UNRECOVERABLY lost to the
+  // mirror (live exposure decisions are unaffected — they read chain
+  // state). That must be an error the caller can surface, not a log line.
+  const gapLedgers = stored.length > 0 ? Math.max(floor - (Number(stored[0].cursor) + 1), 0) : 0;
+  if (gapLedgers > 0) {
+    console.error(
+      `[event-ingest] PERMANENT MIRROR GAP: ${gapLedgers} ledger(s) ` +
+        `(${Number(stored[0].cursor) + 1}..${floor - 1}) fell out of RPC retention while ingest was down — ` +
+        `policies/settlements events in that range are lost to the mirror.`
+    );
+  }
 
   let policies = 0;
   let settlements = 0;
@@ -128,5 +143,5 @@ export async function ingestChainEvents(
     on conflict (name) do update set cursor = ${String(toLedger)}, updated_at = now()
   `;
 
-  return { policies, settlements, fromLedger, toLedger };
+  return { policies, settlements, fromLedger, toLedger, gapLedgers };
 }

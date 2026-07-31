@@ -130,6 +130,10 @@ export async function authorizeSale(
 
   const client = deps.soroban ?? new SorobanClient(config);
   const aero = deps.aero ?? new AeroApiClient(config);
+  // OCA-M04: the endpoint's maxDuration is 60s but a single 429 cooldown
+  // sleeps 65s — cap API time so a rate-limit burst degrades to a clean
+  // refusal instead of a platform kill mid-request.
+  aero.setDeadline(Date.now() + 45_000);
   const guard = deps.guard ?? ((r: GuardRoute) => guardRoute(config, r, aero));
   const oracleId = config.oracleAggregatorId;
   const oraclePublicKey = client.publicKeyFromSecret(config.oracleSecretKey);

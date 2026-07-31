@@ -53,6 +53,11 @@ const CANCELLATION_RECHECK_HOURS = 20;
 const CANCELLATION_BATCH = 20;
 const EXPOSURE_CLEAR_STREAK = 2;
 const SEVERE_PCT = Number(process.env.EXPOSURE_SEVERE_PCT ?? 0.5);
+// OCA-M04: stop starting new AeroAPI work past this run age — the cron's
+// maxDuration is 300s and a hard platform kill mid-chain-write must never
+// be reachable via stacked 429 cooldowns. Unprocessed rows wait for the
+// next hourly run.
+const RUN_BUDGET_MS = 240_000;
 
 export async function run(
   config: GovConfig,
@@ -98,10 +103,12 @@ export async function run(
       `${row.flight_id} ${row.origin}→${row.dest} [${row.cause}]`;
 
     // ── cancellation — daily-ish sweep, batched ────────────────────────
+    const deadline = start + RUN_BUDGET_MS;
     const aero = new AeroApiClient({
       aeroApiBaseUrl: process.env.AEROAPI_BASE_URL ?? "https://aeroapi.flightaware.com/aeroapi",
       aeroApiKey: process.env.AEROAPI_KEY ?? "",
     });
+    aero.setDeadline(deadline);
     const cancelRows = open.filter((r) => r.cause === "cancellation");
     const due = opts.forceAll
       ? cancelRows
@@ -113,6 +120,10 @@ export async function run(
           )
           .slice(0, CANCELLATION_BATCH);
     for (const row of due) {
+      if (Date.now() > deadline) {
+        actions.push({ flight: labelOf(row), skipped: "run time budget exhausted — recheck deferred to next run" });
+        continue;
+      }
       try {
         const verdict = await sweepVerdict(aero, asRoute(row));
         const alive = verdict.days.some((d) => d.state === "alive");

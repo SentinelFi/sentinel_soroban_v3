@@ -85,6 +85,67 @@ export function computeDisableCap(routeCount: number): number {
   return Math.max(3, Math.ceil(routeCount * 0.2));
 }
 
+/**
+ * OCA-H01: the disable cap must hold across CONCURRENT runs (a scheduled
+ * gov_exposure tick overlapping an admin "run now" click), not just within
+ * one process's local counter. Slots are claimed through an atomic
+ * conditional upsert on an hourly-window row — the `where count < cap`
+ * clause makes claim-or-refuse a single atomic statement, which works over
+ * the transaction-mode pooler (unlike session advisory locks).
+ */
+async function ensureSlotsTable(sql: ReturnType<typeof getDb>): Promise<void> {
+  await sql`
+    create table if not exists gov_disable_slots (
+      window_start timestamptz primary key,
+      count int not null
+    )
+  `;
+  // Same FSA-H01 posture as `interventions`: deny-all RLS on self-created tables.
+  await sql`alter table gov_disable_slots enable row level security`;
+}
+
+/**
+ * Atomically claim one automated-disable slot in the current hour window.
+ * Returns false when the hourly budget (`cap`) is already spent — including
+ * by a concurrent or earlier run this hour. Without a DB (or on DB error)
+ * it allows the claim: the caller's local per-run counter remains the
+ * fallback guard, matching the ledger's DB-optional posture.
+ */
+export async function claimDisableSlot(cap: number): Promise<boolean> {
+  if (!process.env.GOVERNANCE_DB_URL) return true;
+  try {
+    const sql = getDb();
+    await ensureSlotsTable(sql);
+    await sql`delete from gov_disable_slots where window_start < now() - interval '2 days'`;
+    const rows = (await sql`
+      insert into gov_disable_slots (window_start, count)
+      values (date_trunc('hour', now()), 1)
+      on conflict (window_start) do update
+        set count = gov_disable_slots.count + 1
+        where gov_disable_slots.count < ${cap}
+      returning count
+    `) as unknown as unknown[];
+    return rows.length > 0;
+  } catch (err) {
+    console.warn(`[interventions] claimDisableSlot failed (${err}) — falling back to local counter.`);
+    return true;
+  }
+}
+
+/** Return a claimed slot that did not end in an on-chain disable. */
+export async function releaseDisableSlot(): Promise<void> {
+  if (!process.env.GOVERNANCE_DB_URL) return;
+  try {
+    const sql = getDb();
+    await sql`
+      update gov_disable_slots set count = greatest(count - 1, 0)
+      where window_start = date_trunc('hour', now())
+    `;
+  } catch (err) {
+    console.warn(`[interventions] releaseDisableSlot failed (ignored): ${err}`);
+  }
+}
+
 /** Exported so read paths (the admin routes board's cause join) can
  *  guarantee the table exists without having opened an intervention yet. */
 export async function ensureTable(sql: ReturnType<typeof getDb>): Promise<void> {

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { loadConfig } from "./config";
 import { cronTrigger, recordRun } from "./governance/runs";
@@ -27,7 +28,13 @@ import type { Config, RunLogEntry } from "./types";
 export function isAuthorized(req: VercelRequest): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
-  return req.headers.authorization === `Bearer ${secret}`;
+  // OCA-L01: constant-time compare — this secret gates every keeper/
+  // oracle/gov-admin-signed transaction; `===` short-circuits on the
+  // first differing byte. (The length check leaks only the length,
+  // which is standard and acceptable.)
+  const expected = Buffer.from(`Bearer ${secret}`);
+  const presented = Buffer.from(req.headers.authorization ?? "");
+  return presented.length === expected.length && timingSafeEqual(presented, expected);
 }
 
 /**

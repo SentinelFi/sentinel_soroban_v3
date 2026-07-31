@@ -5,8 +5,10 @@ import { parseFlightStatus } from "../status";
 import { FlightStatus, type Config, type RunLogEntry, type FetcherAction } from "../types";
 import type { GovConfig } from "./config";
 import {
+  claimDisableSlot,
   computeDisableCap,
   pauseRoute,
+  releaseDisableSlot,
   type GovChainConfig,
   type InterventionRoute,
 } from "./interventions";
@@ -94,10 +96,19 @@ export function computeConcentrations(
     r.units += f.liabilityUnits;
     routes.set(rkey, r);
     airports.set(f.origin, (airports.get(f.origin) ?? 0n) + f.liabilityUnits);
-    airports.set(f.dest, (airports.get(f.dest) ?? 0n) + f.liabilityUnits);
+    // OCA-L04: origin == dest (bad data / future round-trip type) must not
+    // count the same liability twice for one airport.
+    if (f.dest !== f.origin) {
+      airports.set(f.dest, (airports.get(f.dest) ?? 0n) + f.liabilityUnits);
+    }
   }
+  // OCA-L03: CEILING division — plain truncation rounded every fraction
+  // down (~1e-6), a bias that consistently favored NOT pausing at the
+  // 25%/50% thresholds. For a risk brake, ties round toward action.
   const fraction = (units: bigint): number =>
-    totalManagedUnits <= 0n ? 0 : Number((units * 1_000_000n) / totalManagedUnits) / 1_000_000;
+    totalManagedUnits <= 0n
+      ? 0
+      : Number((units * 1_000_000n + totalManagedUnits - 1n) / totalManagedUnits) / 1_000_000;
   return {
     routes: new Map(
       [...routes].map(([k, r]) => [k, { origin: r.origin, dest: r.dest, fraction: fraction(r.units) }])
@@ -172,7 +183,15 @@ export function computeExposureSignals(
 export async function readExposure(
   client: SorobanClient,
   config: Pick<Config, "flightPoolManagerId" | "riskVaultId">
-): Promise<{ flights: FlightExposure[]; totalManaged: bigint }> {
+): Promise<{
+  flights: FlightExposure[];
+  totalManaged: bigint;
+  /** OCA-M01: live liability on flights absent from the routes file — it
+   *  can't be scoped to a route/airport bucket, so it must be SURFACED
+   *  rather than silently dropped from the brake's numerator. */
+  unknownLiabilityUnits: bigint;
+  unknownFlights: string[];
+}> {
   const routesConfig = loadRoutesConfig();
   const routeByFlight = new Map(
     routesConfig.routes.map((r) => [r.flight_id, { origin: r.origin, dest: r.destination }])
@@ -186,20 +205,34 @@ export async function readExposure(
     (await client.readContract(config.flightPoolManagerId, "get_active_flights")) ?? [];
 
   const flights: FlightExposure[] = [];
+  let unknownLiabilityUnits = 0n;
+  const unknownFlights: string[] = [];
   for (const [flightId, date] of active as [string, bigint][]) {
     const route = routeByFlight.get(flightId);
-    if (!route) continue; // unknown to the routes file — can't scope it
     const cfg = await client.readContract(config.flightPoolManagerId, "get_flight_config", [
       client.symbolToScVal(flightId),
       client.u64ToScVal(date),
     ]);
     if (!cfg) continue;
-    // Only unsettled policies carry live liability.
+    // Only unsettled policies carry live liability. Unknown (OCA-M07's
+    // fail-closed parse sentinel) is COUNTED here — for the risk brake the
+    // conservative direction is assuming the liability is live, not gone.
     const status = parseFlightStatus(cfg.status);
-    if (status !== FlightStatus.Active && status !== FlightStatus.NotInitiated) continue;
+    if (
+      status !== FlightStatus.Active &&
+      status !== FlightStatus.NotInitiated &&
+      status !== FlightStatus.Unknown
+    )
+      continue;
     const payoff = BigInt(cfg.payoff ?? 0);
     const buyers = BigInt(cfg.buyer_count ?? 0);
     if (buyers === 0n) continue;
+    if (!route) {
+      // Unknown to the routes file (removed after sale, or never added).
+      unknownLiabilityUnits += payoff * buyers;
+      if (!unknownFlights.includes(flightId)) unknownFlights.push(flightId);
+      continue;
+    }
     flights.push({
       flightId,
       origin: route.origin,
@@ -207,7 +240,7 @@ export async function readExposure(
       liabilityUnits: payoff * buyers,
     });
   }
-  return { flights, totalManaged };
+  return { flights, totalManaged, unknownLiabilityUnits, unknownFlights };
 }
 
 /** Shared env-defaulted contract ids (GovConfig carries only governance). */
@@ -263,6 +296,14 @@ export async function run(config: GovConfig, deps: ExposureDeps = {}): Promise<R
             transition: `ingested ${ingested.policies} policy / ${ingested.settlements} settlement event(s)`,
           });
         }
+        // OCA-L05: a retention gap is permanent mirror data loss — surface
+        // it on the jobs board, not just in a log line.
+        if (ingested.gapLedgers > 0) {
+          actions.push({
+            flight: "-",
+            error: `event-mirror gap: ${ingested.gapLedgers} ledger(s) lost beyond RPC retention (mirror incomplete; live exposure unaffected)`,
+          });
+        }
         console.log(
           `[gov-exposure] event mirror: +${ingested.policies} policies, +${ingested.settlements} settlements ` +
             `(ledgers ${ingested.fromLedger}..${ingested.toLedger})`
@@ -274,14 +315,34 @@ export async function run(config: GovConfig, deps: ExposureDeps = {}): Promise<R
 
     let flights: FlightExposure[];
     let totalManaged: bigint;
+    let unknownLiabilityUnits: bigint;
+    let unknownFlights: string[];
     try {
-      ({ flights, totalManaged } = await readExposure(client, {
+      ({ flights, totalManaged, unknownLiabilityUnits, unknownFlights } = await readExposure(client, {
         flightPoolManagerId: poolId,
         riskVaultId: vaultId,
       }));
     } catch (err) {
       console.error(`[gov-exposure] on-chain read failed — no actions this run: ${err}`);
       return done(false, `on-chain read failed: ${err}`);
+    }
+
+    // OCA-M01: liability the brake CANNOT scope (flight missing from the
+    // routes file) is a blind spot in the concentration math — make it loud
+    // on the jobs board instead of silently under-counting.
+    if (unknownLiabilityUnits > 0n) {
+      const pct =
+        totalManaged > 0n
+          ? ((Number((unknownLiabilityUnits * 10_000n) / totalManaged) / 100).toFixed(1) + "%")
+          : "n/a";
+      console.warn(
+        `[gov-exposure] BLIND SPOT: ${unknownLiabilityUnits} units of live liability (${pct} of TMA) ` +
+          `on flight(s) not in the routes file: ${unknownFlights.join(", ")} — excluded from concentration buckets.`
+      );
+      actions.push({
+        flight: unknownFlights.join(","),
+        error: `unscoped liability ${unknownLiabilityUnits} units (${pct} of capacity) — flight(s) missing from routes file, excluded from exposure buckets`,
+      });
     }
 
     const specs = computeExposureSignals(flights, totalManaged);
@@ -346,11 +407,23 @@ export async function run(config: GovConfig, deps: ExposureDeps = {}): Promise<R
         actions.push({ flight: label, skipped: `circuit breaker: would pause (${why}) — cap ${cap} reached` });
         continue;
       }
+      // OCA-H01: the local counter above only guards THIS invocation; the
+      // DB slot claim makes the cap atomic across overlapping runs (a
+      // scheduled tick racing an admin "run now"). Claimed slots that don't
+      // end in an on-chain disable are returned so idempotent re-pauses of
+      // already-off routes never eat the hourly budget.
+      if (!(await claimDisableSlot(cap))) {
+        console.warn(`[gov-exposure] CIRCUIT BREAKER: hourly disable cap ${cap} spent (concurrent run) — flagging ${label}.`);
+        actions.push({ flight: label, skipped: `circuit breaker: would pause (${why}) — hourly cap ${cap} spent across runs` });
+        continue;
+      }
       try {
         const result = await pauseRoute(chainConfig, route, "exposure", { why, fraction }, ACTOR);
         if (result.disabledOnChain) disables++;
+        else await releaseDisableSlot();
         actions.push({ flight: label, transition: result.outcome });
       } catch (err) {
+        await releaseDisableSlot();
         console.error(`[gov-exposure] ${label}: pause failed — ${err}. Next run retries.`);
         actions.push({ flight: label, error: String(err) });
       }

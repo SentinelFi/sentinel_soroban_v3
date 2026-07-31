@@ -58,10 +58,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       actor: `admin:${admin.email}`,
     });
 
-    const setLifecycle = (status: string) => sql`
-      update routes set status = ${status}
-      where flight_id = ${b.flight_id} and origin = ${b.origin} and dest = ${b.dest}
-    `;
+    // OCA-M03: the chain write lands BEFORE this DB mirror. A mirror
+    // failure must never surface as a bare 500 — the admin would have no
+    // tx_hash and could plausibly resubmit a second signed governance tx.
+    // Capture the error and report it alongside the confirmed tx instead.
+    let dbMirrorError: string | null = null;
+    const setLifecycle = async (status: string) => {
+      try {
+        await sql`
+          update routes set status = ${status}
+          where flight_id = ${b.flight_id} and origin = ${b.origin} and dest = ${b.dest}
+        `;
+      } catch (err) {
+        dbMirrorError = err instanceof Error ? err.message : String(err);
+        console.error(`[admin-actions] ${b.op} ${b.flight_id}: chain op confirmed but routes mirror failed — ${dbMirrorError}`);
+      }
+    };
 
     let outcome;
     switch (b.op) {
@@ -106,6 +118,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       tx_hash: outcome.txHash,
       before: jsonRoute(outcome.before),
       after: jsonRoute(outcome.after),
+      ...(dbMirrorError
+        ? {
+            warning:
+              `on-chain op confirmed (see tx_hash) but the DB routes.status mirror failed: ${dbMirrorError}. ` +
+              `Do NOT resubmit the op — fix the DB status instead.`,
+          }
+        : {}),
     });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
