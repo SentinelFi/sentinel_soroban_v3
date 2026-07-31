@@ -3367,7 +3367,7 @@ against `route_status`.
 |---|---|---|
 | `/` | `Markets.tsx` | Main insurance-market board — browse routes, buy delay policies |
 | `/markets` | `MarketsGlobe.tsx` | Globe visualization of routes |
-| `/bets` | `MyBets.tsx` | The connected traveler's policies — claim state, expiry countdowns |
+| `/policies` | `Policies.tsx` | The connected traveler's policies — claim state, expiry countdowns |
 | `/house` | `House.tsx` | The "House" / underwriter (LP) page — vault deposit/withdraw, share price, free/locked capital |
 | `/calculator` (`/quant`) | `Quant.tsx` | Monte-Carlo underwriting / pricing simulator |
 | `/status` | `Status.tsx` | Public automation/ops health board (reads `api/status`) |

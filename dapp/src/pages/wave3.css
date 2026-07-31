@@ -4,7 +4,7 @@
  *   - Earn Yield (util warning, withdrawal-queue graphics, share-price chart)
  *   - the flight-date calendar popover in the insurance slip
  *
- * Imported by MyBets.tsx / House.tsx / Markets.tsx so we never touch index.css.
+ * Imported by Policies.tsx / House.tsx / Markets.tsx so we never touch index.css.
  * Everything references the shared theme tokens (--color-*, --radius-*), so it
  * re-tints for free when the MODE dock flips fun <-> serious. Structural theme
  * differences (pixel vs clean) are branched in the components with useTheme();
@@ -16,6 +16,7 @@
  */
 
 @layer components {
+
 	/* ───────────────────────── status badges (policies) ──────────── */
 	/*
 	 * FUN = hard-edged pixel chip, 2px border, step shadow, uppercase pixel
@@ -37,12 +38,14 @@
 		box-shadow: var(--shadow-px-sm);
 		white-space: nowrap;
 	}
+
 	.w3-badge-dot {
 		width: 6px;
 		height: 6px;
 		background: var(--badge, var(--color-ink));
 		flex: none;
 	}
+
 	[data-theme="serious"] .w3-badge {
 		border-width: 1px;
 		border-radius: 999px;
@@ -54,6 +57,7 @@
 		box-shadow: none;
 		background: color-mix(in srgb, var(--badge, var(--color-line)) 14%, transparent);
 	}
+
 	[data-theme="serious"] .w3-badge-dot {
 		border-radius: 999px;
 	}
@@ -68,14 +72,17 @@
 		background: var(--color-surface);
 		border: 2px solid var(--color-line);
 	}
+
 	.w3-policy-terminal {
 		background: var(--color-inset);
 	}
+
 	[data-theme="serious"] .w3-policy {
 		border-width: 1px;
 		border-radius: var(--radius-card);
 		box-shadow: var(--shadow-soft-sm);
 	}
+
 	.w3-reason {
 		font-family: var(--font-body, inherit);
 		font-size: 13px;
@@ -92,6 +99,7 @@
 		background: color-mix(in srgb, var(--color-gold) 10%, var(--color-inset));
 		box-shadow: var(--shadow-px-sm);
 	}
+
 	.w3-util-warn-glyph {
 		font-family: var(--font-board);
 		font-size: 22px;
@@ -99,6 +107,7 @@
 		color: var(--color-gold);
 		flex: none;
 	}
+
 	[data-theme="serious"] .w3-util-warn {
 		border-width: 1px;
 		border-radius: var(--radius-ctl);
@@ -119,6 +128,7 @@
 		overflow-x: auto;
 		padding: 4px 2px 8px;
 	}
+
 	.w3-queue-chip {
 		flex: none;
 		min-width: 92px;
@@ -128,10 +138,12 @@
 		box-shadow: var(--shadow-px-sm);
 		text-align: center;
 	}
+
 	.w3-queue-chip.is-mine {
 		border-color: var(--color-gold);
 		background: color-mix(in srgb, var(--color-gold) 14%, var(--color-raised));
 	}
+
 	.w3-queue-pos {
 		display: block;
 		font-family: var(--font-display);
@@ -139,9 +151,11 @@
 		letter-spacing: 0.04em;
 		color: var(--color-mute);
 	}
+
 	.w3-queue-chip.is-mine .w3-queue-pos {
 		color: var(--color-gold);
 	}
+
 	.w3-queue-shares {
 		display: block;
 		margin-top: 2px;
@@ -150,6 +164,7 @@
 		line-height: 1.1;
 		color: var(--color-ink);
 	}
+
 	.w3-queue-arrow {
 		align-self: center;
 		font-family: var(--font-board);
@@ -166,9 +181,11 @@
 		overflow: visible;
 		padding: 2px 0;
 	}
+
 	[data-theme="serious"] .w3-queue-arrow {
 		display: none;
 	}
+
 	[data-theme="serious"] .w3-queue-chip {
 		display: flex;
 		align-items: center;
@@ -183,6 +200,7 @@
 		padding: 8px 12px;
 		position: relative;
 	}
+
 	[data-theme="serious"] .w3-queue-chip::before {
 		content: "";
 		position: absolute;
@@ -193,14 +211,17 @@
 		border-radius: 999px;
 		background: var(--color-line-strong);
 	}
+
 	[data-theme="serious"] .w3-queue-chip.is-mine {
 		border-left-color: var(--color-gold);
 		background: color-mix(in srgb, var(--color-gold) 8%, transparent);
 		border-radius: var(--radius-ctl);
 	}
+
 	[data-theme="serious"] .w3-queue-chip.is-mine::before {
 		background: var(--color-gold);
 	}
+
 	[data-theme="serious"] .w3-queue-pos {
 		font-size: 11px;
 		font-weight: 600;
@@ -213,17 +234,20 @@
 		background: var(--color-surface);
 		border: 2px solid var(--color-line);
 	}
+
 	[data-theme="serious"] .w3-chart-card {
 		border-width: 1px;
 		border-radius: var(--radius-card);
 		box-shadow: var(--shadow-soft-sm);
 	}
+
 	/* the SVG chart carries a faint CRT overlay in fun only */
 	.w3-chart-svg {
 		display: block;
 		width: 100%;
 		height: auto;
 	}
+
 	.w3-illustrative {
 		font-family: var(--font-display);
 		font-size: 9px;
@@ -233,6 +257,7 @@
 		border: 2px solid var(--color-line);
 		padding: 2px 6px;
 	}
+
 	[data-theme="serious"] .w3-illustrative {
 		border-width: 1px;
 		border-radius: 999px;
@@ -247,6 +272,7 @@
 	.w3-cal {
 		position: relative;
 	}
+
 	.w3-cal-pop {
 		margin-top: 6px;
 		padding: 12px;
@@ -254,17 +280,20 @@
 		border: 2px solid var(--color-line-mid);
 		box-shadow: var(--shadow-px-md);
 	}
+
 	[data-theme="serious"] .w3-cal-pop {
 		border-width: 1px;
 		border-radius: var(--radius-card);
 		box-shadow: var(--shadow-soft-md);
 	}
+
 	.w3-cal-head {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		margin-bottom: 8px;
 	}
+
 	.w3-cal-title {
 		font-family: var(--font-display);
 		font-size: 11px;
@@ -272,12 +301,14 @@
 		text-transform: uppercase;
 		color: var(--color-ink);
 	}
+
 	[data-theme="serious"] .w3-cal-title {
 		font-size: 14px;
 		font-weight: 600;
 		letter-spacing: 0;
 		text-transform: none;
 	}
+
 	.w3-cal-nav {
 		width: 28px;
 		height: 28px;
@@ -291,26 +322,32 @@
 		font-size: 18px;
 		line-height: 1;
 	}
+
 	.w3-cal-nav:hover:not(:disabled) {
 		filter: brightness(1.12);
 	}
+
 	.w3-cal-nav:disabled {
 		opacity: 0.35;
 		cursor: not-allowed;
 	}
+
 	.w3-cal-nav:focus-visible {
 		outline: 2px solid var(--color-sky);
 		outline-offset: 2px;
 	}
+
 	[data-theme="serious"] .w3-cal-nav {
 		border-width: 1px;
 		border-radius: 999px;
 	}
+
 	.w3-cal-grid {
 		display: grid;
 		grid-template-columns: repeat(7, 1fr);
 		gap: 3px;
 	}
+
 	.w3-cal-dow {
 		font-family: var(--font-display);
 		font-size: 8px;
@@ -319,11 +356,13 @@
 		color: var(--color-mute);
 		padding-bottom: 4px;
 	}
+
 	[data-theme="serious"] .w3-cal-dow {
 		font-size: 10px;
 		font-weight: 600;
 		text-transform: uppercase;
 	}
+
 	.w3-cal-day {
 		aspect-ratio: 1 / 1;
 		display: inline-flex;
@@ -336,47 +375,58 @@
 		border: 2px solid transparent;
 		background: var(--color-surface);
 	}
+
 	.w3-cal-day:hover:not(:disabled) {
 		border-color: var(--color-line-strong);
 	}
+
 	.w3-cal-day:disabled {
 		color: var(--color-mute);
 		opacity: 0.4;
 		background: transparent;
 		cursor: not-allowed;
 	}
+
 	.w3-cal-day.is-empty {
 		background: transparent;
 		border-color: transparent;
 	}
+
 	.w3-cal-day.is-today:not(.is-selected) {
 		border-color: var(--color-sky);
 	}
+
 	.w3-cal-day.is-selected {
 		background: var(--color-gold);
 		color: var(--color-page);
 		border-color: var(--color-gold);
 		box-shadow: var(--shadow-px-sm);
 	}
+
 	.w3-cal-day:focus-visible {
 		outline: 2px solid var(--color-sky);
 		outline-offset: 1px;
 	}
+
 	/* SERIOUS: clean rounded cells, no pixel font, soft hover + highlight ring */
 	[data-theme="serious"] .w3-cal-day {
-		font-family: var(--font-board); /* serious --font-board = clean mono */
+		font-family: var(--font-board);
+		/* serious --font-board = clean mono */
 		font-size: 14px;
 		border-width: 1px;
 		border-radius: 999px;
 		background: transparent;
 	}
+
 	[data-theme="serious"] .w3-cal-day:hover:not(:disabled) {
 		background: color-mix(in srgb, var(--color-highlight) 14%, transparent);
 		border-color: transparent;
 	}
+
 	[data-theme="serious"] .w3-cal-day.is-today:not(.is-selected) {
 		border-color: color-mix(in srgb, var(--color-highlight) 60%, transparent);
 	}
+
 	[data-theme="serious"] .w3-cal-day.is-selected {
 		background: var(--color-highlight);
 		color: #06131a;
@@ -393,11 +443,13 @@
 		width: 100%;
 		text-align: left;
 	}
+
 	.w3-cal-field .w3-cal-value-empty {
 		color: var(--color-mute);
 	}
 
 	@media (prefers-reduced-motion: reduce) {
+
 		.w3-cal-day,
 		.w3-cal-nav,
 		.w3-queue-chip {

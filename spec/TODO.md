@@ -105,7 +105,7 @@ Legend: **P0** = do first · **P1** = high value · **P2** = polish.
   page affected.
 - [x] **P2 — TxProgress waiting UX.** New shared `TxProgress` component
   (`src/components/TxProgress.tsx`), wired into all 5 flows: BetSlip buy
-  (verify+sign+confirm, COVERED/DENIED stamps), MyBets claim (sign+confirm,
+  (verify+sign+confirm, COVERED/DENIED stamps), Policies claim (sign+confirm,
   PAID stamp — converted its bespoke `claimingId` pattern onto `TxState`),
   House deposit/withdraw/collect (sign+confirm, plain ✓/✕, no stamp — those
   aren't insurance-purchase outcomes), Admin job runs (single `confirming`
@@ -142,13 +142,13 @@ Legend: **P0** = do first · **P1** = high value · **P2** = polish.
   rows genuinely newly visible — unchanged rows keep their key across
   background refetches), RiskBar fill on mount (serious: scaleX grow;
   fun: per-cell staggered pop, `riskbar-cell-pop`/`riskbar-fill-grow`),
-  MyBets claim-button gold pulse (`.claim-btn-pulse`, distinct from the
+  Policies claim-button gold pulse (`.claim-btn-pulse`, distinct from the
   card's existing `.win-flash`), stat count-ups (new `useCountUp` hook,
   requestAnimationFrame + cubic ease-out, applied to StatsTicker's
   whole-number fields only — currency figures stay static, not worth the
   bigint-interpolation complexity), status-lamp breathing (`.breathe` —
   a calmer alternative to the existing hard `.blink`, applied to the
-  three "alive and tracking" LIVE dots across Markets/MyBets/
+  three "alive and tracking" LIVE dots across Markets/Policies/
   MarketsGlobe; kept `.blink` for the DEMO-data dot specifically, since
   that state deserves more attention, not less), notification settle
   (drop + overshoot + settle, added directly to the existing `.toast-px`
@@ -163,7 +163,7 @@ Legend: **P0** = do first · **P1** = high value · **P2** = polish.
   3 more Pixellab assets (`ticket-tear` used as a divider; skipped a new
   `coin-flip` asset — CSS 3D transform on the existing sprite was
   strictly better, no sprite-sheet needed). Verified: typecheck clean;
-  browser-checked Markets/MyBets/MarketsGlobe for console errors (none —
+  browser-checked Markets/Policies/MarketsGlobe for console errors (none —
   one unrelated pre-existing a11y warning, one unrelated stale
   `_next/static` cache reference from an unrelated project sharing this
   browser profile, harmless 304). Caveat stated plainly: this sandbox's

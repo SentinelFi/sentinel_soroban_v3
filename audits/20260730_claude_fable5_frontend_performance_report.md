@@ -180,7 +180,7 @@ stack, or rendered output changes.
 **File:** `dapp/src/hooks/useContracts.ts` (`useFlightDataBatch`,
 `usePolicyStateBatch`)
 
-Markets and MyBets poll `get_flight_data` once per active flight every
+Markets and Policies poll `get_flight_data` once per active flight every
 30 s (bounded by a 50-concurrent worker pool). Harmless at today's volume;
 at hundreds of simultaneously active flights it becomes a steady RPC drain
 per open tab.
