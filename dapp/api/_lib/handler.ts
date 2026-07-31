@@ -4,23 +4,30 @@ import { cronTrigger, recordRun } from "./governance/runs";
 import type { Config, RunLogEntry } from "./types";
 
 /**
- * Auth for cron endpoints.
+ * Auth for cron endpoints — CRON_SECRET is REQUIRED (fail closed).
  *
- * - If CRON_SECRET is configured, the caller MUST present
- *   `Authorization: Bearer <CRON_SECRET>`. Vercel's cron scheduler sends
- *   exactly that header automatically when a CRON_SECRET project env var
- *   exists, so scheduled invocations and manual curl both pass the same
- *   check — and a spoofed `x-vercel-cron` header alone is not enough.
- * - If CRON_SECRET is NOT configured, fall back to accepting requests
- *   carrying the `x-vercel-cron` header (set by Vercel's scheduler; the
- *   platform strips it from external requests). Anything else is 401.
+ * The caller MUST present `Authorization: Bearer <CRON_SECRET>`. Vercel's
+ * cron scheduler sends exactly that header automatically whenever a
+ * CRON_SECRET project env var exists, so scheduled invocations and manual
+ * curl both pass the same check.
+ *
+ * When CRON_SECRET is unset, EVERY request is rejected. These endpoints
+ * sign real transactions and spend keeper/oracle funds, so we never fall
+ * back to trusting an unauthenticated request header: `x-vercel-cron` is
+ * added by Vercel's scheduler but the platform's stripping of a spoofed
+ * inbound copy is not a documented security guarantee, so it is not an
+ * auth boundary. (cronTrigger still reads it, but only to LABEL a run as
+ * scheduled vs external — never to authorize.)
+ *
+ * Deploy note: set CRON_SECRET in the Vercel project that runs the
+ * scheduled crons (vercel.backend.json) BEFORE enabling them, or every
+ * cron will 401. The bots runner (scripts/run_bot.ts) invokes each job's
+ * run() directly and never passes through here, so it is unaffected.
  */
 export function isAuthorized(req: VercelRequest): boolean {
   const secret = process.env.CRON_SECRET;
-  if (secret) {
-    return req.headers.authorization === `Bearer ${secret}`;
-  }
-  return Boolean(req.headers["x-vercel-cron"]);
+  if (!secret) return false;
+  return req.headers.authorization === `Bearer ${secret}`;
 }
 
 /**
