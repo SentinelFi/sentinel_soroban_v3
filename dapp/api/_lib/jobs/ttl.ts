@@ -120,17 +120,36 @@ async function extendIdlePersistentKeys(client: SorobanClient, config: Config, r
     }>;
     const buyers = (await sql`select distinct buyer from policies`) as unknown as Array<{ buyer: string }>;
 
-    const routeKeys = routes.map((r) =>
-      client.scvVec([
-        client.symbolToScVal("Route"),
-        client.symbolToScVal(r.flight_id),
-        client.symbolToScVal(r.origin),
-        client.symbolToScVal(r.dest),
-      ])
-    );
-    const travelerKeys = buyers.map((b) =>
-      client.scvVec([client.symbolToScVal("TravelerFlights"), client.addressToScVal(b.buyer)])
-    );
+    // OCA-M08: key construction is per-row isolated — one corrupted/empty
+    // value (e.g. a bad `buyer` address) must skip THAT row, not abort TTL
+    // maintenance for every route and buyer this run.
+    const routeKeys: ReturnType<typeof client.scvVec>[] = [];
+    for (const r of routes) {
+      try {
+        routeKeys.push(
+          client.scvVec([
+            client.symbolToScVal("Route"),
+            client.symbolToScVal(r.flight_id),
+            client.symbolToScVal(r.origin),
+            client.symbolToScVal(r.dest),
+          ])
+        );
+      } catch (err) {
+        console.warn(`[ttl-extender] bad route row ${r.flight_id} ${r.origin}->${r.dest} skipped: ${err}`);
+        results.push({ contract: `route key ${r.flight_id}`, success: false, error: String(err) });
+      }
+    }
+    const travelerKeys: ReturnType<typeof client.scvVec>[] = [];
+    for (const b of buyers) {
+      try {
+        travelerKeys.push(
+          client.scvVec([client.symbolToScVal("TravelerFlights"), client.addressToScVal(b.buyer)])
+        );
+      } catch (err) {
+        console.warn(`[ttl-extender] bad buyer row ${JSON.stringify(b.buyer)} skipped: ${err}`);
+        results.push({ contract: `traveler key ${String(b.buyer).slice(0, 12)}…`, success: false, error: String(err) });
+      }
+    }
 
     const jobs: Array<{ name: string; contractId: string; keys: ReturnType<typeof client.scvVec>[] }> = [
       { name: "governance Route", contractId: config.governanceId, keys: routeKeys },
@@ -150,7 +169,10 @@ async function extendIdlePersistentKeys(client: SorobanClient, config: Config, r
     }
     console.log(`[ttl-extender] key-level TTL: ${routeKeys.length} route + ${travelerKeys.length} traveler key(s) extended.`);
   } catch (err) {
+    // Fold into the job's results so the ops board shows TTL maintenance
+    // was NOT healthy this run (OCA-M08) — a bare log line hid this.
     console.warn(`[ttl-extender] key-level extend skipped (DB): ${err}`);
+    results.push({ contract: "key-level extend (whole pass)", success: false, error: String(err) });
   }
 }
 
