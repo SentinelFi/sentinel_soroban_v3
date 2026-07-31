@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { DOCS_URL } from "../config/links"
 import { useCopy } from "../copy"
 
 /**
@@ -54,6 +55,14 @@ export function InfoBubble({ children }: { children: React.ReactNode }) {
 					<p className="font-body text-[13px] leading-relaxed text-dim">
 						{children}
 					</p>
+					<a
+						href={DOCS_URL}
+						target="_blank"
+						rel="noopener noreferrer"
+						className="mt-3 inline-block font-display text-[10px] tracking-[0.05em] text-sky hover:text-gold"
+					>
+						{t.info.docsCta}
+					</a>
 				</div>
 			)}
 		</span>

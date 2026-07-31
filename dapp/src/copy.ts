@@ -281,9 +281,11 @@ const fun = {
 	info: {
 		title: "HOW THIS WORKS",
 		aria: "What is this?",
+		docsCta: "READ THE PILOT'S MANUAL ↗",
 	},
 	footer: {
-		left: "Soroban testnet · same contracts, different game.",
+		// rendered after the linked "Soroban testnet" prefix — see SiteFooter
+		left: "same contracts, different game.",
 		right: "NOT FINANCIAL ADVICE. IT'S INSURANCE, BUT FUN.",
 	},
 } as const
@@ -564,9 +566,10 @@ const serious: Copy = {
 	info: {
 		title: "How this works",
 		aria: "What is this?",
+		docsCta: "Read the docs →",
 	},
 	footer: {
-		left: "Soroban testnet · parametric flight delay insurance.",
+		left: "parametric flight delay insurance.",
 		right: "Not financial advice.",
 	},
 }
