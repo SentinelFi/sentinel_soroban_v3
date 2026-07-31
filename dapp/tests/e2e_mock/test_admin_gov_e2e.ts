@@ -60,6 +60,7 @@ import { handler as interventionsHandler } from "../../api/admin/interventions";
 import { handler as freezeHandler } from "../../api/admin/freeze";
 import { run as exposureRun, type ExposureDeps } from "../../api/_lib/governance/exposure_collector";
 import type { GovConfig } from "../../api/_lib/governance/config";
+import { allowRequest } from "../../api/_lib/rate_limit";
 import type { SorobanClient } from "../../api/_lib/soroban_client";
 import { check, summarize } from "../../scripts/e2e/harness";
 
@@ -392,6 +393,43 @@ async function testExposureOrchestration(): Promise<void> {
 // Main
 // ---------------------------------------------------------------------------
 
+async function testRateLimiter(): Promise<void> {
+  console.log("\n── OCA-M02: sale-auth rate limiter ──────────────────────");
+  // Synthetic scope+id so this never collides with real endpoint buckets;
+  // the table is throwaway accounting (hourly-pruned), safe to seed into.
+  const id = "e2e-test-ip";
+  const limit = 3;
+
+  const results: boolean[] = [];
+  for (let i = 0; i < limit + 2; i++) results.push(await allowRequest("e2e-rl", id, limit));
+  check(
+    "DB-backed: first `limit` requests pass, the rest are refused",
+    results.slice(0, limit).every(Boolean) && results.slice(limit).every((r) => r === false),
+    JSON.stringify(results)
+  );
+
+  const other = await allowRequest("e2e-rl", "another-ip", limit);
+  check("a different caller id is unaffected by the spent bucket", other === true);
+
+  // In-memory fallback: with the DB env removed the limiter must still
+  // bound the (fresh) bucket within this process.
+  const dbUrl = process.env.GOVERNANCE_DB_URL;
+  delete process.env.GOVERNANCE_DB_URL;
+  try {
+    const mem: boolean[] = [];
+    for (let i = 0; i < limit + 2; i++) mem.push(await allowRequest("e2e-rl-mem", id, limit));
+    check(
+      "no-DB fallback: in-memory layer enforces the same window",
+      mem.slice(0, limit).every(Boolean) && mem.slice(limit).every((r) => r === false),
+      JSON.stringify(mem)
+    );
+  } finally {
+    process.env.GOVERNANCE_DB_URL = dbUrl;
+  }
+
+  await sql`delete from api_rate_limits where bucket like 'e2e-rl%'`;
+}
+
 async function main(): Promise<void> {
   console.log(
     "Connected to GOVERNANCE_DB_URL (live governance Supabase project). " +
@@ -404,6 +442,7 @@ async function main(): Promise<void> {
     await testInterventionsHandler();
     await testFreezeHandler();
     await testExposureOrchestration();
+    await testRateLimiter();
   } finally {
     await cleanupRoute(HANDLER_ROUTE);
     for (const r of EXPOSURE_ROUTES) await cleanupRoute(r);
