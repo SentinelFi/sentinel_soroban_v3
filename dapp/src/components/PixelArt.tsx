@@ -55,6 +55,9 @@ export function PixelArt({
 				src={`/px/${name}.png`}
 				alt={asset.alt}
 				data-pixel={name}
+				// scenes are the above-the-fold hero banners — fetch ahead
+				// of the sprite art so first paint isn't waiting on them
+				fetchPriority={asset.scene ? "high" : undefined}
 				draggable={false}
 				className={cn(
 					"pixelated select-none",

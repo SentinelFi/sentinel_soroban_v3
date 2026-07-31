@@ -66,7 +66,7 @@ const TYPE_STYLE: Record<NotificationType, { border: string; label: string }> =
 		secondary: { border: "var(--color-blip)", label: "INFO" },
 		success: { border: "var(--color-win)", label: "NICE!" },
 		error: { border: "var(--color-loss)", label: "OOPS" },
-		warning: { border: "var(--color-gold)", label: "HEY!" },
+		warning: { border: "var(--color-gold)", label: "HEADS UP" },
 	}
 
 const AUTO_DISMISS_MS = 5000

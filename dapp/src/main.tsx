@@ -8,6 +8,15 @@ import { ThemeProvider } from "./providers/ThemeProvider"
 import App from "./App"
 import "./index.css"
 
+console.log(String.raw`
+  _    _      _ _
+ | |  | |    | | |
+ | |__| | ___| | | ___
+ |  __  |/ _ \ | |/ _ \
+ | |  | |  __/ | | (_) |
+ |_|  |_|\___|_|_|\___/
+`)
+
 const queryClient = new QueryClient()
 
 createRoot(document.getElementById("root")!).render(
