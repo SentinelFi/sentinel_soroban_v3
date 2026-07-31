@@ -12,7 +12,7 @@ import {
 } from "../hooks/useContracts"
 import { useWallet } from "../hooks/useWallet"
 import { useNotification } from "../hooks/useNotification"
-import { cn, formatDate } from "../lib/utils"
+import { cn, errorMessage, formatDate } from "../lib/utils"
 import { PixelArt } from "../components/PixelArt"
 import { TxProgress } from "../components/TxProgress"
 import type { TxState } from "../types"
@@ -260,7 +260,7 @@ export default function MyBets() {
 			}, 2000)
 		} catch (err) {
 			console.error("Claim failed:", err)
-			const message = err instanceof Error ? err.message : "Claim failed"
+			const message = errorMessage(err, "Claim failed")
 			setClaimError(message)
 			setClaimTxState("error")
 			addNotification(message, "error")

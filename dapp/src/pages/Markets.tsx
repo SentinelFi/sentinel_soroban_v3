@@ -17,6 +17,8 @@ import {
 import type { UiRoute } from "../hooks/useContracts"
 import { DEMO_ROUTES } from "../config/routes"
 import { useWallet } from "../hooks/useWallet"
+import { connectWallet } from "../util/wallet"
+import { errorMessage } from "../lib/utils"
 import { useNotification } from "../hooks/useNotification"
 import { PixelArt } from "../components/PixelArt"
 import { SeriousIcon } from "../components/SeriousIcon"
@@ -408,7 +410,7 @@ function BetSlip({
 				onClose()
 			}, 1500)
 		} catch (err) {
-			setError(err instanceof Error ? err.message : "Transaction failed")
+			setError(errorMessage(err))
 			setTxState("error")
 			setTimeout(() => setTxState("idle"), 3000)
 		}
@@ -518,18 +520,22 @@ function BetSlip({
 				/>
 
 				{!address && (
-					<p className="font-body text-[13px] text-gold">
-						{t.slip.connectPrompt}
-					</p>
+					<div className="space-y-2">
+						<p className="font-body text-[13px] text-gold">
+							{t.slip.connectPrompt}
+						</p>
+						<button
+							type="button"
+							onClick={() => void connectWallet()}
+							className="btn-px btn-gold btn-sm w-full"
+						>
+							{t.wallet.connect}
+						</button>
+					</div>
 				)}
 				{whitelistBlocked && (
 					<p className="font-body text-[13px] text-gold">
 						{t.slip.blockedPrompt}
-					</p>
-				)}
-				{error && (
-					<p className="break-words font-body text-[13px] text-loss">
-						{error}
 					</p>
 				)}
 

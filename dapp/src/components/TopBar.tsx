@@ -14,6 +14,7 @@ import { cn, txHashOf } from "../lib/utils"
 import { useCopy } from "../copy"
 import { useTheme } from "../providers/ThemeProvider"
 import { PixelArt } from "./PixelArt"
+import { SchemeToggle } from "./ThemeToggle"
 
 const NAV = [
 	{ to: "/", key: "markets" },
@@ -157,7 +158,7 @@ function CoinChip() {
 				type="button"
 				onClick={() => void mint()}
 				disabled={minting}
-				className="ml-1 border-l-2 border-line pl-2 font-body text-[11px] font-bold tracking-[0.06em] text-win hover:text-ink disabled:opacity-50"
+				className="ml-1 border-l-2 border-line px-2 font-body text-[11px] font-bold tracking-[0.06em] text-win hover:text-ink disabled:opacity-50"
 				title="Mint 10,000 test USDC"
 			>
 				{minting ? "MINTING…" : "+MINT"}
@@ -213,6 +214,7 @@ export function TopBar() {
 				</nav>
 
 				<div className="ml-auto flex items-center gap-3">
+					<SchemeToggle />
 					<CoinChip />
 					{address ? (
 						<WalletMenu address={address} />

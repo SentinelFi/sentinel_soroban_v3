@@ -30,12 +30,18 @@
 	--color-mute: #8296bd;
 
 	/* arcade neons — each carries a meaning */
-	--color-gold: #f5c13a; /* rewards / odds / stat numbers */
-	--color-win: #34d17a; /* on-time / success / claim */
-	--color-loss: #e74a4a; /* delayed / error */
-	--color-blip: #3a6bff; /* secondary CTA / step badges */
-	--color-sky: #5bc3e8; /* section headings / labels */
-	--color-highlight: #5bc3e8; /* serious-theme cyan accent (= sky in fun) */
+	--color-gold: #f5c13a;
+	/* rewards / odds / stat numbers */
+	--color-win: #34d17a;
+	/* on-time / success / claim */
+	--color-loss: #e74a4a;
+	/* delayed / error */
+	--color-blip: #3a6bff;
+	/* secondary CTA / step badges */
+	--color-sky: #5bc3e8;
+	/* section headings / labels */
+	--color-highlight: #5bc3e8;
+	/* serious-theme cyan accent (= sky in fun) */
 
 	--color-shadow-hard: #07102a;
 
@@ -92,22 +98,20 @@ body {
 html[data-theme="serious"] {
 	background-color: var(--color-page);
 }
+
 [data-theme="serious"] body {
 	color: var(--color-dim);
 	background-color: var(--color-page);
 	background-image:
-		radial-gradient(
-			720px 460px ellipse at 15% 0%,
+		radial-gradient(720px 460px ellipse at 15% 0%,
 			rgba(34, 184, 214, 0.05),
-			transparent 70%
-		),
-		radial-gradient(
-			620px 520px ellipse at 88% 12%,
+			transparent 70%),
+		radial-gradient(620px 520px ellipse at 88% 12%,
 			rgba(91, 139, 255, 0.045),
-			transparent 72%
-		);
+			transparent 72%);
 	background-attachment: fixed;
 }
+
 [data-theme="serious"] ::selection {
 	background: var(--color-highlight);
 	color: #04121a;
@@ -122,6 +126,7 @@ html[data-theme="serious"] {
 		cursor: pointer;
 		font-family: inherit;
 	}
+
 	button:disabled {
 		cursor: not-allowed;
 	}
@@ -150,9 +155,11 @@ html[data-theme="serious"] {
 	align-items: center;
 	gap: 8px;
 }
+
 .theme-dock .theme-toggle {
 	box-shadow: 0 4px 0 0 var(--color-shadow-hard);
 }
+
 .theme-dock-label {
 	font-family: var(--font-display);
 	font-size: 7px;
@@ -160,14 +167,17 @@ html[data-theme="serious"] {
 	text-transform: uppercase;
 	color: var(--color-mute);
 }
+
 [data-theme="serious"] .theme-dock .theme-toggle {
 	box-shadow: var(--shadow-soft-md);
 }
+
 [data-theme="serious"] .theme-dock-label {
 	font-family: var(--font-body);
 	font-size: 10px;
 	letter-spacing: 0.08em;
 }
+
 @media (max-width: 640px) {
 	.theme-dock-label {
 		display: none;
@@ -179,9 +189,11 @@ html[data-theme="serious"] {
 	color: var(--color-mute);
 	transition: color 120ms;
 }
+
 .footer-link:hover {
 	color: var(--color-ink);
 }
+
 .theme-toggle-opt {
 	font-family: var(--font-display);
 	font-size: 8px;
@@ -191,10 +203,12 @@ html[data-theme="serious"] {
 	color: var(--color-mute);
 	transition: color 120ms, background-color 120ms;
 }
+
 .theme-toggle-opt[data-active="true"] {
 	background: var(--color-gold);
 	color: var(--color-page);
 }
+
 .theme-toggle-opt:not([data-active="true"]):hover {
 	color: var(--color-ink);
 }
@@ -251,11 +265,13 @@ html[data-theme="serious"] {
 		0 6px 20px -8px rgba(3, 7, 18, 0.65),
 		0 2px 6px -4px rgba(3, 7, 18, 0.5);
 }
+
 [data-theme="serious"] .theme-toggle {
 	border-radius: 9999px;
 	border-width: 1px;
 	padding: 2px;
 }
+
 [data-theme="serious"] .theme-toggle-opt {
 	font-family: var(--font-display);
 	font-size: 12px;
@@ -269,1077 +285,1235 @@ html[data-theme="serious"] {
 /* Component classes live in the `components` layer so Tailwind
    utilities (text-*, p-*, …) can override them per-instance. */
 @layer components {
-/* ── pixel utilities ──────────────────────────────────────────── */
+	/* ── pixel utilities ──────────────────────────────────────────── */
 
-.pixelated {
-	image-rendering: pixelated;
-}
+	.pixelated {
+		image-rendering: pixelated;
+	}
 
-/* 8-bit notched corners (cuts 4px squares off each corner) */
-.notch {
-	clip-path: polygon(
-		4px 0,
-		calc(100% - 4px) 0,
-		100% 4px,
-		100% calc(100% - 4px),
-		calc(100% - 4px) 100%,
-		4px 100%,
-		0 calc(100% - 4px),
-		0 4px
-	);
-}
+	/* alt text paints in the element's text color while the file loads —
+	   make the flash invisible; screen readers read the attribute, not
+	   the painted fallback */
+	img[data-pixel] {
+		color: transparent;
+	}
 
-/* CRT scanlines for the departures board well */
-.scanlines {
-	background-image: repeating-linear-gradient(
-		0deg,
-		rgba(0, 0, 0, 0.22) 0px,
-		rgba(0, 0, 0, 0.22) 1px,
-		transparent 1px,
-		transparent 3px
-	);
-	pointer-events: none;
-}
+	/* 8-bit notched corners (cuts 4px squares off each corner) */
+	.notch {
+		clip-path: polygon(4px 0,
+				calc(100% - 4px) 0,
+				100% 4px,
+				100% calc(100% - 4px),
+				calc(100% - 4px) 100%,
+				4px 100%,
+				0 calc(100% - 4px),
+				0 4px);
+	}
 
-/* ── panels ───────────────────────────────────────────────────── */
+	/* CRT scanlines for the departures board well */
+	.scanlines {
+		background-image: repeating-linear-gradient(0deg,
+				rgba(0, 0, 0, 0.22) 0px,
+				rgba(0, 0, 0, 0.22) 1px,
+				transparent 1px,
+				transparent 3px);
+		pointer-events: none;
+	}
 
-.panel {
-	background: var(--color-surface);
-	border: 2px solid var(--color-line);
-	box-shadow: var(--shadow-px-sm);
-}
+	/* ── panels ───────────────────────────────────────────────────── */
 
-.panel-raised {
-	background: var(--color-raised);
-	border: 2px solid var(--color-line-mid);
-	box-shadow: var(--shadow-px-md);
-}
+	.panel {
+		background: var(--color-surface);
+		border: 2px solid var(--color-line);
+		box-shadow: var(--shadow-px-sm);
+	}
 
-.panel-inset {
-	background: var(--color-inset);
-	border: 2px solid var(--color-line);
-}
+	.panel-raised {
+		background: var(--color-raised);
+		border: 2px solid var(--color-line-mid);
+		box-shadow: var(--shadow-px-md);
+	}
 
-/* ── pixel buttons: 2px border + hard step shadow, flattens on press ── */
+	.panel-inset {
+		background: var(--color-inset);
+		border: 2px solid var(--color-line);
+	}
 
-.btn-px {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: 8px;
-	font-family: var(--font-display);
-	font-size: 11px;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
-	padding: 12px 16px;
-	border: 2px solid;
-	box-shadow: var(--shadow-px-md);
-	transition:
-		transform 120ms steps(2, end),
-		box-shadow 120ms steps(2, end),
-		filter 120ms steps(2, end);
-	user-select: none;
-	white-space: nowrap;
-}
-/* hover is a tonal shift, not a jump — the press (:active) is the motion */
-.btn-px:hover:not(:disabled) {
-	filter: brightness(1.12);
-}
-.btn-px:active:not(:disabled) {
-	transform: translateY(2px);
-	box-shadow: var(--shadow-px-sm);
-}
-.btn-px:focus-visible {
-	outline: 2px solid var(--color-sky);
-	outline-offset: 2px;
-}
-.btn-px:disabled {
-	opacity: 0.45;
-	transform: none;
-}
+	/* ── pixel buttons: 2px border + hard step shadow, flattens on press ── */
 
-.btn-gold {
-	background: var(--color-gold);
-	color: var(--color-page);
-	border-color: #c99a1c;
-}
-.btn-win {
-	background: var(--color-win);
-	color: var(--color-page);
-	border-color: #1e9e58;
-}
-.btn-loss {
-	background: var(--color-loss);
-	color: #ffffff;
-	border-color: #a32b2b;
-}
-.btn-blip {
-	background: var(--color-surface);
-	color: var(--color-blip);
-	border-color: var(--color-blip);
-}
-.btn-ghost {
-	background: transparent;
-	color: var(--color-ink);
-	border-color: var(--color-line-mid);
-	box-shadow: none;
-}
+	.btn-px {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		font-family: var(--font-display);
+		font-size: 11px;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		padding: 12px 16px;
+		border: 2px solid;
+		box-shadow: var(--shadow-px-md);
+		transition:
+			transform 120ms steps(2, end),
+			box-shadow 120ms steps(2, end),
+			filter 120ms steps(2, end);
+		user-select: none;
+		white-space: nowrap;
+	}
 
-.btn-sm {
-	font-size: 9px;
-	padding: 8px 10px;
-}
+	/* hover is a tonal shift, not a jump — the press (:active) is the motion */
+	.btn-px:hover:not(:disabled) {
+		filter: brightness(1.12);
+	}
 
-/* ── pixel pagination controls (departures board) ─────────────── */
+	.btn-px:active:not(:disabled) {
+		transform: translateY(2px);
+		box-shadow: var(--shadow-px-sm);
+	}
 
-.page-btn {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	font-family: var(--font-display);
-	font-size: 9px;
-	letter-spacing: 0.04em;
-	padding: 8px 12px;
-	color: var(--color-sky);
-	background: var(--color-inset);
-	border: 2px solid var(--color-line-mid);
-	box-shadow: var(--shadow-px-sm);
-	transition: filter 120ms steps(2, end);
-	user-select: none;
-	white-space: nowrap;
-}
-.page-btn:hover:not(:disabled) {
-	color: var(--color-ink);
-	border-color: var(--color-line-strong);
-	filter: brightness(1.2);
-}
-.page-btn:active:not(:disabled) {
-	transform: translateY(2px);
-	box-shadow: none;
-}
-.page-btn:focus-visible {
-	outline: 2px solid var(--color-sky);
-	outline-offset: 2px;
-}
-.page-btn:disabled {
-	opacity: 0.35;
-	box-shadow: none;
-}
+	.btn-px:focus-visible {
+		outline: 2px solid var(--color-sky);
+		outline-offset: 2px;
+	}
 
-/* ── pixel form fields ────────────────────────────────────────── */
+	.btn-px:disabled {
+		opacity: 0.45;
+		transform: none;
+	}
 
-.field-px {
-	width: 100%;
-	background: var(--color-raised);
-	border: 2px solid var(--color-line);
-	color: var(--color-ink);
-	font-family: var(--font-body);
-	font-size: 15px;
-	line-height: 1.2;
-	padding: 10px 12px;
-}
-.field-px:focus {
-	outline: none;
-	border-color: var(--color-sky);
-}
-.field-px::placeholder {
-	color: var(--color-mute);
-}
-/* keep the native date-picker icon visible on dark */
-input.field-px[type="date"] {
-	color-scheme: dark;
-}
+	.btn-gold {
+		background: var(--color-gold);
+		color: var(--color-page);
+		border-color: #c99a1c;
+	}
 
-/* ── pixel range sliders (underwriter calculator) ─────────────── */
-/* Chunky square controls: a hard-stop gold fill painted onto the track
+	.btn-win {
+		background: var(--color-win);
+		color: var(--color-page);
+		border-color: #1e9e58;
+	}
+
+	.btn-loss {
+		background: var(--color-loss);
+		color: #ffffff;
+		border-color: #a32b2b;
+	}
+
+	.btn-blip {
+		background: var(--color-surface);
+		color: var(--color-blip);
+		border-color: var(--color-blip);
+	}
+
+	.btn-ghost {
+		background: transparent;
+		color: var(--color-ink);
+		border-color: var(--color-line-mid);
+		box-shadow: none;
+	}
+
+	.btn-sm {
+		font-size: 9px;
+		padding: 8px 10px;
+	}
+
+	/* ── pixel pagination controls (departures board) ─────────────── */
+
+	.page-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-family: var(--font-display);
+		font-size: 9px;
+		letter-spacing: 0.04em;
+		padding: 8px 12px;
+		color: var(--color-sky);
+		background: var(--color-inset);
+		border: 2px solid var(--color-line-mid);
+		box-shadow: var(--shadow-px-sm);
+		transition: filter 120ms steps(2, end);
+		user-select: none;
+		white-space: nowrap;
+	}
+
+	.page-btn:hover:not(:disabled) {
+		color: var(--color-ink);
+		border-color: var(--color-line-strong);
+		filter: brightness(1.2);
+	}
+
+	.page-btn:active:not(:disabled) {
+		transform: translateY(2px);
+		box-shadow: none;
+	}
+
+	.page-btn:focus-visible {
+		outline: 2px solid var(--color-sky);
+		outline-offset: 2px;
+	}
+
+	.page-btn:disabled {
+		opacity: 0.35;
+		box-shadow: none;
+	}
+
+	/* ── pixel form fields ────────────────────────────────────────── */
+
+	.field-px {
+		width: 100%;
+		background: var(--color-raised);
+		border: 2px solid var(--color-line);
+		color: var(--color-ink);
+		font-family: var(--font-body);
+		font-size: 15px;
+		line-height: 1.2;
+		padding: 10px 12px;
+	}
+
+	.field-px:focus {
+		outline: none;
+		border-color: var(--color-sky);
+	}
+
+	.field-px::placeholder {
+		color: var(--color-mute);
+	}
+
+	/* keep the native date-picker icon visible on dark */
+	input.field-px[type="date"] {
+		color-scheme: dark;
+	}
+
+	/* ── pixel range sliders (underwriter calculator) ─────────────── */
+	/* Chunky square controls: a hard-stop gold fill painted onto the track
    via --fill (set inline per slider), and a tall knob with a step shadow.
    No rounding anywhere — these are levers, not pills. */
 
-.slider-px {
-	-webkit-appearance: none;
-	appearance: none;
-	display: block;
-	width: 100%;
-	height: 34px; /* room for the tall thumb — nothing clips */
-	background: transparent;
-	cursor: ew-resize;
-}
-.slider-px:focus-visible {
-	outline: 2px solid var(--color-sky);
-	outline-offset: 3px;
-}
-
-.slider-px::-webkit-slider-runnable-track {
-	height: 18px;
-	border: 2px solid var(--color-line-mid);
-	background: linear-gradient(
-		to right,
-		var(--color-gold) var(--fill, 50%),
-		var(--color-inset) var(--fill, 50%)
-	);
-}
-.slider-px::-webkit-slider-thumb {
-	-webkit-appearance: none;
-	width: 18px;
-	height: 30px;
-	margin-top: -8px; /* center 30px knob on the 18px track */
-	background: var(--color-ink);
-	border: 2px solid var(--color-shadow-hard);
-	box-shadow: 0 3px 0 0 var(--color-shadow-hard);
-}
-
-.slider-px::-moz-range-track {
-	height: 14px;
-	border: 2px solid var(--color-line-mid);
-	background: var(--color-inset);
-}
-.slider-px::-moz-range-progress {
-	height: 14px;
-	border: 2px solid var(--color-line-mid);
-	background: var(--color-gold);
-}
-.slider-px::-moz-range-thumb {
-	width: 18px;
-	height: 30px;
-	border-radius: 0;
-	background: var(--color-ink);
-	border: 2px solid var(--color-shadow-hard);
-	box-shadow: 0 3px 0 0 var(--color-shadow-hard);
-}
-
-/* ── type helpers ─────────────────────────────────────────────── */
-
-.h-display {
-	font-family: var(--font-display);
-	color: var(--color-ink);
-	line-height: 1.2;
-}
-.h-section {
-	font-family: var(--font-display);
-	font-size: 13px;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
-	color: var(--color-sky);
-}
-/* small labels read effortlessly: neutral face, weight + tracking do the work */
-.label-px {
-	font-family: var(--font-body);
-	font-size: 11px;
-	font-weight: 650;
-	letter-spacing: 0.1em;
-	text-transform: uppercase;
-	color: var(--color-mute);
-}
-/* tiny status words (BOARDING, DELAYED…) — readable, not 8px pixel type */
-.status-px {
-	font-family: var(--font-body);
-	font-size: 11px;
-	font-weight: 700;
-	letter-spacing: 0.08em;
-	text-transform: uppercase;
-	white-space: nowrap;
-}
-.board-figure {
-	font-family: var(--font-board);
-	font-size: 22px;
-	line-height: 1;
-	color: var(--color-gold);
-}
-
-/* ── animation (transform / visibility only — content never hidden by default) ── */
-
-@keyframes px-blink {
-	0%,
-	49% {
-		opacity: 1;
+	.slider-px {
+		-webkit-appearance: none;
+		appearance: none;
+		display: block;
+		width: 100%;
+		height: 34px;
+		/* room for the tall thumb — nothing clips */
+		background: transparent;
+		cursor: ew-resize;
 	}
-	50%,
-	100% {
-		opacity: 0;
-	}
-}
-.blink {
-	animation: px-blink 1200ms steps(2, end) infinite;
-}
 
-@keyframes px-marquee {
-	from {
-		transform: translateX(0);
+	.slider-px:focus-visible {
+		outline: 2px solid var(--color-sky);
+		outline-offset: 3px;
 	}
-	to {
-		transform: translateX(-50%);
-	}
-}
-.marquee-track {
-	display: flex;
-	width: max-content;
-	animation: px-marquee 30s linear infinite;
-}
-.marquee-track:hover {
-	animation-play-state: paused;
-}
 
-@keyframes px-float {
-	from {
-		transform: translateY(0);
+	.slider-px::-webkit-slider-runnable-track {
+		height: 18px;
+		border: 2px solid var(--color-line-mid);
+		background: linear-gradient(to right,
+				var(--color-gold) var(--fill, 50%),
+				var(--color-inset) var(--fill, 50%));
 	}
-	to {
-		transform: translateY(-6px);
-	}
-}
-.floaty {
-	animation: px-float 2400ms steps(6, end) infinite alternate;
-}
 
-/* ── the landing loop ─────────────────────────────────────────────
+	.slider-px::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		width: 18px;
+		height: 30px;
+		margin-top: -8px;
+		/* center 30px knob on the 18px track */
+		background: var(--color-ink);
+		border: 2px solid var(--color-shadow-hard);
+		box-shadow: 0 3px 0 0 var(--color-shadow-hard);
+	}
+
+	.slider-px::-moz-range-track {
+		height: 14px;
+		border: 2px solid var(--color-line-mid);
+		background: var(--color-inset);
+	}
+
+	.slider-px::-moz-range-progress {
+		height: 14px;
+		border: 2px solid var(--color-line-mid);
+		background: var(--color-gold);
+	}
+
+	.slider-px::-moz-range-thumb {
+		width: 18px;
+		height: 30px;
+		border-radius: 0;
+		background: var(--color-ink);
+		border: 2px solid var(--color-shadow-hard);
+		box-shadow: 0 3px 0 0 var(--color-shadow-hard);
+	}
+
+	/* ── type helpers ─────────────────────────────────────────────── */
+
+	.h-display {
+		font-family: var(--font-display);
+		color: var(--color-ink);
+		line-height: 1.2;
+	}
+
+	.h-section {
+		font-family: var(--font-display);
+		font-size: 13px;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--color-sky);
+	}
+
+	/* small labels read effortlessly: neutral face, weight + tracking do the work */
+	.label-px {
+		font-family: var(--font-body);
+		font-size: 11px;
+		font-weight: 650;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--color-mute);
+	}
+
+	/* tiny status words (BOARDING, DELAYED…) — readable, not 8px pixel type */
+	.status-px {
+		font-family: var(--font-body);
+		font-size: 11px;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		white-space: nowrap;
+	}
+
+	.board-figure {
+		font-family: var(--font-board);
+		font-size: 22px;
+		line-height: 1;
+		color: var(--color-gold);
+	}
+
+	/* ── animation (transform / visibility only — content never hidden by default) ── */
+
+	@keyframes px-blink {
+
+		0%,
+		49% {
+			opacity: 1;
+		}
+
+		50%,
+		100% {
+			opacity: 0;
+		}
+	}
+
+	.blink {
+		animation: px-blink 1200ms steps(2, end) infinite;
+	}
+
+	@keyframes px-marquee {
+		from {
+			transform: translateX(0);
+		}
+
+		to {
+			transform: translateX(-50%);
+		}
+	}
+
+	.marquee-track {
+		display: flex;
+		width: max-content;
+		animation: px-marquee 30s linear infinite;
+	}
+
+	.marquee-track:hover {
+		animation-play-state: paused;
+	}
+
+	@keyframes px-float {
+		from {
+			transform: translateY(0);
+		}
+
+		to {
+			transform: translateY(-6px);
+		}
+	}
+
+	.floaty {
+		animation: px-float 2400ms steps(6, end) infinite alternate;
+	}
+
+	/* ── the landing loop ─────────────────────────────────────────────
    Track spans the hero (inset-0), so translate(%) = hero fractions.
    The plane img sits statically at its PARKED spot on the runway
    (left/top set inline) — with animations off (reduced motion) the
    plane simply rests there, fully visible. The loop: glide in from
    the upper right, flare, touch down, decelerate rolling left,
    pause at the stand, then taxi off the left edge and go around. */
-@keyframes px-land {
-	0% {
-		/* off the right edge, high in the night sky */
-		transform: translate(100%, -52%);
-		animation-timing-function: linear;
-	}
-	54% {
-		/* long straight glide slope down toward the strip */
-		transform: translate(21%, -5%);
-		animation-timing-function: linear;
-	}
-	62% {
-		/* touchdown — then brake down the runway */
-		transform: translate(14%, 0%);
-		animation-timing-function: cubic-bezier(0.1, 0.55, 0.35, 1);
-	}
-	82%,
-	93% {
-		/* parked at the stand (matches the sprite's static position) */
-		transform: translate(0%, 0%);
-	}
-	93.01% {
-		animation-timing-function: cubic-bezier(0.55, 0, 0.85, 0.55);
-	}
-	100% {
-		/* taxi off the left edge, then go around again */
-		transform: translate(-18%, 0%);
-	}
-}
-.land-track {
-	position: absolute;
-	inset: 0;
-	pointer-events: none;
-	animation: px-land 18s infinite;
-}
-/* nose pitch: sprite faces LEFT, so +rotate = nose down the glide */
-@keyframes px-pitch {
-	0%,
-	52% {
-		transform: rotate(9deg);
-	}
-	62%,
-	100% {
-		transform: rotate(0deg);
-	}
-}
-.land-plane {
-	animation: px-pitch 18s linear infinite;
-}
+	@keyframes px-land {
+		0% {
+			/* off the right edge, high in the night sky */
+			transform: translate(100%, -52%);
+			animation-timing-function: linear;
+		}
 
-@keyframes px-flash {
-	0%,
-	100% {
-		box-shadow:
-			0 4px 0 0 #07102a,
-			0 0 0 2px rgba(245, 193, 58, 0.35);
-	}
-	50% {
-		box-shadow:
-			0 4px 0 0 #07102a,
-			0 0 0 4px rgba(245, 193, 58, 0.6);
-	}
-}
-.win-flash {
-	animation: px-flash 1200ms steps(2, end) infinite;
-}
+		54% {
+			/* long straight glide slope down toward the strip */
+			transform: translate(21%, -5%);
+			animation-timing-function: linear;
+		}
 
-/* ── tx progress stepper ──────────────────────────────────────────
+		62% {
+			/* touchdown — then brake down the runway */
+			transform: translate(14%, 0%);
+			animation-timing-function: cubic-bezier(0.1, 0.55, 0.35, 1);
+		}
+
+		82%,
+		93% {
+			/* parked at the stand (matches the sprite's static position) */
+			transform: translate(0%, 0%);
+		}
+
+		93.01% {
+			animation-timing-function: cubic-bezier(0.55, 0, 0.85, 0.55);
+		}
+
+		100% {
+			/* taxi off the left edge, then go around again */
+			transform: translate(-18%, 0%);
+		}
+	}
+
+	.land-track {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		animation: px-land 18s infinite;
+	}
+
+	/* nose pitch: sprite faces LEFT, so +rotate = nose down the glide */
+	@keyframes px-pitch {
+
+		0%,
+		52% {
+			transform: rotate(9deg);
+		}
+
+		62%,
+		100% {
+			transform: rotate(0deg);
+		}
+	}
+
+	.land-plane {
+		animation: px-pitch 18s linear infinite;
+	}
+
+	@keyframes px-flash {
+
+		0%,
+		100% {
+			box-shadow:
+				0 4px 0 0 #07102a,
+				0 0 0 2px rgba(245, 193, 58, 0.35);
+		}
+
+		50% {
+			box-shadow:
+				0 4px 0 0 #07102a,
+				0 0 0 4px rgba(245, 193, 58, 0.6);
+		}
+	}
+
+	.win-flash {
+		animation: px-flash 1200ms steps(2, end) infinite;
+	}
+
+	/* ── tx progress stepper ──────────────────────────────────────────
    Serious: opacity/transform, 150–300ms, ease. Fun: steps() pixel
    motion. Shared box model; the two skins otherwise render nothing
    alike (see TxProgress.tsx). */
 
-.tx-progress {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	padding: 10px 0;
-}
+	.tx-progress {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: 10px 0;
+	}
 
-/* -- serious: 3-dot stepper -- */
-.tx-progress-serious .tx-dot {
-	display: flex;
-	height: 22px;
-	width: 22px;
-	align-items: center;
-	justify-content: center;
-	border-radius: 999px;
-	border: 1.5px solid var(--color-line-mid);
-	color: var(--color-mute);
-	transition:
-		border-color 200ms ease,
-		color 200ms ease,
-		background-color 200ms ease;
-}
-.tx-progress-serious .tx-dot.is-active {
-	border-color: var(--color-sky);
-	color: var(--color-sky);
-	animation: tx-shimmer 1400ms ease-in-out infinite;
-}
-.tx-progress-serious .tx-dot.is-done {
-	border-color: var(--color-win);
-	background: color-mix(in srgb, var(--color-win) 16%, transparent);
-	color: var(--color-win);
-}
-.tx-progress-serious .tx-dot.is-failed {
-	border-color: var(--color-loss);
-	color: var(--color-loss);
-}
-.tx-progress-serious .tx-dot-line {
-	height: 1.5px;
-	width: 28px;
-	background: var(--color-line-mid);
-	transition: background-color 250ms ease;
-}
-.tx-progress-serious .tx-dot-line.is-done {
-	background: var(--color-win);
-}
-@keyframes tx-shimmer {
-	0%,
-	100% {
-		opacity: 1;
+	/* -- serious: 3-dot stepper -- */
+	.tx-progress-serious .tx-dot {
+		display: flex;
+		height: 22px;
+		width: 22px;
+		align-items: center;
+		justify-content: center;
+		border-radius: 999px;
+		border: 1.5px solid var(--color-line-mid);
+		color: var(--color-mute);
+		transition:
+			border-color 200ms ease,
+			color 200ms ease,
+			background-color 200ms ease;
 	}
-	50% {
-		opacity: 0.45;
-	}
-}
 
-/* -- fun: boarding-pass runway -- */
-.tx-progress-fun .tx-runway {
-	position: relative;
-	height: 40px;
-	width: 100%;
-	max-width: 220px;
-}
-.tx-progress-fun .tx-runway-strip {
-	position: absolute;
-	top: 50%;
-	left: 0;
-	right: 0;
-	height: 2px;
-	background: repeating-linear-gradient(
-		to right,
-		var(--color-line-mid) 0 8px,
-		transparent 8px 16px
-	);
-	transform: translateY(-50%);
-}
-.tx-progress-fun .tx-runway-plane {
-	position: absolute;
-	top: 50%;
-	transform: translate(-50%, -50%);
-	transition: left 500ms steps(6, end);
-}
-.tx-progress-fun .tx-radar {
-	position: absolute;
-	top: 0;
-	right: 0;
-	animation: tx-radar-pulse 900ms steps(4, end) infinite;
-}
-@keyframes tx-radar-pulse {
-	0%,
-	100% {
-		opacity: 1;
-		transform: scale(1);
+	.tx-progress-serious .tx-dot.is-active {
+		border-color: var(--color-sky);
+		color: var(--color-sky);
+		animation: tx-shimmer 1400ms ease-in-out infinite;
 	}
-	50% {
-		opacity: 0.6;
-		transform: scale(1.15);
-	}
-}
-.tx-progress-fun .tx-stamp-pop {
-	position: relative;
-	animation: tx-stamp-drop 360ms steps(5, end);
-}
-@keyframes tx-stamp-drop {
-	0% {
-		opacity: 0;
-		transform: scale(1.8) rotate(-14deg);
-	}
-	60% {
-		opacity: 1;
-		transform: scale(0.92) rotate(-4deg);
-	}
-	100% {
-		opacity: 1;
-		transform: scale(1) rotate(-6deg);
-	}
-}
 
-.tx-confetti {
-	position: absolute;
-	inset: 0;
-	pointer-events: none;
-}
-.tx-confetti-piece {
-	position: absolute;
-	top: 50%;
-	left: 50%;
-	height: 5px;
-	width: 5px;
-	background: var(--color-gold);
-	animation: tx-confetti-burst 700ms steps(6, end) forwards;
-}
-@keyframes tx-confetti-burst {
-	to {
-		transform: rotate(var(--tx-angle, 0deg)) translateY(-46px);
-		opacity: 0;
+	.tx-progress-serious .tx-dot.is-done {
+		border-color: var(--color-win);
+		background: color-mix(in srgb, var(--color-win) 16%, transparent);
+		color: var(--color-win);
 	}
-}
-.tx-confetti-piece:nth-child(1) {
-	--tx-angle: 0deg;
-	background: var(--color-gold);
-}
-.tx-confetti-piece:nth-child(2) {
-	--tx-angle: 30deg;
-	background: var(--color-win);
-}
-.tx-confetti-piece:nth-child(3) {
-	--tx-angle: 60deg;
-	background: var(--color-sky);
-}
-.tx-confetti-piece:nth-child(4) {
-	--tx-angle: 90deg;
-	background: var(--color-gold);
-}
-.tx-confetti-piece:nth-child(5) {
-	--tx-angle: 120deg;
-	background: var(--color-win);
-}
-.tx-confetti-piece:nth-child(6) {
-	--tx-angle: 150deg;
-	background: var(--color-sky);
-}
-.tx-confetti-piece:nth-child(7) {
-	--tx-angle: 180deg;
-	background: var(--color-gold);
-}
-.tx-confetti-piece:nth-child(8) {
-	--tx-angle: 210deg;
-	background: var(--color-win);
-}
-.tx-confetti-piece:nth-child(9) {
-	--tx-angle: 240deg;
-	background: var(--color-sky);
-}
-.tx-confetti-piece:nth-child(10) {
-	--tx-angle: 270deg;
-	background: var(--color-gold);
-}
-.tx-confetti-piece:nth-child(11) {
-	--tx-angle: 300deg;
-	background: var(--color-win);
-}
-.tx-confetti-piece:nth-child(12) {
-	--tx-angle: 330deg;
-	background: var(--color-sky);
-}
-.tx-confetti-piece:nth-child(13) {
-	--tx-angle: 15deg;
-	background: var(--color-gold);
-}
-.tx-confetti-piece:nth-child(14) {
-	--tx-angle: 195deg;
-	background: var(--color-win);
-}
 
-/* ── micro-animations (fun more, serious less) ────────────────────
+	.tx-progress-serious .tx-dot.is-failed {
+		border-color: var(--color-loss);
+		color: var(--color-loss);
+	}
+
+	.tx-progress-serious .tx-dot-line {
+		height: 1.5px;
+		width: 28px;
+		background: var(--color-line-mid);
+		transition: background-color 250ms ease;
+	}
+
+	.tx-progress-serious .tx-dot-line.is-done {
+		background: var(--color-win);
+	}
+
+	@keyframes tx-shimmer {
+
+		0%,
+		100% {
+			opacity: 1;
+		}
+
+		50% {
+			opacity: 0.45;
+		}
+	}
+
+	/* -- fun: boarding-pass runway -- */
+	.tx-progress-fun .tx-runway {
+		position: relative;
+		height: 40px;
+		width: 100%;
+		max-width: 220px;
+	}
+
+	.tx-progress-fun .tx-runway-strip {
+		position: absolute;
+		top: 50%;
+		left: 0;
+		right: 0;
+		height: 2px;
+		background: repeating-linear-gradient(to right,
+				var(--color-line-mid) 0 8px,
+				transparent 8px 16px);
+		transform: translateY(-50%);
+	}
+
+	.tx-progress-fun .tx-runway-plane {
+		position: absolute;
+		top: 50%;
+		transform: translate(-50%, -50%);
+		transition: left 500ms steps(6, end);
+	}
+
+	.tx-progress-fun .tx-radar {
+		position: absolute;
+		top: 0;
+		right: 0;
+		animation: tx-radar-pulse 900ms steps(4, end) infinite;
+	}
+
+	@keyframes tx-radar-pulse {
+
+		0%,
+		100% {
+			opacity: 1;
+			transform: scale(1);
+		}
+
+		50% {
+			opacity: 0.6;
+			transform: scale(1.15);
+		}
+	}
+
+	.tx-progress-fun .tx-stamp-pop {
+		position: relative;
+		animation: tx-stamp-drop 360ms steps(5, end);
+	}
+
+	@keyframes tx-stamp-drop {
+		0% {
+			opacity: 0;
+			transform: scale(1.8) rotate(-14deg);
+		}
+
+		60% {
+			opacity: 1;
+			transform: scale(0.92) rotate(-4deg);
+		}
+
+		100% {
+			opacity: 1;
+			transform: scale(1) rotate(-6deg);
+		}
+	}
+
+	.tx-confetti {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+	}
+
+	.tx-confetti-piece {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		height: 5px;
+		width: 5px;
+		background: var(--color-gold);
+		animation: tx-confetti-burst 700ms steps(6, end) forwards;
+	}
+
+	@keyframes tx-confetti-burst {
+		to {
+			transform: rotate(var(--tx-angle, 0deg)) translateY(-46px);
+			opacity: 0;
+		}
+	}
+
+	.tx-confetti-piece:nth-child(1) {
+		--tx-angle: 0deg;
+		background: var(--color-gold);
+	}
+
+	.tx-confetti-piece:nth-child(2) {
+		--tx-angle: 30deg;
+		background: var(--color-win);
+	}
+
+	.tx-confetti-piece:nth-child(3) {
+		--tx-angle: 60deg;
+		background: var(--color-sky);
+	}
+
+	.tx-confetti-piece:nth-child(4) {
+		--tx-angle: 90deg;
+		background: var(--color-gold);
+	}
+
+	.tx-confetti-piece:nth-child(5) {
+		--tx-angle: 120deg;
+		background: var(--color-win);
+	}
+
+	.tx-confetti-piece:nth-child(6) {
+		--tx-angle: 150deg;
+		background: var(--color-sky);
+	}
+
+	.tx-confetti-piece:nth-child(7) {
+		--tx-angle: 180deg;
+		background: var(--color-gold);
+	}
+
+	.tx-confetti-piece:nth-child(8) {
+		--tx-angle: 210deg;
+		background: var(--color-win);
+	}
+
+	.tx-confetti-piece:nth-child(9) {
+		--tx-angle: 240deg;
+		background: var(--color-sky);
+	}
+
+	.tx-confetti-piece:nth-child(10) {
+		--tx-angle: 270deg;
+		background: var(--color-gold);
+	}
+
+	.tx-confetti-piece:nth-child(11) {
+		--tx-angle: 300deg;
+		background: var(--color-win);
+	}
+
+	.tx-confetti-piece:nth-child(12) {
+		--tx-angle: 330deg;
+		background: var(--color-sky);
+	}
+
+	.tx-confetti-piece:nth-child(13) {
+		--tx-angle: 15deg;
+		background: var(--color-gold);
+	}
+
+	.tx-confetti-piece:nth-child(14) {
+		--tx-angle: 195deg;
+		background: var(--color-win);
+	}
+
+	/* ── micro-animations (fun more, serious less) ────────────────────
    Serious = opacity/transform, 150–300ms, ease. Fun = steps() pixel
    motion. Admin intentionally does not use any of these — it stays
    minimal (see Admin.tsx). */
 
-/* status-lamp breathing — a calmer alternative to .blink for "alive and
+	/* status-lamp breathing — a calmer alternative to .blink for "alive and
    updating" indicators (LIVE dots), as opposed to .blink's harder flash
    reserved for states that want conscious attention (DEMO/error). */
-@keyframes px-breathe {
-	0%,
-	100% {
-		opacity: 1;
-		transform: scale(1);
-	}
-	50% {
-		opacity: 0.55;
-		transform: scale(0.85);
-	}
-}
-.breathe {
-	animation: px-breathe 2200ms ease-in-out infinite;
-}
+	@keyframes px-breathe {
 
-/* split-flap status chips — plays on mount, so callers key the chip on
+		0%,
+		100% {
+			opacity: 1;
+			transform: scale(1);
+		}
+
+		50% {
+			opacity: 0.55;
+			transform: scale(0.85);
+		}
+	}
+
+	.breathe {
+		animation: px-breathe 2200ms ease-in-out infinite;
+	}
+
+	/* split-flap status chips — plays on mount, so callers key the chip on
    its displayed text: a genuine content change remounts it and replays
    the flap. Fun = a snappy vertical squeeze (steps); serious = a soft
    fade + tiny rise. */
-@keyframes px-flap-fun {
-	0% {
-		transform: scaleY(0.2);
-		opacity: 0;
-	}
-	60% {
-		transform: scaleY(1.15);
-		opacity: 1;
-	}
-	100% {
-		transform: scaleY(1);
-	}
-}
-@keyframes px-flap-serious {
-	from {
-		transform: translateY(3px);
-		opacity: 0;
-	}
-	to {
-		transform: translateY(0);
-		opacity: 1;
-	}
-}
-.status-flap {
-	transform-origin: center;
-	animation: px-flap-fun 260ms steps(5, end) both;
-}
-[data-theme="serious"] .status-flap {
-	animation: px-flap-serious 220ms ease-out both;
-}
+	@keyframes px-flap-fun {
+		0% {
+			transform: scaleY(0.2);
+			opacity: 0;
+		}
 
-/* board row stream-in — plays once per row on mount (i.e. when it first
+		60% {
+			transform: scaleY(1.15);
+			opacity: 1;
+		}
+
+		100% {
+			transform: scaleY(1);
+		}
+	}
+
+	@keyframes px-flap-serious {
+		from {
+			transform: translateY(3px);
+			opacity: 0;
+		}
+
+		to {
+			transform: translateY(0);
+			opacity: 1;
+		}
+	}
+
+	.status-flap {
+		transform-origin: center;
+		animation: px-flap-fun 260ms steps(5, end) both;
+	}
+
+	[data-theme="serious"] .status-flap {
+		animation: px-flap-serious 220ms ease-out both;
+	}
+
+	/* board row stream-in — plays once per row on mount (i.e. when it first
    enters the visible page/search/sort set, not on background refetches
    of unchanged rows, since those keep the same key). */
-@keyframes px-row-in {
-	from {
-		transform: translateY(6px);
-		opacity: 0;
-	}
-	to {
-		transform: translateY(0);
-		opacity: 1;
-	}
-}
-.board-row-in {
-	animation: px-row-in 320ms ease-out both;
-}
-[data-theme="fun"] .board-row-in {
-	animation-timing-function: steps(6, end);
-}
-.board-row-in:nth-child(1) {
-	animation-delay: 0ms;
-}
-.board-row-in:nth-child(2) {
-	animation-delay: 30ms;
-}
-.board-row-in:nth-child(3) {
-	animation-delay: 60ms;
-}
-.board-row-in:nth-child(4) {
-	animation-delay: 90ms;
-}
-.board-row-in:nth-child(5) {
-	animation-delay: 120ms;
-}
-.board-row-in:nth-child(6) {
-	animation-delay: 150ms;
-}
-.board-row-in:nth-child(7) {
-	animation-delay: 180ms;
-}
-.board-row-in:nth-child(8) {
-	animation-delay: 210ms;
-}
-.board-row-in:nth-child(9) {
-	animation-delay: 240ms;
-}
-.board-row-in:nth-child(10) {
-	animation-delay: 270ms;
-}
-.board-row-in:nth-child(11) {
-	animation-delay: 300ms;
-}
-.board-row-in:nth-child(12) {
-	animation-delay: 330ms;
-}
+	@keyframes px-row-in {
+		from {
+			transform: translateY(6px);
+			opacity: 0;
+		}
 
-/* MyBets claim-button gold pulse — distinct from the card's existing
+		to {
+			transform: translateY(0);
+			opacity: 1;
+		}
+	}
+
+	.board-row-in {
+		animation: px-row-in 320ms ease-out both;
+	}
+
+	[data-theme="fun"] .board-row-in {
+		animation-timing-function: steps(6, end);
+	}
+
+	.board-row-in:nth-child(1) {
+		animation-delay: 0ms;
+	}
+
+	.board-row-in:nth-child(2) {
+		animation-delay: 30ms;
+	}
+
+	.board-row-in:nth-child(3) {
+		animation-delay: 60ms;
+	}
+
+	.board-row-in:nth-child(4) {
+		animation-delay: 90ms;
+	}
+
+	.board-row-in:nth-child(5) {
+		animation-delay: 120ms;
+	}
+
+	.board-row-in:nth-child(6) {
+		animation-delay: 150ms;
+	}
+
+	.board-row-in:nth-child(7) {
+		animation-delay: 180ms;
+	}
+
+	.board-row-in:nth-child(8) {
+		animation-delay: 210ms;
+	}
+
+	.board-row-in:nth-child(9) {
+		animation-delay: 240ms;
+	}
+
+	.board-row-in:nth-child(10) {
+		animation-delay: 270ms;
+	}
+
+	.board-row-in:nth-child(11) {
+		animation-delay: 300ms;
+	}
+
+	.board-row-in:nth-child(12) {
+		animation-delay: 330ms;
+	}
+
+	/* MyBets claim-button gold pulse — distinct from the card's existing
    .win-flash border flash; draws the eye specifically to the action. */
-@keyframes px-claim-pulse {
-	0%,
-	100% {
-		box-shadow: 0 0 0 0 rgba(245, 193, 58, 0.55);
-	}
-	50% {
-		box-shadow: 0 0 0 6px rgba(245, 193, 58, 0);
-	}
-}
-.claim-btn-pulse {
-	animation: px-claim-pulse 1600ms ease-in-out infinite;
-}
-[data-theme="fun"] .claim-btn-pulse {
-	animation-timing-function: steps(4, end);
-}
+	@keyframes px-claim-pulse {
 
-/* toast settle — drop in, slight overshoot, settle. Plays on mount
+		0%,
+		100% {
+			box-shadow: 0 0 0 0 rgba(245, 193, 58, 0.55);
+		}
+
+		50% {
+			box-shadow: 0 0 0 6px rgba(245, 193, 58, 0);
+		}
+	}
+
+	.claim-btn-pulse {
+		animation: px-claim-pulse 1600ms ease-in-out infinite;
+	}
+
+	[data-theme="fun"] .claim-btn-pulse {
+		animation-timing-function: steps(4, end);
+	}
+
+	/* toast settle — drop in, slight overshoot, settle. Plays on mount
    (each toast already has a stable per-notification key). */
-@keyframes px-toast-settle {
-	0% {
-		transform: translateY(-14px);
-		opacity: 0;
-	}
-	70% {
-		transform: translateY(2px);
-		opacity: 1;
-	}
-	100% {
-		transform: translateY(0);
-	}
-}
-.toast-px {
-	animation: px-toast-settle 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
-}
-[data-theme="fun"] .toast-px {
-	animation-timing-function: steps(6, end);
-}
+	@keyframes px-toast-settle {
+		0% {
+			transform: translateY(-14px);
+			opacity: 0;
+		}
 
-/* TopBar coin flip (fun only) — plays on mount, so the caller keys the
+		70% {
+			transform: translateY(2px);
+			opacity: 1;
+		}
+
+		100% {
+			transform: translateY(0);
+		}
+	}
+
+	.toast-px {
+		animation: px-toast-settle 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+	}
+
+	[data-theme="fun"] .toast-px {
+		animation-timing-function: steps(6, end);
+	}
+
+	/* TopBar coin flip (fun only) — plays on mount, so the caller keys the
    coin sprite on the balance value: a genuine change remounts it. */
-@keyframes px-coin-flip {
-	0% {
-		transform: rotateY(0deg);
-	}
-	100% {
-		transform: rotateY(360deg);
-	}
-}
-.coin-flip {
-	display: inline-block;
-	animation: px-coin-flip 700ms steps(8, end);
-}
+	@keyframes px-coin-flip {
+		0% {
+			transform: rotateY(0deg);
+		}
 
-@media (prefers-reduced-motion: reduce) {
-	.blink,
-	.marquee-track,
-	.floaty,
-	.land-track,
-	.land-plane,
-	.win-flash,
-	.tx-progress-serious .tx-dot.is-active,
-	.tx-progress-fun .tx-runway-plane,
-	.tx-progress-fun .tx-radar,
-	.tx-progress-fun .tx-stamp-pop,
-	.tx-confetti-piece,
-	.breathe,
-	.status-flap,
-	.board-row-in,
-	.claim-btn-pulse,
-	.toast-px,
-	.coin-flip,
-	.riskbar-fill-grow,
-	.riskbar-cell-pop,
-	.globe-node-fun,
-	.globe-node-serious {
-		animation: none;
-		transition: none;
+		100% {
+			transform: rotateY(360deg);
+		}
 	}
-	/* with the loop off, the plane rests parked on the runway — visible */
-}
 
-/* ── toasts ───────────────────────────────────────────────────── */
-
-.toast-stack {
-	position: fixed;
-	top: 72px;
-	right: 16px;
-	z-index: 50;
-	display: flex;
-	flex-direction: column;
-	gap: 8px;
-	max-width: 340px;
-}
-.toast-px {
-	border: 2px solid;
-	box-shadow: var(--shadow-px-md);
-	background: var(--color-raised);
-	color: var(--color-ink);
-	font-family: var(--font-body);
-	font-size: 13px;
-	padding: 10px 12px;
-	word-break: break-word;
-}
-.toast-row {
-	display: flex;
-	align-items: baseline;
-	gap: 8px;
-}
-.toast-tag {
-	flex-shrink: 0;
-}
-.toast-msg {
-	flex: 1;
-	min-width: 0;
-}
-.toast-close {
-	flex-shrink: 0;
-	color: var(--color-mute);
-	font-size: 12px;
-	line-height: 1;
-	padding: 0 2px;
-}
-.toast-close:hover {
-	color: var(--color-ink);
-}
-.toast-link {
-	display: inline-block;
-	margin-top: 6px;
-	color: var(--color-sky);
-	font-size: 12px;
-	font-weight: 600;
-	text-decoration: none;
-	border-bottom: 1px solid transparent;
-}
-.toast-link:hover {
-	border-bottom-color: currentColor;
-}
-
-/* ── risk bar ─────────────────────────────────────────────────────── */
-
-.riskbar {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-}
-.riskbar-track-px {
-	display: inline-flex;
-	gap: 1px;
-	padding: 1px;
-	border: 2px solid var(--color-line);
-	background: var(--color-inset);
-}
-.riskbar-cell {
-	width: 5px;
-	height: 10px;
-}
-.riskbar-cell-pop {
-	transform-origin: bottom;
-	animation: riskbar-cell-pop 260ms steps(4, end) both;
-}
-@keyframes riskbar-cell-pop {
-	from {
-		transform: scaleY(0);
-		opacity: 0;
+	.coin-flip {
+		display: inline-block;
+		animation: px-coin-flip 700ms steps(8, end);
 	}
-	to {
-		transform: scaleY(1);
-		opacity: 1;
-	}
-}
-.riskbar-value {
-	font-family: var(--font-board);
-	font-size: 16px;
-	line-height: 1;
-	min-width: 30px;
-}
-.riskbar-est {
-	font-family: var(--font-body);
-	font-size: 9px;
-	letter-spacing: 0.08em;
-	text-transform: uppercase;
-	color: var(--color-mute);
-}
-/* serious: smooth rounded gradient bar */
-.riskbar-track-serious {
-	width: 64px;
-	height: 6px;
-	border-radius: 9999px;
-	background: var(--color-inset);
-	overflow: hidden;
-}
-.riskbar-fill-serious {
-	height: 100%;
-	border-radius: 9999px;
-}
-.riskbar-fill-grow {
-	transform-origin: left;
-	animation: riskbar-fill-grow 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-@keyframes riskbar-fill-grow {
-	from {
-		transform: scaleX(0);
-	}
-	to {
-		transform: scaleX(1);
-	}
-}
-[data-theme="serious"] .riskbar-value {
-	font-family: var(--font-display);
-	font-size: 13px;
-	font-variant-numeric: tabular-nums;
-	font-weight: 600;
-}
-[data-theme="serious"] .riskbar-est {
-	font-size: 10px;
-	text-transform: none;
-	letter-spacing: 0;
-}
 
-/* ── activity log drawer ──────────────────────────────────────────── */
+	@media (prefers-reduced-motion: reduce) {
 
-/* docks bottom-left, ABOVE the MODE dock (which sits at bottom:16px). */
-.activity-dock {
-	position: fixed;
-	left: 16px;
-	bottom: 64px;
-	z-index: 59;
-	display: flex;
-	flex-direction: column-reverse;
-	align-items: flex-start;
-	gap: 8px;
-}
-.activity-tab {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	padding: 5px 10px;
-	background: var(--color-inset);
-	border: 2px solid var(--color-line-mid);
-	box-shadow: 0 4px 0 0 var(--color-shadow-hard);
-	color: var(--color-dim);
-	font-family: var(--font-display);
-	font-size: 8px;
-	letter-spacing: 0.1em;
-	text-transform: uppercase;
-}
-.activity-tab:hover {
-	color: var(--color-ink);
-}
-.activity-tab-glyph {
-	font-size: 12px;
-	line-height: 1;
-	color: var(--color-sky);
-}
-.activity-count {
-	min-width: 16px;
-	padding: 0 4px;
-	text-align: center;
-	background: var(--color-gold);
-	color: var(--color-page);
-	font-size: 8px;
-}
-.activity-panel {
-	position: relative;
-	width: 300px;
-	max-height: 46vh;
-	overflow: hidden;
-	display: flex;
-	flex-direction: column;
-	background: var(--color-raised);
-	border: 3px solid var(--color-line-strong);
-	box-shadow: 0 6px 0 0 var(--color-shadow-hard);
-}
-.activity-panel-head {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	padding: 8px 10px;
-	border-bottom: 2px solid var(--color-line);
-	background: var(--color-inset);
-}
-.activity-panel-title {
-	font-family: var(--font-display);
-	font-size: 9px;
-	letter-spacing: 0.08em;
-	color: var(--color-ink);
-	text-transform: uppercase;
-}
-.activity-clear {
-	font-family: var(--font-display);
-	font-size: 8px;
-	letter-spacing: 0.06em;
-	color: var(--color-mute);
-	text-transform: uppercase;
-}
-.activity-clear:hover {
-	color: var(--color-loss);
-}
-.activity-scan {
-	position: absolute;
-	inset: 0;
-	pointer-events: none;
-}
-.activity-list {
-	position: relative;
-	z-index: 1;
-	overflow-y: auto;
-	padding: 4px;
-}
-.activity-empty {
-	padding: 18px 10px;
-	text-align: center;
-	color: var(--color-mute);
-	font-size: 12px;
-}
-.activity-item {
-	display: flex;
-	gap: 8px;
-	padding: 8px;
-	border-bottom: 1px solid var(--color-line);
-}
-.activity-item:last-child {
-	border-bottom: none;
-}
-.activity-item-dot {
-	flex-shrink: 0;
-	width: 8px;
-	height: 8px;
-	margin-top: 5px;
-}
-.activity-item-body {
-	min-width: 0;
-	flex: 1;
-}
-.activity-item-msg {
-	color: var(--color-ink);
-	font-size: 12.5px;
-	line-height: 1.35;
-	word-break: break-word;
-}
-.activity-item-meta {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	margin-top: 3px;
-}
-.activity-item-time {
-	color: var(--color-mute);
-	font-size: 11px;
-}
-.activity-item-link {
-	color: var(--color-sky);
-	font-size: 11px;
-	font-weight: 600;
-	text-decoration: none;
-	border-bottom: 1px solid transparent;
-}
-.activity-item-link:hover {
-	border-bottom-color: currentColor;
-}
+		.blink,
+		.marquee-track,
+		.floaty,
+		.land-track,
+		.land-plane,
+		.win-flash,
+		.tx-progress-serious .tx-dot.is-active,
+		.tx-progress-fun .tx-runway-plane,
+		.tx-progress-fun .tx-radar,
+		.tx-progress-fun .tx-stamp-pop,
+		.tx-confetti-piece,
+		.breathe,
+		.status-flap,
+		.board-row-in,
+		.claim-btn-pulse,
+		.toast-px,
+		.coin-flip,
+		.riskbar-fill-grow,
+		.riskbar-cell-pop,
+		.globe-node-fun,
+		.globe-node-serious {
+			animation: none;
+			transition: none;
+		}
+
+		/* with the loop off, the plane rests parked on the runway — visible */
+	}
+
+	/* ── toasts ───────────────────────────────────────────────────── */
+
+	.toast-stack {
+		position: fixed;
+		top: 72px;
+		right: 16px;
+		z-index: 50;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		max-width: 340px;
+	}
+
+	.toast-px {
+		border: 2px solid;
+		box-shadow: var(--shadow-px-md);
+		background: var(--color-raised);
+		color: var(--color-ink);
+		font-family: var(--font-body);
+		font-size: 13px;
+		padding: 10px 12px;
+		word-break: break-word;
+	}
+
+	.toast-row {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+	}
+
+	.toast-tag {
+		flex-shrink: 0;
+	}
+
+	.toast-msg {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.toast-close {
+		flex-shrink: 0;
+		color: var(--color-mute);
+		font-size: 12px;
+		line-height: 1;
+		padding: 0 2px;
+	}
+
+	.toast-close:hover {
+		color: var(--color-ink);
+	}
+
+	.toast-link {
+		display: inline-block;
+		margin-top: 6px;
+		color: var(--color-sky);
+		font-size: 12px;
+		font-weight: 600;
+		text-decoration: none;
+		border-bottom: 1px solid transparent;
+	}
+
+	.toast-link:hover {
+		border-bottom-color: currentColor;
+	}
+
+	/* ── risk bar ─────────────────────────────────────────────────────── */
+
+	.riskbar {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.riskbar-track-px {
+		display: inline-flex;
+		gap: 1px;
+		padding: 1px;
+		border: 2px solid var(--color-line);
+		background: var(--color-inset);
+	}
+
+	.riskbar-cell {
+		width: 5px;
+		height: 10px;
+	}
+
+	.riskbar-cell-pop {
+		transform-origin: bottom;
+		animation: riskbar-cell-pop 260ms steps(4, end) both;
+	}
+
+	@keyframes riskbar-cell-pop {
+		from {
+			transform: scaleY(0);
+			opacity: 0;
+		}
+
+		to {
+			transform: scaleY(1);
+			opacity: 1;
+		}
+	}
+
+	.riskbar-value {
+		font-family: var(--font-board);
+		font-size: 16px;
+		line-height: 1;
+		min-width: 30px;
+	}
+
+	.riskbar-est {
+		font-family: var(--font-body);
+		font-size: 9px;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--color-mute);
+	}
+
+	/* serious: smooth rounded gradient bar */
+	.riskbar-track-serious {
+		width: 64px;
+		height: 6px;
+		border-radius: 9999px;
+		background: var(--color-inset);
+		overflow: hidden;
+	}
+
+	.riskbar-fill-serious {
+		height: 100%;
+		border-radius: 9999px;
+	}
+
+	.riskbar-fill-grow {
+		transform-origin: left;
+		animation: riskbar-fill-grow 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+	}
+
+	@keyframes riskbar-fill-grow {
+		from {
+			transform: scaleX(0);
+		}
+
+		to {
+			transform: scaleX(1);
+		}
+	}
+
+	[data-theme="serious"] .riskbar-value {
+		font-family: var(--font-display);
+		font-size: 13px;
+		font-variant-numeric: tabular-nums;
+		font-weight: 600;
+	}
+
+	[data-theme="serious"] .riskbar-est {
+		font-size: 10px;
+		text-transform: none;
+		letter-spacing: 0;
+	}
+
+	/* ── activity log drawer ──────────────────────────────────────────── */
+
+	/* docks bottom-left, ABOVE the MODE dock (which sits at bottom:16px). */
+	.activity-dock {
+		position: fixed;
+		left: 16px;
+		bottom: 64px;
+		z-index: 59;
+		display: flex;
+		flex-direction: column-reverse;
+		align-items: flex-start;
+		gap: 8px;
+	}
+
+	.activity-tab {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 5px 10px;
+		background: var(--color-inset);
+		border: 2px solid var(--color-line-mid);
+		box-shadow: 0 4px 0 0 var(--color-shadow-hard);
+		color: var(--color-dim);
+		font-family: var(--font-display);
+		font-size: 8px;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+	}
+
+	.activity-tab:hover {
+		color: var(--color-ink);
+	}
+
+	.activity-tab-glyph {
+		font-size: 12px;
+		line-height: 1;
+		color: var(--color-sky);
+	}
+
+	.activity-count {
+		min-width: 16px;
+		padding: 0 4px;
+		text-align: center;
+		background: var(--color-gold);
+		color: var(--color-page);
+		font-size: 8px;
+	}
+
+	.activity-panel {
+		position: relative;
+		width: 300px;
+		max-height: 46vh;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+		background: var(--color-raised);
+		border: 3px solid var(--color-line-strong);
+		box-shadow: 0 6px 0 0 var(--color-shadow-hard);
+	}
+
+	.activity-panel-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 8px 10px;
+		border-bottom: 2px solid var(--color-line);
+		background: var(--color-inset);
+	}
+
+	.activity-panel-title {
+		font-family: var(--font-display);
+		font-size: 9px;
+		letter-spacing: 0.08em;
+		color: var(--color-ink);
+		text-transform: uppercase;
+	}
+
+	.activity-clear {
+		font-family: var(--font-display);
+		font-size: 8px;
+		letter-spacing: 0.06em;
+		color: var(--color-mute);
+		text-transform: uppercase;
+	}
+
+	.activity-clear:hover {
+		color: var(--color-loss);
+	}
+
+	.activity-scan {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+	}
+
+	.activity-list {
+		position: relative;
+		z-index: 1;
+		overflow-y: auto;
+		padding: 4px;
+	}
+
+	.activity-empty {
+		padding: 18px 10px;
+		text-align: center;
+		color: var(--color-mute);
+		font-size: 12px;
+	}
+
+	.activity-item {
+		display: flex;
+		gap: 8px;
+		padding: 8px;
+		border-bottom: 1px solid var(--color-line);
+	}
+
+	.activity-item:last-child {
+		border-bottom: none;
+	}
+
+	.activity-item-dot {
+		flex-shrink: 0;
+		width: 8px;
+		height: 8px;
+		margin-top: 5px;
+	}
+
+	.activity-item-body {
+		min-width: 0;
+		flex: 1;
+	}
+
+	.activity-item-msg {
+		color: var(--color-ink);
+		font-size: 12.5px;
+		line-height: 1.35;
+		word-break: break-word;
+	}
+
+	.activity-item-meta {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-top: 3px;
+	}
+
+	.activity-item-time {
+		color: var(--color-mute);
+		font-size: 11px;
+	}
+
+	.activity-item-link {
+		color: var(--color-sky);
+		font-size: 11px;
+		font-weight: 600;
+		text-decoration: none;
+		border-bottom: 1px solid transparent;
+	}
+
+	.activity-item-link:hover {
+		border-bottom-color: currentColor;
+	}
 
 }
 
@@ -1354,23 +1528,28 @@ input.field-px[type="date"] {
 	text-transform: none;
 	padding: 6px 12px;
 }
+
 [data-theme="serious"] .activity-tab-glyph {
 	color: var(--color-highlight);
 }
+
 [data-theme="serious"] .activity-count {
 	border-radius: 9999px;
 	font-size: 10px;
 	background: var(--color-highlight);
 }
+
 [data-theme="serious"] .activity-panel {
 	border-width: 1px;
 	border-color: var(--color-line);
 	border-radius: var(--radius-card);
 	box-shadow: var(--shadow-soft-md);
 }
+
 [data-theme="serious"] .activity-panel-head {
 	border-bottom-width: 1px;
 }
+
 [data-theme="serious"] .activity-panel-title,
 [data-theme="serious"] .activity-clear {
 	font-family: var(--font-body);
@@ -1378,18 +1557,10 @@ input.field-px[type="date"] {
 	letter-spacing: 0;
 	text-transform: none;
 }
+
 [data-theme="serious"] .activity-clear {
 	font-size: 12px;
 }
-
-/* ══════════════════════════════════════════════════════════════════
-   SERIOUS SKIN — Sentinel "Midnight Radar"
-   A full clean reskin of the SAME class names the pixel theme uses.
-   Rounded cards, soft directional shadows, hairline self-coloured
-   borders, Outfit display type, tonal accents. Lives UNLAYERED after
-   the components layer so it wins the cascade over the pixel rules,
-   while fun (no data-theme / data-theme="fun") keeps every pixel value.
-   ══════════════════════════════════════════════════════════════════ */
 
 [data-theme="serious"] {
 	--radius-card: 14px;
@@ -1404,6 +1575,7 @@ input.field-px[type="date"] {
 	letter-spacing: -0.01em;
 	line-height: 1.15;
 }
+
 [data-theme="serious"] .h-section {
 	font-family: var(--font-display);
 	font-weight: 600;
@@ -1412,6 +1584,7 @@ input.field-px[type="date"] {
 	text-transform: none;
 	color: var(--color-ink);
 }
+
 [data-theme="serious"] .label-px {
 	font-family: var(--font-body);
 	font-size: 11px;
@@ -1420,6 +1593,7 @@ input.field-px[type="date"] {
 	text-transform: uppercase;
 	color: var(--color-mute);
 }
+
 [data-theme="serious"] .status-px {
 	font-family: var(--font-body);
 	font-weight: 600;
@@ -1427,6 +1601,7 @@ input.field-px[type="date"] {
 	letter-spacing: 0.02em;
 	text-transform: none;
 }
+
 /* board figures become tabular Outfit numerals — no VT323 in serious */
 [data-theme="serious"] .board-figure {
 	font-family: var(--font-display);
@@ -1441,12 +1616,11 @@ input.field-px[type="date"] {
 [data-theme="serious"] .hero-serious-title {
 	font-family: var(--font-display);
 }
+
 [data-theme="serious"] .hero-grad {
-	background: linear-gradient(
-		100deg,
-		var(--color-highlight),
-		var(--color-blip)
-	);
+	background: linear-gradient(100deg,
+			var(--color-highlight),
+			var(--color-blip));
 	-webkit-background-clip: text;
 	background-clip: text;
 	-webkit-text-fill-color: transparent;
@@ -1463,16 +1637,19 @@ input.field-px[type="date"] {
 	border-width: 1px;
 	border-radius: var(--radius-card);
 }
+
 [data-theme="serious"] .panel {
 	background: var(--color-surface);
 	border-color: color-mix(in oklab, var(--color-line) 80%, #ffffff 20%);
 	box-shadow: var(--shadow-soft-md);
 }
+
 [data-theme="serious"] .panel-raised {
 	background: var(--color-raised);
 	border-color: color-mix(in oklab, var(--color-line-mid) 78%, #ffffff 22%);
 	box-shadow: var(--shadow-soft-md);
 }
+
 [data-theme="serious"] .panel-inset {
 	background: var(--color-inset);
 	border-color: var(--color-line);
@@ -1496,68 +1673,76 @@ input.field-px[type="date"] {
 		color 150ms ease,
 		filter 150ms ease;
 }
+
 [data-theme="serious"] .btn-px:hover:not(:disabled) {
 	filter: none;
 }
+
 /* clean hover: tonal brighten of the fill, no lift/jump */
 [data-theme="serious"] .btn-gold:hover:not(:disabled),
 [data-theme="serious"] .btn-win:hover:not(:disabled),
 [data-theme="serious"] .btn-loss:hover:not(:disabled) {
 	filter: brightness(1.06);
 }
+
 [data-theme="serious"] .btn-px:active:not(:disabled) {
 	transform: none;
 	box-shadow: var(--shadow-soft-sm);
 	filter: brightness(0.96);
 }
+
 [data-theme="serious"] .btn-gold {
 	background: var(--color-gold);
 	color: #1a1305;
 	border-color: color-mix(in oklab, var(--color-gold) 70%, #000 30%);
 }
+
 [data-theme="serious"] .btn-win {
 	background: var(--color-win);
 	color: #04140b;
 	border-color: color-mix(in oklab, var(--color-win) 70%, #000 30%);
 }
+
 [data-theme="serious"] .btn-loss {
 	background: var(--color-loss);
 	color: #ffffff;
 	border-color: color-mix(in oklab, var(--color-loss) 72%, #000 28%);
 }
+
 [data-theme="serious"] .btn-blip {
 	background: color-mix(in oklab, var(--color-blip) 16%, var(--color-surface));
 	color: var(--color-blip);
 	border-color: color-mix(in oklab, var(--color-blip) 45%, transparent);
 }
+
 [data-theme="serious"] .btn-blip:hover:not(:disabled) {
 	background: color-mix(in oklab, var(--color-blip) 24%, var(--color-surface));
 }
+
 [data-theme="serious"] .btn-ghost {
 	background: transparent;
 	color: var(--color-dim);
 	border-color: var(--color-line-mid);
 }
+
 [data-theme="serious"] .btn-ghost:hover:not(:disabled) {
 	color: var(--color-ink);
 	border-color: var(--color-line-strong);
 	filter: none;
 }
+
 [data-theme="serious"] .btn-px:focus-visible {
 	outline: 2px solid var(--color-highlight);
 	outline-offset: 2px;
 }
-/* per-row secondary action: primary "Buy Coverage" carries the fill, the
-   sibling "Earn Yield" steps back to tonal so the row reads with one
-   clear primary rather than two competing saturated fills */
+
+/* per-row "Earn Yield": same solid treatment as the fun skin — full win
+   fill with page-colored text (near-white on the light scheme's darker
+   green) — rather than the tonal step-back the other serious fills use */
 [data-theme="serious"] .row-yield.btn-win {
-	background: color-mix(in oklab, var(--color-win) 14%, var(--color-surface));
-	color: var(--color-win);
-	border-color: color-mix(in oklab, var(--color-win) 42%, transparent);
-}
-[data-theme="serious"] .row-yield.btn-win:hover:not(:disabled) {
-	filter: none;
-	background: color-mix(in oklab, var(--color-win) 22%, var(--color-surface));
+	background: var(--color-win);
+	color: var(--color-page);
+	border-color: color-mix(in oklab, var(--color-win) 70%, #000 30%);
 }
 
 /* ── pagination controls ──────────────────────────────────────────── */
@@ -1577,12 +1762,14 @@ input.field-px[type="date"] {
 		border-color 150ms ease,
 		background-color 150ms ease;
 }
+
 [data-theme="serious"] .page-btn:hover:not(:disabled) {
 	filter: none;
 	color: var(--color-ink);
 	border-color: var(--color-line-strong);
 	background: var(--color-raised);
 }
+
 [data-theme="serious"] .page-btn:active:not(:disabled) {
 	transform: none;
 	box-shadow: var(--shadow-soft-sm);
@@ -1597,10 +1784,10 @@ input.field-px[type="date"] {
 	border-radius: var(--radius-ctl);
 	color: var(--color-ink);
 }
+
 [data-theme="serious"] .field-px:focus {
 	border-color: var(--color-highlight);
-	box-shadow: 0 0 0 3px
-		color-mix(in oklab, var(--color-highlight) 22%, transparent);
+	box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-highlight) 22%, transparent);
 }
 
 /* ── range sliders → rounded track + round knob, tonal fill ──────── */
@@ -1609,12 +1796,11 @@ input.field-px[type="date"] {
 	height: 8px;
 	border: none;
 	border-radius: 999px;
-	background: linear-gradient(
-		to right,
-		var(--color-highlight) var(--fill, 50%),
-		var(--color-inset) var(--fill, 50%)
-	);
+	background: linear-gradient(to right,
+			var(--color-highlight) var(--fill, 50%),
+			var(--color-inset) var(--fill, 50%));
 }
+
 [data-theme="serious"] .slider-px::-webkit-slider-thumb {
 	width: 18px;
 	height: 18px;
@@ -1624,18 +1810,21 @@ input.field-px[type="date"] {
 	border: 3px solid var(--color-highlight);
 	box-shadow: var(--shadow-soft-sm);
 }
+
 [data-theme="serious"] .slider-px::-moz-range-track {
 	height: 8px;
 	border: none;
 	border-radius: 999px;
 	background: var(--color-inset);
 }
+
 [data-theme="serious"] .slider-px::-moz-range-progress {
 	height: 8px;
 	border: none;
 	border-radius: 999px;
 	background: var(--color-highlight);
 }
+
 [data-theme="serious"] .slider-px::-moz-range-thumb {
 	width: 18px;
 	height: 18px;
@@ -1650,9 +1839,11 @@ input.field-px[type="date"] {
 [data-theme="serious"] .notch {
 	clip-path: none;
 }
+
 [data-theme="serious"] .scanlines {
 	display: none;
 }
+
 [data-theme="serious"] .pixelated {
 	image-rendering: auto;
 }
@@ -1665,6 +1856,7 @@ input.field-px[type="date"] {
 	font-family: var(--font-body);
 	font-weight: 700;
 }
+
 [data-theme="serious"] .info-panel {
 	border-radius: var(--radius-card);
 }
@@ -1688,6 +1880,7 @@ input.field-px[type="date"] {
 		background-color 150ms ease,
 		border-color 150ms ease;
 }
+
 [data-theme="serious"] .calc-cta:hover {
 	background: color-mix(in oklab, var(--color-gold) 14%, var(--color-surface));
 	border-color: color-mix(in oklab, var(--color-gold) 65%, transparent);
@@ -1717,11 +1910,13 @@ input.field-px[type="date"] {
 		color 150ms ease,
 		background-color 150ms ease;
 }
+
 [data-theme="serious"] .topbar {
 	border-bottom-width: 1px;
 	background: color-mix(in oklab, var(--color-page) 82%, transparent);
 	backdrop-filter: saturate(1.1) blur(8px);
 }
+
 [data-theme="serious"] .brand-tagline {
 	letter-spacing: 0.02em;
 	text-transform: none;
@@ -1741,25 +1936,30 @@ input.field-px[type="date"] {
 [data-theme="serious"] main .border-2 {
 	border-width: 1px;
 }
+
 /* board chrome: header / search / table / pager stack into one card.
    Explicit classes (added on the elements) round only the stack's ends. */
 [data-theme="serious"] .board-head {
 	border-top-left-radius: var(--radius-card);
 	border-top-right-radius: var(--radius-card);
 }
+
 [data-theme="serious"] .board-foot {
 	border-bottom-left-radius: var(--radius-card);
 	border-bottom-right-radius: var(--radius-card);
 }
+
 /* keep the rounded-corner clip but allow horizontal scroll on narrow
    screens — a bare `overflow: hidden` made the board unscrollable */
 [data-theme="serious"] .board-table-wrap {
 	overflow-x: auto;
 	overflow-y: hidden;
 }
+
 [data-theme="serious"] .board-table-wrap.board-foot {
 	border-radius: 0 0 var(--radius-card) var(--radius-card);
 }
+
 /* table hover row: soft tonal wash */
 [data-theme="serious"] main tbody tr {
 	transition: background-color 150ms ease;
@@ -1770,6 +1970,7 @@ input.field-px[type="date"] {
 	border-radius: var(--radius-ctl);
 	overflow: hidden;
 }
+
 [data-theme="serious"] .marquee-track {
 	animation-duration: 45s;
 }
@@ -1801,6 +2002,7 @@ input.field-px[type="date"] {
 	--radius-card: 0px;
 	--radius-ctl: 0px;
 }
+
 /* catch-all: also flattens 999px pills, utility classes, the page
    skins, and the wallet-kit modal (light DOM, so this reaches it) */
 [data-theme="serious"] *,
@@ -1830,6 +2032,151 @@ input.field-px[type="date"] {
 [data-theme="serious"] .btn-ghost {
 	background: var(--color-raised);
 }
+
+/* scheme toggle is icon-only: no border, no fill, in every skin/scheme.
+   The serious selector must repeat here to outrank the .btn-ghost tonal
+   fill above; unlayered, so it also beats the layered .btn-px box. */
+.scheme-toggle,
+.scheme-toggle:active:not(:disabled),
+[data-theme="serious"] .scheme-toggle {
+	background: transparent;
+	border-color: transparent;
+	box-shadow: none;
+}
+
 [data-theme="serious"] .page-btn:disabled {
 	background: var(--color-inset);
+}
+
+/* ────────────────────────────────────────────────────────────────
+   LIGHT SCHEME — second axis over both skins, toggled from the
+   header (data-scheme on <html>, dark is the default).
+
+   Dark keeps the exact token values above; light re-derives each
+   ramp: elevation flips (raised = lightest), text becomes the deep
+   navy the dark scheme uses as its page, and every accent is
+   darkened until it clears ~4.5:1 on the light surfaces while
+   keeping its hue and meaning.
+
+   Specificity ladder (all var overrides, no component rules):
+     html[data-scheme="light"]                        beats [data-theme="serious"]
+     html[data-scheme="light"][data-theme="serious"]  beats both
+   ──────────────────────────────────────────────────────────────── */
+
+html {
+	color-scheme: dark;
+}
+
+html[data-scheme="light"] {
+	color-scheme: light;
+}
+
+/* fun · light — daylight arcade: blue-tinted paper, same chunky chrome */
+html[data-scheme="light"] {
+	/* backgrounds — elevation flips: raised is now the lightest */
+	--color-page: #e6ecf8;
+	--color-surface: #f2f5fc;
+	--color-raised: #ffffff;
+	--color-inset: #d8e1f2;
+
+	/* borders — periwinkle lines that still read as hard pixel edges */
+	--color-line: #b7c5e2;
+	--color-line-mid: #93a7cf;
+	--color-line-strong: #6b86b8;
+
+	/* text — dark scheme's midnight page becomes the ink */
+	--color-ink: #101f42;
+	--color-dim: #35486f;
+	--color-mute: #5a6d94;
+
+	/* arcade accents — same meanings, darkened for light surfaces
+	   (gold: the dark scheme's yellow, stepped down for pale panels
+	   without drifting into brown-gold) */
+	--color-gold: #d4a51f;
+	--color-win: #0f8a4d;
+	--color-loss: #cc3434;
+	--color-blip: #2d55d8;
+	--color-sky: #0d7ca8;
+	--color-highlight: #0d7ca8;
+
+	/* step shadows soften to a muted periwinkle */
+	--color-shadow-hard: #a9b8d6;
+	--shadow-px-sm: 0 2px 0 0 #a9b8d6;
+	--shadow-px-md: 0 4px 0 0 #a9b8d6;
+}
+
+/* fun · light — the CRT scanlines were tuned for dark glass: 22% black
+   reads as loud stripes on pale insets. Whisper-faint navy keeps the
+   texture without the stripes. (Serious hides .scanlines entirely.) */
+html[data-scheme="light"] .scanlines {
+	background-image: repeating-linear-gradient(0deg,
+			rgba(16, 31, 66, 0.05) 0px,
+			rgba(16, 31, 66, 0.05) 1px,
+			transparent 1px,
+			transparent 3px);
+}
+
+/* fun · light body — the night starfield becomes faint navy specks */
+html[data-scheme="light"] body {
+	background-image:
+		radial-gradient(1px 1px at 20% 30%, rgba(16, 31, 66, 0.45) 50%, transparent 51%),
+		radial-gradient(1px 1px at 60% 12%, rgba(16, 31, 66, 0.22) 50%, transparent 51%),
+		radial-gradient(1px 1px at 84% 46%, rgba(16, 31, 66, 0.34) 50%, transparent 51%),
+		radial-gradient(1px 1px at 38% 74%, rgba(16, 31, 66, 0.2) 50%, transparent 51%),
+		radial-gradient(1px 1px at 70% 80%, rgba(16, 31, 66, 0.38) 50%, transparent 51%);
+}
+
+/* serious · light — clean daylight insurance: near-white cards on
+   cool gray-blue, the reference cyan deepened to teal-ink */
+html[data-scheme="light"][data-theme="serious"] {
+	--color-page: #eef1f7;
+	--color-surface: #fafcff;
+	--color-raised: #ffffff;
+	--color-inset: #e7ecf5;
+
+	--color-line: #d8dfeb;
+	--color-line-mid: #c3cddd;
+	--color-line-strong: #9cabc6;
+
+	--color-ink: #101b30;
+	--color-dim: #3c4d70;
+	--color-mute: #61729a;
+
+	--color-gold: #c99f2b;
+	--color-win: #148a4f;
+	--color-loss: #cd403c;
+	--color-blip: #2e57d0;
+	--color-sky: #0b7ba6;
+	--color-highlight: #0b8fa8;
+
+	/* one soft daylight shadow, cool gray instead of near-black */
+	--shadow-soft-sm: 0 1px 2px rgba(23, 34, 64, 0.14);
+	--shadow-soft-md:
+		0 6px 20px -8px rgba(23, 34, 64, 0.22),
+		0 2px 6px -4px rgba(23, 34, 64, 0.14);
+}
+
+/* serious · light body — same radar washes, tuned up a touch so they
+   survive on the light base */
+html[data-scheme="light"][data-theme="serious"] body {
+	background-image:
+		radial-gradient(720px 460px ellipse at 15% 0%,
+			rgba(11, 143, 168, 0.07),
+			transparent 70%),
+		radial-gradient(620px 520px ellipse at 88% 12%,
+			rgba(46, 87, 208, 0.06),
+			transparent 72%);
+	background-attachment: fixed;
+}
+
+/* selection: serious hardcodes near-black text for the dark scheme —
+   on the light scheme's deepened cyan it must flip to white */
+html[data-scheme="light"][data-theme="serious"] ::selection {
+	background: var(--color-highlight);
+	color: #ffffff;
+}
+
+/* native date-picker chrome follows the scheme */
+html[data-scheme="light"] input.field-px[type="date"] {
+	color-scheme: light;
 }

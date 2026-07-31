@@ -18,6 +18,8 @@ import {
 	useWithdrawalQueue,
 } from "../hooks/useContracts"
 import { useWallet } from "../hooks/useWallet"
+import { connectWallet } from "../util/wallet"
+import { errorMessage } from "../lib/utils"
 import { useNotification } from "../hooks/useNotification"
 import { PixelArt } from "../components/PixelArt"
 import { SeriousIcon } from "../components/SeriousIcon"
@@ -92,7 +94,17 @@ export default function House() {
 	const [cancelingDepositId, setCancelingDepositId] = useState<bigint | null>(
 		null,
 	)
-	const [txError, setTxError] = useState<string | null>(null)
+	// Per-flow error strings so a failed deposit never bleeds into the
+	// withdraw/collect steppers (and vice versa).
+	const [depositError, setDepositError] = useState<string | null>(null)
+	const [requestError, setRequestError] = useState<string | null>(null)
+	const [collectError, setCollectError] = useState<string | null>(null)
+	const [cancelDepositError, setCancelDepositError] = useState<string | null>(
+		null,
+	)
+	const [cancelWithdrawError, setCancelWithdrawError] = useState<
+		string | null
+	>(null)
 
 	// ─── reads ───
 	const { data: totalAssets } = useTotalAssets()
@@ -147,9 +159,14 @@ export default function House() {
 		void queryClient.invalidateQueries({ queryKey: ["usdc"] })
 	}
 
-	function fail(err: unknown, setState: (s: TxState) => void, label: string) {
+	function fail(
+		err: unknown,
+		setState: (s: TxState) => void,
+		setError: (m: string | null) => void,
+		label: string,
+	) {
 		console.error(`${label} failed:`, err)
-		setTxError(err instanceof Error ? err.message : String(err))
+		setError(errorMessage(err))
 		setState("error")
 		setTimeout(() => setState("idle"), 4000)
 	}
@@ -158,7 +175,7 @@ export default function House() {
 	async function handleDeposit() {
 		if (!address || depositAssets <= 0n || depositTx !== "idle") return
 		setDepositTx("awaiting")
-		setTxError(null)
+		setDepositError(null)
 		try {
 			// Two-phase LP entry: escrow assets now; the queue-maintenance
 			// cron mints shares at the post-delay share price.
@@ -177,14 +194,14 @@ export default function House() {
 			invalidate()
 			setTimeout(() => setDepositTx("idle"), 3000)
 		} catch (err) {
-			fail(err, setDepositTx, "Deposit")
+			fail(err, setDepositTx, setDepositError, "Deposit")
 		}
 	}
 
 	async function handleCancelDeposit(requestId: bigint) {
 		if (!address || cancelingDepositId !== null) return
 		setCancelingDepositId(requestId)
-		setTxError(null)
+		setCancelDepositError(null)
 		try {
 			const tx = await riskVaultClient.cancel_deposit({
 				caller: address,
@@ -195,7 +212,7 @@ export default function House() {
 			invalidate()
 		} catch (err) {
 			console.error("Cancel deposit failed:", err)
-			setTxError(err instanceof Error ? err.message : String(err))
+			setCancelDepositError(errorMessage(err))
 		} finally {
 			setCancelingDepositId(null)
 		}
@@ -204,7 +221,7 @@ export default function House() {
 	async function handleRequestWithdrawal() {
 		if (!address || withdrawShares <= 0n || requestTx !== "idle") return
 		setRequestTx("awaiting")
-		setTxError(null)
+		setRequestError(null)
 		try {
 			const tx = await riskVaultClient.request_withdrawal({
 				caller: address,
@@ -218,14 +235,14 @@ export default function House() {
 			invalidate()
 			setTimeout(() => setRequestTx("idle"), 3000)
 		} catch (err) {
-			fail(err, setRequestTx, "Request withdrawal")
+			fail(err, setRequestTx, setRequestError, "Request withdrawal")
 		}
 	}
 
 	async function handleCancel(requestId: bigint) {
 		if (!address || cancelingId !== null) return
 		setCancelingId(requestId)
-		setTxError(null)
+		setCancelWithdrawError(null)
 		try {
 			const tx = await riskVaultClient.cancel_withdrawal({
 				caller: address,
@@ -236,7 +253,7 @@ export default function House() {
 			invalidate()
 		} catch (err) {
 			console.error("Cancel withdrawal failed:", err)
-			setTxError(err instanceof Error ? err.message : String(err))
+			setCancelWithdrawError(errorMessage(err))
 		} finally {
 			setCancelingId(null)
 		}
@@ -245,7 +262,7 @@ export default function House() {
 	async function handleCollect() {
 		if (!address || collectTx !== "idle") return
 		setCollectTx("awaiting")
-		setTxError(null)
+		setCollectError(null)
 		try {
 			const tx = await riskVaultClient.collect({ caller: address })
 			setCollectTx("confirming")
@@ -255,7 +272,7 @@ export default function House() {
 			invalidate()
 			setTimeout(() => setCollectTx("idle"), 3000)
 		} catch (err) {
-			fail(err, setCollectTx, "Collect")
+			fail(err, setCollectTx, setCollectError, "Collect")
 		}
 	}
 
@@ -397,13 +414,15 @@ export default function House() {
 					</p>
 					<TransactionButton
 						state={depositTx}
-						onClick={() => void handleDeposit()}
-						disabled={!connected || depositAssets <= 0n}
+						onClick={() =>
+							void (connected ? handleDeposit() : connectWallet())
+						}
+						disabled={connected && depositAssets <= 0n}
 						className="btn-win mt-4 w-full"
 					>
 						{connected ? t.house.depositCta : t.house.connectWallet}
 					</TransactionButton>
-					<TxProgress state={depositTx} steps={["awaiting", "confirming"]} error={txError} />
+					<TxProgress state={depositTx} steps={["awaiting", "confirming"]} error={depositError} />
 					<p className="mt-2 font-body text-[13px] text-mute">
 						{t.house.depositQueueHint}
 					</p>
@@ -438,6 +457,11 @@ export default function House() {
 								</div>
 							))}
 						</div>
+					)}
+					{cancelDepositError && (
+						<p className="mt-2 break-words font-body text-[13px] text-loss">
+							{cancelDepositError}
+						</p>
 					)}
 				</section>
 
@@ -519,15 +543,22 @@ export default function House() {
 						)}
 						<TransactionButton
 							state={requestTx}
-							onClick={() => void handleRequestWithdrawal()}
+							onClick={() =>
+								void (
+									connected
+										? handleRequestWithdrawal()
+										: connectWallet()
+								)
+							}
 							disabled={
-								!connected || withdrawShares <= 0n || insufficientShares
+								connected &&
+								(withdrawShares <= 0n || insufficientShares)
 							}
 							className="btn-blip mt-4 w-full"
 						>
 							{connected ? t.house.queueCta : t.house.connectWallet}
 						</TransactionButton>
-						<TxProgress state={requestTx} steps={["awaiting", "confirming"]} error={txError} />
+						<TxProgress state={requestTx} steps={["awaiting", "confirming"]} error={requestError} />
 						<p className="mt-2 font-body text-[13px] text-mute">
 							{t.house.queueHint}
 						</p>
@@ -621,6 +652,11 @@ export default function House() {
 										})}
 									</div>
 								)}
+								{cancelWithdrawError && (
+									<p className="mt-2 break-words font-body text-[13px] text-loss">
+										{cancelWithdrawError}
+									</p>
+								)}
 							</>
 						)}
 
@@ -643,7 +679,7 @@ export default function House() {
 								>
 									{t.house.collectCta}
 								</TransactionButton>
-								<TxProgress state={collectTx} steps={["awaiting", "confirming"]} error={txError} />
+								<TxProgress state={collectTx} steps={["awaiting", "confirming"]} error={collectError} />
 							</div>
 						) : (
 							<p className="font-board text-[18px] text-mute">
@@ -653,11 +689,6 @@ export default function House() {
 					</div>
 				</div>
 
-				{txError && (
-					<p className="box-soft mt-4 break-words border-2 border-loss bg-inset px-3 py-2 font-body text-[13px] text-loss">
-						{txError}
-					</p>
-				)}
 			</section>
 
 			<p className="font-body text-[13px] text-mute">

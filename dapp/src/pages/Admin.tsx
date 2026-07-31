@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import type { Session } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
-import { relTime } from "../lib/utils"
+import { errorMessage, relTime } from "../lib/utils"
 import { TxProgress } from "../components/TxProgress"
 import type { TxState } from "../types"
 
@@ -480,7 +480,7 @@ function JobsBoard({
 			setRunTxState(entry.success ? "success" : "error")
 			onDone()
 		} catch (err) {
-			setNote(`${job}: ${err instanceof Error ? err.message : String(err)}`)
+			setNote(`${job}: ${errorMessage(err)}`)
 			setRunTxState("error")
 		} finally {
 			setTimeout(() => {
@@ -642,7 +642,7 @@ function RoutesBoard({
 			await fn()
 			onDone()
 		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err))
+			setError(errorMessage(err))
 		} finally {
 			setBusy(null)
 		}
