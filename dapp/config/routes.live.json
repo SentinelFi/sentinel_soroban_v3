@@ -1,0 +1,4 @@
+{
+  "$schema_note": "BOARD live list — the small, admin-curated subset of seeded routes the frontend actually verifies on-chain and shows on the Markets board. The fleet file (routes.testnet.json) can hold hundreds of seeded routes; scanning them all from the browser costs one RPC simulate-call per route per visitor, so the board reads THIS list instead. Add a route here (flight_id / origin / destination, matching its on-chain key exactly) after seeding it with scripts/seed_routes.ts; remove it to take it off the board. Empty list → the board falls back to scanning the first few fleet entries, and shows built-in demo rows when nothing resolves Active.",
+  "routes": []
+}
