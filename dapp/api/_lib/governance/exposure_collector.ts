@@ -98,8 +98,13 @@ export function computeConcentrations(
     airports.set(f.origin, (airports.get(f.origin) ?? 0n) + f.liabilityUnits);
     airports.set(f.dest, (airports.get(f.dest) ?? 0n) + f.liabilityUnits);
   }
+  // OCA-L03: CEILING division — plain truncation rounded every fraction
+  // down (~1e-6), a bias that consistently favored NOT pausing at the
+  // 25%/50% thresholds. For a risk brake, ties round toward action.
   const fraction = (units: bigint): number =>
-    totalManagedUnits <= 0n ? 0 : Number((units * 1_000_000n) / totalManagedUnits) / 1_000_000;
+    totalManagedUnits <= 0n
+      ? 0
+      : Number((units * 1_000_000n + totalManagedUnits - 1n) / totalManagedUnits) / 1_000_000;
   return {
     routes: new Map(
       [...routes].map(([k, r]) => [k, { origin: r.origin, dest: r.dest, fraction: fraction(r.units) }])
