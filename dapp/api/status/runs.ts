@@ -11,37 +11,27 @@ import { publicError } from "../_lib/public_error";
  * trigger attribution — those stay on the authenticated admin board.
  *
  * Also carries the settlement-barrier gauge (ops_flags 'barrier', written
- * best-effort by the settler): engaged + since + age, with `stalled: true`
- * once the age exceeds two settler cycles (10 min) — the protocol's single
- * most important operational alert condition (every LP entry/exit is
- * frozen while the barrier is up).
+ * best-effort by the settler), COARSENED to two booleans (OCA-M06):
+ * `engaged` (LP entry/exit currently frozen — users can see that on-chain
+ * anyway) and `stalled` (age exceeds two settler cycles, 10 min — the
+ * protocol's single most important operational alert condition). The
+ * precise since/age/pending internals stay on the authenticated admin
+ * surface: they would let an observer time purchases/withdrawals around
+ * live settlement state.
  */
 const BARRIER_STALL_SECS = 600; // 2 settler cycles
 
-async function readBarrier(): Promise<{
-  engaged: boolean;
-  since: string | null;
-  age_secs: number | null;
-  pending: number | null;
-  stalled: boolean;
-} | null> {
+async function readBarrier(): Promise<{ engaged: boolean; stalled: boolean } | null> {
   try {
     const sql = getDb();
     const rows = (await sql`
       select value, data, updated_at from ops_flags where key = 'barrier'
     `) as unknown as Array<{ value: boolean; data: { since?: string; pending?: number } | null; updated_at: string }>;
-    if (rows.length === 0) return { engaged: false, since: null, age_secs: null, pending: null, stalled: false };
-    const r = rows[0];
-    if (!r.value) return { engaged: false, since: null, age_secs: null, pending: null, stalled: false };
-    const since = r.data?.since ?? null;
+    if (rows.length === 0 || !rows[0].value) return { engaged: false, stalled: false };
+    // since/pending are read to COMPUTE the stalled flag but never echoed.
+    const since = rows[0].data?.since ?? null;
     const age = since ? Math.floor((Date.now() - Date.parse(since)) / 1000) : null;
-    return {
-      engaged: true,
-      since,
-      age_secs: age,
-      pending: r.data?.pending ?? null,
-      stalled: age !== null && age > BARRIER_STALL_SECS,
-    };
+    return { engaged: true, stalled: age !== null && age > BARRIER_STALL_SECS };
   } catch {
     return null; // DB down — feed still serves job rows from the same DB… so this stays null anyway
   }
