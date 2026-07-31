@@ -38,6 +38,11 @@ export async function saveFlightSchedule(
         primary key (flight_id, date_unix)
       )
     `;
+    // FSA-H01: enable deny-all RLS on this self-created table (see the same
+    // note in governance/interventions.ts). Without it the table is world
+    // read/write via PostgREST using only the public key; the owning
+    // postgres role bypasses RLS so server-side access is unaffected.
+    await sql`alter table flight_schedules enable row level security`;
     await sql`
       insert into flight_schedules (flight_id, date_unix, scheduled_out_unix, scheduled_in_unix, fetched_at)
       values (${flightId}, ${dateUnix.toString()},

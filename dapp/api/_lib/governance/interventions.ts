@@ -104,6 +104,13 @@ export async function ensureTable(sql: ReturnType<typeof getDb>): Promise<void> 
       revived_by text
     )
   `;
+  // FSA-H01: a self-created table defaults to RLS-DISABLED, and Supabase
+  // grants anon/authenticated full privileges on the public schema — so
+  // without this it is world read/write via the PostgREST Data API using
+  // only the public key. Enable deny-all RLS (zero policies, matching the
+  // migration-defined tables). The owning postgres role bypasses RLS, so
+  // server-side access here is unaffected. Idempotent.
+  await sql`alter table interventions enable row level security`;
   await sql`
     create unique index if not exists interventions_open_key
     on interventions (flight_id, origin, dest, cause)

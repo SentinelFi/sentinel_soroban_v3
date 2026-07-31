@@ -26,6 +26,12 @@ export async function ensureOutcomesTable(sql: ReturnType<typeof getDb>): Promis
       unique (flight_id, origin, dest, flight_date)
     )
   `;
+  // FSA-H01: enable deny-all RLS on this self-created table (see the same
+  // note in governance/interventions.ts). New tables default to
+  // RLS-disabled and anon holds default grants on the public schema;
+  // without this the table is world read/write via PostgREST. Owner
+  // (postgres) bypasses RLS, so server-side access is unaffected.
+  await sql`alter table flight_outcomes enable row level security`;
 }
 
 /**
