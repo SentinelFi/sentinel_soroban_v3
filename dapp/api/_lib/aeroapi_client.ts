@@ -99,10 +99,26 @@ export class AeroApiClient {
    * cycles. Callers already fail safe on null.
    */
   private quotaExhausted = false;
+  /**
+   * OCA-M04: absolute wall-clock deadline (epoch ms). Serverless jobs run
+   * under a hard maxDuration kill; a single flight's 429 cooldowns
+   * (~65s × 3) must never sleep the function into that kill mid-loop.
+   * When a retry sleep would cross the deadline the call gives up (null —
+   * every caller fails safe) WITHOUT tripping the quota breaker.
+   */
+  private deadlineMs: number | null = null;
 
   constructor(config: Pick<Config, "aeroApiBaseUrl" | "aeroApiKey">) {
     this.baseUrl = config.aeroApiBaseUrl;
     this.apiKey = config.aeroApiKey;
+  }
+
+  setDeadline(epochMs: number): void {
+    this.deadlineMs = epochMs;
+  }
+
+  private wouldCrossDeadline(pendingSleepMs: number): boolean {
+    return this.deadlineMs !== null && Date.now() + pendingSleepMs > this.deadlineMs;
   }
 
   /**
@@ -256,6 +272,10 @@ export class AeroApiClient {
     if (this.quotaExhausted) {
       return null; // breaker tripped — no point burning more calls this run
     }
+    if (this.wouldCrossDeadline(0)) {
+      console.warn(`[aeroapi] run deadline reached — skipping ${label}.`);
+      return null;
+    }
     const headers: Record<string, string> = {};
     if (this.apiKey) {
       headers["x-apikey"] = this.apiKey;
@@ -291,6 +311,13 @@ export class AeroApiClient {
         // does not. Cool down past the window and retry; only a 429 that
         // SURVIVES the cooldown trips the permanent run-level breaker.
         if (resp.status === 429) {
+          if (this.wouldCrossDeadline(RATE_LIMIT_COOLDOWN_MS)) {
+            console.warn(
+              `[aeroapi] 429 for ${label} but a cooldown would cross the run deadline — ` +
+                `giving up on this call (quota breaker NOT tripped).`
+            );
+            return null;
+          }
           if (attempt < MAX_RETRIES) {
             console.warn(
               `[aeroapi] HTTP 429 for ${label} — rate-limit/quota ambiguous; ` +
@@ -311,6 +338,10 @@ export class AeroApiClient {
         if (resp.status >= 500) {
           if (attempt < MAX_RETRIES) {
             const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+            if (this.wouldCrossDeadline(delay)) {
+              console.warn(`[aeroapi] HTTP ${resp.status} for ${label} — retry would cross the run deadline, giving up.`);
+              return null;
+            }
             console.warn(`[aeroapi] HTTP ${resp.status} for ${label}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})...`);
             await sleep(delay);
             continue;
@@ -326,6 +357,10 @@ export class AeroApiClient {
         // Network errors — retry
         if (attempt < MAX_RETRIES) {
           const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+          if (this.wouldCrossDeadline(delay)) {
+            console.warn(`[aeroapi] Network error for ${label}: ${err} — retry would cross the run deadline, giving up.`);
+            return null;
+          }
           console.warn(`[aeroapi] Network error for ${label}: ${err}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})...`);
           await sleep(delay);
           continue;
