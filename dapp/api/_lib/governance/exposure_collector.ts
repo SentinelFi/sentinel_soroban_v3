@@ -96,7 +96,11 @@ export function computeConcentrations(
     r.units += f.liabilityUnits;
     routes.set(rkey, r);
     airports.set(f.origin, (airports.get(f.origin) ?? 0n) + f.liabilityUnits);
-    airports.set(f.dest, (airports.get(f.dest) ?? 0n) + f.liabilityUnits);
+    // OCA-L04: origin == dest (bad data / future round-trip type) must not
+    // count the same liability twice for one airport.
+    if (f.dest !== f.origin) {
+      airports.set(f.dest, (airports.get(f.dest) ?? 0n) + f.liabilityUnits);
+    }
   }
   // OCA-L03: CEILING division — plain truncation rounded every fraction
   // down (~1e-6), a bias that consistently favored NOT pausing at the
