@@ -19,7 +19,7 @@ import { SchemeToggle } from "./ThemeToggle"
 const NAV = [
 	{ to: "/", key: "markets" },
 	{ to: "/markets", key: "globe" },
-	{ to: "/bets", key: "policies" },
+	{ to: "/policies", key: "policies" },
 	{ to: "/house", key: "yield" },
 ] as const
 

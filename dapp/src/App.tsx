@@ -9,7 +9,7 @@ import { useWallet } from "./hooks/useWallet"
 import { stellarNetwork } from "./contracts/util"
 import { useCopy } from "./copy"
 import Markets from "./pages/Markets"
-import MyBets from "./pages/MyBets"
+import Policies from "./pages/Policies"
 import House from "./pages/House"
 import Status from "./pages/Status"
 import { Privacy, Terms } from "./pages/Legal"
@@ -70,7 +70,7 @@ export default function App() {
 					<Routes>
 						<Route path="/" element={<Markets />} />
 						<Route path="/markets" element={<MarketsGlobe />} />
-						<Route path="/bets" element={<MyBets />} />
+						<Route path="/policies" element={<Policies />} />
 						<Route path="/house" element={<House />} />
 						<Route path="/calculator" element={<Quant />} />
 						{/* legacy alias */}

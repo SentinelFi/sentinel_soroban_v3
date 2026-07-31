@@ -91,7 +91,7 @@ function StatusBadge({ kind, label }: { kind: BadgeKind; label: string }) {
 	)
 }
 
-export default function MyBets() {
+export default function Policies() {
 	const { address, signTransaction } = useWallet()
 	useContractSync()
 	const queryClient = useQueryClient()

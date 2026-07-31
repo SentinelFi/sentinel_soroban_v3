@@ -1097,7 +1097,7 @@ html[data-theme="serious"] {
 		animation-delay: 330ms;
 	}
 
-	/* MyBets claim-button gold pulse — distinct from the card's existing
+	/* Policies claim-button gold pulse — distinct from the card's existing
    .win-flash border flash; draws the eye specifically to the action. */
 	@keyframes px-claim-pulse {
 
