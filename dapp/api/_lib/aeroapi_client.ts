@@ -117,6 +117,19 @@ export class AeroApiClient {
     this.deadlineMs = epochMs;
   }
 
+  // OCA-L06: the client validates and encodes its own inputs instead of
+  // trusting every caller's discipline — several internal callers (route
+  // guard, admin routes) reach here with values that were never
+  // regex-checked upstream. Invalid input → null, same fail-soft contract
+  // as every other client error.
+  private static IDENT_RE = /^[A-Z0-9]{2,10}$/i;
+  private static DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  private badInput(kind: string, value: unknown): null {
+    console.warn(`[aeroapi] invalid ${kind} ${JSON.stringify(value)} — refusing to build request`);
+    return null;
+  }
+
   private wouldCrossDeadline(pendingSleepMs: number): boolean {
     return this.deadlineMs !== null && Date.now() + pendingSleepMs > this.deadlineMs;
   }
@@ -141,7 +154,11 @@ export class AeroApiClient {
    * Retries on 429 (rate limit) and 5xx with exponential backoff.
    */
   async getFlightData(ident: string, dateStr: string): Promise<AeroApiFlight | null> {
-    const url = `${this.baseUrl}/flights/${ident}?start=${dateStr}T00:00:00Z&end=${dateStr}T23:59:59Z`;
+    if (!AeroApiClient.IDENT_RE.test(ident)) return this.badInput("ident", ident);
+    if (!AeroApiClient.DATE_RE.test(dateStr)) return this.badInput("date", dateStr);
+    const url =
+      `${this.baseUrl}/flights/${encodeURIComponent(ident)}` +
+      `?start=${encodeURIComponent(`${dateStr}T00:00:00Z`)}&end=${encodeURIComponent(`${dateStr}T23:59:59Z`)}`;
     const data = await this.requestJson<AeroApiResponse>(url, `${ident} on ${dateStr}`);
     if (!data) return null;
 
@@ -175,7 +192,12 @@ export class AeroApiClient {
     startIso: string,
     endIso: string
   ): Promise<AeroApiFlight[] | null> {
-    const url = `${this.baseUrl}/flights/${ident}?start=${startIso}&end=${endIso}`;
+    if (!AeroApiClient.IDENT_RE.test(ident)) return this.badInput("ident", ident);
+    if (Number.isNaN(Date.parse(startIso))) return this.badInput("startIso", startIso);
+    if (Number.isNaN(Date.parse(endIso))) return this.badInput("endIso", endIso);
+    const url =
+      `${this.baseUrl}/flights/${encodeURIComponent(ident)}` +
+      `?start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(endIso)}`;
     const data = await this.requestJson<AeroApiResponse>(url, `${ident} ${startIso}..${endIso}`);
     if (!data) return null;
     return data.flights ?? [];
@@ -216,6 +238,8 @@ export class AeroApiClient {
       maxPages?: number;
     }
   ): Promise<AeroApiSchedulesResponse | null> {
+    if (!AeroApiClient.DATE_RE.test(dateStartStr)) return this.badInput("dateStart", dateStartStr);
+    if (!AeroApiClient.DATE_RE.test(dateEndStr)) return this.badInput("dateEnd", dateEndStr);
     // max_pages is clamped: values above ~5 have been observed answering
     // with quota errors / empty sets on lower tiers. Busy windows beyond
     // the first response are collected by FOLLOWING links.next cursors,
