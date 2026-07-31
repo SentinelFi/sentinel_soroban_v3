@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { loadConfig } from "../_lib/config";
+import { publicError } from "../_lib/public_error";
 import { allowRequest, clientIp } from "../_lib/rate_limit";
 import { authorizeSale } from "../_lib/sale_auth";
 
@@ -63,6 +64,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       ...(result.scheduledIn !== undefined ? { scheduled_in: result.scheduledIn } : {}),
     });
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    res.status(500).json({ error: publicError("sale-auth", err) });
   }
 }

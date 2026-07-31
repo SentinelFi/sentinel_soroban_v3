@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getDb } from "../_lib/governance/db";
 import { JOB_REGISTRY, latestRuns } from "../_lib/governance/runs";
+import { publicError } from "../_lib/public_error";
 
 /**
  * GET /api/status/runs — PUBLIC job-health feed for the /status page.
@@ -69,6 +70,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     res.setHeader("Cache-Control", "public, s-maxage=60, stale-while-revalidate=300");
     res.status(200).json({ jobs, barrier, as_of: new Date().toISOString() });
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    res.status(500).json({ error: publicError("status-runs", err) });
   }
 }
