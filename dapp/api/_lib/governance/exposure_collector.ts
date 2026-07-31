@@ -174,7 +174,15 @@ export function computeExposureSignals(
 export async function readExposure(
   client: SorobanClient,
   config: Pick<Config, "flightPoolManagerId" | "riskVaultId">
-): Promise<{ flights: FlightExposure[]; totalManaged: bigint }> {
+): Promise<{
+  flights: FlightExposure[];
+  totalManaged: bigint;
+  /** OCA-M01: live liability on flights absent from the routes file — it
+   *  can't be scoped to a route/airport bucket, so it must be SURFACED
+   *  rather than silently dropped from the brake's numerator. */
+  unknownLiabilityUnits: bigint;
+  unknownFlights: string[];
+}> {
   const routesConfig = loadRoutesConfig();
   const routeByFlight = new Map(
     routesConfig.routes.map((r) => [r.flight_id, { origin: r.origin, dest: r.destination }])
@@ -188,9 +196,10 @@ export async function readExposure(
     (await client.readContract(config.flightPoolManagerId, "get_active_flights")) ?? [];
 
   const flights: FlightExposure[] = [];
+  let unknownLiabilityUnits = 0n;
+  const unknownFlights: string[] = [];
   for (const [flightId, date] of active as [string, bigint][]) {
     const route = routeByFlight.get(flightId);
-    if (!route) continue; // unknown to the routes file — can't scope it
     const cfg = await client.readContract(config.flightPoolManagerId, "get_flight_config", [
       client.symbolToScVal(flightId),
       client.u64ToScVal(date),
@@ -202,6 +211,12 @@ export async function readExposure(
     const payoff = BigInt(cfg.payoff ?? 0);
     const buyers = BigInt(cfg.buyer_count ?? 0);
     if (buyers === 0n) continue;
+    if (!route) {
+      // Unknown to the routes file (removed after sale, or never added).
+      unknownLiabilityUnits += payoff * buyers;
+      if (!unknownFlights.includes(flightId)) unknownFlights.push(flightId);
+      continue;
+    }
     flights.push({
       flightId,
       origin: route.origin,
@@ -209,7 +224,7 @@ export async function readExposure(
       liabilityUnits: payoff * buyers,
     });
   }
-  return { flights, totalManaged };
+  return { flights, totalManaged, unknownLiabilityUnits, unknownFlights };
 }
 
 /** Shared env-defaulted contract ids (GovConfig carries only governance). */
@@ -276,14 +291,34 @@ export async function run(config: GovConfig, deps: ExposureDeps = {}): Promise<R
 
     let flights: FlightExposure[];
     let totalManaged: bigint;
+    let unknownLiabilityUnits: bigint;
+    let unknownFlights: string[];
     try {
-      ({ flights, totalManaged } = await readExposure(client, {
+      ({ flights, totalManaged, unknownLiabilityUnits, unknownFlights } = await readExposure(client, {
         flightPoolManagerId: poolId,
         riskVaultId: vaultId,
       }));
     } catch (err) {
       console.error(`[gov-exposure] on-chain read failed — no actions this run: ${err}`);
       return done(false, `on-chain read failed: ${err}`);
+    }
+
+    // OCA-M01: liability the brake CANNOT scope (flight missing from the
+    // routes file) is a blind spot in the concentration math — make it loud
+    // on the jobs board instead of silently under-counting.
+    if (unknownLiabilityUnits > 0n) {
+      const pct =
+        totalManaged > 0n
+          ? ((Number((unknownLiabilityUnits * 10_000n) / totalManaged) / 100).toFixed(1) + "%")
+          : "n/a";
+      console.warn(
+        `[gov-exposure] BLIND SPOT: ${unknownLiabilityUnits} units of live liability (${pct} of TMA) ` +
+          `on flight(s) not in the routes file: ${unknownFlights.join(", ")} — excluded from concentration buckets.`
+      );
+      actions.push({
+        flight: unknownFlights.join(","),
+        error: `unscoped liability ${unknownLiabilityUnits} units (${pct} of capacity) — flight(s) missing from routes file, excluded from exposure buckets`,
+      });
     }
 
     const specs = computeExposureSignals(flights, totalManaged);
