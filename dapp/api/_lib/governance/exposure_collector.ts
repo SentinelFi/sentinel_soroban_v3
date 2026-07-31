@@ -5,8 +5,10 @@ import { parseFlightStatus } from "../status";
 import { FlightStatus, type Config, type RunLogEntry, type FetcherAction } from "../types";
 import type { GovConfig } from "./config";
 import {
+  claimDisableSlot,
   computeDisableCap,
   pauseRoute,
+  releaseDisableSlot,
   type GovChainConfig,
   type InterventionRoute,
 } from "./interventions";
@@ -346,11 +348,23 @@ export async function run(config: GovConfig, deps: ExposureDeps = {}): Promise<R
         actions.push({ flight: label, skipped: `circuit breaker: would pause (${why}) — cap ${cap} reached` });
         continue;
       }
+      // OCA-H01: the local counter above only guards THIS invocation; the
+      // DB slot claim makes the cap atomic across overlapping runs (a
+      // scheduled tick racing an admin "run now"). Claimed slots that don't
+      // end in an on-chain disable are returned so idempotent re-pauses of
+      // already-off routes never eat the hourly budget.
+      if (!(await claimDisableSlot(cap))) {
+        console.warn(`[gov-exposure] CIRCUIT BREAKER: hourly disable cap ${cap} spent (concurrent run) — flagging ${label}.`);
+        actions.push({ flight: label, skipped: `circuit breaker: would pause (${why}) — hourly cap ${cap} spent across runs` });
+        continue;
+      }
       try {
         const result = await pauseRoute(chainConfig, route, "exposure", { why, fraction }, ACTOR);
         if (result.disabledOnChain) disables++;
+        else await releaseDisableSlot();
         actions.push({ flight: label, transition: result.outcome });
       } catch (err) {
+        await releaseDisableSlot();
         console.error(`[gov-exposure] ${label}: pause failed — ${err}. Next run retries.`);
         actions.push({ flight: label, error: String(err) });
       }

@@ -44,6 +44,8 @@ import {
   recordClearCheck,
   recordCheck,
   checkedRecently,
+  claimDisableSlot,
+  releaseDisableSlot,
   ensureTable,
   type GovChainConfig,
   type InterventionRoute,
@@ -249,6 +251,34 @@ async function testRecordCheckDedupe(): Promise<void> {
   await cleanupRoute(ROUTE);
 }
 
+async function testDisableSlotBudget(): Promise<void> {
+  console.log("\n── OCA-H01: cross-run hourly disable-slot budget ────────");
+  // The budget table is shared accounting, not a ledger — wiping it only
+  // resets this hour's automated-pause allowance, safe on testnet. The
+  // first claim creates the table if this is a fresh database.
+  await claimDisableSlot(1);
+  await sql`delete from gov_disable_slots`;
+  const cap = 3;
+
+  const claims: boolean[] = [];
+  for (let i = 0; i < cap; i++) claims.push(await claimDisableSlot(cap));
+  check("claims 1..cap all succeed", claims.every(Boolean), JSON.stringify(claims));
+
+  const over = await claimDisableSlot(cap);
+  check("claim cap+1 refused — budget spent for the hour", over === false);
+
+  // A "concurrent run" is just another process hitting the same window row:
+  // it must see the spent budget rather than its own fresh counter.
+  const concurrent = await claimDisableSlot(cap);
+  check("second run's claim against the spent budget also refused", concurrent === false);
+
+  await releaseDisableSlot();
+  const reclaimed = await claimDisableSlot(cap);
+  check("released slot (no on-chain disable happened) is re-claimable", reclaimed === true);
+
+  await sql`delete from gov_disable_slots`;
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -269,6 +299,7 @@ async function main(): Promise<void> {
     await testIdempotentRepause();
     await testClearStreakHysteresis();
     await testRecordCheckDedupe();
+    await testDisableSlotBudget();
   } finally {
     await cleanupRoute(ROUTE);
     await sql.end({ timeout: 5 });
