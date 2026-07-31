@@ -205,9 +205,16 @@ export async function readExposure(
       client.u64ToScVal(date),
     ]);
     if (!cfg) continue;
-    // Only unsettled policies carry live liability.
+    // Only unsettled policies carry live liability. Unknown (OCA-M07's
+    // fail-closed parse sentinel) is COUNTED here — for the risk brake the
+    // conservative direction is assuming the liability is live, not gone.
     const status = parseFlightStatus(cfg.status);
-    if (status !== FlightStatus.Active && status !== FlightStatus.NotInitiated) continue;
+    if (
+      status !== FlightStatus.Active &&
+      status !== FlightStatus.NotInitiated &&
+      status !== FlightStatus.Unknown
+    )
+      continue;
     const payoff = BigInt(cfg.payoff ?? 0);
     const buyers = BigInt(cfg.buyer_count ?? 0);
     if (buyers === 0n) continue;

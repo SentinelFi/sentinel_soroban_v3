@@ -67,6 +67,10 @@ export const FlightStatus = {
   ToBeSettledDelayed: "ToBeSettledDelayed",
   ToBeSettledCancelled: "ToBeSettledCancelled",
   Settled: "Settled",
+  // CLIENT-SIDE ONLY (OCA-M07) — not an on-chain variant, never sent to a
+  // contract. parseFlightStatus returns this for unrecognized shapes so
+  // money-relevant gates fail CLOSED (nothing treats Unknown as fresh).
+  Unknown: "Unknown",
 } as const;
 
 export type FlightStatus = (typeof FlightStatus)[keyof typeof FlightStatus];
