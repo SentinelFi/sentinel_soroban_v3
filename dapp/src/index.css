@@ -2011,41 +2011,37 @@ html[data-theme="serious"] {
 	border-radius: 0 !important;
 }
 
-/* controls: no border stroke — the fill IS the control. Element
-   selectors catch every button/field; class selectors cover composite
-   controls whose border sits on a wrapper div. !important because the
+/* …except buttons, which keep their pre-pass rounded, stroked look.
+   10px mirrors what --radius-ctl was before the pass zeroed it. */
+[data-theme="serious"] .btn-px,
+[data-theme="serious"] .page-btn {
+	border-radius: 10px !important;
+}
+
+/* controls: no border stroke — the fill IS the control. Field element
+   selectors catch every input; class selectors cover composite
+   controls whose border sits on a wrapper div. Buttons are exempt —
+   they keep their per-variant border stroke. !important because the
    skin rules above set border-color per variant at higher specificity.
    Focus feedback survives: focus-visible outlines and the .field-px
    focus ring are outlines/shadows, not borders. */
-[data-theme="serious"] button,
 [data-theme="serious"] input,
 [data-theme="serious"] select,
 [data-theme="serious"] textarea,
-[data-theme="serious"] .btn-px,
-[data-theme="serious"] .page-btn,
 [data-theme="serious"] .theme-toggle,
 [data-theme="serious"] .info-bubble {
 	border-color: transparent !important;
 }
 
-/* border-only controls get a tonal fill so they stay visible */
-[data-theme="serious"] .btn-ghost {
-	background: var(--color-raised);
-}
-
 /* scheme toggle is icon-only: no border, no fill, in every skin/scheme.
-   The serious selector must repeat here to outrank the .btn-ghost tonal
-   fill above; unlayered, so it also beats the layered .btn-px box. */
+   The serious selector outranks the serious .btn-ghost skin rules;
+   unlayered, so it also beats the layered .btn-px box. */
 .scheme-toggle,
 .scheme-toggle:active:not(:disabled),
 [data-theme="serious"] .scheme-toggle {
 	background: transparent;
 	border-color: transparent;
 	box-shadow: none;
-}
-
-[data-theme="serious"] .page-btn:disabled {
-	background: var(--color-inset);
 }
 
 /* ────────────────────────────────────────────────────────────────

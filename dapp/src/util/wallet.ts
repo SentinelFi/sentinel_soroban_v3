@@ -3,7 +3,7 @@ import {
 	type SwkAppTheme,
 	StellarWalletsKit,
 } from "@creit.tech/stellar-wallets-kit"
-import { sep43Modules } from "@creit.tech/stellar-wallets-kit/modules/utils"
+import { defaultModules } from "@creit.tech/stellar-wallets-kit/modules/utils"
 import { Horizon } from "@stellar/stellar-sdk"
 import { networkPassphrase, stellarNetwork } from "../contracts/util"
 import storage from "./storage"
@@ -40,7 +40,10 @@ const modalTheme: SwkAppTheme = {
 
 StellarWalletsKit.init({
 	network: networkPassphrase as Networks,
-	modules: sep43Modules(),
+	// defaultModules → every zero-config wallet (Freighter, xBull, Lobstr,
+	// Albedo, Hana, Rabet, …); the kit modal lists them all and offers an
+	// install link for wallets the browser doesn't have.
+	modules: defaultModules(),
 	theme: modalTheme,
 })
 
