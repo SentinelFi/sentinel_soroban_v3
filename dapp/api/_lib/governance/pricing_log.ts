@@ -55,6 +55,11 @@ export async function logPricingRun(entry: PricingRunLog): Promise<boolean> {
         summary jsonb not null default '{}'::jsonb
       )
     `;
+    // FSA-H01: enable deny-all RLS on this self-created table (see the same
+    // note in governance/interventions.ts). Without it the table is world
+    // read/write via PostgREST using only the public key; the owning
+    // postgres role bypasses RLS so server-side access is unaffected.
+    await sql`alter table pricing_runs enable row level security`;
     await sql`
       insert into pricing_runs
         (context, model_version, priced_for_date, total_candidates, priced, failed, excluded, summary)

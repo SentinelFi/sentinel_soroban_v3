@@ -19,6 +19,38 @@ export interface AdminIdentity {
   email: string;
 }
 
+/** Minimal shape of the fields we gate on from a Supabase auth user. */
+interface AuthUserLike {
+  email?: string | null;
+  email_confirmed_at?: string | null;
+}
+
+/**
+ * Pure allowlist decision, split out so it is unit-testable without a
+ * live Supabase call. An identity is admitted only when the account has a
+ * CONFIRMED email that is on the ADMIN_EMAILS allowlist.
+ *
+ * The email_confirmed_at gate (FSA-M02) matters because the allowlist
+ * keys on the email string alone: without it, if the Supabase project
+ * ever allowed a sign-in method that does not verify email (password
+ * signup with confirmation off, say), an attacker could register an
+ * allowlisted admin's address and pass. Magic-link and OAuth both set
+ * email_confirmed_at, so this never rejects the flows in use today.
+ */
+export function resolveAdminEmail(
+  user: AuthUserLike | null | undefined,
+  adminEmailsCsv: string | undefined,
+): string | null {
+  const email = user?.email?.toLowerCase();
+  if (!email || !user?.email_confirmed_at) return null;
+
+  const allowlist = (adminEmailsCsv ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  return allowlist.includes(email) ? email : null;
+}
+
 export async function verifyAdmin(req: VercelRequest): Promise<AdminIdentity | null> {
   const header = req.headers.authorization ?? "";
   const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
@@ -34,12 +66,8 @@ export async function verifyAdmin(req: VercelRequest): Promise<AdminIdentity | n
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const { data, error } = await supabase.auth.getUser(token);
-  if (error || !data.user?.email) return null;
+  if (error) return null;
 
-  const allowlist = (process.env.ADMIN_EMAILS ?? "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-  const email = data.user.email.toLowerCase();
-  return allowlist.includes(email) ? { email } : null;
+  const email = resolveAdminEmail(data.user, process.env.ADMIN_EMAILS);
+  return email ? { email } : null;
 }

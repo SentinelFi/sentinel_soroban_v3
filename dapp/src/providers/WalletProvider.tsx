@@ -9,6 +9,7 @@ import {
 } from "react"
 import storage from "../util/storage"
 import { wallet, fetchBalances, type MappedBalances } from "../util/wallet"
+import { networkPassphrase as appNetworkPassphrase } from "../contracts/util"
 
 const signTransaction = wallet.signTransaction.bind(wallet)
 
@@ -40,6 +41,14 @@ export interface WalletContextType {
 	isPending: boolean
 	network?: string
 	networkPassphrase?: string
+	/**
+	 * True when the connected wallet reports a network passphrase that
+	 * differs from the one this app builds transactions for (FSA-L01).
+	 * Only ever true when we positively know the wallet's network (an
+	 * empty/unknown passphrase never trips it), so it raises no false
+	 * alarms. Consumers surface a warning; signing is not hard-blocked.
+	 */
+	networkMismatch: boolean
 	signTransaction: typeof wallet.signTransaction
 	updateBalances: () => Promise<void>
 }
@@ -49,6 +58,7 @@ const POLL_INTERVAL = 1000
 export const WalletContext = createContext<WalletContextType>({
 	isPending: true,
 	balances: {},
+	networkMismatch: false,
 	updateBalances: async () => {},
 	signTransaction,
 })
@@ -181,17 +191,33 @@ export const WalletProvider = ({ children }: { children: React.ReactNode }) => {
 		}
 	}, []) // eslint-disable-line react-hooks/exhaustive-deps -- it SHOULD only run once per component mount
 
+	// Only flag a mismatch when the wallet has actually reported a
+	// passphrase (non-Freighter wallets may leave it empty) — an unknown
+	// network must not raise a false warning.
+	const networkMismatch = Boolean(
+		networkPassphrase && networkPassphrase !== appNetworkPassphrase,
+	)
+
 	const contextValue = useMemo(
 		() => ({
 			address,
 			network,
 			networkPassphrase,
+			networkMismatch,
 			balances,
 			updateBalances,
 			isPending,
 			signTransaction,
 		}),
-		[address, network, networkPassphrase, balances, updateBalances, isPending],
+		[
+			address,
+			network,
+			networkPassphrase,
+			networkMismatch,
+			balances,
+			updateBalances,
+			isPending,
+		],
 	)
 
 	return <WalletContext value={contextValue}>{children}</WalletContext>

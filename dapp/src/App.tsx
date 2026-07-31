@@ -5,6 +5,8 @@ import { FlightBackground } from "./components/FlightBackground"
 import { ThemeDock } from "./components/ThemeToggle"
 import { ActivityLog } from "./components/ActivityLog"
 import { useTheme } from "./providers/ThemeProvider"
+import { useWallet } from "./hooks/useWallet"
+import { stellarNetwork } from "./contracts/util"
 import { useCopy } from "./copy"
 import Markets from "./pages/Markets"
 import MyBets from "./pages/MyBets"
@@ -31,6 +33,28 @@ function PageLoading() {
 
 const GITHUB_URL = "https://github.com/SentinelFi"
 
+/**
+ * FSA-L01: warn (non-blocking) when the connected wallet is on a
+ * different Stellar network than the one this app signs for. Signing is
+ * not disabled — the flag only ever trips when the wallet's network is
+ * positively known to differ — so a bad comparison can never lock a user
+ * out of a working app; it only ever adds a banner.
+ */
+function NetworkMismatchBanner() {
+	const { networkMismatch } = useWallet()
+	if (!networkMismatch) return null
+	return (
+		<div
+			role="alert"
+			className="relative z-20 border-b border-amber-500/40 bg-amber-500/15 px-4 py-2 text-center font-body text-[13px] text-amber-200"
+		>
+			Your wallet is on a different network than this app (
+			{stellarNetwork}). Switch your wallet to {stellarNetwork} before
+			signing.
+		</div>
+	)
+}
+
 export default function App() {
 	const { theme } = useTheme()
 	return (
@@ -40,6 +64,7 @@ export default function App() {
 			{theme === "serious" && <FlightBackground />}
 
 			<TopBar />
+			<NetworkMismatchBanner />
 			<main className="relative z-10 flex-1">
 				<Suspense fallback={<PageLoading />}>
 					<Routes>
