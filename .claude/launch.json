@@ -5,6 +5,12 @@
 			"name": "dapp",
 			"url": "http://localhost:5175",
 			"port": 5175
+		},
+		{
+			"name": "dapp-verify",
+			"runtimeExecutable": "cmd",
+			"runtimeArgs": ["/c", "cd /d dapp && npx vite --port 5176 --strictPort"],
+			"port": 5176
 		}
 	]
 }
