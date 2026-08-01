@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { errorMessage, txHashOf } from "../lib/utils"
 import { useNotification } from "./useNotification"
+import { useWallet } from "./useWallet"
+import { stellarNetwork } from "../contracts/util"
 import type { TxState } from "../types"
 
 /**
@@ -66,6 +68,12 @@ export function useTxFlow(options: TxFlowOptions = {}) {
 	const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 	const queryClient = useQueryClient()
 	const { addNotification } = useNotification()
+	// Defense in depth behind the disabled buttons: refuse to start any
+	// signing flow while the wallet positively reports a different
+	// network than the one this app builds transactions for.
+	const { networkMismatch } = useWallet()
+	const networkMismatchRef = useRef(networkMismatch)
+	networkMismatchRef.current = networkMismatch
 
 	// Options are captured in a ref so run() stays referentially stable
 	// even when callers pass inline arrays/handlers.
@@ -98,6 +106,16 @@ export function useTxFlow(options: TxFlowOptions = {}) {
 			fn: (step: (s: TxState) => void) => Promise<TxFlowResult | void>,
 		): Promise<boolean> => {
 			if (stateRef.current !== "idle") return false
+			if (networkMismatchRef.current) {
+				const message = `Your wallet is on a different network than this app (${stellarNetwork}). Switch networks before signing.`
+				setError(message)
+				transition("error")
+				addNotification(message, "error")
+				timerRef.current = setTimeout(() => {
+					transition("idle")
+				}, optsRef.current.errorResetDelayMs)
+				return false
+			}
 			setError(null)
 			try {
 				const result = await fn(transition)

@@ -364,7 +364,7 @@ function BetSlip({
 	defaults?: Defaults
 	onClose: () => void
 }) {
-	const { address, signTransaction } = useWallet()
+	const { address, signTransaction, networkMismatch } = useWallet()
 	const t = useCopy()
 	const { theme } = useTheme()
 	const [flightDate, setFlightDate] = useState("")
@@ -516,7 +516,9 @@ function BetSlip({
 				<TransactionButton
 					state={flow.state}
 					onClick={placeBet}
-					disabled={!address || !flightDate || whitelistBlocked}
+					disabled={
+						!address || !flightDate || whitelistBlocked || networkMismatch
+					}
 					className="btn-loss w-full"
 				>
 					{t.slip.cta(premium !== undefined ? formatUsdc(premium) : "…")}

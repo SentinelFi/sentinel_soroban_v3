@@ -78,7 +78,7 @@ function StatTile({
 }
 
 export default function House() {
-	const { address, signTransaction } = useWallet()
+	const { address, signTransaction, networkMismatch } = useWallet()
 	const queryClient = useQueryClient()
 	const { addNotification } = useNotification()
 	const t = useCopy()
@@ -387,7 +387,7 @@ export default function House() {
 						onClick={() =>
 							void (connected ? handleDeposit() : connectWallet())
 						}
-						disabled={connected && depositAssets <= 0n}
+						disabled={connected && (depositAssets <= 0n || networkMismatch)}
 						className="btn-win mt-4 w-full"
 					>
 						{connected ? t.house.depositCta : t.house.connectWallet}
@@ -417,7 +417,10 @@ export default function House() {
 												entry.request_id,
 											)
 										}
-										disabled={cancelingDepositId !== null}
+										disabled={
+											cancelingDepositId !== null ||
+											networkMismatch
+										}
 										className="btn-px btn-ghost btn-sm text-loss"
 									>
 										{cancelingDepositId === entry.request_id
@@ -522,7 +525,9 @@ export default function House() {
 							}
 							disabled={
 								connected &&
-								(withdrawShares <= 0n || insufficientShares)
+								(withdrawShares <= 0n ||
+									insufficientShares ||
+									networkMismatch)
 							}
 							className="btn-blip mt-4 w-full"
 						>
@@ -608,7 +613,8 @@ export default function House() {
 															)
 														}
 														disabled={
-															cancelingId !== null
+															cancelingId !== null ||
+															networkMismatch
 														}
 														className="btn-px btn-ghost btn-sm text-loss"
 													>
@@ -644,7 +650,7 @@ export default function House() {
 								<TransactionButton
 									state={collectFlow.state}
 									onClick={handleCollect}
-									disabled={!connected}
+									disabled={!connected || networkMismatch}
 									className="btn-win mt-3 w-full"
 								>
 									{t.house.collectCta}

@@ -34,11 +34,12 @@ function PageLoading() {
 }
 
 /**
- * FSA-L01: warn (non-blocking) when the connected wallet is on a
- * different Stellar network than the one this app signs for. Signing is
- * not disabled — the flag only ever trips when the wallet's network is
- * positively known to differ — so a bad comparison can never lock a user
- * out of a working app; it only ever adds a banner.
+ * Warn when the connected wallet is on a different Stellar network than
+ * the one this app signs for. Signing is ALSO blocked while the flag is
+ * up (buttons disabled + a guard in useTxFlow). The flag only ever
+ * trips when the wallet's network is positively known to differ — an
+ * unknown/unreported network never blocks — so a bad comparison cannot
+ * lock a user out of a working app.
  */
 function NetworkMismatchBanner() {
 	const { networkMismatch } = useWallet()

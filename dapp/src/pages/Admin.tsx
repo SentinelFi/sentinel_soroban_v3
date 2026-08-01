@@ -9,6 +9,7 @@ import type { Session } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
 import { errorMessage } from "../lib/utils"
 import { isoMinute, relTime, usdFromUnits, utcDateTime } from "../lib/format"
+import { explorerTxUrl } from "../lib/explorer"
 import { useDebouncedValue } from "../hooks/useDebouncedValue"
 import { TxProgress } from "../components/TxProgress"
 import type { TxState } from "../types"
@@ -1457,7 +1458,7 @@ function ActionLog({ log, loading }: { log: AdminAction[]; loading: boolean }) {
 								<td className="px-3 py-2">
 									{a.tx_hash ? (
 										<a
-											href={`https://stellar.expert/explorer/testnet/tx/${a.tx_hash}`}
+											href={explorerTxUrl(a.tx_hash)}
 											target="_blank"
 											rel="noopener noreferrer"
 											className="footer-link font-board text-[15px]"

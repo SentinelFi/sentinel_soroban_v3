@@ -90,7 +90,7 @@ function StatusBadge({ kind, label }: { kind: BadgeKind; label: string }) {
 }
 
 export default function Policies() {
-	const { address, signTransaction } = useWallet()
+	const { address, signTransaction, networkMismatch } = useWallet()
 	const t = useCopy()
 	const { theme } = useTheme()
 	const serious = theme === "serious"
@@ -349,7 +349,7 @@ export default function Policies() {
 								<button
 									type="button"
 									onClick={() => handleClaim(bet)}
-									disabled={claimingId !== null}
+									disabled={claimingId !== null || networkMismatch}
 									className={cn(
 										"btn-px btn-win mt-4 w-full",
 										claimingId === null && "claim-btn-pulse",

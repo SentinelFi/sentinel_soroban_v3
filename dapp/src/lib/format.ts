@@ -17,11 +17,24 @@ export function formatUsdc(amount: bigint): string {
 	return `${negative ? "-" : ""}${whole.toLocaleString()}.${fracStr}`
 }
 
-/** Convert human USDC string to i128. */
+/**
+ * Convert a human USDC string to i128 units. Pure decimal-string
+ * parsing — the amount the user signs must be EXACTLY what they typed,
+ * so no binary-float detour ("0.29" via parseFloat is 2899999.99…
+ * stroops, one short). Strict format: digits with an optional decimal
+ * point ("12", "12.5", ".5"). Anything else — junk suffixes ("12.3abc"),
+ * scientific notation ("1e3"), negatives — returns 0n, which the
+ * callers' `<= 0n` guards treat as "no valid amount entered".
+ * Fractions beyond 7 decimals are truncated (chain precision).
+ */
 export function parseUsdc(amount: string): bigint {
-	const num = parseFloat(amount)
-	if (isNaN(num) || num <= 0) return 0n
-	return BigInt(Math.floor(num * 10_000_000))
+	const m = amount.trim().match(/^(\d+)?(?:\.(\d+))?$/)
+	if (!m || (!m[1] && !m[2])) return 0n
+	const whole = m[1] ?? "0"
+	const frac = (m[2] ?? "")
+		.slice(0, USDC_DECIMALS)
+		.padEnd(USDC_DECIMALS, "0")
+	return BigInt(whole) * USDC_DIVISOR + BigInt(frac || "0")
 }
 
 /**
