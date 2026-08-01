@@ -16,8 +16,9 @@ import "@fontsource/outfit/400.css"
 import "@fontsource/outfit/500.css"
 import "@fontsource/outfit/600.css"
 import "@fontsource/outfit/700.css"
-import "@fontsource/press-start-2p"
-import "@fontsource/vt323"
+// Press Start 2P + VT323 are NOT imported from @fontsource: they're
+// self-hosted in public/fonts and declared in index.css so index.html
+// can preload them (see the pixel-fonts note there).
 import "./index.css"
 
 console.log(String.raw`
