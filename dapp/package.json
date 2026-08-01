@@ -26,6 +26,9 @@
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "2.5.0",
+    "@fontsource/outfit": "^5.3.0",
+    "@fontsource/press-start-2p": "^5.3.0",
+    "@fontsource/vt323": "^5.3.0",
     "@stellar/stellar-sdk": "16.1.0",
     "@supabase/supabase-js": "^2.110.7",
     "@tailwindcss/vite": "^4.2.1",

@@ -7,6 +7,13 @@ import { WalletProvider } from "./providers/WalletProvider"
 import { NotificationProvider } from "./providers/NotificationProvider"
 import { ThemeProvider } from "./providers/ThemeProvider"
 import App from "./App"
+// Self-hosted fonts (bundled, same-origin) — no third-party font CDN
+import "@fontsource/outfit/400.css"
+import "@fontsource/outfit/500.css"
+import "@fontsource/outfit/600.css"
+import "@fontsource/outfit/700.css"
+import "@fontsource/press-start-2p"
+import "@fontsource/vt323"
 import "./index.css"
 
 console.log(String.raw`

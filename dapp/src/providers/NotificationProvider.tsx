@@ -22,6 +22,7 @@ import React, {
 	useState,
 	type ReactNode,
 } from "react"
+import { explorerTxUrl } from "../lib/explorer"
 
 type NotificationType =
 	| "primary"
@@ -72,10 +73,9 @@ const TYPE_STYLE: Record<NotificationType, { border: string; label: string }> =
 const AUTO_DISMISS_MS = 5000
 const HISTORY_LIMIT = 50
 
-/** Testnet explorer link for a transaction hash. */
-export function explorerTxUrl(hash: string): string {
-	return `https://stellar.expert/explorer/testnet/tx/${hash}`
-}
+// Re-exported for existing importers; the implementation derives the
+// explorer network from the app's configured Stellar network.
+export { explorerTxUrl }
 
 export const NotificationProvider: React.FC<{ children: ReactNode }> = ({
 	children,

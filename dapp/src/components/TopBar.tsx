@@ -5,6 +5,7 @@ import { useNotification } from "../hooks/useNotification"
 import { formatUsdc, mockUsdcClient, useUsdcBalance } from "../hooks/useContracts"
 import { useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet, disconnectWallet } from "../util/wallet"
+import { stellarNetwork } from "../contracts/util"
 import { cn, txHashOf } from "../lib/utils"
 import { useCopy } from "../copy"
 import { useTheme } from "../providers/ThemeProvider"
@@ -108,7 +109,7 @@ function WalletMenu({ address }: { address: string }) {
 
 /** USDC balance chip with inline testnet faucet mint (+10,000 mock USDC). */
 function CoinChip() {
-	const { address, signTransaction } = useWallet()
+	const { address, signTransaction, networkMismatch } = useWallet()
 	const { data: usdcBalance } = useUsdcBalance(address)
 	const { theme } = useTheme()
 	const t = useCopy()
@@ -148,15 +149,19 @@ function CoinChip() {
 				{usdcBalance != null ? formatUsdc(usdcBalance) : "…"}
 			</span>
 			<span className="label-px">USDC</span>
-			<button
-				type="button"
-				onClick={() => void mint()}
-				disabled={minting}
-				className="ml-1 border-l-2 border-line px-2 font-body text-[11px] font-bold tracking-[0.06em] text-win hover:text-ink disabled:opacity-50"
-				title="Mint 10,000 test USDC"
-			>
-				{minting ? "MINTING…" : "+MINT"}
-			</button>
+			{/* faucet is a test-token affordance — never rendered against
+			    a mainnet deployment (mock USDC does not exist there) */}
+			{stellarNetwork !== "PUBLIC" && (
+				<button
+					type="button"
+					onClick={() => void mint()}
+					disabled={minting || networkMismatch}
+					className="ml-1 border-l-2 border-line px-2 font-body text-[11px] font-bold tracking-[0.06em] text-win hover:text-ink disabled:opacity-50"
+					title="Mint 10,000 test USDC"
+				>
+					{minting ? "MINTING…" : "+MINT"}
+				</button>
+			)}
 		</div>
 	)
 }
