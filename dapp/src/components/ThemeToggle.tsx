@@ -104,21 +104,21 @@ function ToggleButtons({
 		<>
 			<button
 				type="button"
-				aria-pressed={theme === "serious"}
-				onClick={() => setTheme("serious")}
-				className="theme-toggle-opt"
-				data-active={theme === "serious"}
-			>
-				Serious
-			</button>
-			<button
-				type="button"
 				aria-pressed={theme === "fun"}
 				onClick={() => setTheme("fun")}
 				className="theme-toggle-opt"
 				data-active={theme === "fun"}
 			>
 				Fun
+			</button>
+			<button
+				type="button"
+				aria-pressed={theme === "serious"}
+				onClick={() => setTheme("serious")}
+				className="theme-toggle-opt"
+				data-active={theme === "serious"}
+			>
+				Serious
 			</button>
 		</>
 	)

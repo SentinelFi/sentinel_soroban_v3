@@ -159,6 +159,49 @@ function EmphasizeDelayed({ text }: { text: string }) {
 	)
 }
 
+/**
+ * Serious-hero headline line rendered as split-flap letters. Each letter
+ * carries a slice of one shared gradient — background-size spans the whole
+ * line, offset per letter — so the clip reads as a single sweep while the
+ * letters flip into place like an airport departure board. Screen readers
+ * get the plain text once; the letters are decoration.
+ *
+ * `delayBase`/`delayStep` set the flip cadence — the fun hero runs a
+ * quicker stagger than the serious one.
+ */
+function HeroFlapLine({
+	text,
+	delayBase = 240,
+	delayStep = 50,
+}: {
+	text: string
+	delayBase?: number
+	delayStep?: number
+}) {
+	const letters = [...text]
+	const n = letters.length
+	return (
+		<span className="hero-flap">
+			<span className="sr-only">{text}</span>
+			{letters.map((ch, i) => (
+				<span
+					key={i}
+					aria-hidden="true"
+					className="hero-flap-letter"
+					style={{
+						animationDelay: `${delayBase + i * delayStep}ms`,
+						backgroundSize: `${n * 100}% 100%`,
+						backgroundPosition:
+							n > 1 ? `${(i / (n - 1)) * 100}% 0` : "0 0",
+					}}
+				>
+					{ch === " " ? " " : ch}
+				</span>
+			))}
+		</span>
+	)
+}
+
 /** External flight-tracking page for a flight id (lowercase slug). */
 function flightradarUrl(flightId: string): string {
 	return `https://www.flightradar24.com/data/flights/${encodeURIComponent(
@@ -787,16 +830,17 @@ export default function Markets() {
 	return (
 		<div className="mx-auto max-w-6xl space-y-8 px-4 py-8">
 			{serious ? (
-				/* serious hero — big Outfit headline with a gradient clip,
-				   floated over the canvas flight-paths already behind it.
-				   No pixel airfield, no pixel plane. */
+				/* serious hero — oversized fluid Outfit headline over the canvas
+				   flight-paths: line 1 rises in and gets a periodic sheen sweep,
+				   line 2 flips in split-flap style with a breathing gradient.
+				   All motion is disabled under prefers-reduced-motion. */
 				<section className="hero-serious relative py-10 sm:py-16">
-					<h1 className="hero-serious-title font-display text-[40px] font-bold leading-[1.02] tracking-[-0.02em] sm:text-[64px]">
-						{t.markets.heroLine1}
+					<h1 className="hero-serious-title hero-mega font-display font-bold leading-[1.02]">
+						<span className="hero-line1">{t.markets.heroLine1}</span>
 						<br />
-						<span className="hero-grad">{t.markets.heroLine2}</span>
+						<HeroFlapLine text={t.markets.heroLine2} />
 					</h1>
-					<p className="mt-6 max-w-xl font-body text-[16px] leading-relaxed text-dim sm:text-[18px]">
+					<p className="hero-sub-rise mt-6 max-w-xl font-body text-[16px] leading-relaxed text-dim sm:text-[18px]">
 						{t.markets.heroSub}
 					</p>
 				</section>
@@ -807,11 +851,19 @@ export default function Markets() {
 				<section>
 					<div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
 						<h1 className="h-display text-[24px] leading-[1.45] sm:text-[32px]">
-							{t.markets.heroLine1}
+							<span className="hero-fun-line1">
+								{t.markets.heroLine1}
+							</span>
 							<br />
-							<span className="text-loss">{t.markets.heroLine2}</span>
+							<span className="text-loss">
+								<HeroFlapLine
+									text={t.markets.heroLine2}
+									delayBase={120}
+									delayStep={26}
+								/>
+							</span>
 						</h1>
-						<p className="max-w-sm font-body text-[15px] leading-relaxed text-dim">
+						<p className="hero-sub-rise max-w-sm font-body text-[15px] leading-relaxed text-dim">
 							<EmphasizeDelayed text={t.markets.heroSub} />
 						</p>
 					</div>
