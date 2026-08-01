@@ -9,12 +9,18 @@ import { useTheme } from "./providers/ThemeProvider"
 import { useWallet } from "./hooks/useWallet"
 import { stellarNetwork } from "./contracts/util"
 import { useCopy } from "./copy"
-import { DOCS_URL, GITHUB_URL, STELLAR_URL, X_URL } from "./config/links"
+import {
+	BRIDGE_URL,
+	DOCS_URL,
+	GITHUB_URL,
+	STELLAR_URL,
+	X_URL,
+} from "./config/links"
 import Markets from "./pages/Markets"
 import Policies from "./pages/Policies"
 import House from "./pages/House"
 import Status from "./pages/Status"
-import { Privacy, Terms } from "./pages/Legal"
+import { Disclaimers, Privacy, Terms } from "./pages/Legal"
 
 // Heavy pages load on first navigation, not with the landing page:
 // the globe carries d3-geo + the world-atlas topology, the calculator its
@@ -81,6 +87,7 @@ export default function App() {
 						<Route path="/quant" element={<Quant />} />
 						<Route path="/privacy" element={<Privacy />} />
 						<Route path="/terms" element={<Terms />} />
+						<Route path="/disclaimers" element={<Disclaimers />} />
 						<Route path="/status" element={<Status />} />
 						{/* hidden — not linked from any nav; ops only */}
 						<Route path="/admin" element={<Admin />} />
@@ -137,6 +144,12 @@ function FooterLinks({ className }: { className?: string }) {
 			<span aria-hidden="true" className="text-mute/50">
 				·
 			</span>
+			<Link to="/disclaimers" className="footer-link">
+				Disclaimers
+			</Link>
+			<span aria-hidden="true" className="text-mute/50">
+				·
+			</span>
 			<Link to="/status" className="footer-link">
 				Status
 			</Link>
@@ -150,6 +163,18 @@ function FooterLinks({ className }: { className?: string }) {
 				className="footer-link"
 			>
 				GitHub
+			</a>
+			<span aria-hidden="true" className="text-mute/50">
+				·
+			</span>
+			<a
+				href={BRIDGE_URL}
+				target="_blank"
+				rel="noopener noreferrer"
+				className="footer-link"
+				aria-label="Bridge USDC to Stellar via Allbridge (mainnet)"
+			>
+				Bridge
 			</a>
 			<span aria-hidden="true" className="text-mute/50">
 				·
