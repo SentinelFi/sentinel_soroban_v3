@@ -78,7 +78,9 @@ export function HowItWorksBubble() {
 			<span className="font-semibold text-loss">DELAYED</span>).
 			Underwriters take the other side and earn premiums when flights
 			land <span className="font-semibold text-win">on time</span>. No
-			claims forms: an oracle settles every flight on-chain.
+			claims forms: an oracle settles every flight on-chain. Underwriter
+			deposits and cash-outs both process after a ~6-hour safety delay,
+			at the share price current at processing time.
 		</InfoBubble>
 	)
 }

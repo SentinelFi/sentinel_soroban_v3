@@ -9,7 +9,7 @@ import {
 	useTravelerFlights,
 } from "../hooks/useContracts"
 import { useWallet } from "../hooks/useWallet"
-import { useTxFlow } from "../hooks/useTxFlow"
+import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { cn, txHashOf } from "../lib/utils"
 import { formatDate } from "../lib/format"
 import { PixelArt } from "../components/PixelArt"
@@ -49,21 +49,25 @@ interface Bet {
 	eta?: string
 }
 
-function liveLabel(tag: OracleTag | undefined): string {
+type Copy = ReturnType<typeof useCopy>
+
+/** Live-tracking label — themed through copy.ts so serious mode doesn't
+ *  leak the arcade ALL-CAPS voice. */
+function liveLabel(tag: OracleTag | undefined, t: Copy): string {
 	switch (tag) {
 		case "Active":
-			return "IN AIR"
+			return t.policies.liveInAir
 		case "Landed":
-			return "LANDED"
+			return t.policies.liveLanded
 		case "Cancelled":
 		case "ToBeSettledCancelled":
-			return "CANCELLED"
+			return t.policies.liveCancelled
 		case "ToBeSettledDelayed":
-			return "DELAYED — SETTLING"
+			return t.policies.liveDelayedSettling
 		case "ToBeSettledOnTime":
-			return "ON TIME — SETTLING"
+			return t.policies.liveOnTimeSettling
 		default:
-			return "SCHEDULED"
+			return t.policies.liveScheduled
 	}
 }
 
@@ -103,10 +107,18 @@ export default function Policies() {
 		onSettled: () => setClaimingId(null),
 	})
 
-	const { data: flights, isLoading: flightsLoading } =
-		useTravelerFlights(address)
-	const { data: policyStates, isLoading: statesLoading } =
-		usePolicyStateBatch(flights, address)
+	const {
+		data: flights,
+		isLoading: flightsLoading,
+		isError: flightsError,
+		refetch: refetchFlights,
+	} = useTravelerFlights(address)
+	const {
+		data: policyStates,
+		isLoading: statesLoading,
+		isError: statesError,
+		refetch: refetchStates,
+	} = usePolicyStateBatch(flights, address)
 	const { data: flightData } = useFlightDataBatch(flights)
 
 	if (!address) {
@@ -130,6 +142,9 @@ export default function Policies() {
 	}
 
 	const isLoading = flightsLoading || statesLoading
+	// An RPC failure must NEVER masquerade as "no policies yet" — for an
+	// insurance product that's a trust-destroying message.
+	const loadFailed = flightsError || statesError
 
 	const oracleByFlight = new Map(
 		(flightData ?? []).map((entry) => [
@@ -173,26 +188,26 @@ export default function Policies() {
 		let reason: string | undefined
 
 		if (section === "open") {
-			outcome = liveLabel(oracle?.status.tag)
+			outcome = liveLabel(oracle?.status.tag, t)
 			badge = "tracking"
 		} else if (section === "won") {
 			outcome =
 				settlementTag === "SettledCancelled"
-					? "CANCELLED — PAYS OUT"
-					: "DELAYED — PAYS OUT"
+					? t.policies.outcomeCancelledPays
+					: t.policies.outcomeDelayedPays
 			badge = "claimable"
 		} else {
 			// terminal — derive the eligibility reason string
 			if (settlementTag === "SettledOnTime") {
-				outcome = "ON TIME — NO PAYOUT"
+				outcome = t.policies.outcomeOnTime
 				badge = "onTime"
 				reason = t.policies.reasonOnTime
 			} else if (state.claimed) {
 				// delayed/cancelled and already claimed → paid out
 				outcome =
 					settlementTag === "SettledCancelled"
-						? "CANCELLED — PAID"
-						: "DELAYED — PAID"
+						? t.policies.outcomeCancelledPaid
+						: t.policies.outcomeDelayedPaid
 				badge = "paid"
 				reason =
 					settlementTag === "SettledCancelled"
@@ -202,8 +217,8 @@ export default function Policies() {
 				// delayed/cancelled, unclaimed, window closed → expired
 				outcome =
 					settlementTag === "SettledCancelled"
-						? "CANCELLED — EXPIRED"
-						: "DELAYED — EXPIRED"
+						? t.policies.outcomeCancelledExpired
+						: t.policies.outcomeDelayedExpired
 				badge = "expired"
 				reason = t.policies.reasonExpired
 			}
@@ -238,14 +253,15 @@ export default function Policies() {
 		if (!address || claimingId) return
 		setClaimingId(bet.id)
 		void claimFlow.run(async (step) => {
-			step("awaiting")
+			step("verifying")
 			const tx = await flightPoolManagerClient.claim({
 				traveler: address,
 				flight_id: bet.flightId,
 				date: bet.date,
 			})
-			step("confirming")
-			const sent = await tx.signAndSend({ signTransaction })
+			const sent = await tx.signAndSend({
+				signTransaction: stagedSigner(step, signTransaction),
+			})
 			return {
 				message: t.notify.claimed(bet.flightId),
 				txHash: txHashOf(sent),
@@ -271,7 +287,28 @@ export default function Policies() {
 				</div>
 			)}
 
-			{!isLoading && bets.length === 0 && (
+			{!isLoading && loadFailed && (
+				<div role="alert" className="panel p-8 text-center">
+					<p className="font-board text-[22px] text-loss">
+						{t.policies.loadError}
+					</p>
+					<p className="mt-2 font-body text-[13px] text-mute">
+						{t.policies.loadErrorSub}
+					</p>
+					<button
+						type="button"
+						className="btn-px btn-gold mt-4"
+						onClick={() => {
+							void refetchFlights()
+							void refetchStates()
+						}}
+					>
+						{t.policies.retry}
+					</button>
+				</div>
+			)}
+
+			{!isLoading && !loadFailed && bets.length === 0 && (
 				<div className="panel p-8 text-center">
 					{serious ? (
 						<Plane
@@ -362,7 +399,7 @@ export default function Policies() {
 								{claimingId === bet.id && (
 									<TxProgress
 										state={claimFlow.state}
-										steps={["awaiting", "confirming"]}
+										steps={["verifying", "awaiting", "confirming"]}
 										error={claimFlow.error}
 										stamps={{ success: "stamp-paid" }}
 									/>

@@ -38,6 +38,21 @@ export function parseUsdc(amount: string): bigint {
 }
 
 /**
+ * Exact input-field string for a unit amount ("1234.567", no grouping,
+ * trailing zeros trimmed) — used by MAX buttons so the round-trip
+ * through parseUsdc reproduces the balance to the last unit.
+ */
+export function unitsToInput(units: bigint): string {
+	if (units <= 0n) return "0"
+	const whole = units / USDC_DIVISOR
+	const frac = (units % USDC_DIVISOR)
+		.toString()
+		.padStart(USDC_DECIMALS, "0")
+		.replace(/0+$/, "")
+	return frac ? `${whole}.${frac}` : whole.toString()
+}
+
+/**
  * Dollar display for a raw 7-decimal unit string (admin API rows).
  * bigint all the way down — no Number(units)/1e7 precision loss.
  */

@@ -93,17 +93,43 @@ export default function Status() {
 						)}
 						{jobs.map((j) => (
 							<tr key={j.job} className="border-b border-line/60 last:border-b-0">
-								<td className="w-8 px-3 py-2.5">
-									<span
-										aria-hidden="true"
-										className={`inline-block h-[9px] w-[9px] ${
-											j.success === false
-												? "bg-loss"
+								<td className="w-14 px-3 py-2.5">
+									{/* not color-only: lamp + ✓/✕ glyph + sr text */}
+									<span className="flex items-center gap-1.5">
+										<span
+											aria-hidden="true"
+											className={`inline-block h-[9px] w-[9px] ${
+												j.success === false
+													? "bg-loss"
+													: j.success === true
+														? "bg-win"
+														: "bg-line-strong"
+											}`}
+										/>
+										<span
+											aria-hidden="true"
+											className={`font-body text-[11px] ${
+												j.success === false
+													? "text-loss"
+													: j.success === true
+														? "text-win"
+														: "text-mute"
+											}`}
+										>
+											{j.success === false
+												? "✕"
 												: j.success === true
-													? "bg-win"
-													: "bg-line-strong"
-										}`}
-									/>
+													? "✓"
+													: "·"}
+										</span>
+										<span className="sr-only">
+											{j.success === false
+												? "last run failed"
+												: j.success === true
+													? "last run passed"
+													: "no recent run"}
+										</span>
+									</span>
 								</td>
 								<td className="px-3 py-2.5">
 									<span className="font-board text-[17px] text-ink">{j.job}</span>

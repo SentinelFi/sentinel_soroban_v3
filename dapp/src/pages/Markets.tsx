@@ -16,7 +16,7 @@ import {
 import type { UiRoute } from "../hooks/useContracts"
 import { DEMO_ROUTES } from "../config/routes"
 import { useWallet } from "../hooks/useWallet"
-import { useTxFlow } from "../hooks/useTxFlow"
+import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet } from "../util/wallet"
 import { txHashOf } from "../lib/utils"
 import { PixelArt } from "../components/PixelArt"
@@ -214,7 +214,10 @@ function Ticker({
 					{isDemo ? t.markets.statusDemo : "LIVE"}
 				</span>
 			</span>
-			<div className="marquee-track gap-6">
+			{/* the 4× loop is presentational — screen readers get the
+			    single-copy static list below instead, which also becomes
+			    the visible wrapped layout under prefers-reduced-motion */}
+			<div className="marquee-track gap-6" aria-hidden="true">
 				{loop.map((chip, i) => (
 					<span
 						key={`${chip.code}-${i}`}
@@ -231,6 +234,21 @@ function Ticker({
 					</span>
 				))}
 			</div>
+			<ul className="ticker-static">
+				{chips.map((chip, i) => (
+					<li
+						key={`${chip.code}-${i}`}
+						className="flex items-center gap-2 whitespace-nowrap"
+					>
+						<span className="font-board text-[19px] text-ink">
+							✈ {chip.code}
+						</span>
+						<span className={`status-px ${chip.status.color}`}>
+							{chip.status.label}
+						</span>
+					</li>
+				))}
+			</ul>
 		</div>
 	)
 }
@@ -336,7 +354,7 @@ function StatsTicker({ openMarkets }: { openMarkets: number }) {
 			<span className="z-10 flex shrink-0 items-center gap-2 border-r-2 border-line bg-inset pl-3 pr-3">
 				<span className="label-px text-gold">{t.statsTicker.tag}</span>
 			</span>
-			<div className="marquee-track gap-8">
+			<div className="marquee-track gap-8" aria-hidden="true">
 				{loop.map((item, i) => (
 					<span
 						key={`${item.label}-${i}`}
@@ -349,6 +367,19 @@ function StatsTicker({ openMarkets }: { openMarkets: number }) {
 					</span>
 				))}
 			</div>
+			<ul className="ticker-static">
+				{items.map((item) => (
+					<li
+						key={item.label}
+						className="flex items-baseline gap-2 whitespace-nowrap"
+					>
+						<span className="label-px text-mute">{item.label}</span>
+						<span className="font-board text-[19px] text-ink">
+							{item.value}
+						</span>
+					</li>
+				))}
+			</ul>
 		</div>
 	)
 }
@@ -370,6 +401,9 @@ function BetSlip({
 	const [flightDate, setFlightDate] = useState("")
 	const flow = useTxFlow({
 		invalidateKeys: [["controller"], ["usdc"]],
+		// errors also go to a sticky toast — the inline stepper resets
+		// itself, and users need time to read/copy what went wrong
+		notifyError: true,
 		onSettled: (outcome) => {
 			if (outcome === "success") onClose()
 		},
@@ -379,6 +413,45 @@ function BetSlip({
 	const { data: isWhitelisted } = useIsWhitelisted(address)
 	const whitelistBlocked =
 		whitelistEnabled === true && !!address && isWhitelisted === false
+
+	// Dialog behaviour: initial focus on the panel, Escape closes, Tab is
+	// trapped inside, and focus returns to the opener on unmount — the
+	// overlay is a real modal, not just a visual one.
+	const panelRef = useRef<HTMLElement>(null)
+	const onCloseRef = useRef(onClose)
+	onCloseRef.current = onClose
+	useEffect(() => {
+		const opener = document.activeElement as HTMLElement | null
+		panelRef.current?.focus()
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") {
+				onCloseRef.current()
+				return
+			}
+			if (e.key !== "Tab") return
+			const panel = panelRef.current
+			if (!panel) return
+			const focusables = panel.querySelectorAll<HTMLElement>(
+				'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+			)
+			if (focusables.length === 0) return
+			const first = focusables[0]
+			const last = focusables[focusables.length - 1]
+			const active = document.activeElement
+			if (e.shiftKey && (active === first || active === panel)) {
+				e.preventDefault()
+				last.focus()
+			} else if (!e.shiftKey && active === last) {
+				e.preventDefault()
+				first.focus()
+			}
+		}
+		document.addEventListener("keydown", onKey)
+		return () => {
+			document.removeEventListener("keydown", onKey)
+			opener?.focus()
+		}
+	}, [])
 
 	const premium = route.terms?.premium ?? defaults?.default_premium
 	const payoff = route.terms?.payoff ?? defaults?.default_payoff
@@ -408,7 +481,8 @@ function BetSlip({
 				throw new Error(auth.reason ?? "Sale not authorized")
 			}
 
-			step("awaiting")
+			// still "verifying" here — building/simulating is an RPC step;
+			// stagedSigner flips to "awaiting" when the wallet actually opens
 			const tx = await controllerClient.buy_insurance({
 				traveler: address,
 				flight_id: route.flightId,
@@ -416,8 +490,9 @@ function BetSlip({
 				dest: route.dest,
 				date,
 			})
-			step("confirming")
-			const sent = await tx.signAndSend({ signTransaction })
+			const sent = await tx.signAndSend({
+				signTransaction: stagedSigner(step, signTransaction),
+			})
 			return {
 				message: t.notify.covered(route.flightId, flightDate),
 				txHash: txHashOf(sent),
@@ -434,11 +509,18 @@ function BetSlip({
 				onClick={onClose}
 				className="absolute inset-0 bg-page/85"
 			/>
-			<aside className="slip-panel panel-raised relative z-10 flex h-full w-full max-w-[380px] flex-col gap-4 overflow-y-auto p-5">
+			<aside
+				ref={panelRef}
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="betslip-title"
+				tabIndex={-1}
+				className="slip-panel panel-raised relative z-10 flex h-full w-full max-w-[380px] flex-col gap-4 overflow-y-auto p-5"
+			>
 				<div className="flex items-start justify-between">
 					<div>
 						<p className="label-px text-gold">{t.slip.eyebrow}</p>
-						<h2 className="h-display mt-1 text-[15px]">
+						<h2 id="betslip-title" className="h-display mt-1 text-[15px]">
 							{t.slip.title}
 						</h2>
 					</div>
@@ -518,6 +600,9 @@ function BetSlip({
 					onClick={placeBet}
 					disabled={
 						!address || !flightDate || whitelistBlocked || networkMismatch
+					}
+					title={
+						address && !flightDate ? t.slip.pickDateHint : undefined
 					}
 					className="btn-loss w-full"
 				>

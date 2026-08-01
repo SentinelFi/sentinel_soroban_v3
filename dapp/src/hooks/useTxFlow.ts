@@ -1,10 +1,36 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { errorMessage, txHashOf } from "../lib/utils"
+import { txHashOf } from "../lib/utils"
+import { humanizeTxError } from "../lib/errors"
 import { useNotification } from "./useNotification"
 import { useWallet } from "./useWallet"
 import { stellarNetwork } from "../contracts/util"
 import type { TxState } from "../types"
+
+/**
+ * Wrap the wallet's signTransaction so the flow state flips to
+ * "awaiting" (CHECK WALLET…) at the moment the wallet is actually
+ * invoked and to "confirming" once the signature returns — instead of
+ * labeling the RPC build/simulate step as the wallet step. Callers use
+ * step("verifying") for the build/simulate phase:
+ *
+ *   step("verifying")
+ *   const tx = await client.method({ ... })
+ *   const sent = await tx.signAndSend({
+ *     signTransaction: stagedSigner(step, signTransaction),
+ *   })
+ */
+export function stagedSigner<A extends unknown[], R>(
+	step: (s: TxState) => void,
+	sign: (...args: A) => Promise<R>,
+): (...args: A) => Promise<R> {
+	return async (...args: A) => {
+		step("awaiting")
+		const result = await sign(...args)
+		step("confirming")
+		return result
+	}
+}
 
 /**
  * The one chain-write state machine. Every signing flow (buy cover,
@@ -70,10 +96,14 @@ export function useTxFlow(options: TxFlowOptions = {}) {
 	const { addNotification } = useNotification()
 	// Defense in depth behind the disabled buttons: refuse to start any
 	// signing flow while the wallet positively reports a different
-	// network than the one this app builds transactions for.
-	const { networkMismatch } = useWallet()
+	// network than the one this app builds transactions for. Wallets
+	// that never report a network (anything beyond Freighter/HOT) can't
+	// trip that check, so their failures get a network hint appended.
+	const { networkMismatch, networkPassphrase } = useWallet()
 	const networkMismatchRef = useRef(networkMismatch)
 	networkMismatchRef.current = networkMismatch
+	const networkUnverifiedRef = useRef(!networkPassphrase)
+	networkUnverifiedRef.current = !networkPassphrase
 
 	// Options are captured in a ref so run() stays referentially stable
 	// even when callers pass inline arrays/handlers.
@@ -135,7 +165,16 @@ export function useTxFlow(options: TxFlowOptions = {}) {
 				return true
 			} catch (err) {
 				console.error("Transaction failed:", err)
-				const message = errorMessage(err, optsRef.current.errorFallback)
+				let message = humanizeTxError(err, optsRef.current.errorFallback)
+				// A declined signature is the user's own action — no hint
+				// needed. Everything else on a non-reporting wallet might
+				// really be a wrong-network failure in disguise.
+				if (
+					networkUnverifiedRef.current &&
+					!message.startsWith("Signature request was declined")
+				) {
+					message += ` (Tip: this wallet doesn't report its network — check that it's on ${stellarNetwork}.)`
+				}
 				setError(message)
 				transition("error")
 				if (optsRef.current.notifyError) {

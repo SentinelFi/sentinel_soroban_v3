@@ -19,6 +19,15 @@ import { useCopy } from "../copy"
  */
 
 const DOW = ["S", "M", "T", "W", "T", "F", "S"]
+const WEEKDAYS_FULL = [
+	"Sunday",
+	"Monday",
+	"Tuesday",
+	"Wednesday",
+	"Thursday",
+	"Friday",
+	"Saturday",
+]
 
 /** Local YYYY-MM-DD for a Date (calendar days are display-local). */
 function ymd(d: Date): string {
@@ -70,6 +79,17 @@ export function FlightCalendar({
 
 	const wrapRef = useRef<HTMLDivElement>(null)
 	const gridRef = useRef<HTMLDivElement>(null)
+	const fieldRef = useRef<HTMLButtonElement>(null)
+
+	// Roving tabindex done for real: DOM focus follows focusDay, so
+	// keyboard users SEE the focus ring on the day cell and screen
+	// readers HEAR each day announced as they arrow around.
+	useEffect(() => {
+		if (!open) return
+		gridRef.current
+			?.querySelector<HTMLButtonElement>(`[data-day="${ymd(focusDay)}"]`)
+			?.focus()
+	}, [open, focusDay, viewMonth])
 
 	// close on outside click / Escape
 	useEffect(() => {
@@ -107,10 +127,13 @@ export function FlightCalendar({
 	const firstWeekday = new Date(year, month, 1).getDay()
 	const daysInMonth = new Date(year, month + 1, 0).getDate()
 
-	// leading blanks so the 1st lands under its weekday, then the days
+	// leading blanks so the 1st lands under its weekday, then the days —
+	// chunked into weeks so the ARIA grid can expose real rows
 	const cells: Array<Date | null> = []
 	for (let i = 0; i < firstWeekday; i++) cells.push(null)
 	for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d))
+	const weeks: Array<Array<Date | null>> = []
+	for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7))
 
 	// can we page back? only if the previous month still holds a selectable day
 	const prevMonthEnd = new Date(year, month, 0) // last day of prev month
@@ -148,6 +171,7 @@ export function FlightCalendar({
 				return
 			case "Escape":
 				setOpen(false)
+				fieldRef.current?.focus()
 				return
 			default:
 				return
@@ -165,6 +189,7 @@ export function FlightCalendar({
 	return (
 		<div ref={wrapRef} className="w3-cal">
 			<button
+				ref={fieldRef}
 				type="button"
 				className="field-px w3-cal-field"
 				aria-haspopup="dialog"
@@ -199,7 +224,7 @@ export function FlightCalendar({
 								"‹"
 							)}
 						</button>
-						<span className="w3-cal-title">
+						<span className="w3-cal-title" aria-live="polite">
 							{monthTitle(viewMonth, serious)}
 						</span>
 						<button
@@ -218,51 +243,72 @@ export function FlightCalendar({
 						</button>
 					</div>
 
+					{/* rows use display:contents so the ARIA grid is valid
+					    (grid → row → gridcell) without breaking the CSS grid
+					    layout; the container itself is no longer a tab stop —
+					    the focused day button is the single stop (roving). */}
 					<div
 						ref={gridRef}
 						className="w3-cal-grid"
 						role="grid"
-						tabIndex={0}
 						onKeyDown={onGridKey}
 					>
-						{DOW.map((d, i) => (
-							<div key={i} className="w3-cal-dow" aria-hidden="true">
-								{d}
+						<div role="row" style={{ display: "contents" }}>
+							{DOW.map((d, i) => (
+								<div
+									key={i}
+									role="columnheader"
+									aria-label={WEEKDAYS_FULL[i]}
+									className="w3-cal-dow"
+								>
+									{d}
+								</div>
+							))}
+						</div>
+						{weeks.map((week, w) => (
+							<div
+								key={w}
+								role="row"
+								style={{ display: "contents" }}
+							>
+								{week.map((d, i) => {
+									if (!d)
+										return (
+											<div
+												key={`e${w}-${i}`}
+												className="w3-cal-day is-empty"
+												aria-hidden="true"
+											/>
+										)
+									const disabled = isDisabled(d)
+									const isSel =
+										!!selectedDate &&
+										ymd(d) === ymd(selectedDate)
+									const isToday = ymd(d) === ymd(today)
+									const isFocus = ymd(d) === ymd(focusDay)
+									return (
+										<button
+											key={ymd(d)}
+											type="button"
+											role="gridcell"
+											data-day={ymd(d)}
+											aria-selected={isSel}
+											aria-current={
+												isToday ? "date" : undefined
+											}
+											disabled={disabled}
+											tabIndex={isFocus ? 0 : -1}
+											className={`w3-cal-day${
+												isSel ? " is-selected" : ""
+											}${isToday ? " is-today" : ""}`}
+											onClick={() => selectDay(d)}
+										>
+											{d.getDate()}
+										</button>
+									)
+								})}
 							</div>
 						))}
-						{cells.map((d, i) => {
-							if (!d)
-								return (
-									<div
-										key={`e${i}`}
-										className="w3-cal-day is-empty"
-										aria-hidden="true"
-									/>
-								)
-							const disabled = isDisabled(d)
-							const isSel =
-								!!selectedDate &&
-								ymd(d) === ymd(selectedDate)
-							const isToday = ymd(d) === ymd(today)
-							const isFocus = ymd(d) === ymd(focusDay)
-							return (
-								<button
-									key={ymd(d)}
-									type="button"
-									role="gridcell"
-									aria-selected={isSel}
-									aria-current={isToday ? "date" : undefined}
-									disabled={disabled}
-									tabIndex={isFocus ? 0 : -1}
-									className={`w3-cal-day${
-										isSel ? " is-selected" : ""
-									}${isToday ? " is-today" : ""}`}
-									onClick={() => selectDay(d)}
-								>
-									{d.getDate()}
-								</button>
-							)
-						})}
 					</div>
 				</div>
 			)}

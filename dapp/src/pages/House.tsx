@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import {
@@ -17,9 +17,11 @@ import {
 	useWithdrawalQueue,
 } from "../hooks/useContracts"
 import { useWallet } from "../hooks/useWallet"
-import { useTxFlow } from "../hooks/useTxFlow"
+import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet } from "../util/wallet"
-import { errorMessage, txHashOf } from "../lib/utils"
+import { txHashOf } from "../lib/utils"
+import { humanizeTxError } from "../lib/errors"
+import { unitsToInput } from "../lib/format"
 import { useNotification } from "../hooks/useNotification"
 import { PixelArt } from "../components/PixelArt"
 import { SeriousIcon } from "../components/SeriousIcon"
@@ -39,6 +41,19 @@ import { AlertTriangle } from "lucide-react"
 
 /** Vault writes touch balances and both queues. */
 const VAULT_INVALIDATE = [["vault"], ["usdc"]]
+
+/** Mirrors risk_vault's on-chain LP_PRICING_DELAY_SECS (6h, in
+ *  contracts/risk_vault/src/constants.rs — no getter exposes it). Both
+ *  queues process entries only after this delay, at the share price
+ *  current at processing time. */
+const LP_PRICING_DELAY_SECS = 6n * 3600n
+
+/** "5h 42m" remaining until a queue entry's delay elapses. */
+function fmtRemaining(secs: number): string {
+	const h = Math.floor(secs / 3600)
+	const m = Math.max(1, Math.ceil((secs % 3600) / 60))
+	return h > 0 ? `${h}h ${m}m` : `${m}m`
+}
 
 function StatTile({
 	label,
@@ -93,9 +108,11 @@ export default function House() {
 		null,
 	)
 	// One flow instance per write, so a failed deposit never bleeds into
-	// the withdraw/collect steppers (and vice versa).
+	// the withdraw/collect steppers (and vice versa). Errors also raise
+	// a sticky toast — the inline stepper self-resets after 4s.
 	const flowOpts = {
 		invalidateKeys: VAULT_INVALIDATE,
+		notifyError: true,
 		resetDelayMs: 3000,
 		errorResetDelayMs: 4000,
 	}
@@ -110,9 +127,9 @@ export default function House() {
 	>(null)
 
 	// ─── reads ───
-	const { data: totalAssets } = useTotalAssets()
-	const { data: locked } = useLockedCapital()
-	const { data: free } = useFreeCapital()
+	const { data: totalAssets, isError: totalAssetsError } = useTotalAssets()
+	const { data: locked, isError: lockedError } = useLockedCapital()
+	const { data: free, isError: freeError } = useFreeCapital()
 	const { data: protocolStats } = useProtocolStats()
 	const { data: usdcBalance } = useUsdcBalance(address)
 	const { data: shares } = useVaultBalance(address)
@@ -120,6 +137,28 @@ export default function House() {
 	const { data: withdrawalQueue } = useWithdrawalQueue()
 	const { data: depositQueue } = useDepositQueue()
 	const { data: claimable } = useClaimableBalance(address)
+	// "…" means loading; a failed read shows "—" plus one shared note —
+	// numbers that silently never resolve read as broken trust.
+	const statsUnavailable = totalAssetsError || lockedError || freeError
+
+	// Minute-ish clock driving the queue countdowns below.
+	const [nowSecs, setNowSecs] = useState(() => Math.floor(Date.now() / 1000))
+	useEffect(() => {
+		const id = setInterval(
+			() => setNowSecs(Math.floor(Date.now() / 1000)),
+			30_000,
+		)
+		return () => clearInterval(id)
+	}, [])
+
+	/** "UNLOCKS IN ~5h 42m" while the 6h delay runs, then "READY". */
+	function queueEtaLabel(requestedAt: bigint): string {
+		const eligibleAt = Number(requestedAt + LP_PRICING_DELAY_SECS)
+		const remaining = eligibleAt - nowSecs
+		return remaining > 0
+			? t.house.queueEta(fmtRemaining(remaining))
+			: t.house.queueReady
+	}
 
 	// illustrative (labelled) trend series + real-where-available share price
 	const tvlSpark = useTvlSparkline()
@@ -129,6 +168,12 @@ export default function House() {
 	const depositAssets = parseUsdc(depositAmount)
 	const withdrawShares = parseUsdc(withdrawAmount)
 	const insufficientShares = shares !== undefined && withdrawShares > shares
+	const insufficientBalance =
+		usdcBalance !== undefined && depositAssets > usdcBalance
+	// Live USDC preview for the shares-denominated withdraw input.
+	const { data: withdrawPreview } = useConvertToAssets(
+		withdrawShares > 0n && !insufficientShares ? withdrawShares : undefined,
+	)
 
 	const withdrawalQueueRows = withdrawalQueue ?? []
 	const hasQueue = withdrawalQueueRows.length > 0
@@ -164,17 +209,18 @@ export default function House() {
 
 	// ─── writes ───
 	function handleDeposit() {
-		if (!address || depositAssets <= 0n) return
+		if (!address || depositAssets <= 0n || insufficientBalance) return
 		void depositFlow.run(async (step) => {
-			step("awaiting")
+			step("verifying")
 			// Two-phase LP entry: escrow assets now; the queue-maintenance
 			// cron mints shares at the post-delay share price.
 			const tx = await riskVaultClient.request_deposit({
 				caller: address,
 				assets: depositAssets,
 			})
-			step("confirming")
-			const sent = await tx.signAndSend({ signTransaction })
+			const sent = await tx.signAndSend({
+				signTransaction: stagedSigner(step, signTransaction),
+			})
 			setDepositAmount("")
 			return { message: t.notify.depositQueued, txHash: txHashOf(sent) }
 		})
@@ -194,7 +240,7 @@ export default function House() {
 			invalidate()
 		} catch (err) {
 			console.error("Cancel deposit failed:", err)
-			setCancelDepositError(errorMessage(err))
+			setCancelDepositError(humanizeTxError(err))
 		} finally {
 			setCancelingDepositId(null)
 		}
@@ -203,13 +249,14 @@ export default function House() {
 	function handleRequestWithdrawal() {
 		if (!address || withdrawShares <= 0n) return
 		void requestFlow.run(async (step) => {
-			step("awaiting")
+			step("verifying")
 			const tx = await riskVaultClient.request_withdrawal({
 				caller: address,
 				shares: withdrawShares,
 			})
-			step("confirming")
-			const sent = await tx.signAndSend({ signTransaction })
+			const sent = await tx.signAndSend({
+				signTransaction: stagedSigner(step, signTransaction),
+			})
 			setWithdrawAmount("")
 			return { message: t.notify.withdrawQueued, txHash: txHashOf(sent) }
 		})
@@ -229,7 +276,7 @@ export default function House() {
 			invalidate()
 		} catch (err) {
 			console.error("Cancel withdrawal failed:", err)
-			setCancelWithdrawError(errorMessage(err))
+			setCancelWithdrawError(humanizeTxError(err))
 		} finally {
 			setCancelingId(null)
 		}
@@ -238,10 +285,11 @@ export default function House() {
 	function handleCollect() {
 		if (!address) return
 		void collectFlow.run(async (step) => {
-			step("awaiting")
+			step("verifying")
 			const tx = await riskVaultClient.collect({ caller: address })
-			step("confirming")
-			const sent = await tx.signAndSend({ signTransaction })
+			const sent = await tx.signAndSend({
+				signTransaction: stagedSigner(step, signTransaction),
+			})
 			return { message: t.notify.collected, txHash: txHashOf(sent) }
 		})
 	}
@@ -301,18 +349,32 @@ export default function House() {
 			<section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
 				<StatTile
 					label={t.house.statTvl}
-					value={totalAssets !== undefined ? formatUsdc(totalAssets) : "…"}
+					value={
+						totalAssetsError
+							? "—"
+							: totalAssets !== undefined
+								? formatUsdc(totalAssets)
+								: "…"
+					}
 					spark={tvlSpark}
 					sparkColor="var(--color-win)"
 					illustrativeLabel={t.house.illustrative}
 				/>
 				<StatTile
 					label={t.house.statBacking}
-					value={locked !== undefined ? formatUsdc(locked) : "…"}
+					value={
+						lockedError
+							? "—"
+							: locked !== undefined
+								? formatUsdc(locked)
+								: "…"
+					}
 				/>
 				<StatTile
 					label={t.house.statFree}
-					value={free !== undefined ? formatUsdc(free) : "…"}
+					value={
+						freeError ? "—" : free !== undefined ? formatUsdc(free) : "…"
+					}
 				/>
 				<StatTile
 					label={t.house.statHealth}
@@ -322,6 +384,11 @@ export default function House() {
 					illustrativeLabel={t.house.illustrative}
 				/>
 			</section>
+			{statsUnavailable && (
+				<p role="status" className="font-body text-[13px] text-gold">
+					{t.house.statsUnavailable}
+				</p>
+			)}
 
 			{/* share-price history — real snapshots where available, else
 			    a labelled illustrative series */}
@@ -365,16 +432,34 @@ export default function House() {
 						<span className="label-px mb-1 block">
 							{t.house.depositAmount}
 						</span>
-						<input
-							type="number"
-							name="deposit-amount"
-							min="0"
-							placeholder="0.00"
-							className="field-px"
-							value={depositAmount}
-							onChange={(e) => setDepositAmount(e.target.value)}
-						/>
+						<div className="flex gap-2">
+							<input
+								type="number"
+								name="deposit-amount"
+								min="0"
+								placeholder="0.00"
+								className="field-px"
+								value={depositAmount}
+								onChange={(e) => setDepositAmount(e.target.value)}
+							/>
+							<button
+								type="button"
+								className="btn-px btn-ghost btn-sm"
+								disabled={!usdcBalance || usdcBalance <= 0n}
+								onClick={() =>
+									usdcBalance !== undefined &&
+									setDepositAmount(unitsToInput(usdcBalance))
+								}
+							>
+								{t.house.maxBtn}
+							</button>
+						</div>
 					</label>
+					{insufficientBalance && (
+						<p className="mt-2 font-body text-[13px] text-loss">
+							{t.house.insufficientBalance}
+						</p>
+					)}
 					<p className="mt-2 font-body text-[13px] text-mute">
 						{t.house.walletBalance}{" "}
 						<span className="text-dim">
@@ -387,12 +472,17 @@ export default function House() {
 						onClick={() =>
 							void (connected ? handleDeposit() : connectWallet())
 						}
-						disabled={connected && (depositAssets <= 0n || networkMismatch)}
+						disabled={
+							connected &&
+							(depositAssets <= 0n ||
+								insufficientBalance ||
+								networkMismatch)
+						}
 						className="btn-win mt-4 w-full"
 					>
 						{connected ? t.house.depositCta : t.house.connectWallet}
 					</TransactionButton>
-					<TxProgress state={depositFlow.state} steps={["awaiting", "confirming"]} error={depositFlow.error} />
+					<TxProgress state={depositFlow.state} steps={["verifying", "awaiting", "confirming"]} error={depositFlow.error} />
 					<p className="mt-2 font-body text-[13px] text-mute">
 						{t.house.depositQueueHint}
 					</p>
@@ -405,10 +495,15 @@ export default function House() {
 									key={entry.request_id.toString()}
 									className="box-soft flex items-center justify-between border-2 border-line bg-inset px-3 py-2"
 								>
-									<span className="font-board text-[18px] text-ink">
-										{t.house.depositQueued(
-											formatUsdc(entry.assets),
-										)}
+									<span className="flex flex-col">
+										<span className="font-board text-[18px] text-ink">
+											{t.house.depositQueued(
+												formatUsdc(entry.assets),
+											)}
+										</span>
+										<span className="label-px text-gold">
+											{queueEtaLabel(entry.requested_at)}
+										</span>
 									</span>
 									<button
 										type="button"
@@ -479,21 +574,43 @@ export default function House() {
 							<span className="label-px mb-1 block">
 								{t.house.cashOutAmount}
 							</span>
-							<input
-								type="number"
-								name="withdraw-shares"
-								min="0"
-								placeholder="0.00"
-								className="field-px"
-								value={withdrawAmount}
-								onChange={(e) => setWithdrawAmount(e.target.value)}
-							/>
+							<div className="flex gap-2">
+								<input
+									type="number"
+									name="withdraw-shares"
+									min="0"
+									placeholder="0.00"
+									className="field-px"
+									value={withdrawAmount}
+									onChange={(e) => setWithdrawAmount(e.target.value)}
+								/>
+								<button
+									type="button"
+									className="btn-px btn-ghost btn-sm"
+									disabled={!shares || shares <= 0n}
+									onClick={() =>
+										shares !== undefined &&
+										setWithdrawAmount(unitsToInput(shares))
+									}
+								>
+									{t.house.maxBtn}
+								</button>
+							</div>
 						</label>
 						{insufficientShares && (
 							<p className="mt-2 font-body text-[13px] text-loss">
 								{t.house.insufficient}
 							</p>
 						)}
+						{withdrawShares > 0n &&
+							!insufficientShares &&
+							withdrawPreview !== undefined && (
+								<p className="mt-2 font-body text-[13px] text-dim">
+									{t.house.withdrawPreview(
+										formatUsdc(withdrawPreview),
+									)}
+								</p>
+							)}
 						{fullyUtilized && (
 							<div className="w3-util-warn mt-3">
 								{serious ? (
@@ -533,7 +650,7 @@ export default function House() {
 						>
 							{connected ? t.house.queueCta : t.house.connectWallet}
 						</TransactionButton>
-						<TxProgress state={requestFlow.state} steps={["awaiting", "confirming"]} error={requestFlow.error} />
+						<TxProgress state={requestFlow.state} steps={["verifying", "awaiting", "confirming"]} error={requestFlow.error} />
 						<p className="mt-2 font-body text-[13px] text-mute">
 							{t.house.queueHint}
 						</p>
@@ -593,15 +710,22 @@ export default function House() {
 													key={entry.request_id.toString()}
 													className="box-soft flex items-center justify-between border-2 border-line bg-inset px-3 py-2"
 												>
-													<span className="font-board text-[18px] text-ink">
-														{t.house.queueShares(
-															formatUsdc(
-																entry.shares,
-															),
-														)}
-														<span className="ml-2 text-mute">
-															{t.house.queuePosition(
-																position,
+													<span className="flex flex-col">
+														<span className="font-board text-[18px] text-ink">
+															{t.house.queueShares(
+																formatUsdc(
+																	entry.shares,
+																),
+															)}
+															<span className="ml-2 text-mute">
+																{t.house.queuePosition(
+																	position,
+																)}
+															</span>
+														</span>
+														<span className="label-px text-gold">
+															{queueEtaLabel(
+																entry.requested_at,
 															)}
 														</span>
 													</span>
@@ -655,7 +779,7 @@ export default function House() {
 								>
 									{t.house.collectCta}
 								</TransactionButton>
-								<TxProgress state={collectFlow.state} steps={["awaiting", "confirming"]} error={collectFlow.error} />
+								<TxProgress state={collectFlow.state} steps={["verifying", "awaiting", "confirming"]} error={collectFlow.error} />
 							</div>
 						) : (
 							<p className="font-board text-[18px] text-mute">
