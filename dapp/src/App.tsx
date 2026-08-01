@@ -43,15 +43,14 @@ function PageLoading() {
  */
 function NetworkMismatchBanner() {
 	const { networkMismatch } = useWallet()
+	const t = useCopy()
 	if (!networkMismatch) return null
 	return (
 		<div
 			role="alert"
 			className="relative z-20 border-b border-amber-500/40 bg-amber-500/15 px-4 py-2 text-center font-body text-[13px] text-amber-200"
 		>
-			Your wallet is on a different network than this app (
-			{stellarNetwork}). Switch your wallet to {stellarNetwork} before
-			signing.
+			{t.wallet.mismatchBanner(stellarNetwork)}
 		</div>
 	)
 }

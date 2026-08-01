@@ -18,12 +18,15 @@ export function TransactionButton({
 	onClick,
 	disabled,
 	className,
+	title,
 	children,
 }: {
 	state: TxState
 	onClick: () => void
 	disabled?: boolean
 	className?: string
+	/** Why the button is disabled — surfaced as a tooltip while it is. */
+	title?: string
 	children: React.ReactNode
 }) {
 	const busy = state === "verifying" || state === "awaiting" || state === "confirming"
@@ -32,6 +35,7 @@ export function TransactionButton({
 			type="button"
 			onClick={onClick}
 			disabled={disabled || busy}
+			title={disabled && !busy ? title : undefined}
 			className={cn("btn-px", className)}
 		>
 			{STATE_LABEL[state] ?? children}

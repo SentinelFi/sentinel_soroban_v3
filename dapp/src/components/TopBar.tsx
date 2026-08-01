@@ -3,7 +3,7 @@ import { NavLink } from "react-router-dom"
 import { useWallet } from "../hooks/useWallet"
 import { useNotification } from "../hooks/useNotification"
 import { formatUsdc, mockUsdcClient, useUsdcBalance } from "../hooks/useContracts"
-import { useTxFlow } from "../hooks/useTxFlow"
+import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet, disconnectWallet } from "../util/wallet"
 import { stellarNetwork } from "../contracts/util"
 import { cn, txHashOf } from "../lib/utils"
@@ -33,12 +33,17 @@ function shortAddr(addr: string) {
 function WalletMenu({ address }: { address: string }) {
 	const [open, setOpen] = useState(false)
 	const rootRef = useRef<HTMLDivElement>(null)
+	const menuRef = useRef<HTMLDivElement>(null)
 	const { addNotification } = useNotification()
 	const t = useCopy()
 
-	// close on outside click / Escape
+	// close on outside click / Escape; focus the first item on open (the
+	// menu role implies arrow-key navigation — handled below)
 	useEffect(() => {
 		if (!open) return
+		menuRef.current
+			?.querySelector<HTMLButtonElement>('[role="menuitem"]')
+			?.focus()
 		const onPointer = (e: MouseEvent) => {
 			if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
 		}
@@ -52,6 +57,25 @@ function WalletMenu({ address }: { address: string }) {
 			document.removeEventListener("keydown", onKey)
 		}
 	}, [open])
+
+	const onMenuKey = (e: React.KeyboardEvent) => {
+		const items = Array.from(
+			menuRef.current?.querySelectorAll<HTMLButtonElement>(
+				'[role="menuitem"]',
+			) ?? [],
+		)
+		if (items.length === 0) return
+		const idx = items.indexOf(document.activeElement as HTMLButtonElement)
+		let next: number
+		if (e.key === "ArrowDown") next = (idx + 1) % items.length
+		else if (e.key === "ArrowUp")
+			next = idx <= 0 ? items.length - 1 : idx - 1
+		else if (e.key === "Home") next = 0
+		else if (e.key === "End") next = items.length - 1
+		else return
+		e.preventDefault()
+		items[next].focus()
+	}
 
 	const copyAddress = async () => {
 		setOpen(false)
@@ -82,7 +106,9 @@ function WalletMenu({ address }: { address: string }) {
 			</button>
 			{open && (
 				<div
+					ref={menuRef}
 					role="menu"
+					onKeyDown={onMenuKey}
 					className="panel-raised absolute right-0 top-full z-30 mt-2 min-w-[11rem] p-1"
 				>
 					<button
@@ -110,7 +136,7 @@ function WalletMenu({ address }: { address: string }) {
 /** USDC balance chip with inline testnet faucet mint (+10,000 mock USDC). */
 function CoinChip() {
 	const { address, signTransaction, networkMismatch } = useWallet()
-	const { data: usdcBalance } = useUsdcBalance(address)
+	const { data: usdcBalance, isError: usdcError } = useUsdcBalance(address)
 	const { theme } = useTheme()
 	const t = useCopy()
 	const mintFlow = useTxFlow({
@@ -119,16 +145,19 @@ function CoinChip() {
 		notifyError: true,
 	})
 	const minting =
-		mintFlow.state === "awaiting" || mintFlow.state === "confirming"
+		mintFlow.state === "verifying" ||
+		mintFlow.state === "awaiting" ||
+		mintFlow.state === "confirming"
 
 	if (!address) return null
 
 	const mint = () =>
 		mintFlow.run(async (step) => {
-			step("awaiting")
+			step("verifying")
 			const tx = await mockUsdcClient.faucet({ to: address })
-			step("confirming")
-			const sent = await tx.signAndSend({ signTransaction })
+			const sent = await tx.signAndSend({
+				signTransaction: stagedSigner(step, signTransaction),
+			})
 			return { message: t.notify.mintSuccess, txHash: txHashOf(sent) }
 		})
 
@@ -145,8 +174,15 @@ function CoinChip() {
 			) : (
 				<span className="font-body text-[12px] font-bold text-gold">$</span>
 			)}
-			<span className="board-figure text-[18px] text-ink">
-				{usdcBalance != null ? formatUsdc(usdcBalance) : "…"}
+			<span
+				className="board-figure text-[18px] text-ink"
+				title={usdcError ? "Balance failed to load — retrying" : undefined}
+			>
+				{usdcError
+					? "—"
+					: usdcBalance != null
+						? formatUsdc(usdcBalance)
+						: "…"}
 			</span>
 			<span className="label-px">USDC</span>
 			{/* faucet is a test-token affordance — never rendered against
