@@ -217,15 +217,16 @@ export async function authorizeSale(
         (s.actual_ident ?? s.ident) === flightId &&
         (s.scheduled_out ?? "").slice(0, 10) === dateStr
     );
-    if (rows.length === 0) {
+    const match = rows[0];
+    if (!match) {
       await guard(route);
       return refuse("flight is not in the published schedule for that date");
     }
     if (rows.length > 1) {
       return refuse("ambiguous published schedule (multiple instances)");
     }
-    scheduledOut = rows[0].scheduled_out;
-    scheduledIn = rows[0].scheduled_in;
+    scheduledOut = match.scheduled_out;
+    scheduledIn = match.scheduled_in;
   }
 
   // ── The 24h cutoff, against the real departure time ────────────────

@@ -58,16 +58,18 @@ export async function ingestChainEvents(
     select cursor from ingest_cursors where name = ${CURSOR_KEY}
   `) as unknown as Array<{ cursor: string }>;
   const floor = Math.max(latest.sequence - RETENTION_LEDGERS, 1);
-  const fromLedger = stored.length > 0 ? Math.max(Number(stored[0].cursor) + 1, floor) : floor;
+  const storedCursor = stored[0]?.cursor;
+  const fromLedger = storedCursor !== undefined ? Math.max(Number(storedCursor) + 1, floor) : floor;
   // OCA-L05: if the ingest was down longer than RPC retention, everything
   // between the stored cursor and the floor is UNRECOVERABLY lost to the
   // mirror (live exposure decisions are unaffected — they read chain
   // state). That must be an error the caller can surface, not a log line.
-  const gapLedgers = stored.length > 0 ? Math.max(floor - (Number(stored[0].cursor) + 1), 0) : 0;
+  const gapLedgers =
+    storedCursor !== undefined ? Math.max(floor - (Number(storedCursor) + 1), 0) : 0;
   if (gapLedgers > 0) {
     console.error(
       `[event-ingest] PERMANENT MIRROR GAP: ${gapLedgers} ledger(s) ` +
-        `(${Number(stored[0].cursor) + 1}..${floor - 1}) fell out of RPC retention while ingest was down — ` +
+        `(${Number(storedCursor) + 1}..${floor - 1}) fell out of RPC retention while ingest was down — ` +
         `policies/settlements events in that range are lost to the mirror.`
     );
   }
@@ -99,7 +101,7 @@ export async function ingestChainEvents(
         } catch {
           /* keep null */
         }
-        const [txHash, evIndex] = String(ev.id).split("-");
+        const [txHash = "", evIndex] = String(ev.id).split("-");
         const boughtAt = (ev as { ledgerClosedAt?: string }).ledgerClosedAt ?? new Date().toISOString();
         await sql`
           insert into policies (tx_hash, event_index, ledger, flight_id, origin, dest,
@@ -118,14 +120,18 @@ export async function ingestChainEvents(
         let outcome = "Unknown";
         try {
           const v = scValToNative(ev.value as xdr.ScVal);
-          outcome = Array.isArray(v) ? String(v[0]) : typeof v === "object" && v ? Object.keys(v)[0] : String(v);
+          outcome = Array.isArray(v)
+            ? String(v[0])
+            : typeof v === "object" && v
+              ? (Object.keys(v)[0] ?? "Unknown")
+              : String(v);
         } catch {
           /* keep Unknown */
         }
         await sql`
           insert into settlements (flight_id, date, outcome, ledger, tx_hash)
           values (${String(flightId)}, ${Number(date)}, ${outcome}, ${ev.ledger},
-                  ${String(ev.id).split("-")[0]})
+                  ${String(ev.id).split("-")[0] ?? ""})
           on conflict (flight_id, date) do nothing
         `;
         settlements++;

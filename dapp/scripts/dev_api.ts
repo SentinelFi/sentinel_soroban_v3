@@ -66,7 +66,7 @@ async function toVercelRequest(req: IncomingMessage): Promise<VercelRequest> {
   const query: Record<string, string | string[]> = {};
   for (const key of url.searchParams.keys()) {
     const values = url.searchParams.getAll(key);
-    query[key] = values.length > 1 ? values : values[0];
+    query[key] = values.length > 1 ? values : (values[0] ?? "");
   }
   const raw = await readBody(req);
   let body: unknown = raw;

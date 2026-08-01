@@ -173,7 +173,7 @@ export class AeroApiClient {
       );
       return null;
     }
-    return data.flights[0];
+    return data.flights[0] ?? null;
   }
 
   /**

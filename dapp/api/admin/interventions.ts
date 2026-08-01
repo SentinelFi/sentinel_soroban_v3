@@ -67,12 +67,13 @@ export async function handler(
         order by ${orderBy}
         limit ${limit} offset ${offset}
       `.catch(() => []);
-      const total = rows.length > 0 ? Number(rows[0].full_count) : 0;
+      const total = Number(rows[0]?.full_count ?? 0);
       const clean = rows.map(({ full_count, ...r }) => r);
 
-      const [{ open_count }] = await sql`
+      const openRows = (await sql`
         select count(*)::int as open_count from interventions where revived_at is null
-      `.catch(() => [{ open_count: 0 }]);
+      `.catch(() => [])) as Array<{ open_count: number }>;
+      const open_count = openRows[0]?.open_count ?? 0;
 
       res.status(200).json({ rows: clean, total, page, limit, state, open_count });
       return;
@@ -114,11 +115,11 @@ export async function handler(
       const rows = (await sql`
         select * from interventions where id = ${id} and revived_at is null
       `) as unknown as InterventionRow[];
-      if (rows.length === 0) {
+      const row = rows[0];
+      if (!row) {
         res.status(404).json({ error: "no open intervention with that id" });
         return;
       }
-      const row = rows[0];
       const outcome = await reviveRoute(
         chainConfig,
         { flight_id: row.flight_id, origin: row.origin, destination: row.dest },

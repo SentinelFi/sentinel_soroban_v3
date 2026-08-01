@@ -17,7 +17,7 @@ import { cronTrigger, recordRun } from "./runs";
  *   write no DB state; for pre-add_admin testing and safe rollouts.
  */
 
-const TESTNET_DEFAULTS: Record<string, string> = {
+const TESTNET_DEFAULTS = {
   STELLAR_RPC_URL: "https://soroban-testnet.stellar.org",
   STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
   // 2026-07-18 testnet deployment (matches _lib/config.ts + the frontend).
