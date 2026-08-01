@@ -67,13 +67,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         order by r.flight_id, r.origin, r.dest
         limit ${limit} offset ${offset}
       `;
-      const total = routes.length > 0 ? Number(routes[0].full_count) : 0;
+      const total = Number(routes[0]?.full_count ?? 0);
       const cleanRoutes = routes.map(({ full_count, ...r }) => r);
 
-      const [{ fleet_total }] = await sql`select count(*)::int as fleet_total from routes`;
-      const [{ fleet_active }] = await sql`
+      const fleetTotalRows = (await sql`
+        select count(*)::int as fleet_total from routes
+      `) as Array<{ fleet_total: number }>;
+      const fleet_total = fleetTotalRows[0]?.fleet_total ?? 0;
+      const fleetActiveRows = (await sql`
         select count(*)::int as fleet_active from routes where status in ('active', 'disabled')
-      `;
+      `) as Array<{ fleet_active: number }>;
+      const fleet_active = fleetActiveRows[0]?.fleet_active ?? 0;
 
       if (req.query.chain === "1") {
         const config = loadGovConfig();

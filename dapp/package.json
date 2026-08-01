@@ -3,6 +3,9 @@
   "type": "module",
   "version": "0.0.1",
   "private": true,
+  "engines": {
+    "node": ">=22.12"
+  },
   "workspaces": [
     "packages/*"
   ],
@@ -13,6 +16,7 @@
     "install:contracts": "npm install --workspaces && npm run build --workspaces --if-present",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
+    "lint": "oxlint",
     "test:e2e": "tsx tests/e2e_mock/test_oracle_e2e.ts",
     "test:e2e:gov": "tsx tests/e2e_mock/test_interventions_e2e.ts",
     "test:e2e:admin": "tsx tests/e2e_mock/test_admin_gov_e2e.ts",
@@ -46,6 +50,7 @@
     "@types/topojson-client": "^3.1.5",
     "@vercel/node": "^5.8.26",
     "@vitejs/plugin-react": "^5.1.2",
+    "oxlint": "^1.76.0",
     "tsx": "^4.23.1",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",

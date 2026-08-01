@@ -27,9 +27,10 @@ async function readBarrier(): Promise<{ engaged: boolean; stalled: boolean } | n
     const rows = (await sql`
       select value, data, updated_at from ops_flags where key = 'barrier'
     `) as unknown as Array<{ value: boolean; data: { since?: string; pending?: number } | null; updated_at: string }>;
-    if (rows.length === 0 || !rows[0].value) return { engaged: false, stalled: false };
+    const row = rows[0];
+    if (!row?.value) return { engaged: false, stalled: false };
     // since/pending are read to COMPUTE the stalled flag but never echoed.
-    const since = rows[0].data?.since ?? null;
+    const since = row.data?.since ?? null;
     const age = since ? Math.floor((Date.now() - Date.parse(since)) / 1000) : null;
     return { engaged: true, stalled: age !== null && age > BARRIER_STALL_SECS };
   } catch {

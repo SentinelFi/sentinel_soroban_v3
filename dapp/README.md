@@ -184,7 +184,7 @@ Ten cron jobs run as Vercel serverless functions inside this app, so a single Ve
 > frontend-only while the backend runs LOCALLY as bots (`npm run bot -- <name>`;
 > 5-minute Vercel crons need a Pro plan). To flip the backend on later:
 > `mv vercel.backend.json vercel.json && rm .vercelignore` — the ready-made
-> config carries all 11 cron schedules (`JOB_REGISTRY` in
+> config carries all 10 cron schedules (`JOB_REGISTRY` in
 > `api/_lib/governance/runs.ts` is the canonical list) — then set the server
 > env vars and deploy.
 

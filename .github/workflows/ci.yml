@@ -79,3 +79,35 @@ jobs:
 
       - name: cargo audit
         run: cargo audit
+
+  dapp:
+    name: dapp lint, typecheck, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dapp
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: dapp/.nvmrc
+          cache: npm
+          cache-dependency-path: dapp/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Build contract binding packages
+        run: npm run install:contracts
+
+      - name: oxlint
+        run: npm run lint
+
+      - name: Typecheck (src + api/scripts/config + vite.config)
+        run: npm run typecheck
+
+      - name: vite build
+        run: npx vite build

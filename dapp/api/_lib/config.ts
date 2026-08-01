@@ -16,7 +16,7 @@ import type { Config } from "./types";
 // frontend hardcodes in dapp/src/contracts/*.ts. (The previous defaults
 // pointed at the retired 07-11 deployment, whose oracle predates
 // open_sale/close_sale — the sale authorizer cannot run against it.)
-const TESTNET_DEFAULTS: Record<string, string> = {
+const TESTNET_DEFAULTS = {
   STELLAR_RPC_URL: "https://soroban-testnet.stellar.org",
   STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
   ORACLE_AGGREGATOR_ID: "CDMKBMNJ2YZTARAM4ZUU7HZJZA7UUYJU76ZOAN2SCR3WJYZSSHXV7ESW",
@@ -29,7 +29,7 @@ const TESTNET_DEFAULTS: Record<string, string> = {
   AEROAPI_BASE_URL: "https://aeroapi.flightaware.com/aeroapi",
 };
 
-function envOrDefault(name: string): string {
+function envOrDefault(name: keyof typeof TESTNET_DEFAULTS): string {
   return process.env[name] ?? TESTNET_DEFAULTS[name];
 }
 
@@ -89,7 +89,13 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
 export function loadPublicConfig(): {
   network: string;
   rpcUrl: string;
-  contractIds: Record<string, string>;
+  contractIds: {
+    oracleAggregator: string;
+    controller: string;
+    riskVault: string;
+    governance: string;
+    flightPoolManager: string;
+  };
   hasKeys: { oracle: boolean; keeper: boolean; ttl: boolean };
 } {
   return {

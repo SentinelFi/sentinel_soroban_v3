@@ -408,8 +408,9 @@ export async function recordCheck(
       where flight_id = ${route.flight_id} and origin = ${route.origin}
         and dest = ${route.destination} and cause = ${cause} and revived_at is null
     `) as unknown as Array<{ id: string }>;
-    if (open.length > 0) {
-      await sql`update interventions set last_checked_at = now(), evidence = ${sql.json(evidence as never)} where id = ${open[0].id}`;
+    const existing = open[0];
+    if (existing) {
+      await sql`update interventions set last_checked_at = now(), evidence = ${sql.json(evidence as never)} where id = ${existing.id}`;
       return;
     }
     await sql`

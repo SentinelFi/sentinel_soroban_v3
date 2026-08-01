@@ -41,6 +41,7 @@ test-results/
 .next/
 .nuxt/
 .turbo/
+.vite/
 
 # TypeScript build info
 *.tsbuildinfo

@@ -40,7 +40,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       order by flight_date desc, logged_at desc
       limit ${limit} offset ${offset}
     `;
-    const total = rows.length > 0 ? Number(rows[0].full_count) : 0;
+    const total = Number(rows[0]?.full_count ?? 0);
     const clean = rows.map(({ full_count, ...r }) => r);
 
     res.status(200).json({ rows: clean, total, page, limit });
