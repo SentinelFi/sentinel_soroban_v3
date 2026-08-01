@@ -13,8 +13,8 @@ const fun = {
 	nav: {
 		markets: "PREDICT",
 		globe: "LIVE",
-		policies: "MY POLICIES",
-		yield: "EARN YIELD",
+		policies: "POLICIES",
+		yield: "YIELD",
 	},
 	wallet: {
 		connect: "INSERT COIN — CONNECT",
@@ -340,8 +340,8 @@ const serious: Copy = {
 	nav: {
 		markets: "Insure",
 		globe: "Live",
-		policies: "My Policies",
-		yield: "Earn Yield",
+		policies: "Policies",
+		yield: "Yield",
 	},
 	wallet: {
 		connect: "Connect Wallet",
