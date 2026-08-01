@@ -278,6 +278,18 @@ const fun = {
 			"At 80% on-time / $50 premium / $400 payout the pool bleeds — the histogram sits left of zero. Turn the levers.",
 		disclaimer: "Simplified Monte Carlo model. Not a promise of yield.",
 	},
+	notify: {
+		mintSuccess: "+10,000 USDC minted to your wallet",
+		mintFailed: "Mint failed — try again",
+		covered: (id: string, date: string) =>
+			`Covered: ${id} on ${date} — pays if delayed`,
+		depositQueued: "Deposit queued — shares mint at the next pool pass",
+		depositCancelled: "Deposit request cancelled",
+		withdrawQueued: "Cash-out queued",
+		withdrawCancelled: "Cash-out request cancelled",
+		collected: "Cash-out collected",
+		claimed: (id: string) => `Payout claimed for flight ${id}!`,
+	},
 	info: {
 		title: "HOW THIS WORKS",
 		aria: "What is this?",
@@ -562,6 +574,18 @@ const serious: Copy = {
 		avgNote:
 			"At 80% on-time / $50 premium / $400 payout the pool runs a loss — the distribution sits left of zero. Adjust the assumptions.",
 		disclaimer: "Simplified Monte Carlo model. Not a promise of yield.",
+	},
+	notify: {
+		mintSuccess: "+10,000 USDC minted to your wallet",
+		mintFailed: "Mint failed — try again",
+		covered: (id: string, date: string) =>
+			`Coverage purchased: ${id} on ${date} — pays if delayed`,
+		depositQueued: "Deposit queued — shares mint at the next pool pass",
+		depositCancelled: "Deposit request cancelled",
+		withdrawQueued: "Withdrawal queued",
+		withdrawCancelled: "Withdrawal request cancelled",
+		collected: "Withdrawal collected",
+		claimed: (id: string) => `Payout claimed for flight ${id}.`,
 	},
 	info: {
 		title: "How this works",

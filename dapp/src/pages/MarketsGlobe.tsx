@@ -157,11 +157,21 @@ function Globe({
 		setDragging(false)
 	}
 
-	// wheel → zoom toward/away (preventDefault stops the page scrolling)
-	const onWheel = (e: React.WheelEvent) => {
-		e.preventDefault()
-		setZoom((z) => clampZoom(z * (e.deltaY < 0 ? 1.12 : 1 / 1.12)))
-	}
+	// wheel → zoom toward/away. Attached as a NATIVE non-passive listener:
+	// React 17+ binds `wheel` passively at the root, so an onWheel prop's
+	// preventDefault() is a no-op — the page would scroll under the globe
+	// (plus a console error in dev). Passive:false restores cancelability.
+	const stageRef = useRef<HTMLDivElement>(null)
+	useEffect(() => {
+		const el = stageRef.current
+		if (!el) return
+		const onWheel = (e: WheelEvent) => {
+			e.preventDefault()
+			setZoom((z) => clampZoom(z * (e.deltaY < 0 ? 1.12 : 1 / 1.12)))
+		}
+		el.addEventListener("wheel", onWheel, { passive: false })
+		return () => el.removeEventListener("wheel", onWheel)
+	}, [])
 
 	// keyboard: arrows rotate, +/− zoom (accessibility)
 	const onKeyDown = (e: React.KeyboardEvent) => {
@@ -273,12 +283,12 @@ function Globe({
 
 	return (
 		<div
+			ref={stageRef}
 			className={`globe-stage${dragging ? " dragging" : ""}`}
 			onPointerDown={onPointerDown}
 			onPointerMove={onPointerMove}
 			onPointerUp={endDrag}
 			onPointerLeave={endDrag}
-			onWheel={onWheel}
 			onKeyDown={onKeyDown}
 			tabIndex={0}
 			role="application"

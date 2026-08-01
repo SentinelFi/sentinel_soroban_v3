@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useDeferredValue, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { PixelArt } from "../components/PixelArt"
 import { SeriousIcon } from "../components/SeriousIcon"
@@ -148,6 +148,31 @@ interface McResult {
 	maxNet: number
 }
 
+/**
+ * Sample k ~ Binomial(n, p). Exact Bernoulli loop for small variance;
+ * normal approximation (Box–Muller, continuity-corrected) once
+ * n·p·(1−p) is large enough that the approximation is excellent —
+ * making a trial O(1) instead of O(travelers), so the worst case drops
+ * from runs×travelers (5M) RNG calls per slider tick to ~2×runs.
+ */
+function sampleBinomial(rng: () => number, n: number, p: number): number {
+	if (n <= 0 || p <= 0) return 0
+	if (p >= 1) return n
+	const mean = n * p
+	const variance = mean * (1 - p)
+	if (variance > 9) {
+		const u1 = rng() || Number.MIN_VALUE
+		const u2 = rng()
+		const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2)
+		return Math.max(0, Math.min(n, Math.round(mean + z * Math.sqrt(variance))))
+	}
+	let k = 0
+	for (let j = 0; j < n; j++) {
+		if (rng() < p) k++
+	}
+	return k
+}
+
 function runMonteCarlo(
 	travelers: number,
 	onTimePct: number,
@@ -172,11 +197,7 @@ function runMonteCarlo(
 			1,
 			Math.max(0, pDelay + (2 * rng() - 1) * pSpread),
 		)
-		// sample delayed count ~ Binomial(travelers, p)
-		let delayed = 0
-		for (let j = 0; j < travelers; j++) {
-			if (rng() < p) delayed++
-		}
+		const delayed = sampleBinomial(rng, travelers, p)
 		nets[i] = premiums - delayed * payout
 	}
 
@@ -332,10 +353,26 @@ export default function Quant() {
 	const net = premiums - expectedPayouts
 	const breakEven = (1 - premium / payout) * 100
 
-	// monte carlo — memoized on inputs so a drag recomputes once per value
+	// monte carlo — deferred inputs: the slider thumb and readouts update
+	// at input priority while the simulation recomputes in a deferred
+	// render, so dragging never janks even at the 5,000-trial setting
+	const dTravelers = useDeferredValue(travelers)
+	const dOnTimePct = useDeferredValue(onTimePct)
+	const dUncertainty = useDeferredValue(uncertainty)
+	const dPremium = useDeferredValue(premium)
+	const dPayout = useDeferredValue(payout)
+	const dRuns = useDeferredValue(runs)
 	const mc = useMemo(
-		() => runMonteCarlo(travelers, onTimePct, uncertainty, premium, payout, runs),
-		[travelers, onTimePct, uncertainty, premium, payout, runs],
+		() =>
+			runMonteCarlo(
+				dTravelers,
+				dOnTimePct,
+				dUncertainty,
+				dPremium,
+				dPayout,
+				dRuns,
+			),
+		[dTravelers, dOnTimePct, dUncertainty, dPremium, dPayout, dRuns],
 	)
 	const yieldPct = (mc.mean / capital) * 100
 

@@ -6,7 +6,6 @@ import {
 	parseUsdc,
 	riskVaultClient,
 	useClaimableBalance,
-	useContractSync,
 	useConvertToAssets,
 	useDepositQueue,
 	useFreeCapital,
@@ -18,8 +17,9 @@ import {
 	useWithdrawalQueue,
 } from "../hooks/useContracts"
 import { useWallet } from "../hooks/useWallet"
+import { useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet } from "../util/wallet"
-import { errorMessage } from "../lib/utils"
+import { errorMessage, txHashOf } from "../lib/utils"
 import { useNotification } from "../hooks/useNotification"
 import { PixelArt } from "../components/PixelArt"
 import { SeriousIcon } from "../components/SeriousIcon"
@@ -35,8 +35,10 @@ import {
 } from "../data"
 import { useTheme } from "../providers/ThemeProvider"
 import { useCopy } from "../copy"
-import type { TxState } from "../types"
 import { AlertTriangle } from "lucide-react"
+
+/** Vault writes touch balances and both queues. */
+const VAULT_INVALIDATE = [["vault"], ["usdc"]]
 
 function StatTile({
 	label,
@@ -77,7 +79,6 @@ function StatTile({
 
 export default function House() {
 	const { address, signTransaction } = useWallet()
-	useContractSync()
 	const queryClient = useQueryClient()
 	const { addNotification } = useNotification()
 	const t = useCopy()
@@ -87,18 +88,20 @@ export default function House() {
 
 	const [depositAmount, setDepositAmount] = useState("")
 	const [withdrawAmount, setWithdrawAmount] = useState("")
-	const [depositTx, setDepositTx] = useState<TxState>("idle")
-	const [requestTx, setRequestTx] = useState<TxState>("idle")
-	const [collectTx, setCollectTx] = useState<TxState>("idle")
 	const [cancelingId, setCancelingId] = useState<bigint | null>(null)
 	const [cancelingDepositId, setCancelingDepositId] = useState<bigint | null>(
 		null,
 	)
-	// Per-flow error strings so a failed deposit never bleeds into the
-	// withdraw/collect steppers (and vice versa).
-	const [depositError, setDepositError] = useState<string | null>(null)
-	const [requestError, setRequestError] = useState<string | null>(null)
-	const [collectError, setCollectError] = useState<string | null>(null)
+	// One flow instance per write, so a failed deposit never bleeds into
+	// the withdraw/collect steppers (and vice versa).
+	const flowOpts = {
+		invalidateKeys: VAULT_INVALIDATE,
+		resetDelayMs: 3000,
+		errorResetDelayMs: 4000,
+	}
+	const depositFlow = useTxFlow(flowOpts)
+	const requestFlow = useTxFlow(flowOpts)
+	const collectFlow = useTxFlow(flowOpts)
 	const [cancelDepositError, setCancelDepositError] = useState<string | null>(
 		null,
 	)
@@ -127,11 +130,11 @@ export default function House() {
 	const withdrawShares = parseUsdc(withdrawAmount)
 	const insufficientShares = shares !== undefined && withdrawShares > shares
 
-	const hasQueue = !!withdrawalQueue && withdrawalQueue.length > 0
-	const myQueueEntries =
-		withdrawalQueue && address
-			? withdrawalQueue.filter((entry) => entry.owner === address)
-			: []
+	const withdrawalQueueRows = withdrawalQueue ?? []
+	const hasQueue = withdrawalQueueRows.length > 0
+	const myQueueEntries = address
+		? withdrawalQueueRows.filter((entry) => entry.owner === address)
+		: []
 	const myDepositEntries =
 		depositQueue && address
 			? depositQueue.filter((entry) => entry.owner === address)
@@ -159,43 +162,22 @@ export default function House() {
 		void queryClient.invalidateQueries({ queryKey: ["usdc"] })
 	}
 
-	function fail(
-		err: unknown,
-		setState: (s: TxState) => void,
-		setError: (m: string | null) => void,
-		label: string,
-	) {
-		console.error(`${label} failed:`, err)
-		setError(errorMessage(err))
-		setState("error")
-		setTimeout(() => setState("idle"), 4000)
-	}
-
 	// ─── writes ───
-	async function handleDeposit() {
-		if (!address || depositAssets <= 0n || depositTx !== "idle") return
-		setDepositTx("awaiting")
-		setDepositError(null)
-		try {
+	function handleDeposit() {
+		if (!address || depositAssets <= 0n) return
+		void depositFlow.run(async (step) => {
+			step("awaiting")
 			// Two-phase LP entry: escrow assets now; the queue-maintenance
 			// cron mints shares at the post-delay share price.
 			const tx = await riskVaultClient.request_deposit({
 				caller: address,
 				assets: depositAssets,
 			})
-			setDepositTx("confirming")
-			await tx.signAndSend({ signTransaction })
-			setDepositTx("success")
+			step("confirming")
+			const sent = await tx.signAndSend({ signTransaction })
 			setDepositAmount("")
-			addNotification(
-				"Deposit queued — shares mint at the next pool pass",
-				"success",
-			)
-			invalidate()
-			setTimeout(() => setDepositTx("idle"), 3000)
-		} catch (err) {
-			fail(err, setDepositTx, setDepositError, "Deposit")
-		}
+			return { message: t.notify.depositQueued, txHash: txHashOf(sent) }
+		})
 	}
 
 	async function handleCancelDeposit(requestId: bigint) {
@@ -208,7 +190,7 @@ export default function House() {
 				request_id: requestId,
 			})
 			await tx.signAndSend({ signTransaction })
-			addNotification("Deposit request cancelled", "secondary")
+			addNotification(t.notify.depositCancelled, "secondary")
 			invalidate()
 		} catch (err) {
 			console.error("Cancel deposit failed:", err)
@@ -218,25 +200,19 @@ export default function House() {
 		}
 	}
 
-	async function handleRequestWithdrawal() {
-		if (!address || withdrawShares <= 0n || requestTx !== "idle") return
-		setRequestTx("awaiting")
-		setRequestError(null)
-		try {
+	function handleRequestWithdrawal() {
+		if (!address || withdrawShares <= 0n) return
+		void requestFlow.run(async (step) => {
+			step("awaiting")
 			const tx = await riskVaultClient.request_withdrawal({
 				caller: address,
 				shares: withdrawShares,
 			})
-			setRequestTx("confirming")
-			await tx.signAndSend({ signTransaction })
-			setRequestTx("success")
+			step("confirming")
+			const sent = await tx.signAndSend({ signTransaction })
 			setWithdrawAmount("")
-			addNotification("Cash-out queued", "success")
-			invalidate()
-			setTimeout(() => setRequestTx("idle"), 3000)
-		} catch (err) {
-			fail(err, setRequestTx, setRequestError, "Request withdrawal")
-		}
+			return { message: t.notify.withdrawQueued, txHash: txHashOf(sent) }
+		})
 	}
 
 	async function handleCancel(requestId: bigint) {
@@ -249,7 +225,7 @@ export default function House() {
 				request_id: requestId,
 			})
 			await tx.signAndSend({ signTransaction })
-			addNotification("Cash-out request cancelled", "secondary")
+			addNotification(t.notify.withdrawCancelled, "secondary")
 			invalidate()
 		} catch (err) {
 			console.error("Cancel withdrawal failed:", err)
@@ -259,21 +235,15 @@ export default function House() {
 		}
 	}
 
-	async function handleCollect() {
-		if (!address || collectTx !== "idle") return
-		setCollectTx("awaiting")
-		setCollectError(null)
-		try {
+	function handleCollect() {
+		if (!address) return
+		void collectFlow.run(async (step) => {
+			step("awaiting")
 			const tx = await riskVaultClient.collect({ caller: address })
-			setCollectTx("confirming")
-			await tx.signAndSend({ signTransaction })
-			setCollectTx("success")
-			addNotification("Cash-out collected", "success")
-			invalidate()
-			setTimeout(() => setCollectTx("idle"), 3000)
-		} catch (err) {
-			fail(err, setCollectTx, setCollectError, "Collect")
-		}
+			step("confirming")
+			const sent = await tx.signAndSend({ signTransaction })
+			return { message: t.notify.collected, txHash: txHashOf(sent) }
+		})
 	}
 
 	return (
@@ -413,7 +383,7 @@ export default function House() {
 						{t.house.walletHint}
 					</p>
 					<TransactionButton
-						state={depositTx}
+						state={depositFlow.state}
 						onClick={() =>
 							void (connected ? handleDeposit() : connectWallet())
 						}
@@ -422,7 +392,7 @@ export default function House() {
 					>
 						{connected ? t.house.depositCta : t.house.connectWallet}
 					</TransactionButton>
-					<TxProgress state={depositTx} steps={["awaiting", "confirming"]} error={depositError} />
+					<TxProgress state={depositFlow.state} steps={["awaiting", "confirming"]} error={depositFlow.error} />
 					<p className="mt-2 font-body text-[13px] text-mute">
 						{t.house.depositQueueHint}
 					</p>
@@ -542,7 +512,7 @@ export default function House() {
 							</div>
 						)}
 						<TransactionButton
-							state={requestTx}
+							state={requestFlow.state}
 							onClick={() =>
 								void (
 									connected
@@ -558,7 +528,7 @@ export default function House() {
 						>
 							{connected ? t.house.queueCta : t.house.connectWallet}
 						</TransactionButton>
-						<TxProgress state={requestTx} steps={["awaiting", "confirming"]} error={requestError} />
+						<TxProgress state={requestFlow.state} steps={["awaiting", "confirming"]} error={requestFlow.error} />
 						<p className="mt-2 font-body text-[13px] text-mute">
 							{t.house.queueHint}
 						</p>
@@ -576,7 +546,7 @@ export default function House() {
 								    yours highlighted. FUN = arcade ticket row,
 								    SERIOUS = numbered timeline (see wave3.css) */}
 								<div className="w3-queue-line" role="list">
-									{withdrawalQueue!.map((entry, i) => {
+									{withdrawalQueueRows.map((entry, i) => {
 										const mine =
 											!!address && entry.owner === address
 										return (
@@ -608,7 +578,7 @@ export default function House() {
 									<div className="mt-3 space-y-2">
 										{myQueueEntries.map((entry) => {
 											const position =
-												withdrawalQueue!.findIndex(
+												withdrawalQueueRows.findIndex(
 													(e) =>
 														e.request_id ===
 														entry.request_id,
@@ -672,14 +642,14 @@ export default function House() {
 									USDC
 								</p>
 								<TransactionButton
-									state={collectTx}
-									onClick={() => void handleCollect()}
+									state={collectFlow.state}
+									onClick={handleCollect}
 									disabled={!connected}
 									className="btn-win mt-3 w-full"
 								>
 									{t.house.collectCta}
 								</TransactionButton>
-								<TxProgress state={collectTx} steps={["awaiting", "confirming"]} error={collectError} />
+								<TxProgress state={collectFlow.state} steps={["awaiting", "confirming"]} error={collectFlow.error} />
 							</div>
 						) : (
 							<p className="font-board text-[18px] text-mute">

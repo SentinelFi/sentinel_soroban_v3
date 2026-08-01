@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react"
 import { Link, Route, Routes } from "react-router-dom"
+import { ErrorBoundary } from "./components/ErrorBoundary"
 import { TopBar } from "./components/TopBar"
 import { FlightBackground } from "./components/FlightBackground"
 import { ThemeDock } from "./components/ThemeToggle"
@@ -65,8 +66,12 @@ export default function App() {
 			<TopBar />
 			<NetworkMismatchBanner />
 			<main className="relative z-10 flex-1">
-				<Suspense fallback={<PageLoading />}>
-					<Routes>
+				{/* Boundary OUTSIDE Suspense: a failed lazy import() (stale
+				    deploy, chunk hash changed) rejects through Suspense and
+				    lands here as a reload prompt instead of a white screen. */}
+				<ErrorBoundary>
+					<Suspense fallback={<PageLoading />}>
+						<Routes>
 						<Route path="/" element={<Markets />} />
 						<Route path="/markets" element={<MarketsGlobe />} />
 						<Route path="/policies" element={<Policies />} />
@@ -81,7 +86,8 @@ export default function App() {
 						<Route path="/admin" element={<Admin />} />
 						<Route path="*" element={<Markets />} />
 					</Routes>
-				</Suspense>
+					</Suspense>
+				</ErrorBoundary>
 			</main>
 
 			<SiteFooter />

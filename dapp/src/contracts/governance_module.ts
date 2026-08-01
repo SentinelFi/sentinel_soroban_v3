@@ -1,9 +1,10 @@
 import * as Client from "governance_module"
 import { rpcUrl, networkPassphrase, stellarNetwork } from "./util"
+import { CONTRACT_IDS } from "./ids"
 
 export default new Client.Client({
 	networkPassphrase,
-	contractId: "CATUCJILWACDDEAIFXRL6HXSYDZ7TLOXHMUBKBG4URDOUJHEO7QAJ6NE",
+	contractId: CONTRACT_IDS.governanceModule,
 	rpcUrl,
 	// FSA-L02: only permit cleartext RPC on a local network; a prod https
 	// RPC keeps allowHttp false so a MITM cannot downgrade to http and feed

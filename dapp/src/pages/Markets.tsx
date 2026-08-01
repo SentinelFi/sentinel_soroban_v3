@@ -1,14 +1,13 @@
-import { useEffect, useRef, useState } from "react"
+import { Fragment, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import type { FlightData } from "oracle_aggregator"
 import {
 	controllerClient,
 	formatUsdc,
 	useActiveFlights,
 	useActiveRoutes,
-	useContractSync,
 	useFlightDataBatch,
 	useGovernanceDefaults,
 	useIsWhitelisted,
@@ -17,9 +16,9 @@ import {
 import type { UiRoute } from "../hooks/useContracts"
 import { DEMO_ROUTES } from "../config/routes"
 import { useWallet } from "../hooks/useWallet"
+import { useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet } from "../util/wallet"
-import { errorMessage } from "../lib/utils"
-import { useNotification } from "../hooks/useNotification"
+import { txHashOf } from "../lib/utils"
 import { PixelArt } from "../components/PixelArt"
 import { SeriousIcon } from "../components/SeriousIcon"
 import { HowItWorksBubble } from "../components/InfoBubble"
@@ -36,7 +35,6 @@ import {
 import { useTheme } from "../providers/ThemeProvider"
 import { useCopy } from "../copy"
 import { useCountUp } from "../hooks/useCountUp"
-import type { TxState } from "../types"
 
 /** Midnight-UTC-aligned unix timestamp (u64) for a YYYY-MM-DD date string. */
 function dateStrToMidnightUtc(dateStr: string): bigint {
@@ -130,6 +128,25 @@ function compareRoutes(
 			return byPremium || byPayoff || byFlight
 		}
 	}
+}
+
+/** Render `text` with the word "delayed" carrying the loss accent — the
+ *  fun hero's emphasis survives while the string itself lives in copy.ts. */
+function EmphasizeDelayed({ text }: { text: string }) {
+	const parts = text.split(/(delayed)/i)
+	return (
+		<>
+			{parts.map((part, i) =>
+				/^delayed$/i.test(part) ? (
+					<span key={i} className="font-semibold text-loss">
+						{part}
+					</span>
+				) : (
+					<Fragment key={i}>{part}</Fragment>
+				),
+			)}
+		</>
+	)
 }
 
 /** External flight-tracking page for a flight id (lowercase slug). */
@@ -348,13 +365,15 @@ function BetSlip({
 	onClose: () => void
 }) {
 	const { address, signTransaction } = useWallet()
-	const { addNotification } = useNotification()
-	const queryClient = useQueryClient()
 	const t = useCopy()
 	const { theme } = useTheme()
 	const [flightDate, setFlightDate] = useState("")
-	const [txState, setTxState] = useState<TxState>("idle")
-	const [error, setError] = useState<string | null>(null)
+	const flow = useTxFlow({
+		invalidateKeys: [["controller"], ["usdc"]],
+		onSettled: (outcome) => {
+			if (outcome === "success") onClose()
+		},
+	})
 
 	const { data: whitelistEnabled } = useWhitelistEnabled()
 	const { data: isWhitelisted } = useIsWhitelisted(address)
@@ -365,18 +384,19 @@ function BetSlip({
 	const payoff = route.terms?.payoff ?? defaults?.default_payoff
 	const delayHours = route.terms?.delay_hours ?? defaults?.default_delay_hours
 
-	const placeBet = async () => {
+	const placeBet = () => {
 		if (!address || !flightDate || whitelistBlocked) return
-		setTxState("verifying")
-		setError(null)
-		try {
+		void flow.run(async (step) => {
+			step("verifying")
 			const date = dateStrToMidnightUtc(flightDate)
 			const authRes = await fetch("/api/sale-auth/request", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ flight_id: route.flightId, date: Number(date) }),
 			})
-			const auth = (await authRes.json()) as {
+			// .catch: an HTML error page must surface as the HTTP error below,
+			// not as a raw SyntaxError in the user-facing stepper.
+			const auth = (await authRes.json().catch(() => ({}))) as {
 				authorized?: boolean
 				reason?: string
 				error?: string
@@ -388,7 +408,7 @@ function BetSlip({
 				throw new Error(auth.reason ?? "Sale not authorized")
 			}
 
-			setTxState("awaiting")
+			step("awaiting")
 			const tx = await controllerClient.buy_insurance({
 				traveler: address,
 				flight_id: route.flightId,
@@ -396,24 +416,13 @@ function BetSlip({
 				dest: route.dest,
 				date,
 			})
-			setTxState("confirming")
-			await tx.signAndSend({ signTransaction })
-			setTxState("success")
-			addNotification(
-				`Covered: ${route.flightId} on ${flightDate} — pays if delayed`,
-				"success",
-			)
-			void queryClient.invalidateQueries({ queryKey: ["controller"] })
-			void queryClient.invalidateQueries({ queryKey: ["usdc"] })
-			setTimeout(() => {
-				setTxState("idle")
-				onClose()
-			}, 1500)
-		} catch (err) {
-			setError(errorMessage(err))
-			setTxState("error")
-			setTimeout(() => setTxState("idle"), 3000)
-		}
+			step("confirming")
+			const sent = await tx.signAndSend({ signTransaction })
+			return {
+				message: t.notify.covered(route.flightId, flightDate),
+				txHash: txHashOf(sent),
+			}
+		})
 	}
 
 	return createPortal(
@@ -505,17 +514,17 @@ function BetSlip({
 				</div>
 
 				<TransactionButton
-					state={txState}
-					onClick={() => void placeBet()}
+					state={flow.state}
+					onClick={placeBet}
 					disabled={!address || !flightDate || whitelistBlocked}
 					className="btn-loss w-full"
 				>
 					{t.slip.cta(premium !== undefined ? formatUsdc(premium) : "…")}
 				</TransactionButton>
 				<TxProgress
-					state={txState}
+					state={flow.state}
 					steps={["verifying", "awaiting", "confirming"]}
-					error={error}
+					error={flow.error}
 					stamps={{ success: "stamp-covered", fail: "stamp-denied" }}
 				/>
 
@@ -553,7 +562,6 @@ function BetSlip({
 export default function Markets() {
 	const navigate = useNavigate()
 	const [searchParams, setSearchParams] = useSearchParams()
-	useContractSync()
 	const t = useCopy()
 	const { theme } = useTheme()
 	const serious = theme === "serious"
@@ -579,15 +587,19 @@ export default function Markets() {
 	const scanning = isDemo && (routesLoading || routesFetching)
 	const displayRoutes = isDemo ? SAMPLE_ROUTES : routes
 
-	// Deep-link from the Flight Map (/markets?flight=AA100): preselect the row,
-	// open its slip, and set the search box so the row is visible. One-shot —
-	// clears the param after consuming it so closing the slip doesn't re-open.
+	// Deep-link from the Flight Map (/markets?flight=AA100): preselect the
+	// row, open its slip, and set the search box so the row is visible.
+	// The param is consumed on a match, or once the LIVE list has loaded
+	// and genuinely lacks the flight — while the chunked chain scan is
+	// still streaming, an unmatched param survives to the next pass so it
+	// can't be spent against the DEMO sample.
 	const deepLinkFlight = searchParams.get("flight")
 	useEffect(() => {
 		if (!deepLinkFlight) return
 		const match = displayRoutes.find(
 			(r) => r.flightId.toUpperCase() === deepLinkFlight.toUpperCase(),
 		)
+		if (!match && isDemo) return
 		if (match) {
 			setSlipRoute(match)
 			setQuery(match.flightId)
@@ -595,8 +607,7 @@ export default function Markets() {
 		}
 		searchParams.delete("flight")
 		setSearchParams(searchParams, { replace: true })
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [deepLinkFlight, displayRoutes.length])
+	}, [deepLinkFlight, displayRoutes, isDemo, searchParams, setSearchParams])
 
 	// The on-chain active set only drops a flight once the daily prune_settled
 	// sweep runs, so a Settled or already-claimable (ToBeSettledDelayed)
@@ -696,19 +707,12 @@ export default function Markets() {
 				<section>
 					<div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
 						<h1 className="h-display text-[24px] leading-[1.45] sm:text-[32px]">
-							INSURE YOUR FLIGHT.
+							{t.markets.heroLine1}
 							<br />
-							<span className="text-loss">
-								GET PAID IF IT'S LATE.
-							</span>
+							<span className="text-loss">{t.markets.heroLine2}</span>
 						</h1>
 						<p className="max-w-sm font-body text-[15px] leading-relaxed text-dim">
-							Buying insurance here IS predicting your flight lands
-							late. Stake a fixed premium; if the flight is{" "}
-							<span className="font-semibold text-loss">
-								delayed
-							</span>{" "}
-							past the threshold, the payout is yours automatically.
+							<EmphasizeDelayed text={t.markets.heroSub} />
 						</p>
 					</div>
 
