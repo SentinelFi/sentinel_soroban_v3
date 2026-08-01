@@ -15,6 +15,7 @@ import {
 } from "../hooks/useContracts"
 import type { UiRoute } from "../hooks/useContracts"
 import { DEMO_ROUTES } from "../config/routes"
+import { airlineName } from "../config/airlines"
 import { useWallet } from "../hooks/useWallet"
 import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet } from "../util/wallet"
@@ -25,6 +26,7 @@ import { HowItWorksBubble } from "../components/InfoBubble"
 import { TransactionButton } from "../components/TransactionButton"
 import { TxProgress } from "../components/TxProgress"
 import { RiskBar } from "../components/RiskBar"
+import { TriggerGauge } from "../components/TriggerGauge"
 import { FlightCalendar } from "../components/FlightCalendar"
 import {
 	routeRisk,
@@ -87,15 +89,16 @@ const BOARD_PAGE_SIZE = 12
 const BOARD_PAGE_SIZES = [12, 24, 48, 96]
 
 /** Sortable board columns. */
-type SortKey = "flight" | "status" | "stake"
+type SortKey = "flight" | "trigger" | "status" | "stake"
 type SortState = { key: SortKey; dir: 1 | -1 } | null
 
 /**
  * Comparator for a sort key (ascending). Flight ids compare numerically
- * (AA9 before AA100); status compares by the estimated delay-risk value the
- * row's RiskBar displays (routeRisk is deterministic, so the order is
- * stable); stake compares premium then payoff, with rows still missing
- * terms sorted last. Ties break by flight id.
+ * (AA9 before AA100); trigger compares by delay threshold, with rows whose
+ * terms haven't resolved yet sorted last; status compares by the estimated
+ * delay-risk value the row's RiskBar displays (routeRisk is deterministic,
+ * so the order is stable); stake compares premium then payoff, with rows
+ * still missing terms sorted last. Ties break by flight id.
  */
 function compareRoutes(
 	a: UiRoute,
@@ -109,6 +112,13 @@ function compareRoutes(
 	switch (key) {
 		case "flight":
 			return byFlight
+		case "trigger": {
+			const da = a.terms?.delay_hours ?? defaults?.default_delay_hours
+			const db = b.terms?.delay_hours ?? defaults?.default_delay_hours
+			if (da === undefined || db === undefined)
+				return da === db ? byFlight : da === undefined ? 1 : -1
+			return da - db || byFlight
+		}
 		case "status": {
 			const riskA = routeRisk(a.flightId, `${a.origin}-${a.dest}`)
 			const riskB = routeRisk(b.flightId, `${b.origin}-${b.dest}`)
@@ -557,11 +567,6 @@ function BetSlip({
 						<span className="font-board text-[20px] leading-none text-ink">
 							{route.origin} ✈ {route.dest}
 						</span>
-						{delayHours !== undefined && (
-							<span className="ml-2 text-mute">
-								{t.slip.threshold(delayHours)}
-							</span>
-						)}
 					</p>
 				</div>
 
@@ -591,6 +596,14 @@ function BetSlip({
 						</span>
 						<span className="board-figure text-[26px] text-win">
 							{payoff !== undefined ? formatUsdc(payoff) : "…"} USDC
+						</span>
+					</div>
+					<div className="flex items-center justify-between">
+						<span className="label-px">{t.slip.triggerLabel}</span>
+						<span className="board-figure text-[18px] text-ink">
+							{delayHours !== undefined
+								? t.markets.triggerCell(delayHours)
+								: "…"}
 						</span>
 					</div>
 				</div>
@@ -905,7 +918,7 @@ export default function Markets() {
 									[
 										{ label: t.markets.colFlight, key: "flight" },
 										{ label: t.markets.colRoute },
-										{ label: t.markets.colDate },
+										{ label: t.markets.colTrigger, key: "trigger" },
 										{ label: t.markets.colStatus, key: "status" },
 										{ label: t.markets.colStake, key: "stake" },
 										{ label: "" },
@@ -983,11 +996,19 @@ export default function Markets() {
 											{route.flightId}
 										</a>
 									</td>
-									<td className="px-4 py-3 font-body text-[14px] font-semibold tracking-[0.04em] text-ink">
+									<td
+										className="px-4 py-3 font-body text-[14px] font-semibold tracking-[0.04em] text-ink"
+										title={airlineName(route.flightId)}
+									>
 										{route.origin} → {route.dest}
 									</td>
-									<td className="px-4 py-3 font-body text-[13px] text-mute">
-										{t.markets.datePick}
+									<td className="px-4 py-3 whitespace-nowrap">
+										<TriggerGauge
+											hours={
+												route.terms?.delay_hours ??
+												defaults?.default_delay_hours
+											}
+										/>
 									</td>
 									<td className="px-4 py-3">
 										<div className="flex flex-col items-start gap-1.5">

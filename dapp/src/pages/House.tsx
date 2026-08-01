@@ -37,6 +37,7 @@ import {
 } from "../data"
 import { useTheme } from "../providers/ThemeProvider"
 import { useCopy } from "../copy"
+import { BRIDGE_URL } from "../config/links"
 import { AlertTriangle } from "lucide-react"
 
 /** Vault writes touch balances and both queues. */
@@ -465,7 +466,18 @@ export default function House() {
 						<span className="text-dim">
 							{usdcBalance != null ? formatUsdc(usdcBalance) : "…"} USDC
 						</span>{" "}
-						{t.house.walletHint}
+						{t.house.walletHint}{" "}
+						<span aria-hidden="true" className="text-mute/50">
+							·
+						</span>{" "}
+						<a
+							href={BRIDGE_URL}
+							target="_blank"
+							rel="noopener noreferrer"
+							className="footer-link"
+						>
+							{t.house.bridgeLink}
+						</a>
 					</p>
 					<TransactionButton
 						state={depositFlow.state}

@@ -1,7 +1,5 @@
 import type { ReactNode } from "react"
 
-/** Shared shell for the Privacy / Terms pages — themed via app tokens,
- *  so it reads correctly in both Fun (pixel) and Serious (clean) modes. */
 function LegalShell({
 	title,
 	updated,
@@ -140,6 +138,100 @@ export function Terms() {
 					To the maximum extent permitted by law, the contributors are not
 					liable for any loss or damage arising from your use of the protocol or
 					this interface.
+				</p>
+			</Section>
+		</LegalShell>
+	)
+}
+
+export function Disclaimers() {
+	return (
+		<LegalShell title="Disclaimers" updated="August 2026">
+			<Section heading="Scope">
+				<p>
+					These disclaimers cover this website, the documentation, and any
+					other material published around this protocol. Reading,
+					browsing, or transacting through this interface means you accept
+					them.
+				</p>
+			</Section>
+			<Section heading="Nothing here is advice">
+				<p>
+					Everything on this site is general information. None of it is — or
+					should be read as — investment, financial, legal, tax, accounting,
+					or insurance advice, and nothing here recommends that you buy cover,
+					deposit into the vault, or hold any digital asset. Talk to a
+					qualified professional before making decisions that depend on your
+					personal situation.
+				</p>
+			</Section>
+			<Section heading="An autonomous protocol, not a company">
+				<p>
+					This protocol is a set of open-source smart contracts deployed on the
+					Stellar network. Once deployed, the contracts execute exactly as
+					written, without anyone standing in the middle: the contributors do
+					not hold your funds, do not act as your counterparty, broker, agent,
+					or insurer of record, and cannot reverse, block, or prioritize
+					transactions. This website is only one independent way of reaching
+					those contracts — the protocol exists and operates without it.
+				</p>
+			</Section>
+			<Section heading="You keep custody">
+				<p>
+					You interact through your own wallet and remain solely responsible
+					for your keys, your credentials, and everything signed with them.
+					There is no password reset on a blockchain: lost keys mean lost
+					access, and nobody can recover them or undo a confirmed transaction.
+				</p>
+			</Section>
+			<Section heading="Risk of loss">
+				<p>
+					Using DeFi protocols involves substantial risk. Smart contracts can
+					contain defects even after review; oracles and the flight data
+					behind them can be late, incomplete, or wrong; stablecoins can trade
+					away from their peg; and network congestion or outages can delay
+					settlement. Premiums you stake and capital you underwrite with can
+					be lost entirely. Commit only what you can afford to lose.
+				</p>
+			</Section>
+			<Section heading="Independent third parties">
+				<p>
+					Wallets, RPC endpoints, block explorers, bridges, aviation data
+					providers, and other services reachable from this interface are
+					built and operated by independent parties. Links to them are
+					provided for convenience: the contributors have not audited them and
+					do not endorse or guarantee their security, availability, or
+					accuracy.
+				</p>
+			</Section>
+			<Section heading="Estimates and forward-looking figures">
+				<p>
+					Some numbers shown in this interface — delay-risk estimates, trend
+					sparklines, projected yields — are labelled as estimates or
+					illustrative series. They are not measured history and not a promise
+					of future performance; any forward-looking figure is inherently
+					uncertain and can turn out to be wrong.
+				</p>
+			</Section>
+			<Section heading="Regulatory status">
+				<p>
+					The legal treatment of digital assets and parametric protection
+					products differs between jurisdictions and continues to change.
+					Nothing published here is an offer or solicitation in any place
+					where such an offer would be unlawful, and the protocol is not
+					presented as a licensed or regulated financial or insurance service.
+					It is your responsibility to confirm that using it is lawful where
+					you live and to handle any consequences.
+				</p>
+			</Section>
+			<Section heading="No warranties, no liability">
+				<p>
+					The interface, the contracts, and all related materials are provided
+					"as is" and "as available", without warranties of any kind, express
+					or implied. To the maximum extent the law allows, the contributors
+					accept no liability for any loss or damage — direct or indirect,
+					including lost assets or lost profits — arising from your use of, or
+					inability to use, the protocol or this interface.
 				</p>
 			</Section>
 		</LegalShell>
