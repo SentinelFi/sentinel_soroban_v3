@@ -1,9 +1,10 @@
 import * as Client from "oracle_aggregator"
 import { rpcUrl, networkPassphrase, stellarNetwork } from "./util"
+import { CONTRACT_IDS } from "./ids"
 
 export default new Client.Client({
 	networkPassphrase,
-	contractId: "CDMKBMNJ2YZTARAM4ZUU7HZJZA7UUYJU76ZOAN2SCR3WJYZSSHXV7ESW",
+	contractId: CONTRACT_IDS.oracleAggregator,
 	rpcUrl,
 	// FSA-L02: only permit cleartext RPC on a local network; a prod https
 	// RPC keeps allowHttp false so a MITM cannot downgrade to http and feed

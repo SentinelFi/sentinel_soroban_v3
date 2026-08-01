@@ -1,8 +1,15 @@
 import { Fragment, useEffect, useMemo, useState } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+	keepPreviousData,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query"
 import type { Session } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
-import { errorMessage, relTime } from "../lib/utils"
+import { errorMessage } from "../lib/utils"
+import { isoMinute, relTime, usdFromUnits, utcDateTime } from "../lib/format"
+import { useDebouncedValue } from "../hooks/useDebouncedValue"
 import { TxProgress } from "../components/TxProgress"
 import type { TxState } from "../types"
 
@@ -24,7 +31,7 @@ import type { TxState } from "../types"
 
 /* ── plumbing ─────────────────────────────────────────────────────── */
 
-async function api(path: string, token: string, init?: RequestInit) {
+async function api<T>(path: string, token: string, init?: RequestInit): Promise<T> {
 	const res = await fetch(path, {
 		...init,
 		headers: {
@@ -33,15 +40,128 @@ async function api(path: string, token: string, init?: RequestInit) {
 			...(init?.headers ?? {}),
 		},
 	})
-	const body = await res.json().catch(() => ({}))
+	const body = (await res.json().catch(() => ({}))) as { error?: string }
 	if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`)
-	return body
+	return body as T
 }
 
-const usd = (units: string | null | undefined) =>
-	units == null ? "—" : `$${(Number(units) / 1e7).toLocaleString()}`
-
 const shortTx = (h: string) => `${h.slice(0, 4)}…${h.slice(-4)}`
+
+/* ── API payload types (mirror api/admin/*.ts responses) ──────────── */
+
+interface AdminRoute {
+	flight_id: string
+	origin: string
+	dest: string
+	carrier: string | null
+	status: string
+	pinned: boolean | null
+	pin_until: string | null
+	base_premium_units: string | null
+	base_payoff_units: string | null
+	base_delay_hours: number | null
+	open_intervention_id: string | null
+	open_cause: string | null
+	on_chain?: {
+		status: string
+		terms: { premium: string; payoff: string; delay_hours: number } | null
+	}
+}
+
+interface RoutesResponse {
+	routes: AdminRoute[]
+	total: number
+	fleet_total: number
+	fleet_active: number
+}
+
+interface AdminIntervention {
+	id: string
+	cause: string
+	flight_id: string
+	origin: string
+	dest: string
+	evidence: unknown
+	opened_by: string
+	opened_at: string
+	last_checked_at: string
+	revived_at: string | null
+	revived_by: string | null
+}
+
+interface InterventionsResponse {
+	rows: AdminIntervention[]
+	total: number
+	open_count: number
+}
+
+/** JOB_REGISTRY entry (api/_lib/governance/runs.ts). */
+interface JobRegistryEntry {
+	job: string
+	path: string
+	schedule: string
+	intervalMinutes: number
+	signer: string
+	manualRunnable: boolean
+	description: string
+}
+
+interface JobRun {
+	job: string
+	trigger: string
+	ran_at: string
+	duration_ms: number
+	success: boolean
+	error: string | null
+}
+
+interface JobsResponse {
+	registry: JobRegistryEntry[]
+	latest: JobRun[]
+	recent: JobRun[]
+}
+
+interface JobRunResult {
+	success: boolean
+	duration_ms: number
+}
+
+interface AdminOutcome {
+	id: string | number
+	flight_id: string
+	origin: string
+	dest: string
+	flight_date: string
+	outcome: string
+	delay_minutes: number | null
+	origin_gust_kmh: number | null
+	origin_snow_cm: number | null
+	origin_precip_prob_pct: number | null
+	dest_gust_kmh: number | null
+	dest_snow_cm: number | null
+	dest_precip_prob_pct: number | null
+}
+
+interface OutcomesResponse {
+	rows: AdminOutcome[]
+	total: number
+}
+
+interface AdminAction {
+	id: string | number
+	ts: string
+	actor: string
+	action: string
+	flight_id: string | null
+	origin: string | null
+	dest: string | null
+	tx_hash: string | null
+	success: boolean
+}
+
+interface ActionsResponse {
+	log: AdminAction[]
+}
 
 /* ── board atoms ──────────────────────────────────────────────────── */
 
@@ -229,33 +349,43 @@ const ADMIN_TABS: Array<{ key: AdminTab; label: string }> = [
 function Console({ session }: { session: Session }) {
 	const token = session.access_token
 	const qc = useQueryClient()
-	const invalidate = () => qc.invalidateQueries()
+	// Scoped: every console query key starts with "admin-"; an admin
+	// action must not force a refetch of every chain query in the app.
+	const invalidate = () =>
+		void qc.invalidateQueries({
+			predicate: (q) => String(q.queryKey[0]).startsWith("admin-"),
+		})
 	const [activeTab, setActiveTab] = useState<AdminTab>("jobs")
 
 	const jobsQ = useQuery({
 		queryKey: ["admin-jobs"],
-		queryFn: () => api("/api/admin/jobs", token),
+		queryFn: () => api<JobsResponse>("/api/admin/jobs", token),
 		enabled: activeTab === "jobs",
 		staleTime: 30_000,
 		refetchInterval: 60_000,
 	})
 	const [routeQuery, setRouteQuery] = useState("")
+	// Debounced into the query key: typing "JFK" issues one request, and
+	// keepPreviousData holds the current table instead of flashing the
+	// loading row on every keystroke / page turn.
+	const debouncedRouteQuery = useDebouncedValue(routeQuery, 300)
 	const [routePage, setRoutePage] = useState(1)
 	const [adminPausedOnly, setAdminPausedOnly] = useState(false)
 	const routeLimit = 50
 
 	const routesQ = useQuery({
-		queryKey: ["admin-routes", routeQuery, routePage, adminPausedOnly],
+		queryKey: ["admin-routes", debouncedRouteQuery, routePage, adminPausedOnly],
 		queryFn: () => {
 			const params = new URLSearchParams({
 				chain: "1",
 				page: String(routePage),
 				limit: String(routeLimit),
 			})
-			if (routeQuery) params.set("q", routeQuery)
+			if (debouncedRouteQuery) params.set("q", debouncedRouteQuery)
 			if (adminPausedOnly) params.set("cause", "admin")
-			return api(`/api/admin/routes?${params}`, token)
+			return api<RoutesResponse>(`/api/admin/routes?${params}`, token)
 		},
+		placeholderData: keepPreviousData,
 		staleTime: 30_000,
 		refetchInterval: 60_000,
 	})
@@ -273,14 +403,15 @@ function Console({ session }: { session: Session }) {
 				limit: String(interventionLimit),
 			})
 			if (interventionCause) params.set("cause", interventionCause)
-			return api(`/api/admin/interventions?${params}`, token)
+			return api<InterventionsResponse>(`/api/admin/interventions?${params}`, token)
 		},
+		placeholderData: keepPreviousData,
 		staleTime: 30_000,
 		refetchInterval: 60_000,
 	})
 	const logQ = useQuery({
 		queryKey: ["admin-log"],
-		queryFn: () => api("/api/admin/actions?limit=100", token),
+		queryFn: () => api<ActionsResponse>("/api/admin/actions?limit=100", token),
 		enabled: activeTab === "log",
 		staleTime: 30_000,
 		refetchInterval: 60_000,
@@ -295,9 +426,10 @@ function Console({ session }: { session: Session }) {
 		queryFn: () => {
 			const params = new URLSearchParams({ page: String(outcomePage), limit: String(outcomeLimit) })
 			if (outcomeFilter) params.set("outcome", outcomeFilter)
-			return api(`/api/admin/outcomes?${params}`, token)
+			return api<OutcomesResponse>(`/api/admin/outcomes?${params}`, token)
 		},
 		enabled: activeTab === "outcomes",
+		placeholderData: keepPreviousData,
 		staleTime: 30_000,
 		refetchInterval: 60_000,
 	})
@@ -306,8 +438,8 @@ function Console({ session }: { session: Session }) {
 		(q) => q.error instanceof Error && q.error.message === "Unauthorized"
 	)
 
-	const routes: any[] = routesQ.data?.routes ?? []
-	const interventions: any[] = interventionsQ.data?.rows ?? []
+	const routes = routesQ.data?.routes ?? []
+	const interventions = interventionsQ.data?.rows ?? []
 	// Fleet-wide, DB-only counts (never a full chain scan or the current
 	// tab/filter) so the header stays a whole-fleet summary.
 	const figures = useMemo(
@@ -436,7 +568,7 @@ function Console({ session }: { session: Session }) {
 /** Lamp logic: red = last run failed, gold = stale (2× interval with no
  *  run) or never ran, green = on schedule and passing. */
 function jobTone(
-	last: { ran_at: string; success: boolean } | undefined,
+	last: JobRun | undefined,
 	intervalMinutes: number
 ): { tone: "win" | "loss" | "gold"; word: string } {
 	if (!last) return { tone: "gold", word: "no runs" }
@@ -454,9 +586,9 @@ function JobsBoard({
 	token,
 	onDone,
 }: {
-	registry: any[]
-	latest: any[]
-	recent: any[]
+	registry: JobRegistryEntry[]
+	latest: JobRun[]
+	recent: JobRun[]
 	loading: boolean
 	token: string
 	onDone: () => void
@@ -465,14 +597,14 @@ function JobsBoard({
 	const [note, setNote] = useState<string | null>(null)
 	const [runTxState, setRunTxState] = useState<TxState>("idle")
 	const [expanded, setExpanded] = useState<string | null>(null)
-	const byJob = new Map(latest.map((r: any) => [r.job, r]))
+	const byJob = new Map(latest.map((r) => [r.job, r]))
 
 	async function runNow(job: string) {
 		setBusy(job)
 		setNote(null)
 		setRunTxState("confirming")
 		try {
-			const entry = await api("/api/admin/jobs", token, {
+			const entry = await api<JobRunResult>("/api/admin/jobs", token, {
 				method: "POST",
 				body: JSON.stringify({ job }),
 			})
@@ -512,11 +644,11 @@ function JobsBoard({
 								</td>
 							</tr>
 						)}
-						{registry.map((info: any) => {
+						{registry.map((info) => {
 							const last = byJob.get(info.job)
 							const { tone, word } = jobTone(last, info.intervalMinutes)
 							const isOpen = expanded === info.job
-							const history = recent.filter((r: any) => r.job === info.job).slice(0, 8)
+							const history = recent.filter((r) => r.job === info.job).slice(0, 8)
 							return (
 								<Fragment key={info.job}>
 									<tr className="border-b border-line/60 last:border-b-0">
@@ -577,9 +709,9 @@ function JobsBoard({
 												) : (
 													<div className="flex flex-wrap items-center gap-2">
 														<span className="label-px text-mute">Recent runs</span>
-														{history.map((r: any, i: number) => (
+														{history.map((r) => (
 															<span
-																key={i}
+																key={r.ran_at}
 																className={`status-px ${r.success ? "text-mute" : "text-loss"}`}
 																title={`${r.trigger} · ${new Date(r.ran_at).toISOString()}${r.error ? ` · ${r.error}` : ""}`}
 															>
@@ -618,7 +750,7 @@ function RoutesBoard({
 	total,
 	limit,
 }: {
-	routes: any[]
+	routes: AdminRoute[]
 	loading: boolean
 	token: string
 	onDone: () => void
@@ -649,26 +781,27 @@ function RoutesBoard({
 	}
 
 	const post = (body: object) =>
-		api("/api/admin/actions", token, { method: "POST", body: JSON.stringify(body) })
+		api<unknown>("/api/admin/actions", token, { method: "POST", body: JSON.stringify(body) })
 	const patch = (body: object) =>
-		api("/api/admin/routes", token, { method: "PATCH", body: JSON.stringify(body) })
+		api<unknown>("/api/admin/routes", token, { method: "PATCH", body: JSON.stringify(body) })
 	const intervene = (body: object) =>
-		api("/api/admin/interventions", token, { method: "POST", body: JSON.stringify(body) })
+		api<unknown>("/api/admin/interventions", token, { method: "POST", body: JSON.stringify(body) })
 	const revive = (id: string) =>
-		api("/api/admin/interventions", token, { method: "PATCH", body: JSON.stringify({ id }) })
+		api<unknown>("/api/admin/interventions", token, { method: "PATCH", body: JSON.stringify({ id }) })
 
-	function halt(r: any, id: string, key: object) {
+	function halt(r: AdminRoute, id: string, key: object) {
 		const reason = window.prompt(`Reason for pausing ${r.flight_id} ${r.origin}→${r.dest}:`)
 		if (!reason) return
 		void act(id, () => intervene({ ...key, reason }))
 	}
 
-	function resume(r: any, id: string, key: object) {
+	function resume(r: AdminRoute, id: string, key: object) {
 		// Prefer reviving the open intervention row (audited, cause-tracked);
 		// fall back to the raw on-chain enable for routes disabled before the
 		// interventions ledger existed (no open row to revive).
-		if (r.open_intervention_id) {
-			void act(id, () => revive(r.open_intervention_id))
+		const openId = r.open_intervention_id
+		if (openId) {
+			void act(id, () => revive(openId))
 		} else {
 			void act(id, () => post({ op: "enable", ...key }))
 		}
@@ -751,8 +884,8 @@ function RoutesBoard({
 											</span>
 										</span>
 									</td>
-									<td className="px-3 py-2 text-gold">{usd(r.on_chain?.terms?.premium)}</td>
-									<td className="px-3 py-2 text-gold">{usd(r.on_chain?.terms?.payoff)}</td>
+									<td className="px-3 py-2 text-gold">{usdFromUnits(r.on_chain?.terms?.premium)}</td>
+									<td className="px-3 py-2 text-gold">{usdFromUnits(r.on_chain?.terms?.payoff)}</td>
 									<td className="px-3 py-2 text-dim">
 										{r.on_chain?.terms ? `${r.on_chain.terms.delay_hours}h` : "—"}
 									</td>
@@ -859,7 +992,7 @@ function AddRoute({ token, onDone }: { token: string; onDone: () => void }) {
 	const [form, setForm] = useState({ flight_id: "", origin: "", dest: "", carrier: "" })
 	const m = useMutation({
 		mutationFn: () =>
-			api("/api/admin/routes", token, {
+			api<unknown>("/api/admin/routes", token, {
 				method: "POST",
 				body: JSON.stringify({
 					...form,
@@ -926,7 +1059,7 @@ function InterventionsPanel({
 	total,
 	limit,
 }: {
-	interventions: any[]
+	interventions: AdminIntervention[]
 	loading: boolean
 	token: string
 	onDone: () => void
@@ -943,7 +1076,7 @@ function InterventionsPanel({
 	const pageCount = Math.max(1, Math.ceil(total / limit))
 	const revive = useMutation({
 		mutationFn: (id: string) =>
-			api("/api/admin/interventions", token, { method: "PATCH", body: JSON.stringify({ id }) }),
+			api<unknown>("/api/admin/interventions", token, { method: "PATCH", body: JSON.stringify({ id }) }),
 		onSuccess: onDone,
 	})
 
@@ -1005,15 +1138,15 @@ function InterventionsPanel({
 									</span>
 									<span className="font-body text-[12px] text-mute">by {s.opened_by}</span>
 									<span className="font-body text-[12px] text-mute">
-										since {new Date(s.opened_at).toUTCString().slice(5, 22)}
+										since {utcDateTime(s.opened_at)}
 									</span>
 									{state === "open" ? (
 										<span className="font-body text-[12px] text-mute">
-											checked {new Date(s.last_checked_at).toUTCString().slice(5, 22)}
+											checked {utcDateTime(s.last_checked_at)}
 										</span>
 									) : (
 										<span className="font-body text-[12px] text-mute">
-											revived {new Date(s.revived_at).toUTCString().slice(5, 22)} by {s.revived_by}
+											revived {s.revived_at ? utcDateTime(s.revived_at) : "—"} by {s.revived_by}
 										</span>
 									)}
 									<button
@@ -1079,7 +1212,7 @@ function AdminPause({ token, onDone }: { token: string; onDone: () => void }) {
 	const [form, setForm] = useState({ flight_id: "", origin: "", dest: "", reason: "" })
 	const m = useMutation({
 		mutationFn: () =>
-			api("/api/admin/interventions", token, {
+			api<unknown>("/api/admin/interventions", token, {
 				method: "POST",
 				body: JSON.stringify(form),
 			}),
@@ -1161,7 +1294,7 @@ function OutcomesPanel({
 	total,
 	limit,
 }: {
-	outcomes: any[]
+	outcomes: AdminOutcome[]
 	loading: boolean
 	filter: string
 	onFilterChange: (outcome: string) => void
@@ -1281,7 +1414,7 @@ function OutcomesPanel({
 	)
 }
 
-function ActionLog({ log, loading }: { log: any[]; loading: boolean }) {
+function ActionLog({ log, loading }: { log: AdminAction[]; loading: boolean }) {
 	return (
 		<section>
 			<h2 className="h-section mb-3">Action log</h2>
@@ -1314,7 +1447,7 @@ function ActionLog({ log, loading }: { log: any[]; loading: boolean }) {
 						{log.map((a) => (
 							<tr key={a.id} className="border-b border-line/60 last:border-b-0">
 								<td className="px-3 py-2 whitespace-nowrap text-mute">
-									{new Date(a.ts).toISOString().slice(0, 16).replace("T", " ")}
+									{isoMinute(a.ts)}
 								</td>
 								<td className="px-3 py-2 text-dim">{a.actor}</td>
 								<td className="px-3 py-2 text-ink">{a.action}</td>

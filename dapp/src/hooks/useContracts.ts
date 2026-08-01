@@ -12,8 +12,7 @@
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect } from "react"
-import type { RouteStatus, ResolvedTerms } from "governance_module"
+import type { ResolvedTerms } from "governance_module"
 import type { FlightConfig } from "flight_pool_manager"
 import type { FlightData } from "oracle_aggregator"
 import controllerClient from "../contracts/controller"
@@ -23,47 +22,14 @@ import riskVaultClient from "../contracts/risk_vault"
 import mockUsdcClient from "../contracts/mock_usdc"
 import flightPoolManagerClient from "../contracts/flight_pool_manager"
 import { CANDIDATE_ROUTES } from "../config/routes"
-import { useWallet } from "./useWallet"
 
-/**
- * Sync wallet address to all contract client singletons.
- * Must be called in any component that does write transactions.
- * Scaffold-stellar clients need `publicKey` set to build transactions.
- */
-export function useContractSync() {
-	const { address } = useWallet()
-	useEffect(() => {
-		const clients = [
-			controllerClient,
-			governanceClient,
-			oracleClient,
-			riskVaultClient,
-			mockUsdcClient,
-			flightPoolManagerClient,
-		]
-		for (const client of clients) {
-			;(client as any).options.publicKey = address
-		}
-	}, [address])
-}
+// NOTE: the wallet→client publicKey sync now lives in WalletProvider —
+// it runs once for every page, so write pages no longer need (and no
+// longer have) a per-page useContractSync() call.
 
-const USDC_DECIMALS = 7
-const USDC_DIVISOR = 10_000_000n
-
-/** Format i128 USDC amount to human-readable string */
-export function formatUsdc(amount: bigint): string {
-	const whole = amount / USDC_DIVISOR
-	const frac = amount % USDC_DIVISOR
-	const fracStr = frac.toString().padStart(USDC_DECIMALS, "0").slice(0, 2)
-	return `${whole.toLocaleString()}.${fracStr}`
-}
-
-/** Convert human USDC string to i128 */
-export function parseUsdc(amount: string): bigint {
-	const num = parseFloat(amount)
-	if (isNaN(num) || num <= 0) return 0n
-	return BigInt(Math.floor(num * 10_000_000))
-}
+// Formatting lives in lib/format.ts; re-exported here because most
+// pages already import these alongside the hooks.
+export { formatUsdc, parseUsdc } from "../lib/format"
 
 // ─── Controller reads ───
 
@@ -73,11 +39,7 @@ export function useProtocolStats() {
 		queryFn: async () => {
 			const tx = await controllerClient.get_stats()
 			// (total_policies_sold, total_premiums_collected, total_payouts_distributed)
-			const [sold, premiumsCollected, payoutsDistributed] = tx.result as readonly [
-				bigint,
-				bigint,
-				bigint,
-			]
+			const [sold, premiumsCollected, payoutsDistributed] = tx.result
 			return {
 				totalPoliciesSold: Number(sold),
 				totalPremiumsCollected: premiumsCollected,
@@ -96,7 +58,7 @@ export function useTravelerFlights(address: string | undefined) {
 		queryFn: async () => {
 			if (!address) return []
 			const tx = await controllerClient.get_flights_for_traveler({ address })
-			return tx.result as Array<readonly [string, bigint]>
+			return tx.result
 		},
 		enabled: !!address,
 		refetchInterval: 30_000,
@@ -109,7 +71,7 @@ export function useKeeper() {
 		queryKey: ["controller", "keeper"],
 		queryFn: async () => {
 			const tx = await controllerClient.get_keeper()
-			return tx.result as string
+			return tx.result
 		},
 		retry: 1,
 	})
@@ -120,7 +82,7 @@ export function useSolvencyRatio() {
 		queryKey: ["controller", "solvencyRatio"],
 		queryFn: async () => {
 			const tx = await controllerClient.get_solvency_ratio()
-			return tx.result as number
+			return tx.result
 		},
 		retry: 1,
 	})
@@ -132,7 +94,7 @@ export function useWhitelistEnabled() {
 		queryKey: ["controller", "whitelistEnabled"],
 		queryFn: async () => {
 			const tx = await controllerClient.whitelist_enabled()
-			return tx.result as boolean
+			return tx.result
 		},
 		refetchInterval: 60_000,
 		retry: 1,
@@ -146,7 +108,7 @@ export function useIsWhitelisted(address: string | undefined) {
 		queryFn: async () => {
 			if (!address) return false
 			const tx = await controllerClient.is_whitelisted({ addr: address })
-			return tx.result as boolean
+			return tx.result
 		},
 		enabled: !!address,
 		refetchInterval: 60_000,
@@ -161,7 +123,7 @@ export function useTotalAssets() {
 		queryKey: ["vault", "totalAssets"],
 		queryFn: async () => {
 			const tx = await riskVaultClient.total_assets()
-			return tx.result as bigint
+			return tx.result
 		},
 		refetchInterval: 30_000,
 		retry: 1,
@@ -173,7 +135,7 @@ export function useFreeCapital() {
 		queryKey: ["vault", "freeCapital"],
 		queryFn: async () => {
 			const tx = await riskVaultClient.get_free_capital()
-			return tx.result as bigint
+			return tx.result
 		},
 		refetchInterval: 30_000,
 		retry: 1,
@@ -185,7 +147,7 @@ export function useLockedCapital() {
 		queryKey: ["vault", "lockedCapital"],
 		queryFn: async () => {
 			const tx = await riskVaultClient.get_locked_capital()
-			return tx.result as bigint
+			return tx.result
 		},
 		refetchInterval: 30_000,
 		retry: 1,
@@ -198,7 +160,7 @@ export function useVaultBalance(address: string | undefined) {
 		queryFn: async () => {
 			if (!address) return 0n
 			const tx = await riskVaultClient.balance({ account: address })
-			return tx.result as bigint
+			return tx.result
 		},
 		enabled: !!address,
 		refetchInterval: 30_000,
@@ -213,7 +175,7 @@ export function useConvertToAssets(shares: bigint | undefined) {
 		queryFn: async () => {
 			if (shares === undefined || shares === 0n) return 0n
 			const tx = await riskVaultClient.convert_to_assets({ shares })
-			return tx.result as bigint
+			return tx.result
 		},
 		enabled: shares !== undefined,
 		refetchInterval: 30_000,
@@ -228,7 +190,7 @@ export function useSnapshotPrice() {
 		queryFn: async () => {
 			const day = BigInt(Math.floor(Date.now() / 1000 / 86_400))
 			const tx = await riskVaultClient.get_snapshot_price({ day })
-			return tx.result as bigint
+			return tx.result
 		},
 		retry: 1,
 	})
@@ -240,12 +202,7 @@ export function useWithdrawalQueue() {
 		queryFn: async () => {
 			const tx = await riskVaultClient.get_withdrawal_queue()
 			// WithdrawalRequest { owner, request_id, shares, requested_at }
-			return tx.result as Array<{
-				owner: string
-				request_id: bigint
-				shares: bigint
-				requested_at: bigint
-			}>
+			return tx.result
 		},
 		refetchInterval: 15_000,
 		retry: 1,
@@ -258,12 +215,7 @@ export function useDepositQueue() {
 		queryFn: async () => {
 			const tx = await riskVaultClient.get_deposit_queue()
 			// DepositRequest { owner, request_id, assets, requested_at }
-			return tx.result as Array<{
-				owner: string
-				request_id: bigint
-				assets: bigint
-				requested_at: bigint
-			}>
+			return tx.result
 		},
 		refetchInterval: 15_000,
 		retry: 1,
@@ -276,7 +228,7 @@ export function useClaimableBalance(address: string | undefined) {
 		queryFn: async () => {
 			if (!address) return 0n
 			const tx = await riskVaultClient.get_claimable_balance({ address })
-			return tx.result as bigint
+			return tx.result
 		},
 		enabled: !!address,
 		refetchInterval: 15_000,
@@ -332,7 +284,7 @@ export function useRoutes() {
 								origin: route.origin,
 								dest: route.dest,
 							})
-							const status = tx.result as RouteStatus
+							const status = tx.result
 							return {
 								...route,
 								status: status.tag,
@@ -375,8 +327,7 @@ export function useGovernanceDefaults() {
 		queryKey: ["governance", "defaults"],
 		queryFn: async () => {
 			const tx = await governanceClient.get_defaults()
-			const [default_premium, default_payoff, default_delay_hours] =
-				tx.result as readonly [bigint, bigint, number]
+			const [default_premium, default_payoff, default_delay_hours] = tx.result
 			return { default_premium, default_payoff, default_delay_hours }
 		},
 		retry: 1,
@@ -389,7 +340,7 @@ export function useIsAdmin(address: string | undefined) {
 		queryFn: async () => {
 			if (!address) return false
 			const tx = await governanceClient.is_admin({ addr: address })
-			return tx.result as boolean
+			return tx.result
 		},
 		enabled: !!address,
 		retry: 1,
@@ -403,7 +354,7 @@ export function useActiveFlights() {
 		queryKey: ["oracle", "activeFlights"],
 		queryFn: async () => {
 			const tx = await oracleClient.get_active_flights()
-			return tx.result as Array<readonly [string, bigint]>
+			return tx.result
 		},
 		refetchInterval: 30_000,
 		retry: 1,
@@ -418,7 +369,7 @@ export function useFlightData(flightId: string, date: bigint, enabled = true) {
 				flight_id: flightId,
 				date,
 			})
-			return tx.result as FlightData
+			return tx.result
 		},
 		enabled,
 		refetchInterval: 30_000,
@@ -431,7 +382,7 @@ export function useAuthorizedOracle() {
 		queryKey: ["oracle", "authorizedOracle"],
 		queryFn: async () => {
 			const tx = await oracleClient.get_authorized_oracle()
-			return tx.result as string
+			return tx.result
 		},
 		retry: 1,
 	})
@@ -489,7 +440,7 @@ export function useFlightDataBatch(
 						flight_id: flightId,
 						date,
 					})
-					return { flightId, date, data: tx.result as FlightData, error: false }
+					return { flightId, date, data: tx.result, error: false }
 				} catch {
 					return { flightId, date, data: null, error: true }
 				}
@@ -514,7 +465,7 @@ export function useFlightConfig(
 				flight_id: flightId,
 				date,
 			})
-			return (tx.result ?? null) as FlightConfig | null
+			return tx.result ?? null
 		},
 		enabled,
 		refetchInterval: 30_000,
@@ -561,8 +512,8 @@ export function usePolicyStateBatch(
 						return {
 							flightId,
 							date,
-							config: (cfgTx.result ?? null) as FlightConfig | null,
-							claimed: claimedTx.result as boolean,
+							config: cfgTx.result ?? null,
+							claimed: claimedTx.result,
 							error: false,
 						}
 					} catch {
@@ -582,7 +533,7 @@ export function useRecoveredBalance() {
 		queryKey: ["pool", "recoveredBalance"],
 		queryFn: async () => {
 			const tx = await flightPoolManagerClient.get_recovered_balance()
-			return tx.result as bigint
+			return tx.result
 		},
 		refetchInterval: 60_000,
 		retry: 1,
@@ -597,7 +548,7 @@ export function useUsdcBalance(address: string | undefined) {
 		queryFn: async () => {
 			if (!address) return 0n
 			const tx = await mockUsdcClient.balance({ account: address })
-			return tx.result as bigint
+			return tx.result
 		},
 		enabled: !!address,
 		refetchInterval: 15_000,

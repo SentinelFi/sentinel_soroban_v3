@@ -10,6 +10,24 @@ import {
 import storage from "../util/storage"
 import { wallet, fetchBalances, type MappedBalances } from "../util/wallet"
 import { networkPassphrase as appNetworkPassphrase } from "../contracts/util"
+import controllerClient from "../contracts/controller"
+import governanceClient from "../contracts/governance_module"
+import oracleClient from "../contracts/oracle_aggregator"
+import riskVaultClient from "../contracts/risk_vault"
+import mockUsdcClient from "../contracts/mock_usdc"
+import flightPoolManagerClient from "../contracts/flight_pool_manager"
+
+/** Every contract client singleton — publicKey is synced on address
+ *  change (below) so ANY page can build write transactions without
+ *  remembering to call a per-page sync hook. */
+const CONTRACT_CLIENTS = [
+	controllerClient,
+	governanceClient,
+	oracleClient,
+	riskVaultClient,
+	mockUsdcClient,
+	flightPoolManagerClient,
+]
 
 const signTransaction = wallet.signTransaction.bind(wallet)
 
@@ -71,6 +89,23 @@ export const WalletProvider = ({ children }: { children: React.ReactNode }) => {
 	const [isPending, startTransition] = useTransition()
 	const popupLock = useRef(false)
 
+	// Mirror of the wallet state for the mount-once polling loop below.
+	// The loop reads through this ref so every tick compares against the
+	// CURRENT values — a plain closure would forever compare against the
+	// first render's undefineds, defeating the change checks.
+	const current = useRef({ address, network, networkPassphrase })
+	useEffect(() => {
+		current.current = { address, network, networkPassphrase }
+	})
+
+	// Scaffold-stellar clients need `publicKey` set to build write
+	// transactions; sync all singletons here, once, for every page.
+	useEffect(() => {
+		for (const client of CONTRACT_CLIENTS) {
+			client.options.publicKey = address
+		}
+	}, [address])
+
 	const nullify = () => {
 		setAddress(undefined)
 		setNetwork(undefined)
@@ -102,11 +137,14 @@ export const WalletProvider = ({ children }: { children: React.ReactNode }) => {
 	const updateCurrentWalletState = async () => {
 		// There is no way, with StellarWalletsKit, to check if the wallet is
 		// installed/connected/authorized. We need to manage that on our side by
-		// checking our storage item.
-		const walletId = storage.getItem("walletId")
-		const walletNetwork = storage.getItem("walletNetwork")
-		const walletAddr = storage.getItem("walletAddress")
-		const passphrase = storage.getItem("networkPassphrase")
+		// checking our storage item. "safe" mode: a legacy non-JSON value
+		// returns null instead of throwing — an uncaught throw here would
+		// kill the polling loop for good (no next tick ever scheduled).
+		const walletId = storage.getItem("walletId", "safe")
+		const walletNetwork = storage.getItem("walletNetwork", "safe")
+		const walletAddr = storage.getItem("walletAddress", "safe")
+		const passphrase = storage.getItem("networkPassphrase", "safe")
+		const { address, network, networkPassphrase } = current.current
 
 		if (
 			!address &&

@@ -66,11 +66,11 @@ export {
 // ── usdc balance ───────────────────────────────────────────────────
 export { useUsdcBalance } from "../hooks/useContracts"
 
-// ── helpers + clients + sync (re-exposed for write paths) ──────────
+// ── helpers + clients (re-exposed for write paths; the wallet→client
+// publicKey sync now lives in WalletProvider) ──────────────────────
 export {
 	formatUsdc,
 	parseUsdc,
-	useContractSync,
 	controllerClient,
 	riskVaultClient,
 	governanceClient,

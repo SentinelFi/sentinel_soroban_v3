@@ -5,6 +5,7 @@ import { explorerTxUrl } from "../providers/NotificationProvider"
 import type { NotificationType } from "../providers/NotificationProvider"
 import { useTheme } from "../providers/ThemeProvider"
 import { useCopy } from "../copy"
+import { relTime } from "../lib/format"
 
 /**
  * Collapsible Activity Log drawer. A small tab docks bottom-left (above the
@@ -50,15 +51,6 @@ function useWalletActivity() {
 			addNotification(t.wallet.disconnected(shortAddr(prev)), "warning")
 		}
 	}, [address, addNotification, t])
-}
-
-function timeAgo(at: number): string {
-	const s = Math.max(0, Math.round((Date.now() - at) / 1000))
-	if (s < 60) return `${s}s ago`
-	const m = Math.floor(s / 60)
-	if (m < 60) return `${m}m ago`
-	const h = Math.floor(m / 60)
-	return `${h}h ago`
 }
 
 export function ActivityLog() {
@@ -125,7 +117,7 @@ export function ActivityLog() {
 										<p className="activity-item-msg">{n.message}</p>
 										<div className="activity-item-meta">
 											<span className="activity-item-time">
-												{timeAgo(n.at)}
+												{relTime(n.at)}
 											</span>
 											{n.txHash && (
 												<a

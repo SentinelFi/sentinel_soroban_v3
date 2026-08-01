@@ -1,14 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 import { NavLink } from "react-router-dom"
-import { useQueryClient } from "@tanstack/react-query"
 import { useWallet } from "../hooks/useWallet"
 import { useNotification } from "../hooks/useNotification"
-import {
-	formatUsdc,
-	mockUsdcClient,
-	useContractSync,
-	useUsdcBalance,
-} from "../hooks/useContracts"
+import { formatUsdc, mockUsdcClient, useUsdcBalance } from "../hooks/useContracts"
+import { useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet, disconnectWallet } from "../util/wallet"
 import { cn, txHashOf } from "../lib/utils"
 import { useCopy } from "../copy"
@@ -114,30 +109,27 @@ function WalletMenu({ address }: { address: string }) {
 /** USDC balance chip with inline testnet faucet mint (+10,000 mock USDC). */
 function CoinChip() {
 	const { address, signTransaction } = useWallet()
-	const { addNotification } = useNotification()
-	const queryClient = useQueryClient()
 	const { data: usdcBalance } = useUsdcBalance(address)
-	const [minting, setMinting] = useState(false)
 	const { theme } = useTheme()
+	const t = useCopy()
+	const mintFlow = useTxFlow({
+		invalidateKeys: [["usdc"]],
+		errorFallback: t.notify.mintFailed,
+		notifyError: true,
+	})
+	const minting =
+		mintFlow.state === "awaiting" || mintFlow.state === "confirming"
 
 	if (!address) return null
 
-	const mint = async () => {
-		if (minting) return
-		setMinting(true)
-		try {
+	const mint = () =>
+		mintFlow.run(async (step) => {
+			step("awaiting")
 			const tx = await mockUsdcClient.faucet({ to: address })
+			step("confirming")
 			const sent = await tx.signAndSend({ signTransaction })
-			await queryClient.invalidateQueries({ queryKey: ["usdc"] })
-			addNotification("+10,000 USDC minted to your wallet", "success", {
-				txHash: txHashOf(sent),
-			})
-		} catch {
-			addNotification("Mint failed — try again", "error")
-		} finally {
-			setMinting(false)
-		}
-	}
+			return { message: t.notify.mintSuccess, txHash: txHashOf(sent) }
+		})
 
 	return (
 		// hidden again on md–lg: with the inline nav there the chip is what
@@ -171,7 +163,6 @@ function CoinChip() {
 
 export function TopBar() {
 	const { address } = useWallet()
-	useContractSync()
 	const t = useCopy()
 	const [brandHead, brandTail] = splitBrand(t.brand.name)
 

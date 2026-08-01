@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { relTime } from "../lib/utils"
+import { relTime, utcDateTime } from "../lib/format"
 
 /**
  * SYSTEM STATUS — public job-health board (linked from the footer).
@@ -59,7 +59,7 @@ export default function Status() {
 					</p>
 					{q.data && (
 						<p className="font-body text-[12px] text-mute">
-							as of {new Date(q.data.as_of).toUTCString().slice(5, 25)} UTC
+							as of {utcDateTime(q.data.as_of, true)} UTC
 						</p>
 					)}
 				</div>

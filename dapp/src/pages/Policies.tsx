@@ -1,21 +1,19 @@
 import { useState } from "react"
 import { Link } from "react-router-dom"
-import { useQueryClient } from "@tanstack/react-query"
 import type { FlightData } from "oracle_aggregator"
 import {
 	flightPoolManagerClient,
 	formatUsdc,
-	useContractSync,
 	useFlightDataBatch,
 	usePolicyStateBatch,
 	useTravelerFlights,
 } from "../hooks/useContracts"
 import { useWallet } from "../hooks/useWallet"
-import { useNotification } from "../hooks/useNotification"
-import { cn, errorMessage, formatDate } from "../lib/utils"
+import { useTxFlow } from "../hooks/useTxFlow"
+import { cn, txHashOf } from "../lib/utils"
+import { formatDate } from "../lib/format"
 import { PixelArt } from "../components/PixelArt"
 import { TxProgress } from "../components/TxProgress"
-import type { TxState } from "../types"
 import { useTheme } from "../providers/ThemeProvider"
 import { useCopy } from "../copy"
 import { Plane, Trophy, Clock, Check, PlaneTakeoff } from "lucide-react"
@@ -93,15 +91,17 @@ function StatusBadge({ kind, label }: { kind: BadgeKind; label: string }) {
 
 export default function Policies() {
 	const { address, signTransaction } = useWallet()
-	useContractSync()
-	const queryClient = useQueryClient()
-	const { addNotification } = useNotification()
 	const t = useCopy()
 	const { theme } = useTheme()
 	const serious = theme === "serious"
 	const [claimingId, setClaimingId] = useState<string | null>(null)
-	const [claimTxState, setClaimTxState] = useState<TxState>("idle")
-	const [claimError, setClaimError] = useState<string | null>(null)
+	const claimFlow = useTxFlow({
+		invalidateKeys: [["pool"], ["usdc"]],
+		errorFallback: "Claim failed",
+		notifyError: true,
+		resetDelayMs: 2000,
+		onSettled: () => setClaimingId(null),
+	})
 
 	const { data: flights, isLoading: flightsLoading } =
 		useTravelerFlights(address)
@@ -234,41 +234,23 @@ export default function Policies() {
 	const wonBets = bets.filter((b) => b.section === "won")
 	const settledBets = bets.filter((b) => b.section === "settled")
 
-	const handleClaim = async (bet: Bet) => {
+	const handleClaim = (bet: Bet) => {
 		if (!address || claimingId) return
 		setClaimingId(bet.id)
-		setClaimTxState("awaiting")
-		setClaimError(null)
-		try {
+		void claimFlow.run(async (step) => {
+			step("awaiting")
 			const tx = await flightPoolManagerClient.claim({
 				traveler: address,
 				flight_id: bet.flightId,
 				date: bet.date,
 			})
-			setClaimTxState("confirming")
-			await tx.signAndSend({ signTransaction })
-			setClaimTxState("success")
-			addNotification(
-				`Payout claimed for flight ${bet.flightId}!`,
-				"success",
-			)
-			void queryClient.invalidateQueries({ queryKey: ["pool"] })
-			void queryClient.invalidateQueries({ queryKey: ["usdc"] })
-			setTimeout(() => {
-				setClaimTxState("idle")
-				setClaimingId(null)
-			}, 2000)
-		} catch (err) {
-			console.error("Claim failed:", err)
-			const message = errorMessage(err, "Claim failed")
-			setClaimError(message)
-			setClaimTxState("error")
-			addNotification(message, "error")
-			setTimeout(() => {
-				setClaimTxState("idle")
-				setClaimingId(null)
-			}, 3000)
-		}
+			step("confirming")
+			const sent = await tx.signAndSend({ signTransaction })
+			return {
+				message: t.notify.claimed(bet.flightId),
+				txHash: txHashOf(sent),
+			}
+		})
 	}
 
 	return (
@@ -366,7 +348,7 @@ export default function Policies() {
 								)}
 								<button
 									type="button"
-									onClick={() => void handleClaim(bet)}
+									onClick={() => handleClaim(bet)}
 									disabled={claimingId !== null}
 									className={cn(
 										"btn-px btn-win mt-4 w-full",
@@ -379,9 +361,9 @@ export default function Policies() {
 								</button>
 								{claimingId === bet.id && (
 									<TxProgress
-										state={claimTxState}
+										state={claimFlow.state}
 										steps={["awaiting", "confirming"]}
-										error={claimError}
+										error={claimFlow.error}
 										stamps={{ success: "stamp-paid" }}
 									/>
 								)}
