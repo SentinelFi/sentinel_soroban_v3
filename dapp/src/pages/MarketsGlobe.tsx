@@ -284,6 +284,7 @@ function Globe({
 	return (
 		<div
 			ref={stageRef}
+			data-tour="live"
 			className={`globe-stage${dragging ? " dragging" : ""}`}
 			onPointerDown={onPointerDown}
 			onPointerMove={onPointerMove}

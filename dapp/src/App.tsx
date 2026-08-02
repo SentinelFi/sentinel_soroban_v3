@@ -5,6 +5,7 @@ import { TopBar } from "./components/TopBar"
 import { FlightBackground } from "./components/FlightBackground"
 import { ThemeDock } from "./components/ThemeToggle"
 import { ActivityLog } from "./components/ActivityLog"
+import { Tour } from "./components/Tour"
 import { useTheme } from "./providers/ThemeProvider"
 import { useWallet } from "./hooks/useWallet"
 import { stellarNetwork } from "./contracts/util"
@@ -104,6 +105,9 @@ export default function App() {
 
 			{/* Activity log — collapsible drawer, docks above the MODE dock. */}
 			<ActivityLog />
+
+			{/* First-visit onboarding — invite card bottom-right, guided tour. */}
+			<Tour />
 		</div>
 	)
 }

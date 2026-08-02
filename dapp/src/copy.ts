@@ -57,6 +57,10 @@ const fun = {
 		noMatch: (q: string) => `NO FLIGHTS MATCH “${q}”`,
 		noMatchHint: "Try a flight number or an airport code.",
 		insureBtn: (odds: number) => `INSURE ✈ ${odds}X`,
+		insureTitle: (odds: number) =>
+			`BUY COVER — PAYS ${odds}X THE PREMIUM IF THIS FLIGHT IS DELAYED`,
+		stakeTitle: (premium: string, payout: string) =>
+			`PAY ${premium} USDC NOW — COLLECT ${payout} USDC IF DELAYED`,
 		yieldBtn: "EARN YIELD",
 		yieldTitle: "Take the other side — underwrite flights from the pool",
 		pageLabel: (page: number, total: number, count: number) =>
@@ -325,6 +329,47 @@ const fun = {
 		aria: "What is this?",
 		docsCta: "READ THE PILOT'S MANUAL ↗",
 	},
+	tour: {
+		welcomeTitle: "FIRST TIME HERE?",
+		welcomeBody:
+			"Take a quick lap around the terminal.",
+		start: "SHOW ME AROUND",
+		dismiss: "NO THANKS",
+		skipAria: "Close the tour",
+		stepLabel: (i: number, n: number) => `STEP ${i}/${n}`,
+		back: "◀ BACK",
+		next: "NEXT ▶",
+		done: "FINISH ★",
+		walletLink: "GET A WALLET ↗",
+		stellarLink: "WHAT'S STELLAR? ↗",
+		loading: "LOADING…",
+		steps: {
+			nav: {
+				title: "THE COCKPIT",
+				body: "Connect your Stellar wallet up top to play, and flip the site's look. New to wallets? Start here:",
+			},
+			board: {
+				title: "THE DEPARTURES BOARD",
+				body: "Search or sort the open flights, then hit INSURE on yours: pay a fixed premium, get paid automatically if it lands late.",
+			},
+			live: {
+				title: "LIVE IN THE AIR",
+				body: "Insured flights live on the globe.",
+			},
+			policies: {
+				title: "YOUR SLIPS",
+				body: "Your active cover lives here: flights in the air, payouts to claim, and settled history.",
+			},
+			house: {
+				title: "BE THE HOUSE",
+				body: "Take the other side — deposit USDC to underwrite flights and earn a cut of every premium.",
+			},
+			calc: {
+				title: "RUN THE NUMBERS",
+				body: "Estimate underwriter earnings in simulation mode — thousands of Monte Carlo months, spread and risk included.",
+			},
+		},
+	},
 	footer: {
 		// rendered after the linked "Soroban testnet" prefix — see SiteFooter
 		left: "same contracts, different game.",
@@ -384,6 +429,10 @@ const serious: Copy = {
 		noMatch: (q: string) => `No flights match “${q}”`,
 		noMatchHint: "Try a flight number or an airport code.",
 		insureBtn: (odds: number) => `Buy Coverage · ${odds}×`,
+		insureTitle: (odds: number) =>
+			`Buy coverage — pays ${odds}× the premium if this flight is delayed`,
+		stakeTitle: (premium: string, payout: string) =>
+			`Pay a ${premium} USDC premium — receive ${payout} USDC if the flight is delayed`,
 		yieldBtn: "Earn Yield",
 		yieldTitle: "Take the other side — underwrite flights from the vault",
 		pageLabel: (page: number, total: number, count: number) =>
@@ -651,6 +700,47 @@ const serious: Copy = {
 		title: "How this works",
 		aria: "What is this?",
 		docsCta: "Read the docs →",
+	},
+	tour: {
+		welcomeTitle: "FIRST TIME HERE?",
+		welcomeBody:
+			"Take a short tour of the app.",
+		start: "Show me around",
+		dismiss: "No thanks",
+		skipAria: "Close the tour",
+		stepLabel: (i: number, n: number) => `Step ${i} of ${n}`,
+		back: "← Back",
+		next: "Next →",
+		done: "Finish",
+		walletLink: "Create a wallet →",
+		stellarLink: "Learn about Stellar →",
+		loading: "Loading…",
+		steps: {
+			nav: {
+				title: "The top bar",
+				body: "Connect your Stellar wallet here and adjust the site's appearance. New to wallets? Start here:",
+			},
+			board: {
+				title: "Insurable flights",
+				body: "Search or sort the open flights, then pick one and buy coverage: pay a fixed premium, receive an automatic payout if it's delayed.",
+			},
+			live: {
+				title: "Live flights",
+				body: "Insured flights live on the globe.",
+			},
+			policies: {
+				title: "My Policies",
+				body: "Your active coverage: flights in the air, payouts to claim, and settled history.",
+			},
+			house: {
+				title: "Underwriter vault",
+				body: "Take the other side — deposit USDC to back policies and earn a share of every premium.",
+			},
+			calc: {
+				title: "Run the numbers",
+				body: "Estimate underwriter earnings in simulation mode — a Monte Carlo run over thousands of months, spread and risk included.",
+			},
+		},
 	},
 	footer: {
 		left: "parametric flight delay insurance.",

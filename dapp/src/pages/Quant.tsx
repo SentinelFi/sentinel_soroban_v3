@@ -377,7 +377,10 @@ export default function Quant() {
 	const yieldPct = (mc.mean / capital) * 100
 
 	return (
-		<div className="mx-auto max-w-5xl space-y-8 px-4 py-8">
+		<div
+			data-tour="calc"
+			className="mx-auto max-w-5xl space-y-8 px-4 py-8"
+		>
 			<div>
 				<Link
 					to="/house"
