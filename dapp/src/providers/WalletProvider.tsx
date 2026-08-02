@@ -72,6 +72,12 @@ export interface WalletContextType {
 }
 
 const POLL_INTERVAL = 1000
+// Consecutive failed polls tolerated before treating the wallet as gone.
+// freighter-api gives the extension a hard 2s to answer `isConnected`
+// before reporting "not connected" — a deadline it routinely misses right
+// after the approval popup closes, while locked, or under load — so one
+// failed tick means "busy", not "disconnected".
+const MAX_POLL_FAILURES = 3
 
 export const WalletContext = createContext<WalletContextType>({
 	isPending: true,
@@ -88,6 +94,7 @@ export const WalletProvider = ({ children }: { children: React.ReactNode }) => {
 	const [networkPassphrase, setNetworkPassphrase] = useState<string>()
 	const [isPending, startTransition] = useTransition()
 	const popupLock = useRef(false)
+	const pollFailures = useRef(0)
 
 	// Mirror of the wallet state for the mount-once polling loop below.
 	// The loop reads through this ref so every tick compares against the
@@ -107,6 +114,7 @@ export const WalletProvider = ({ children }: { children: React.ReactNode }) => {
 	}, [address])
 
 	const nullify = () => {
+		pollFailures.current = 0
 		setAddress(undefined)
 		setNetwork(undefined)
 		setNetworkPassphrase(undefined)
@@ -172,6 +180,7 @@ export const WalletProvider = ({ children }: { children: React.ReactNode }) => {
 					wallet.getAddress(),
 					wallet.getNetwork(),
 				])
+				pollFailures.current = 0
 
 				if (!a.address) storage.setItem("walletId", "")
 				if (
@@ -185,11 +194,16 @@ export const WalletProvider = ({ children }: { children: React.ReactNode }) => {
 					setNetworkPassphrase(n.networkPassphrase)
 				}
 			} catch (e) {
-				// If `getNetwork` or `getAddress` throw errors... sign the user out???
-				nullify()
-				// then log the error (instead of throwing) so we have visibility
-				// into the error while working on Scaffold Stellar but we do not
-				// crash the app process
+				// A failed tick usually means the extension was briefly busy,
+				// not that the user disconnected — only a sustained streak of
+				// failures signs the user out. Wiping eagerly here is what
+				// used to disconnect wallets seconds after they connected.
+				pollFailures.current += 1
+				if (pollFailures.current >= MAX_POLL_FAILURES) {
+					nullify()
+				}
+				// log the error (instead of throwing) so we have visibility
+				// but do not crash the app process
 				console.error(e)
 			} finally {
 				popupLock.current = false
