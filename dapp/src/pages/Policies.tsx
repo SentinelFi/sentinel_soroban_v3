@@ -123,7 +123,10 @@ export default function Policies() {
 
 	if (!address) {
 		return (
-			<div className="mx-auto max-w-3xl px-4 py-16 text-center">
+			<div
+				data-tour="policies"
+				className="mx-auto max-w-3xl px-4 py-16 text-center"
+			>
 				{serious ? (
 					<Plane className="mx-auto h-14 w-14 text-highlight" strokeWidth={1.6} />
 				) : (
@@ -270,7 +273,10 @@ export default function Policies() {
 	}
 
 	return (
-		<div className="mx-auto max-w-4xl space-y-10 px-4 py-8">
+		<div
+			data-tour="policies"
+			className="mx-auto max-w-4xl space-y-10 px-4 py-8"
+		>
 			<div>
 				<h1 className="h-display text-[20px]">{t.policies.title}</h1>
 				<p className="mt-2 font-body text-[14px] text-dim">

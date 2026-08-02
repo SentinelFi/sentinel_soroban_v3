@@ -208,7 +208,10 @@ export function TopBar() {
 	const [brandHead, brandTail] = splitBrand(t.brand.name)
 
 	return (
-		<header className="topbar sticky top-0 z-20 border-b-2 border-line bg-page">
+		<header
+			data-tour="nav"
+			className="topbar sticky top-0 z-20 border-b-2 border-line bg-page"
+		>
 			{/* phones may wrap the wallet group to its own line; from md up the
 		    bar stays a single row — squeezed items wrap their own text
 		    ("MY POLICIES" → two lines) instead of breaking the row */}

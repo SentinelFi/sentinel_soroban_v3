@@ -118,6 +118,14 @@ html {
 	background-color: var(--color-page);
 }
 
+/* Smooth in-page scrolling where the browser supports it; skipped for
+   users who prefer reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+	html {
+		scroll-behavior: smooth;
+	}
+}
+
 body {
 	margin: 0;
 	min-height: 100vh;
@@ -234,6 +242,40 @@ html[data-theme="serious"] {
 @media (max-width: 640px) {
 	.theme-dock-label {
 		display: none;
+	}
+}
+
+/* Onboarding tour: card pinned bottom-right (mirrors the MODE dock's
+   bottom-left), stacked under the MODE dock (60) and activity drawer (59)
+   so neither is ever buried by the tour. */
+.tour-dock {
+	position: fixed;
+	right: 16px;
+	bottom: 16px;
+	z-index: 58;
+	width: min(21rem, calc(100vw - 32px));
+	padding: 16px;
+}
+
+/* Anchor of the active tour step. Outline paints outside the box without
+   affecting layout or scroll; the raised z-index lifts panels out of
+   sibling stacking so the ring isn't clipped by neighbours. */
+.tour-highlight {
+	position: relative;
+	z-index: 15;
+	outline: 3px solid var(--color-gold);
+	outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.tour-highlight {
+		animation: tour-pulse 1.4s ease-in-out infinite;
+	}
+}
+
+@keyframes tour-pulse {
+	50% {
+		outline-color: var(--color-sky);
 	}
 }
 

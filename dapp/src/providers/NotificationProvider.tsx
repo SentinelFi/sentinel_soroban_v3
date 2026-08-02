@@ -8,7 +8,8 @@
  *
  * Behaviour:
  *   - success/info/warning toasts auto-dismiss (~5s)
- *   - error toasts are STICKY (stay until closed) so users can read/copy them
+ *   - error toasts get a longer window (~10s) plus a ✕ to close sooner;
+ *     the Activity Log keeps them for reading/copying after they're gone
  *   - a bounded history buffer (~50) backs the Activity Log drawer
  *
  * Themed rendering lives in CSS: FUN = pixel panel (hard border, CRT),
@@ -71,6 +72,9 @@ const TYPE_STYLE: Record<NotificationType, { border: string; label: string }> =
 	}
 
 const AUTO_DISMISS_MS = 5000
+// errors linger longer — enough to read, not forever; the full text
+// survives in the Activity Log either way
+const ERROR_DISMISS_MS = 10_000
 const HISTORY_LIMIT = 50
 
 // Re-exported for existing importers; the implementation derives the
@@ -101,10 +105,10 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({
 			}
 			setToasts((prev) => [...prev, entry])
 			setHistory((prev) => [entry, ...prev].slice(0, HISTORY_LIMIT))
-			// Errors are sticky — users need time to read/copy them.
-			if (type !== "error") {
-				setTimeout(() => dismiss(id), AUTO_DISMISS_MS)
-			}
+			setTimeout(
+				() => dismiss(id),
+				type === "error" ? ERROR_DISMISS_MS : AUTO_DISMISS_MS,
+			)
 		},
 		[dismiss],
 	)

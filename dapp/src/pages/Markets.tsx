@@ -894,7 +894,7 @@ export default function Markets() {
 			<StatsTicker openMarkets={isDemo ? 0 : (routes?.length ?? 0)} />
 
 			{/* THE DEPARTURES BOARD — signature artifact */}
-			<section>
+			<section data-tour="board">
 				<div className="board-head flex items-center justify-between border-2 border-b-0 border-line bg-raised px-4 py-3">
 					<h2 className="h-section flex items-center gap-3">
 						{!serious && (
@@ -1093,20 +1093,30 @@ export default function Markets() {
 												route,
 												defaults,
 											)
+											const fmtPremium =
+												premium !== undefined
+													? formatUsdc(premium)
+													: "…"
+											const fmtPayoff =
+												payoff !== undefined
+													? formatUsdc(payoff)
+													: "…"
 											return (
-												<span className="font-body text-[14px] font-semibold">
+												<span
+													title={t.markets.stakeTitle(
+														fmtPremium,
+														fmtPayoff,
+													)}
+													className="font-body text-[14px] font-semibold"
+												>
 													<span className="text-ink">
-														{premium !== undefined
-															? formatUsdc(premium)
-															: "…"}
+														{fmtPremium}
 													</span>
 													<span className="mx-1 font-normal text-mute">
 														→
 													</span>
 													<span className="text-win">
-														{payoff !== undefined
-															? formatUsdc(payoff)
-															: "…"}
+														{fmtPayoff}
 													</span>
 													<span className="ml-1 text-[11px] font-normal text-mute">
 														USDC
@@ -1117,17 +1127,21 @@ export default function Markets() {
 									</td>
 									<td className="px-4 py-3">
 										<div className="relative z-10 flex justify-end gap-2">
-											<button
-												type="button"
-												onClick={() => setSlipRoute(route)}
-												className="btn-px btn-loss btn-sm"
-											>
-												{t.markets.insureBtn(
-													Number.parseFloat(
-														oddsFor(route, defaults),
-													),
-												)}
-											</button>
+											{(() => {
+												const odds = Number.parseFloat(
+													oddsFor(route, defaults),
+												)
+												return (
+													<button
+														type="button"
+														onClick={() => setSlipRoute(route)}
+														className="btn-px btn-loss btn-sm"
+														title={t.markets.insureTitle(odds)}
+													>
+														{t.markets.insureBtn(odds)}
+													</button>
+												)
+											})()}
 											<button
 												type="button"
 												onClick={() => void navigate("/house")}
