@@ -83,6 +83,33 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
         (config.dryRun ? " [DRY RUN]" : "")
     );
 
+    // Pre-read every route's on-chain status in 20-wide chunks (the same
+    // RPC-friendly width the board scan used). The sequential per-route
+    // read was fine at a handful of routes; at fleet scale (1,069 after
+    // the 2026-08-04 seeding) it was ~7min of round-trips — past the
+    // 300s function cap. Chunked it's ~30s with identical semantics.
+    const STATUS_CHUNK = 20;
+    const statusByKey = new Map<string, Awaited<ReturnType<GovSubmitter["readStatus"]>> | null>();
+    for (let i = 0; i < enabled.length; i += STATUS_CHUNK) {
+      await Promise.all(
+        enabled.slice(i, i + STATUS_CHUNK).map(async (route) => {
+          const mapKey = `${route.flight_id}|${route.origin}|${route.destination}`;
+          try {
+            statusByKey.set(
+              mapKey,
+              await submitter.readStatus({
+                flightId: route.flight_id,
+                origin: route.origin,
+                dest: route.destination,
+              })
+            );
+          } catch {
+            statusByKey.set(mapKey, null); // read failed — skip below, next pass heals
+          }
+        })
+      );
+    }
+
     let surcharged = 0;
     let cleared = 0;
     for (const route of enabled) {
@@ -118,7 +145,11 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
         const target = clampPremium(base + weatherSurchargeUnits(severity, routesConfig.rails), routesConfig.rails);
 
         const key = { flightId: route.flight_id, origin: route.origin, dest: route.destination };
-        const onChain = await submitter.readStatus(key);
+        const onChain = statusByKey.get(`${route.flight_id}|${route.origin}|${route.destination}`);
+        if (!onChain) {
+          actions.push({ flight: label, skipped: "on-chain status read failed — next pass heals" });
+          continue;
+        }
         if (onChain.status !== "Active") {
           actions.push({ flight: label, skipped: `on-chain ${onChain.status} — weather only reprices active routes` });
           continue;
