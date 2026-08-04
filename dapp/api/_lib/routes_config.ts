@@ -1,5 +1,7 @@
 import { readFileSync } from "fs";
-import rawConfig from "../../config/routes.testnet.json";
+// Node ESM (the deployed runtime) hard-requires the JSON import attribute —
+// without it every function that loads this module dies at import time.
+import rawConfig from "../../config/routes.testnet.json" with { type: "json" };
 
 /**
  * Typed loader for config/routes.testnet.json — the single human source of

@@ -1,7 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { loadRoutesConfig, fileTerms } from "./_lib/routes_config.js";
 import { getDb } from "./_lib/governance/db.js";
-import liveConfig from "../config/routes.live.json";
+// Node ESM (the deployed runtime) hard-requires the JSON import attribute.
+import liveConfig from "../config/routes.live.json" with { type: "json" };
 
 /**
  * GET /api/routes — the full route catalog for the board.
