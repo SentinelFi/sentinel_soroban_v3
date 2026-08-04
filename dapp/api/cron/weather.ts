@@ -5,8 +5,8 @@ import { run } from "../_lib/jobs/weather.js";
 // surcharge from the live 3-day forecast, applied/cleared on-chain via
 // the audited GovSubmitter. No DB, no signals. Replaced the route_agent
 // signals collector + reconciler premium path (2026-07-30 simplification).
-// 800s: the 1,069-route fleet sweep runs ~160s warm but scheduled (cold)
-// runs were busting 300s — Fluid compute on Pro allows the headroom.
-export const config = { maxDuration: 800 };
+// The platform hard-caps at 300s (Pro without Fluid ignores higher
+// values — verified 2026-08-04); the job shards the fleet to fit.
+export const config = { maxDuration: 300 };
 
 export default makeGovCronHandler(run);

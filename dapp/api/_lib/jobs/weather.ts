@@ -78,21 +78,56 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
       return forecastCache.get(iata)!;
     };
 
+    // Fleet-scale time budget (2026-08-04, 1,069 routes): the platform
+    // hard-caps this function at 300s (Pro without Fluid ignores a higher
+    // maxDuration), and a full-fleet chain-read sweep flirts with that cap
+    // whenever the public RPC slows. So each pass processes:
+    //   1. EVERY route touching an airport whose forecast is non-calm —
+    //      storm pricing/pausing never waits; and
+    //   2. a rotating quarter of the fleet (stable hash × 2h slot) — the
+    //      calm-weather hygiene slice that clears stale surcharges. Worst
+    //      case a stale surcharge outlives the storm by ≤8h, bounded and
+    //      buyer-favorable-priced (they overpay a known flat surcharge,
+    //      never underpay).
+    // Forecasts stay per-airport-cached (≈30 fetches) — the expensive part
+    // is the per-route on-chain read, so THAT is what the shard limits.
+    const forecastByAirport = new Map<string, Awaited<ReturnType<typeof getForecast>>>();
+    for (const route of enabled) {
+      for (const iata of [route.origin, route.destination]) {
+        if (!forecastByAirport.has(iata)) forecastByAirport.set(iata, await getForecast(iata));
+      }
+    }
+    const calmAirports = new Set(
+      [...forecastByAirport.entries()]
+        .filter(([, f]) => !isExtremeForecast(f) && classifyForecast(f) === "ok")
+        .map(([iata]) => iata)
+    );
+    const SHARDS = 4;
+    const shardIdx = Math.floor(Date.now() / (2 * 3600 * 1000)) % SHARDS;
+    const inShard = (r: (typeof enabled)[number]): boolean => {
+      const s = `${r.flight_id}|${r.origin}|${r.destination}`;
+      let h = 0;
+      for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+      return ((h >>> 0) % SHARDS) === shardIdx;
+    };
+    const toProcess = enabled.filter(
+      (r) => !calmAirports.has(r.origin) || !calmAirports.has(r.destination) || inShard(r)
+    );
+
     console.log(
-      `[weather] ${enabled.length} enabled route(s), ${routesConfig.weatherHorizonDays}d horizon` +
+      `[weather] ${enabled.length} enabled route(s), ${routesConfig.weatherHorizonDays}d horizon — ` +
+        `processing ${toProcess.length} (storm-affected + shard ${shardIdx + 1}/${SHARDS})` +
         (config.dryRun ? " [DRY RUN]" : "")
     );
 
-    // Pre-read every route's on-chain status in 20-wide chunks (the same
-    // RPC-friendly width the board scan used). The sequential per-route
-    // read was fine at a handful of routes; at fleet scale (1,069 after
-    // the 2026-08-04 seeding) it was ~7min of round-trips — past the
-    // 300s function cap. Chunked it's ~30s with identical semantics.
+    // Pre-read this pass's on-chain statuses in 20-wide chunks (the same
+    // RPC-friendly width the board scan used) — sequential per-route
+    // reads were ~7min at full fleet scale.
     const STATUS_CHUNK = 20;
     const statusByKey = new Map<string, Awaited<ReturnType<GovSubmitter["readStatus"]>> | null>();
-    for (let i = 0; i < enabled.length; i += STATUS_CHUNK) {
+    for (let i = 0; i < toProcess.length; i += STATUS_CHUNK) {
       await Promise.all(
-        enabled.slice(i, i + STATUS_CHUNK).map(async (route) => {
+        toProcess.slice(i, i + STATUS_CHUNK).map(async (route) => {
           const mapKey = `${route.flight_id}|${route.origin}|${route.destination}`;
           try {
             statusByKey.set(
@@ -112,7 +147,7 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
 
     let surcharged = 0;
     let cleared = 0;
-    for (const route of enabled) {
+    for (const route of toProcess) {
       const label = `${route.flight_id} ${route.origin}→${route.destination}`;
       try {
         const [o, d] = [await getForecast(route.origin), await getForecast(route.destination)];
