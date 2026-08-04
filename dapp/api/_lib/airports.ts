@@ -32,6 +32,7 @@ export const AIRPORTS: Record<string, AirportCoords> = {
   MSP: { lat: 44.88, lon: -93.22 },
   ORD: { lat: 41.97, lon: -87.91 },
   PHL: { lat: 39.87, lon: -75.24 },
+  PDX: { lat: 45.59, lon: -122.6 },
   PHX: { lat: 33.44, lon: -112.01 },
   SAN: { lat: 32.73, lon: -117.19 },
   SEA: { lat: 47.45, lon: -122.31 },
