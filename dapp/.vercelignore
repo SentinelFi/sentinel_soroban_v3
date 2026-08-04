@@ -1,3 +1,0 @@
-# Backend/cron functions excluded from this frontend-only deploy
-# (still WIP). Re-enable by removing this file + restoring crons in vercel.json.
-api
