@@ -17,7 +17,7 @@ import {
 	useActiveFlights,
 	useFlightDataBatch,
 } from "../hooks/useContracts"
-import { CANDIDATE_ROUTES, DEMO_ROUTES } from "../config/routes"
+import { DEMO_ROUTES, FLEET_ROUTES } from "../config/routes"
 
 /* ── deterministic hashing ─────────────────────────────────────────── */
 
@@ -339,16 +339,18 @@ export const TRACKED_MAP_LIMIT = 10
 /** Cancelled flights stay tracked for this grace window, then drop off. */
 const CANCELLED_GRACE_SECS = 24 * 60 * 60
 
-/** origin/dest lookup for a flightId, from the candidate route table. */
+/** origin/dest lookup for a flightId, from the FULL fleet table — the
+ *  board sells the whole /api/routes catalog, so tracked flights can be
+ *  any fleet route, not just the scan-fallback candidates. */
 const ROUTE_BY_ID: Record<string, { origin: string; dest: string }> =
 	Object.fromEntries(
-		CANDIDATE_ROUTES.map((r) => [r.flightId, { origin: r.origin, dest: r.dest }]),
+		FLEET_ROUTES.map((r) => [r.flightId, { origin: r.origin, dest: r.dest }]),
 	)
 
 /**
  * A small DEMO set of "in-air, being tracked" flights, used when the
  * oracle's active list is empty (the usual testnet case — nothing
- * whitelisted). Built from DEMO_ROUTES (not CANDIDATE_ROUTES/ROUTE_BY_ID)
+ * whitelisted). Built from DEMO_ROUTES (not FLEET_ROUTES/ROUTE_BY_ID)
  * so this still has something to show even if the fleet file itself is
  * momentarily empty. Clearly labelled demo in UI.
  */

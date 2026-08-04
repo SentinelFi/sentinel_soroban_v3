@@ -108,6 +108,7 @@ const fun = {
 		pickDateHint: "Pick a flight date first.",
 		connectPrompt: "Connect your wallet to buy this cover.",
 		blockedPrompt: "Cover is currently limited to approved buyers.",
+		unavailablePrompt: "This route is no longer available.",
 		fineprint:
 			"Buying cover IS predicting your flight lands late: the premium is your stake on DELAYED. An oracle settles the flight on-chain after it lands. No claims forms.",
 	},
@@ -480,6 +481,7 @@ const serious: Copy = {
 		pickDateHint: "Pick a flight date first.",
 		connectPrompt: "Connect your wallet to buy this coverage.",
 		blockedPrompt: "Coverage is currently limited to approved buyers.",
+		unavailablePrompt: "This route is no longer available.",
 		fineprint:
 			"Your premium is a fixed stake on the flight being delayed. An oracle settles the flight on-chain after it lands, so the payout is automatic, with no claim forms.",
 	},

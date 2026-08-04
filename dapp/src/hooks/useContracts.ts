@@ -12,6 +12,7 @@
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import type { QueryClient } from "@tanstack/react-query"
 import type { ResolvedTerms } from "governance_module"
 import type { FlightConfig } from "flight_pool_manager"
 import type { FlightData } from "oracle_aggregator"
@@ -246,66 +247,128 @@ export interface UiRoute {
 	terms: ResolvedTerms | null
 }
 
+/** Row shape served by GET /api/routes (see api/routes.ts). */
+interface ApiRouteRow {
+	flight_id: string
+	origin: string
+	destination: string
+	carrier: string | null
+	status: "Active" | "Disabled"
+	premium_units: string
+	payoff_units: string
+	delay_hours: number
+	featured: boolean
+}
+
 /**
- * Resolve the candidate route list against on-chain `route_status`.
- * GovernanceModule has no route enumeration — see src/config/routes.ts.
+ * Primary board source: one CDN-cached catalog fetch (api/routes.ts)
+ * instead of per-route on-chain simulates — the full seeded fleet in a
+ * single request, regardless of how many routes it holds. Premium/payoff
+ * arrive as i128 base-unit strings; parse to bigint so the rows carry
+ * real `ResolvedTerms`. Featured rows (routes.live.json) pin to the top;
+ * the sort is stable, so API order holds within each group.
  *
- * The candidate list is 200 routes, so resolution runs in chunks of 20
- * (rather than one giant Promise.all) to stay friendly to the public RPC,
- * and polls slowly — whitelisting changes rarely.
+ * Terms here mirror chain state at seed time (plus the DB pause overlay),
+ * so they can lag a governance change by up to the CDN window — the
+ * BetSlip re-verifies `route_status` on-chain at buy time.
+ */
+async function fetchRouteCatalog(): Promise<UiRoute[]> {
+	const res = await fetch("/api/routes")
+	if (!res.ok) throw new Error(`HTTP ${res.status}`)
+	const body = (await res.json()) as { count: number; routes: ApiRouteRow[] }
+	const ordered = [...(body.routes ?? [])].sort(
+		(a, b) => Number(b.featured) - Number(a.featured),
+	)
+	return ordered.map((row) => ({
+		flightId: row.flight_id,
+		origin: row.origin,
+		dest: row.destination,
+		status: row.status,
+		terms:
+			row.status === "Active"
+				? {
+						premium: BigInt(row.premium_units),
+						payoff: BigInt(row.payoff_units),
+						delay_hours: row.delay_hours,
+					}
+				: null,
+	}))
+}
+
+/**
+ * Fallback resolver: the pre-catalog chunked on-chain scan, kept as the
+ * resilience path for when /api/routes isn't deployed (or answers empty).
+ * Resolves CANDIDATE_ROUTES against `route_status` — GovernanceModule has
+ * no route enumeration (see src/config/routes.ts) — in chunks of 20
+ * rather than one giant Promise.all, to stay friendly to the public RPC.
  *
  * On the FIRST scan (no cached data yet) each resolved chunk is published
  * into the query cache immediately, so the board fills in as chunks land
- * instead of blocking on all 10. Background refetches keep the previous
- * full list on screen until the new scan completes.
+ * instead of blocking on all of them. Background refetches keep the
+ * previous full list on screen until the new scan completes.
  */
 const ROUTE_RESOLVE_CHUNK = 20
 const ROUTES_QUERY_KEY = ["governance", "routes"] as const
 
+async function scanCandidateRoutes(
+	queryClient: QueryClient,
+): Promise<UiRoute[]> {
+	const isFirstScan =
+		queryClient.getQueryData(ROUTES_QUERY_KEY) === undefined
+	const results: UiRoute[] = []
+	for (
+		let i = 0;
+		i < CANDIDATE_ROUTES.length;
+		i += ROUTE_RESOLVE_CHUNK
+	) {
+		const chunk = CANDIDATE_ROUTES.slice(i, i + ROUTE_RESOLVE_CHUNK)
+		const resolved = await Promise.all(
+			chunk.map(async (route): Promise<UiRoute> => {
+				try {
+					const tx = await governanceClient.route_status({
+						flight_id: route.flightId,
+						origin: route.origin,
+						dest: route.dest,
+					})
+					const status = tx.result
+					return {
+						...route,
+						status: status.tag,
+						terms: status.tag === "Active" ? status.values[0] : null,
+					}
+				} catch {
+					return { ...route, status: "Unknown", terms: null }
+				}
+			}),
+		)
+		results.push(...resolved)
+		// Stream partials only while the board has nothing real yet —
+		// a background refetch must not shrink the visible list.
+		if (
+			isFirstScan &&
+			i + ROUTE_RESOLVE_CHUNK < CANDIDATE_ROUTES.length
+		) {
+			queryClient.setQueryData(ROUTES_QUERY_KEY, [...results])
+		}
+	}
+	return results
+}
+
+/** Board inventory: /api/routes catalog first, on-chain scan fallback. */
 export function useRoutes() {
 	const queryClient = useQueryClient()
 	return useQuery({
 		queryKey: ROUTES_QUERY_KEY,
 		queryFn: async () => {
-			const isFirstScan =
-				queryClient.getQueryData(ROUTES_QUERY_KEY) === undefined
-			const results: UiRoute[] = []
-			for (
-				let i = 0;
-				i < CANDIDATE_ROUTES.length;
-				i += ROUTE_RESOLVE_CHUNK
-			) {
-				const chunk = CANDIDATE_ROUTES.slice(i, i + ROUTE_RESOLVE_CHUNK)
-				const resolved = await Promise.all(
-					chunk.map(async (route): Promise<UiRoute> => {
-						try {
-							const tx = await governanceClient.route_status({
-								flight_id: route.flightId,
-								origin: route.origin,
-								dest: route.dest,
-							})
-							const status = tx.result
-							return {
-								...route,
-								status: status.tag,
-								terms: status.tag === "Active" ? status.values[0] : null,
-							}
-						} catch {
-							return { ...route, status: "Unknown", terms: null }
-						}
-					}),
-				)
-				results.push(...resolved)
-				// Stream partials only while the board has nothing real yet —
-				// a background refetch must not shrink the visible list.
-				if (
-					isFirstScan &&
-					i + ROUTE_RESOLVE_CHUNK < CANDIDATE_ROUTES.length
-				) {
-					queryClient.setQueryData(ROUTES_QUERY_KEY, [...results])
-				}
+			try {
+				const catalog = await fetchRouteCatalog()
+				if (catalog.length > 0) return catalog
+				// Empty catalog → treat as "endpoint not seeded yet" and let
+				// the chain scan decide what actually exists.
+			} catch {
+				/* endpoint unreachable/undeployed — chain scan below */
 			}
-			return results
+			return scanCandidateRoutes(queryClient)
 		},
 		refetchInterval: 300_000,
 		staleTime: 120_000,

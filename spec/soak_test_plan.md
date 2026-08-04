@@ -22,7 +22,7 @@ After the production-shaped deployment goes live (dapp + serverless API + crons 
 - Existing harness reporter: `check()/summarize()` in `dapp/scripts/e2e/harness.ts` (reuse, wrapped with journal). DB read pattern: `getDb()` in `dapp/api/_lib/governance/db.ts` (as in `test_interventions_e2e.ts`).
 - `mock_usdc` faucet/mint are permissionless; friendbot funds XLM. Vault deposits mint shares only after **6h LP_PRICING_DELAY** → COLLECT.
 - Sale-auth endpoint (`/api/sale-auth/request`) is the ONLY AeroAPI toucher at buy time; staged `dapp/config/route_whitelist.json` has `dep_time_hhmm` per route → flight selection needs **zero** harness-side AeroAPI calls.
-- `dapp/config/routes.live.json` currently EMPTY (board shows demo rows) → route seeding + curation is a user-run prerequisite.
+- Board inventory = GET `/api/routes` (full seeded catalog, CDN-cached, DB pause-overlay; added 2026-08-04 on soak_harness) — `routes.live.json` is demoted to the FEATURED list. Harness candidates come from the same endpoint; picks are spot-verified on-chain before buying.
 - Settle latency bound: ETA + 5h (`SETTLE_AFTER_ETA_SECS`) + 2h fetcher cadence + slack.
 - `/admin` is Supabase magic-link gated → skip UI automation (screenshot the gate); optional stretch: read-only `/api/admin/diagnostics` with a user-supplied JWT.
 - TVL/APY sparklines + route risk bars are synthetic "illustrative" series (`dapp/src/data/derived.ts`) — assert the labeling, not values.
@@ -140,7 +140,7 @@ Single self-contained HTML, no external deps, screenshots inlined base64 (downsc
 
 1. Vercel Pro backend project live with crons + `CRON_SECRET` + signer secrets (`/api/cron/health` confirms).
 2. Render `flight-delay-predictions` live (`/healthz` 200); `AGENT_BASE_URL`/`AGENT_TOKEN` set in Vercel.
-3. Routes seeded (`scripts/seed_routes.ts` — admin-gated, user runs) + **`routes.live.json` curated non-empty**. For 50 buys the seeded set must yield ~70+ viable (route, date) candidates inside the soak window — roughly **15–20 routes with daily departures** (18 curated 2026-08-04) (staged `route_whitelist.json` already holds a large priced set to choose from).
+3. Routes seeded (`scripts/seed_routes.ts` — admin-gated, user runs); `/api/routes` serving ≥800 Active (needs the post-seeding fleet file merged + deployed). The full catalog is the candidate pool — ~1,000 routes × rolling dates ≫ the ~70 viable candidates 50 buys need. `routes.live.json` stays as the 18-route featured list.
 4. `dapp/.env.e2e_live`: `DEPLOYED_APP_URL`, `DEPLOYED_BACKEND_URL`, `RENDER_HEALTH_URL`, `GOVERNANCE_DB_URL`, optional `ADMIN_JWT`, knobs (`E2E_MAX_POLICIES`, `E2E_HEADFUL`). No admin secrets.
 5. `npm i` + `npx playwright install chromium`.
 6. Working branch (not main; user merges).

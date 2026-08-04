@@ -66,7 +66,7 @@ export async function buyPass(
     ...refusedKeys,
   ]);
   const soakEnd = state.soakEndsAt ? Math.floor(Date.parse(state.soakEndsAt) / 1000) : undefined;
-  const pool = await selectCandidates(chain, { soakEndSecs: soakEnd, excludeKeys });
+  const pool = await selectCandidates(cfg.backendUrl, { soakEndSecs: soakEnd, excludeKeys });
   j.append("note", "candidate pool", { size: pool.length, capacity });
   if (pool.length === 0) {
     journalSkip(j, "buy pass", "no viable candidates in window right now");
@@ -90,6 +90,17 @@ export async function buyPass(
       anyOwed = true;
       const c: Candidate | undefined = picks[pickIdx++];
       if (!c) break outer;
+      // Spot-verify the pick on-chain right before spending — the catalog
+      // is CDN-cached; the chain is the truth the buy must match.
+      const live = await chain
+        .routeStatus(c.flightId, c.origin, c.dest)
+        .then((s) => String(s) === "Active")
+        .catch(() => false);
+      if (!live) {
+        refusedKeys.add(`${c.flightId}|${c.dateISO}`);
+        j.append("observation", "spot-verify: catalog row not Active on-chain", { flight: c.flightId }, a.name);
+        continue;
+      }
       const ctx = await newActorContext(browser, uiUrl, a);
       try {
         const before = await chain.usdcBalance(a.address);
@@ -159,7 +170,7 @@ export async function negativePass(
   if (prog.negBuyDone || state.buysPlaced === 0) return;
   console.log("\n── N1 negatives ─────────────────────────────────────────");
 
-  const pool = await selectCandidates(chain, {});
+  const pool = await selectCandidates(cfg.backendUrl, {});
   const c = pool[0];
   if (!c) return;
   const ctx = await newActorContext(browser, uiUrl, n1);

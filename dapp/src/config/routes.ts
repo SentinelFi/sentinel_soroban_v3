@@ -1,5 +1,9 @@
 /**
- * Candidate flight routes — what the Markets board verifies on-chain.
+ * Candidate flight routes — the Markets board's on-chain-scan FALLBACK.
+ *
+ * NOTE: board inventory now comes from GET /api/routes (the full seeded
+ * catalog); routes.live.json is demoted to the FEATURED list (pinned rows)
+ * and CANDIDATE_ROUTES is only scanned when that endpoint is down/empty.
  *
  * The phase-3 GovernanceModule intentionally has no on-chain route
  * enumeration (routes are keyed storage, queried per-route via
@@ -57,6 +61,15 @@ export const CANDIDATE_ROUTES: CandidateRoute[] =
 				.filter((r) => r.enabled !== false)
 				.slice(0, MAX_FLEET_SCAN)
 				.map(toCandidate)
+
+/**
+ * The ENTIRE seeded fleet (disabled entries included) — a static lookup
+ * table, never scanned. With the board serving the full /api/routes
+ * catalog, any fleet route can be purchased and tracked, so consumers
+ * resolving a flightId to its airports (the globe) must cover the whole
+ * fleet, not just CANDIDATE_ROUTES.
+ */
+export const FLEET_ROUTES: CandidateRoute[] = fleet.routes.map(toCandidate)
 
 function randomSample<T>(items: T[], n: number): T[] {
 	const shuffled = [...items]

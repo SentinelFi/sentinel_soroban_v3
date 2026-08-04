@@ -1,8 +1,12 @@
 /**
- * Flight-candidate selection — ZERO AeroAPI calls by design: everything
- * comes from the staged whitelist (dep_time_hhmm, p_covered, premiums)
- * intersected with the curated board list (routes.live.json — the UI can
- * only sell what the board shows), then verified Active on-chain.
+ * Flight-candidate selection — ZERO AeroAPI calls by design.
+ *
+ * Inventory = GET /api/routes (the full seeded catalog the board now
+ * sells — the same data path the UI uses) joined with the staged
+ * whitelist for scheduling metadata (dep_time_hhmm, p_covered). Picked
+ * candidates get one on-chain route_status spot-verification each right
+ * before buying; the catalog itself is CDN-cached and trusted for
+ * browsing, exactly like the real UI.
  *
  * Window math: the deployed sale-auth enforces a 24h purchase cutoff
  * before departure (SALE_MIN_LEAD_SECS default), so viable candidates
@@ -14,7 +18,6 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { DAPP_ROOT } from "./config.js";
-import type { Chain } from "./chain.js";
 
 const DAY = 86_400;
 const AVG_US_UTC_OFFSET_H = 5;
@@ -60,12 +63,33 @@ export function loadLiveBoard(): Array<{ flight_id: string; origin: string; dest
   return l.routes ?? [];
 }
 
+export interface CatalogRoute {
+  flight_id: string;
+  origin: string;
+  destination: string;
+  status: string;
+  featured: boolean;
+}
+
+/** GET /api/routes — the deployed catalog (the board's own inventory). */
+export async function fetchCatalog(backendUrl: string): Promise<CatalogRoute[]> {
+  const r = await fetch(`${backendUrl}/api/routes`, { signal: AbortSignal.timeout(30_000) });
+  if (!r.ok) throw new Error(`/api/routes → ${r.status}`);
+  const body = (await r.json()) as { routes: CatalogRoute[] };
+  return body.routes ?? [];
+}
+
 /**
  * Build the ranked candidate pool relative to `now`. Re-run at every buy
  * pass — candidacy is time-relative and sale-auth refusals shrink it.
+ * Inventory: the deployed /api/routes catalog (status Active) joined
+ * with the whitelist for scheduling metadata. Picked candidates are
+ * spot-verified on-chain by the buy pass, not here (1,000+ per-route
+ * simulate calls per pass would be the exact anti-pattern the catalog
+ * endpoint removed).
  */
 export async function selectCandidates(
-  chain: Chain,
+  backendUrl: string,
   opts: {
     nowSecs?: number;
     soakEndSecs?: number;
@@ -77,23 +101,14 @@ export async function selectCandidates(
   const now = opts.nowSecs ?? Math.floor(Date.now() / 1000);
   const minLeadH = opts.minLeadHours ?? Number(process.env.E2E_DEP_MIN_HOURS ?? 26);
   const maxLeadH = opts.maxLeadHours ?? Number(process.env.E2E_DEP_MAX_HOURS ?? 54);
-  const live = loadLiveBoard();
-  if (live.length === 0) return [];
-  const liveKeys = new Set(live.map((r) => `${r.flight_id}|${r.origin}|${r.destination}`));
-  const routes = loadWhitelistRoutes().filter((r) =>
-    liveKeys.has(`${r.flight_id}|${r.origin}|${r.destination}`),
+  const catalog = await fetchCatalog(backendUrl);
+  const activeKeys = new Set(
+    catalog.filter((r) => r.status === "Active").map((r) => `${r.flight_id}|${r.origin}|${r.destination}`),
   );
-
-  // Verify Active on-chain once per route (not per date).
-  const active: WhitelistRoute[] = [];
-  for (const r of routes) {
-    try {
-      const status = await chain.routeStatus(r.flight_id, r.origin, r.destination);
-      if (String(status) === "Active") active.push(r);
-    } catch {
-      /* unknown route → skip */
-    }
-  }
+  if (activeKeys.size === 0) return [];
+  const active = loadWhitelistRoutes().filter((r) =>
+    activeKeys.has(`${r.flight_id}|${r.origin}|${r.destination}`),
+  );
 
   const out: Candidate[] = [];
   for (const r of active) {

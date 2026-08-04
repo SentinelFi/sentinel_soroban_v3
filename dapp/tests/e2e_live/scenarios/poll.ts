@@ -18,7 +18,7 @@ import { Chain } from "../chain.js";
 import type { Actor } from "../actors.js";
 import type { Journal } from "../journal.js";
 import { journalCheck, journalSkip } from "../checks.js";
-import { loadLiveBoard, loadWhitelistRoutes } from "../flights.js";
+import { fetchCatalog } from "../flights.js";
 import { recentCronRuns, openInterventions, outcomesFor, dbAvailable } from "../db.js";
 import { buyPass, negativePass } from "./buy.js";
 import { newActorContext, snap } from "../browser/context.js";
@@ -46,23 +46,30 @@ export async function checkPass(
 
   // ── 1. seeding verification (the buy gate) ────────────────────────────
   if (!run.seedingVerified) {
-    const board = loadLiveBoard();
-    const wl = new Set(loadWhitelistRoutes().map((r) => `${r.flight_id}|${r.origin}|${r.destination}`));
-    let active = 0;
-    for (const r of board) {
-      if (!wl.has(`${r.flight_id}|${r.origin}|${r.destination}`)) continue;
-      try {
-        if (String(await chain.routeStatus(r.flight_id, r.origin, r.destination)) === "Active") active++;
-      } catch {
-        /* not seeded yet */
+    let activeCount = 0;
+    let verified = 0;
+    let sampleSize = 0;
+    try {
+      const catalog = (await fetchCatalog(cfg.backendUrl)).filter((r) => r.status === "Active");
+      activeCount = catalog.length;
+      const sample = catalog.filter((_, i) => i % 97 === 0).slice(0, 10);
+      sampleSize = sample.length;
+      for (const r of sample) {
+        try {
+          if (String(await chain.routeStatus(r.flight_id, r.origin, r.destination)) === "Active") verified++;
+        } catch {
+          /* not on-chain */
+        }
       }
+    } catch {
+      /* endpoint not deployed yet */
     }
-    if (board.length >= 12 && active === board.length) {
+    if (activeCount >= 800 && sampleSize > 0 && verified === sampleSize) {
       run.seedingVerified = true;
-      j.append("note", "seeding verified — buys unlocked", { boardRoutes: board.length });
-      console.log(`  seeding verified (${active}/${board.length} board routes Active) — buys unlocked`);
+      j.append("note", "seeding verified — buys unlocked", { activeCount, verified });
+      console.log(`  seeding verified (${activeCount} Active in catalog, ${verified}/${sampleSize} spot-checked) — buys unlocked`);
     } else {
-      console.log(`  seeding: ${active}/${board.length} board routes Active — buys still locked`);
+      console.log(`  seeding: catalog Active=${activeCount}, spot-check ${verified}/${sampleSize} — buys still locked`);
     }
     j.saveState(state);
   }

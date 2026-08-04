@@ -5,7 +5,7 @@
 import type { LiveConfig } from "../config.js";
 import { Chain } from "../chain.js";
 import { recentCronRuns, dbAvailable } from "../db.js";
-import { loadLiveBoard, loadWhitelistRoutes } from "../flights.js";
+import { loadLiveBoard, fetchCatalog } from "../flights.js";
 import type { Journal } from "../journal.js";
 import { journalCheck, journalSkip } from "../checks.js";
 
@@ -60,20 +60,39 @@ export async function preflight(cfg: LiveConfig, j: Journal): Promise<boolean> {
     journalSkip(j, "governance DB checks", "GOVERNANCE_DB_URL not set");
   }
 
-  // Routes: board curated + seeded Active on-chain
-  const board = loadLiveBoard();
-  journalCheck(j, "routes.live.json curated non-empty (12+ routes)", board.length >= 12, `${board.length} routes`);
-  const wl = new Map(loadWhitelistRoutes().map((r) => [`${r.flight_id}|${r.origin}|${r.destination}`, r]));
-  let activeCount = 0;
-  for (const r of board) {
-    if (!wl.has(`${r.flight_id}|${r.origin}|${r.destination}`)) continue;
+  // Routes: full catalog served + spot-verified seeded on-chain
+  let catalog: Awaited<ReturnType<typeof fetchCatalog>> = [];
+  try {
+    catalog = await fetchCatalog(cfg.backendUrl);
+  } catch (err) {
+    j.append("note", "catalog fetch failed", { error: String(err) });
+  }
+  const activeCatalog = catalog.filter((r) => r.status === "Active");
+  journalCheck(
+    j,
+    "/api/routes serves the seeded catalog (≥800 Active)",
+    activeCatalog.length >= 800,
+    `${activeCatalog.length} Active of ${catalog.length}`,
+  );
+  // Spot-verify a deterministic sample against the chain (the catalog is
+  // cached; the chain is truth) — every 97th row + the first/last.
+  const sample = activeCatalog.filter((_, i) => i % 97 === 0 || i === activeCatalog.length - 1).slice(0, 12);
+  let verified = 0;
+  for (const r of sample) {
     try {
-      if (String(await chain.routeStatus(r.flight_id, r.origin, r.destination)) === "Active") activeCount++;
+      if (String(await chain.routeStatus(r.flight_id, r.origin, r.destination)) === "Active") verified++;
     } catch {
-      /* not seeded */
+      /* not on-chain */
     }
   }
-  journalCheck(j, "every board route is seeded Active on-chain", activeCount === board.length, `${activeCount}/${board.length} Active`);
+  journalCheck(
+    j,
+    "catalog spot-check: sampled routes are Active on-chain",
+    sample.length > 0 && verified === sample.length,
+    `${verified}/${sample.length} verified`,
+  );
+  const featured = loadLiveBoard();
+  journalCheck(j, "featured list (routes.live.json) present", featured.length >= 12, `${featured.length} featured`);
 
   // Whitelist posture (this run's locked decision: OFF)
   const wlOn = await chain.whitelistEnabled();

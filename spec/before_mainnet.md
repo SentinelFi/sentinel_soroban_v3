@@ -73,6 +73,13 @@ bundle so the chain is touched once.
 
 ## Verification gates
 
+- [x] **Full-catalog board** *(implemented 2026-08-04 on `soak_harness`)*: GET
+  `/api/routes` (bundled fleet file + governance-DB pause overlay, CDN-cached
+  5min) replaces the per-visitor on-chain board scan; board sells the whole
+  seeded catalog, `routes.live.json` demoted to featured list; BetSlip
+  re-verifies the single selected route on-chain at open. Soak exercises it.
+
+
 - [ ] **Live soak test passes** (`spec/soak_test_plan.md`): 24–48h, 25–30
   policies, crons settle autonomously, reconciliation report clean.
 - [ ] Docs drift cleanup: `DEPLOYMENT.md` says 8 crons / README says 11 /

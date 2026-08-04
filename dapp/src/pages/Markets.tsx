@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query"
 import type { FlightData } from "oracle_aggregator"
 import {
 	controllerClient,
+	governanceClient,
 	formatUsdc,
 	useActiveFlights,
 	useActiveRoutes,
@@ -485,6 +486,36 @@ function BetSlip({
 	const whitelistBlocked =
 		whitelistEnabled === true && !!address && isWhitelisted === false
 
+	// Buy-time re-verification: board rows come from the cached /api/routes
+	// catalog, so on open fire ONE `route_status` simulate for this route.
+	// Not Active on-chain → block the buy; Active with different terms →
+	// the chain's terms win below (the number the user pays must be the
+	// chain's number). A failed simulate blocks nothing — sale-auth and the
+	// contract still gate the actual purchase.
+	const { data: liveStatus } = useQuery({
+		queryKey: [
+			"governance",
+			"routeStatus",
+			route.flightId,
+			route.origin,
+			route.dest,
+		],
+		queryFn: async () => {
+			const tx = await governanceClient.route_status({
+				flight_id: route.flightId,
+				origin: route.origin,
+				dest: route.dest,
+			})
+			return tx.result
+		},
+		staleTime: 30_000,
+		retry: 1,
+	})
+	const routeUnavailable =
+		liveStatus !== undefined && liveStatus.tag !== "Active"
+	const liveTerms =
+		liveStatus?.tag === "Active" ? liveStatus.values[0] : null
+
 	// Dialog behaviour: initial focus on the panel, Escape closes, Tab is
 	// trapped inside, and focus returns to the opener on unmount — the
 	// overlay is a real modal, not just a visual one.
@@ -524,12 +555,18 @@ function BetSlip({
 		}
 	}, [])
 
-	const premium = route.terms?.premium ?? defaults?.default_premium
-	const payoff = route.terms?.payoff ?? defaults?.default_payoff
-	const delayHours = route.terms?.delay_hours ?? defaults?.default_delay_hours
+	const premium =
+		liveTerms?.premium ?? route.terms?.premium ?? defaults?.default_premium
+	const payoff =
+		liveTerms?.payoff ?? route.terms?.payoff ?? defaults?.default_payoff
+	const delayHours =
+		liveTerms?.delay_hours ??
+		route.terms?.delay_hours ??
+		defaults?.default_delay_hours
 
 	const placeBet = () => {
-		if (!address || !flightDate || whitelistBlocked) return
+		if (!address || !flightDate || whitelistBlocked || routeUnavailable)
+			return
 		void flow.run(async (step) => {
 			step("verifying")
 			const date = dateStrToMidnightUtc(flightDate)
@@ -623,7 +660,12 @@ function BetSlip({
 							{route.flightId}
 						</span>
 						<span className="status-px text-loss">
-							{t.slip.oddsLabel(oddsFor(route, defaults))}
+							{t.slip.oddsLabel(
+								oddsFor(
+									liveTerms ? { ...route, terms: liveTerms } : route,
+									defaults,
+								),
+							)}
 						</span>
 					</div>
 					<p className="mt-2 font-body text-[14px] text-dim">
@@ -678,7 +720,11 @@ function BetSlip({
 					state={flow.state}
 					onClick={placeBet}
 					disabled={
-						!address || !flightDate || whitelistBlocked || networkMismatch
+						!address ||
+						!flightDate ||
+						whitelistBlocked ||
+						networkMismatch ||
+						routeUnavailable
 					}
 					title={
 						address && !flightDate ? t.slip.pickDateHint : undefined
@@ -696,6 +742,16 @@ function BetSlip({
 					errorTestId="betslip-error"
 				/>
 
+				{routeUnavailable && flow.state === "idle" && (
+					// Same testid the tx stepper stamps on its error line — the
+					// guard above keeps the two from ever coexisting.
+					<p
+						data-testid="betslip-error"
+						className="font-body text-[13px] text-loss"
+					>
+						{t.slip.unavailablePrompt}
+					</p>
+				)}
 				{!address && (
 					<div className="space-y-2">
 						<p className="font-body text-[13px] text-gold">
@@ -748,9 +804,10 @@ export default function Markets() {
 	const { data: activeFlights } = useActiveFlights()
 	const { data: flightData } = useFlightDataBatch(activeFlights)
 
-	// Never block the board on the chunked chain scan: demo rows render
-	// immediately and are swapped for live rows as chunks stream in
-	// (useRoutes publishes partial results per chunk on the first scan).
+	// Never block the board on route loading: demo rows render immediately
+	// and are swapped for live rows once the /api/routes catalog lands (one
+	// shot) — or, on the chain-scan fallback, as chunks stream in (useRoutes
+	// publishes partial results per chunk on the first scan).
 	const isDemo = !routes || routes.length === 0
 	const scanning = isDemo && (routesLoading || routesFetching)
 	const displayRoutes = isDemo ? SAMPLE_ROUTES : routes
