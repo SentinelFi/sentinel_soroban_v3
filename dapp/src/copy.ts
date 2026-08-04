@@ -37,6 +37,7 @@ const fun = {
 		heroLine2: "GET PAID IF IT'S LATE.",
 		heroSub:
 			"Buying insurance here IS predicting your flight lands late. Stake a fixed premium; if the flight is delayed past the threshold, the payout is yours automatically.",
+		heroCtaBoard: "TO THE BOARD",
 		boardTitle: "DEPARTURES — OPEN MARKETS",
 		boardHint: "PAY PREMIUM → PAID IF DELAYED",
 		colStake: "PREMIUM → PAYOUT",
@@ -410,6 +411,7 @@ const serious: Copy = {
 		heroLine2: "Insurance.",
 		heroSub:
 			"Pay a small premium. If your flight is delayed past the threshold, receive a fixed payout in USDC — no claim forms, settled automatically on-chain.",
+		heroCtaBoard: "Browse insurable flights",
 		boardTitle: "Insurable Flights",
 		boardHint: "Premium in → payout if delayed",
 		colStake: "Premium → Payout",
