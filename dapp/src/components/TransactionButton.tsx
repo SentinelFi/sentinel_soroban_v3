@@ -20,6 +20,7 @@ export function TransactionButton({
 	className,
 	title,
 	children,
+	"data-testid": dataTestId,
 }: {
 	state: TxState
 	onClick: () => void
@@ -28,11 +29,14 @@ export function TransactionButton({
 	/** Why the button is disabled — surfaced as a tooltip while it is. */
 	title?: string
 	children: React.ReactNode
+	/** Inert automation hook (e2e_live browser drivers). */
+	"data-testid"?: string
 }) {
 	const busy = state === "verifying" || state === "awaiting" || state === "confirming"
 	return (
 		<button
 			type="button"
+			data-testid={dataTestId}
 			onClick={onClick}
 			disabled={disabled || busy}
 			title={disabled && !busy ? title : undefined}

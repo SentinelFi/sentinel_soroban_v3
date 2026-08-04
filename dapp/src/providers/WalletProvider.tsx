@@ -10,6 +10,7 @@ import {
 import storage from "../util/storage"
 import { wallet, fetchBalances, type MappedBalances } from "../util/wallet"
 import { networkPassphrase as appNetworkPassphrase } from "../contracts/util"
+import { getE2eSigner } from "../util/e2eSigner"
 import controllerClient from "../contracts/controller"
 import governanceClient from "../contracts/governance_module"
 import oracleClient from "../contracts/oracle_aggregator"
@@ -88,10 +89,20 @@ export const WalletContext = createContext<WalletContextType>({
 })
 
 export const WalletProvider = ({ children }: { children: React.ReactNode }) => {
+	// E2E test-mode signer (soak harness) — null in prod builds by static
+	// elimination of the PUBLIC_E2E_SIGNER branch. When present it fully
+	// replaces the wallets-kit: fixed address, local signing, no polling.
+	const e2eSigner = useMemo(() => getE2eSigner(), [])
 	const [balances, setBalances] = useState<MappedBalances>({})
-	const [address, setAddress] = useState<string>()
-	const [network, setNetwork] = useState<string>()
-	const [networkPassphrase, setNetworkPassphrase] = useState<string>()
+	const [address, setAddress] = useState<string | undefined>(
+		e2eSigner?.address,
+	)
+	const [network, setNetwork] = useState<string | undefined>(
+		e2eSigner ? "TESTNET" : undefined,
+	)
+	const [networkPassphrase, setNetworkPassphrase] = useState<
+		string | undefined
+	>(e2eSigner?.networkPassphrase)
 	const [isPending, startTransition] = useTransition()
 	const popupLock = useRef(false)
 	const pollFailures = useRef(0)
@@ -212,6 +223,10 @@ export const WalletProvider = ({ children }: { children: React.ReactNode }) => {
 	}
 
 	useEffect(() => {
+		// E2E signer supplies address/network statically — the wallets-kit
+		// polling loop (and its extension popups) must never start.
+		if (e2eSigner) return
+
 		let timer: ReturnType<typeof setTimeout>
 		let isMounted = true
 
@@ -259,7 +274,9 @@ export const WalletProvider = ({ children }: { children: React.ReactNode }) => {
 			balances,
 			updateBalances,
 			isPending,
-			signTransaction,
+			signTransaction: e2eSigner
+				? e2eSigner.signTransaction
+				: signTransaction,
 		}),
 		[
 			address,
@@ -269,6 +286,7 @@ export const WalletProvider = ({ children }: { children: React.ReactNode }) => {
 			balances,
 			updateBalances,
 			isPending,
+			e2eSigner,
 		],
 	)
 

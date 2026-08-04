@@ -356,43 +356,55 @@ function StatsTicker({ openMarkets }: { openMarkets: number }) {
 	const delayedCountUp = useCountUp(publicStats?.delayed_count ?? 0)
 	const cancelledCountUp = useCountUp(publicStats?.cancelled_count ?? 0)
 
-	const items: Array<{ label: string; value: string }> = [
+	const items: Array<{ key: string; label: string; value: string }> = [
 		{
+			key: "tvl",
 			label: t.statsTicker.tvl,
 			value: `${tvl != null ? formatUsdc(tvl) : "…"} USDC`,
 		},
 		{
+			key: "free",
 			label: t.statsTicker.free,
 			value: `${free != null ? formatUsdc(free) : "…"} USDC`,
 		},
 		{
+			key: "premiums",
 			label: t.statsTicker.premiums,
 			value: `${stats ? formatUsdc(stats.totalPremiumsCollected) : "…"} USDC`,
 		},
 		{
+			key: "policies-sold",
 			label: t.statsTicker.policiesSold,
 			value: stats ? policiesSoldCount.toLocaleString() : "…",
 		},
-		{ label: t.statsTicker.openMarkets, value: openMarketsCount.toLocaleString() },
 		{
+			key: "open-markets",
+			label: t.statsTicker.openMarkets,
+			value: openMarketsCount.toLocaleString(),
+		},
+		{
+			key: "paid-out",
 			label: t.statsTicker.paidOut,
 			value: publicStats
 				? `${formatUsdc(BigInt(publicStats.total_paid_out))} USDC`
 				: "…",
 		},
 		{
+			key: "insurances-paid",
 			label: t.statsTicker.insurancesPaid,
 			value: !publicStats
 				? "…"
 				: (publicStats.insurances_paid != null ? insurancesPaidCount.toLocaleString() : "—"),
 		},
 		{
+			key: "delayed",
 			label: t.statsTicker.delayed,
 			value: !publicStats
 				? "…"
 				: (publicStats.delayed_count != null ? delayedCountUp.toLocaleString() : "—"),
 		},
 		{
+			key: "cancelled",
 			label: t.statsTicker.cancelled,
 			value: !publicStats
 				? "…"
@@ -403,7 +415,10 @@ function StatsTicker({ openMarkets }: { openMarkets: number }) {
 	const loop = [...items, ...items, ...items, ...items]
 
 	return (
-		<div className="ticker flex items-center gap-3 overflow-hidden border-2 border-line bg-inset py-2">
+		<div
+			data-testid="markets-stats"
+			className="ticker flex items-center gap-3 overflow-hidden border-2 border-line bg-inset py-2"
+		>
 			<span className="z-10 flex shrink-0 items-center gap-2 border-r-2 border-line bg-inset pl-3 pr-3">
 				<span className="label-px text-gold">{t.statsTicker.tag}</span>
 			</span>
@@ -427,7 +442,10 @@ function StatsTicker({ openMarkets }: { openMarkets: number }) {
 						className="flex items-baseline gap-2 whitespace-nowrap"
 					>
 						<span className="label-px text-mute">{item.label}</span>
-						<span className="font-board text-[19px] text-ink">
+						<span
+							data-testid={`markets-stat-${item.key}`}
+							className="font-board text-[19px] text-ink"
+						>
 							{item.value}
 						</span>
 					</li>
@@ -567,6 +585,7 @@ function BetSlip({
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="betslip-title"
+				data-testid="betslip"
 				tabIndex={-1}
 				className="slip-panel panel-raised relative z-10 flex h-full w-full max-w-[380px] flex-col gap-4 overflow-y-auto p-5"
 			>
@@ -579,6 +598,7 @@ function BetSlip({
 					</div>
 					<button
 						type="button"
+						data-testid="betslip-close"
 						onClick={onClose}
 						className="btn-px btn-ghost btn-sm"
 					>
@@ -629,7 +649,10 @@ function BetSlip({
 				<div className="space-y-2">
 					<div className="flex items-center justify-between">
 						<span className="label-px">{t.slip.premiumLabel}</span>
-						<span className="board-figure text-[22px] text-ink">
+						<span
+							data-testid="betslip-premium"
+							className="board-figure text-[22px] text-ink"
+						>
 							{premium !== undefined ? formatUsdc(premium) : "…"} USDC
 						</span>
 					</div>
@@ -661,6 +684,7 @@ function BetSlip({
 						address && !flightDate ? t.slip.pickDateHint : undefined
 					}
 					className="btn-loss w-full"
+					data-testid="betslip-buy"
 				>
 					{t.slip.cta(premium !== undefined ? formatUsdc(premium) : "…")}
 				</TransactionButton>
@@ -669,6 +693,7 @@ function BetSlip({
 					steps={["verifying", "awaiting", "confirming"]}
 					error={flow.error}
 					stamps={{ success: "stamp-covered", fail: "stamp-denied" }}
+					errorTestId="betslip-error"
 				/>
 
 				{!address && (
@@ -918,6 +943,7 @@ export default function Markets() {
 						<input
 							type="search"
 							name="board-search"
+							data-testid="board-search"
 							className="field-px pl-9"
 							placeholder={t.markets.searchPlaceholder}
 							value={query}
@@ -963,7 +989,10 @@ export default function Markets() {
 						}`}
 					>
 						<div className="scanlines absolute inset-0" />
-					<table className="w-full min-w-[820px] border-collapse">
+					<table
+						data-testid="markets-board"
+						className="w-full min-w-[820px] border-collapse"
+					>
 						<thead>
 							<tr className="border-b-2 border-line text-left">
 								{(
@@ -1033,6 +1062,8 @@ export default function Markets() {
 							{visible.map((route) => (
 								<tr
 									key={`${route.flightId}-${route.origin}-${route.dest}`}
+									data-testid="board-row"
+									data-flight-id={route.flightId}
 									className="board-row-in border-b-2 border-line/60 hover:bg-raised/60"
 								>
 									<td className="px-4 py-3">
@@ -1067,6 +1098,7 @@ export default function Markets() {
 											{isDemo ? (
 												<span
 													key={scanning ? "scan" : "demo"}
+													data-testid="board-row-status"
 													className="status-px status-flap text-gold"
 												>
 													{scanning
@@ -1076,6 +1108,7 @@ export default function Markets() {
 											) : (
 												<span
 													key="boarding"
+													data-testid="board-row-status"
 													className="status-px status-flap text-win"
 												>
 													{t.markets.statusBoarding}
@@ -1135,6 +1168,7 @@ export default function Markets() {
 												return (
 													<button
 														type="button"
+														data-testid="board-row-buy"
 														onClick={() => setSlipRoute(route)}
 														className="btn-px btn-loss btn-sm"
 														title={t.markets.insureTitle(odds)}

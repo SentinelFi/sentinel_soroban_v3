@@ -84,6 +84,7 @@ function computeEta(estimatedArrival: bigint): string | undefined {
 function StatusBadge({ kind, label }: { kind: BadgeKind; label: string }) {
 	return (
 		<span
+			data-testid="policy-status"
 			className="w3-badge"
 			style={{ ["--badge" as string]: BADGE_VAR[kind] }}
 		>
@@ -352,6 +353,8 @@ export default function Policies() {
 						{wonBets.map((bet) => (
 							<div
 								key={bet.id}
+								data-testid="policy-row"
+								data-flight-id={bet.flightId}
 								className="claim-card win-flash border-2 border-gold bg-surface p-5 text-center"
 							>
 								{serious ? (
@@ -391,6 +394,7 @@ export default function Policies() {
 								)}
 								<button
 									type="button"
+									data-testid="policy-claim"
 									onClick={() => handleClaim(bet)}
 									disabled={claimingId !== null || networkMismatch}
 									className={cn(
@@ -432,7 +436,12 @@ export default function Policies() {
 					</p>
 					<div className="space-y-2">
 						{openBets.map((bet) => (
-							<div key={bet.id} className="w3-policy">
+							<div
+								key={bet.id}
+								data-testid="policy-row"
+								data-flight-id={bet.flightId}
+								className="w3-policy"
+							>
 								<span className="board-figure text-[24px]">
 									{bet.flightId}
 								</span>
@@ -477,6 +486,8 @@ export default function Policies() {
 						{settledBets.map((bet) => (
 							<div
 								key={bet.id}
+								data-testid="policy-row"
+								data-flight-id={bet.flightId}
 								className="w3-policy w3-policy-terminal"
 							>
 								<span className="font-board text-[20px] text-dim">

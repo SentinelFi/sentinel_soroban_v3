@@ -4,13 +4,13 @@
 
 ## Context
 
-After the production-shaped deployment goes live (dapp + serverless API + crons on Vercel Pro via `dapp/vercel.backend.json`, paid Render FastAPI ML service, live Supabase, real FlightAware AeroAPI, real Open-Meteo weather), we want a second e2e suite — separate from the existing mock suites but following their principles — where **only the contracts (live testnet deploy, `deployments/testnet.json`) and money (mock USDC) are simulated**. 14 actors (underwriters + travelers) run the full lifecycle — **20–30 policies** — over a compressed **24–48h soak**; the deployed crons settle everything autonomously; the **frontend itself is verified by browser automation** (every button; displayed TVL/APY/stats reconciled against on-chain truth). Deliverable after ~2 days: a self-contained HTML **reconciliation report**.
+After the production-shaped deployment goes live (dapp + serverless API + crons on Vercel Pro via `dapp/vercel.backend.json`, paid Render FastAPI ML service, live Supabase, real FlightAware AeroAPI, real Open-Meteo weather), we want a second e2e suite — separate from the existing mock suites but following their principles — where **only the contracts (live testnet deploy, `deployments/testnet.json`) and money (mock USDC) are simulated**. 17 actors (underwriters + travelers) run the full lifecycle — **50 policies** — over a compressed **24–48h soak**; the deployed crons settle everything autonomously; the **frontend itself is verified by browser automation** (every button; displayed TVL/APY/stats reconciled against on-chain truth). Deliverable after ~2 days: a self-contained HTML **reconciliation report**.
 
 ## Locked decisions
 
 - Compressed 24–48h soak; real flights landing within the window; crons do all protocol work.
 - Env-gated **test-mode signer** in the dapp (inert in prod builds) so Playwright drives the real UI write paths.
-- Local CLI runner in-repo; **20–30 policies** (~25–30 buys ≈ ≤60 attributable AeroAPI calls) — scaled up to make real Delayed/Cancelled outcomes likely. Candidates skew toward high-`p_covered` routes and evening/last-bank departures (delay-prone); even so, payouts are probabilistic — expected ~3–5 at avg p≈0.15, and the report stays outcome-conditional.
+- Local CLI runner in-repo; **50 policies** (≤56 buys ≈ ≤120 attributable AeroAPI calls) — scaled up to make real Delayed/Cancelled outcomes likely. Candidates skew toward high-`p_covered` routes and evening/last-bank departures (delay-prone); even so, payouts are probabilistic — expected ~5–7 at avg p≈0.12, and the report stays outcome-conditional.
 - **Buyer whitelist DISABLED** for this run (whitelist-gate checks auto-skip as "conditional — whitelist off").
 - **Check cadence: manual + Claude sessions** — `check` is idempotent + catch-up-capable, so cadence never affects correctness; the report timeline is reconstructed from chain events + DB `cron_runs`, not poll times. A Claude Code `/loop` session is an optional hourly convenience while the Mac is awake. Actor actions are deadline-tolerant (claim expiry 7d).
 - Harness NEVER runs admin-gated steps (seed/wipe/route intake) and holds no admin secrets.
@@ -87,24 +87,26 @@ npm scripts (`dapp/package.json`): `e2e:live`, `e2e:live:start|check|watch|repor
 
 Prod-inertness verification: `vite build` without the flag → grep dist for the gated branch.
 
-## Actors (14) & capital sizing
+## Actors (17) & capital sizing (2026-08-04 sizing)
 
-25–30 concurrent policies lock up to 3,000 USDC of vault capital (payoff 100 each), so investor deposits total ~12,000 USDC — comfortable headroom for buys while still letting withdrawal requests compete with locked capital.
+50 concurrent policies lock up to 5,000 USDC of vault capital (payoff 100 each), so investor deposits total ~20,000 USDC — comfortable headroom for buys while still letting withdrawal requests compete with locked capital.
 
 | Actor | Role / scenario |
 |---|---|
-| U1 | Anchor underwriter: mint 2× (20k), deposit 6,000, **hold entire soak** → the clean share-price/APY growth observation |
-| U2 | Deposit 3,000 → mid-soak partial `request_withdrawal` (while many policies still active → exercises withdrawal queue against locked capital) → collect after settlements free capital |
-| U3 | `request_deposit` 1,000 → **cancel_deposit** (exact refund) → re-deposit 1,000 |
-| U4 | Deposit 1,000 → `request_withdrawal` → **cancel_withdrawal** → re-request → collect |
-| U5 | Deposit 800 → **full withdrawal** request late in soak (after payouts) → collect; asserts exit value = shares × final share price (captures net premium gain) |
+| U1 | Anchor underwriter: mint 2× (20k), deposit 10,000, **hold entire soak** → the clean share-price/APY growth observation |
+| U2 | Deposit 5,000 → mid-soak partial `request_withdrawal` (while many policies still active → exercises withdrawal queue against locked capital) → collect after settlements free capital |
+| U3 | `request_deposit` 1,500 → **cancel_deposit** (exact refund) → re-deposit 1,500 |
+| U4 | Deposit 1,200 → `request_withdrawal` → **cancel_withdrawal** → re-request → collect |
+| U5 | Deposit 1,000 → **full withdrawal** request late in soak (after payouts) → collect; asserts exit value = shares × final share price (captures net premium gain) |
 | U6 | Deposit 500 → withdrawal requested in the SAME check as U2/U5 → asserts **queue ordering** (FIFO processing across concurrent requests) and per-request accounting |
-| T1–T2 | 4 policies each, spread across days/routes |
-| T3–T6 | 3 policies each, distinct routes/dep-times, skewed to high-`p_covered`/evening flights |
-| T7 (hybrid) | Deposits 500 in vault AND buys 2 policies (LP-who-also-buys) |
+| T1–T2 | 8 and 7 policies, spread across days/routes |
+| T3–T6 | 6,6,6,5 policies, distinct routes/dep-times, skewed to high-`p_covered`/evening flights |
+| T7 (hybrid) | Deposits 500 in vault AND buys 4 policies (LP-who-also-buys) |
+| T8 | 6 policies |
+| T9–T10 | 1 policy each (single-touch traveler UX pass) |
 | N1 | Negatives: buy with 0 USDC (failure surfaced in UI); sale-auth refusal (date inside 3600s min-lead); claim on an on-time flight. (Whitelist-block negative auto-skipped — whitelist off.) |
 
-Policy total: 25–27 (+ retries on sale-auth refusals, capped at 30 buys). Funding: friendbot with spacing/backoff, skip already-funded. Minting via the real UI +MINT button (doubles as button coverage; faucet is 10k/click — U1 clicks twice).
+Policy total: 50 (+ retries on sale-auth refusals, capped at 56 buys). Funding: friendbot with spacing/backoff, skip already-funded. Minting via the real UI +MINT button (doubles as button coverage; faucet is 10k/click — U1 clicks twice).
 
 ## Verbs
 
@@ -123,7 +125,7 @@ Live deployment may have external traffic → aggregate assertions use our-attri
 - **A. Money (exact, 7-dec)**: per-actor final USDC balance == Σmints − Σpremiums − Σdeposits + Σcancel-refunds + Σcollected-withdrawals + Σclaims; claim payout == exactly 100; cancel paths refund exactly.
 - **B. Vault**: `total_assets` delta == our deposits − withdrawals + premium share − payouts ± flagged external; shares mint only ≥6h after request at snapshot price.
 - **B2. Withdrawal queue**: concurrent requests (U2/U5/U6 same check) processed in queue order with correct per-request share accounting; requests submitted while capital is locked by active policies do not over-release (free capital never goes negative; queue drains as settlements unlock capital); cancel_withdrawal removes exactly one queue entry.
-- **B3. APY / share-price growth**: with 25+ premiums flowing in, `get_snapshot_price` series must be non-decreasing except at payout events; final share price > initial iff Σpremiums > Σpayouts (evaluated against actuals); U1's held position value delta == share-price delta × shares (exact); U5's exit proceeds > deposit iff net-positive vault (outcome-conditional); report computes **realized APY** from the real snapshot series over the soak window and shows it alongside the UI's illustrative sparkline (labeling check only on the latter).
+- **B3. APY / share-price growth**: with 50 premiums flowing in, `get_snapshot_price` series must be non-decreasing except at payout events; final share price > initial iff Σpremiums > Σpayouts (evaluated against actuals); U1's held position value delta == share-price delta × shares (exact); U5's exit proceeds > deposit iff net-positive vault (outcome-conditional); report computes **realized APY** from the real snapshot series over the soak window and shows it alongside the UI's illustrative sparkline (labeling check only on the latter).
 - **C. Stats**: `controller.get_stats` deltas vs journal buys; `/api/status/stats` == chain at same instant; DB `settlements` consistent.
 - **D. Lifecycle (outcome-conditional)**: sale-auth authorized precedes each buy; refusals only on designed negatives; oracle transitions monotonic (registered → ETA → Landed/Cancelled → classified → settled); **IF actual arrival ≥3h late OR cancelled THEN payable + CLAIM succeeds ELSE no payout + negative claim fails**; settlement within ETA+5h+2h+30min; `flight_outcomes`+`settlements` rows match chain.
 - **E. Crons/pipeline**: every `vercel.backend.json` job fired within 2× cadence for the whole window (`cron_runs`); `pendingOutcomes` (cron/health) returns to 0 within 15min; no unexpected `interventions` on our routes (if one occurs: conditional check that board shows route non-buyable).
@@ -138,7 +140,7 @@ Single self-contained HTML, no external deps, screenshots inlined base64 (downsc
 
 1. Vercel Pro backend project live with crons + `CRON_SECRET` + signer secrets (`/api/cron/health` confirms).
 2. Render `flight-delay-predictions` live (`/healthz` 200); `AGENT_BASE_URL`/`AGENT_TOKEN` set in Vercel.
-3. Routes seeded (`scripts/seed_routes.ts` — admin-gated, user runs) + **`routes.live.json` curated non-empty**. For 25–30 buys the seeded set must yield ~40+ viable (route, date) candidates inside the soak window — roughly **12–15 routes with daily departures** (staged `route_whitelist.json` already holds a large priced set to choose from).
+3. Routes seeded (`scripts/seed_routes.ts` — admin-gated, user runs) + **`routes.live.json` curated non-empty**. For 50 buys the seeded set must yield ~70+ viable (route, date) candidates inside the soak window — roughly **15–20 routes with daily departures** (18 curated 2026-08-04) (staged `route_whitelist.json` already holds a large priced set to choose from).
 4. `dapp/.env.e2e_live`: `DEPLOYED_APP_URL`, `DEPLOYED_BACKEND_URL`, `RENDER_HEALTH_URL`, `GOVERNANCE_DB_URL`, optional `ADMIN_JWT`, knobs (`E2E_MAX_POLICIES`, `E2E_HEADFUL`). No admin secrets.
 5. `npm i` + `npx playwright install chromium`.
 6. Working branch (not main; user merges).
@@ -156,4 +158,4 @@ Single self-contained HTML, no external deps, screenshots inlined base64 (downsc
 
 - **Tier 0 (free)**: `smoke` + `preflight` + `check` on an empty run — plumbing only, zero writes.
 - **Tier 1 (local stack, no AeroAPI)**: local `dev:api` + `tools/mock-aeroapi`; harness proxy → localhost:3000. Scope: vault lifecycle (tiny amounts, reversible on live contracts), N1 negatives, all scraping/journal/report. **No synthetic-flight buys against live contracts** (prod fetcher can't resolve fake idents → would wedge the settlement barrier).
-- **Tier 2 (canary, ~2 AeroAPI calls)**: one real buy (T1) on a same-day flight through the deployed stack; confirm crons settle it end-to-end and the report renders its timeline. Then launch the full 10-actor soak.
+- **Tier 2 (canary, ~2 AeroAPI calls)**: one real buy (T1) on a same-day flight through the deployed stack; confirm crons settle it end-to-end and the report renders its timeline. Then launch the full 17-actor soak.

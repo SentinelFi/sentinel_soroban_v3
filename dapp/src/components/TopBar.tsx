@@ -175,6 +175,7 @@ function CoinChip() {
 				<span className="font-body text-[12px] font-bold text-gold">$</span>
 			)}
 			<span
+				data-testid="topbar-balance"
 				className="board-figure text-[18px] text-ink"
 				title={usdcError ? "Balance failed to load — retrying" : undefined}
 			>
@@ -190,6 +191,7 @@ function CoinChip() {
 			{stellarNetwork !== "PUBLIC" && (
 				<button
 					type="button"
+					data-testid="topbar-mint"
 					onClick={() => void mint()}
 					disabled={minting || networkMismatch}
 					className="ml-1 border-l-2 border-line px-2 font-body text-[11px] font-bold tracking-[0.06em] text-win hover:text-ink disabled:opacity-50"
@@ -262,6 +264,7 @@ export function TopBar() {
 					) : (
 						<button
 							type="button"
+							data-testid="topbar-connect"
 							onClick={() => void connectWallet()}
 							className="btn-px btn-gold btn-sm whitespace-normal text-center lg:whitespace-nowrap"
 						>

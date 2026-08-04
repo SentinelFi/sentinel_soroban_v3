@@ -1,4 +1,95 @@
 {
-  "$schema_note": "BOARD live list — the small, admin-curated subset of seeded routes the frontend actually verifies on-chain and shows on the Markets board. The fleet file (routes.testnet.json) can hold hundreds of seeded routes; scanning them all from the browser costs one RPC simulate-call per route per visitor, so the board reads THIS list instead. Add a route here (flight_id / origin / destination, matching its on-chain key exactly) after seeding it with scripts/seed_routes.ts; remove it to take it off the board. Empty list → the board falls back to scanning the first few fleet entries, and shows built-in demo rows when nothing resolves Active.",
-  "routes": []
+ "$schema_note": "BOARD live list \u2014 admin-curated subset of seeded routes the frontend verifies on-chain and shows on the Markets board. Curated 2026-08-04 for the 50-policy soak (diverse carriers/corridors/dep banks).",
+ "routes": [
+  {
+   "flight_id": "AAL1193",
+   "origin": "DFW",
+   "destination": "ORD"
+  },
+  {
+   "flight_id": "UAL2788",
+   "origin": "EWR",
+   "destination": "ORD"
+  },
+  {
+   "flight_id": "UAL1752",
+   "origin": "IAH",
+   "destination": "ORD"
+  },
+  {
+   "flight_id": "AAL322",
+   "origin": "MIA",
+   "destination": "EWR"
+  },
+  {
+   "flight_id": "UAL2331",
+   "origin": "ORD",
+   "destination": "BOS"
+  },
+  {
+   "flight_id": "AAL673",
+   "origin": "ORD",
+   "destination": "LGA"
+  },
+  {
+   "flight_id": "FFT1203",
+   "origin": "PHL",
+   "destination": "MIA"
+  },
+  {
+   "flight_id": "FFT2112",
+   "origin": "ORD",
+   "destination": "PHL"
+  },
+  {
+   "flight_id": "JBU560",
+   "origin": "PHL",
+   "destination": "BOS"
+  },
+  {
+   "flight_id": "JBU405",
+   "origin": "JFK",
+   "destination": "ORD"
+  },
+  {
+   "flight_id": "JBU2073",
+   "origin": "EWR",
+   "destination": "LAX"
+  },
+  {
+   "flight_id": "FFT3135",
+   "origin": "ORD",
+   "destination": "IAH"
+  },
+  {
+   "flight_id": "DAL2226",
+   "origin": "LGA",
+   "destination": "ORD"
+  },
+  {
+   "flight_id": "ASA462",
+   "origin": "EWR",
+   "destination": "SEA"
+  },
+  {
+   "flight_id": "DAL2804",
+   "origin": "BOS",
+   "destination": "ORD"
+  },
+  {
+   "flight_id": "DAL1428",
+   "origin": "JFK",
+   "destination": "MIA"
+  },
+  {
+   "flight_id": "ASA263",
+   "origin": "SEA",
+   "destination": "EWR"
+  },
+  {
+   "flight_id": "SWA335",
+   "origin": "LAS",
+   "destination": "LAX"
+  }
+ ]
 }

@@ -22,7 +22,14 @@
     "test:e2e:admin": "tsx tests/e2e_mock/test_admin_gov_e2e.ts",
     "bot": "tsx scripts/run_bot.ts",
     "test:e2e:testnet": "tsx scripts/test_testnet_e2e.ts",
-    "test:e2e:testnet:bootstrap": "tsx scripts/e2e/testnet_bootstrap.ts"
+    "test:e2e:testnet:bootstrap": "tsx scripts/e2e/testnet_bootstrap.ts",
+    "e2e:live": "tsx tests/e2e_live/cli.ts",
+    "e2e:live:start": "tsx tests/e2e_live/cli.ts start",
+    "e2e:live:check": "tsx tests/e2e_live/cli.ts check",
+    "e2e:live:watch": "tsx tests/e2e_live/cli.ts watch",
+    "e2e:live:report": "tsx tests/e2e_live/cli.ts report",
+    "e2e:live:smoke": "tsx tests/e2e_live/cli.ts smoke",
+    "e2e:live:ui": "PUBLIC_E2E_SIGNER=1 vite --port 5199 --strictPort"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "2.5.0",
@@ -55,6 +62,7 @@
     "@vercel/node": "^5.8.26",
     "@vitejs/plugin-react": "^5.1.2",
     "oxlint": "^1.76.0",
+    "playwright": "^1.62.1",
     "tsx": "^4.23.1",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",

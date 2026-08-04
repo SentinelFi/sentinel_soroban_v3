@@ -30,3 +30,8 @@ dist-ssr
 # Real-chain E2E suite artifacts (testnet-only keys + generated routes file)
 scripts/e2e/.testnet-e2e.json
 scripts/e2e/.routes.testnet-e2e.json
+
+# e2e_live soak harness — run artifacts + actor keys + env (never committed)
+tests/e2e_live/runs/
+tests/e2e_live/.actors.json
+.env.e2e_live

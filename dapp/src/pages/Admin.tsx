@@ -300,7 +300,7 @@ function SignIn() {
 
 	return (
 		<Shell>
-			<div className="panel mx-auto max-w-md px-6 py-6">
+			<div data-testid="admin-gate" className="panel mx-auto max-w-md px-6 py-6">
 				<h2 className="h-section mb-4">Tower access</h2>
 				{sent ? (
 					<p className="font-body text-[14px] text-dim">

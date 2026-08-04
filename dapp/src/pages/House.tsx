@@ -62,6 +62,7 @@ function StatTile({
 	spark,
 	sparkColor,
 	illustrativeLabel,
+	valueTestId,
 }: {
 	label: string
 	value: string
@@ -69,11 +70,15 @@ function StatTile({
 	spark?: number[]
 	sparkColor?: string
 	illustrativeLabel?: string
+	/** Inert automation hook stamped on the value element. */
+	valueTestId?: string
 }) {
 	return (
 		<div className="panel flex flex-col p-4">
 			<p className="label-px text-sky">{label}</p>
-			<p className="board-figure mt-2 text-[26px]">{value}</p>
+			<p data-testid={valueTestId} className="board-figure mt-2 text-[26px]">
+				{value}
+			</p>
 			{spark && spark.length >= 2 && (
 				<div className="mt-2 flex items-center gap-2">
 					<Sparkline
@@ -363,6 +368,7 @@ export default function House() {
 					spark={tvlSpark}
 					sparkColor="var(--color-win)"
 					illustrativeLabel={t.house.illustrative}
+					valueTestId="house-tvl"
 				/>
 				<StatTile
 					label={t.house.statBacking}
@@ -373,12 +379,14 @@ export default function House() {
 								? formatUsdc(locked)
 								: "…"
 					}
+					valueTestId="house-locked"
 				/>
 				<StatTile
 					label={t.house.statFree}
 					value={
 						freeError ? "—" : free !== undefined ? formatUsdc(free) : "…"
 					}
+					valueTestId="house-free"
 				/>
 				<StatTile
 					label={t.house.statHealth}
@@ -440,6 +448,8 @@ export default function House() {
 							<input
 								type="number"
 								name="deposit-amount"
+								data-testid="house-amount"
+								data-amount-for="deposit"
 								min="0"
 								placeholder="0.00"
 								className="field-px"
@@ -494,10 +504,11 @@ export default function House() {
 								networkMismatch)
 						}
 						className="btn-win mt-4 w-full"
+						data-testid="house-deposit"
 					>
 						{connected ? t.house.depositCta : t.house.connectWallet}
 					</TransactionButton>
-					<TxProgress state={depositFlow.state} steps={["verifying", "awaiting", "confirming"]} error={depositFlow.error} />
+					<TxProgress state={depositFlow.state} steps={["verifying", "awaiting", "confirming"]} error={depositFlow.error} errorTestId="house-deposit-error" />
 					<p className="mt-2 font-body text-[13px] text-mute">
 						{t.house.depositQueueHint}
 					</p>
@@ -522,6 +533,7 @@ export default function House() {
 									</span>
 									<button
 										type="button"
+										data-testid="house-cancel-deposit"
 										onClick={() =>
 											void handleCancelDeposit(
 												entry.request_id,
@@ -542,7 +554,10 @@ export default function House() {
 						</div>
 					)}
 					{cancelDepositError && (
-						<p className="mt-2 break-words font-body text-[13px] text-loss">
+						<p
+							data-testid="house-cancel-deposit-error"
+							className="mt-2 break-words font-body text-[13px] text-loss"
+						>
 							{cancelDepositError}
 						</p>
 					)}
@@ -560,7 +575,10 @@ export default function House() {
 						</div>
 						<div className="flex items-baseline justify-between">
 							<span className="label-px">{t.house.currentValue}</span>
-							<span className="board-figure text-[24px]">
+							<span
+								data-testid="house-share-price"
+								className="board-figure text-[24px]"
+							>
 								{positionAssets !== undefined
 									? `${formatUsdc(positionAssets)} USDC`
 									: "…"}
@@ -593,6 +611,8 @@ export default function House() {
 								<input
 									type="number"
 									name="withdraw-shares"
+									data-testid="house-amount"
+									data-amount-for="withdraw"
 									min="0"
 									placeholder="0.00"
 									className="field-px"
@@ -662,10 +682,11 @@ export default function House() {
 									networkMismatch)
 							}
 							className="btn-blip mt-4 w-full"
+							data-testid="house-request-withdrawal"
 						>
 							{connected ? t.house.queueCta : t.house.connectWallet}
 						</TransactionButton>
-						<TxProgress state={requestFlow.state} steps={["verifying", "awaiting", "confirming"]} error={requestFlow.error} />
+						<TxProgress state={requestFlow.state} steps={["verifying", "awaiting", "confirming"]} error={requestFlow.error} errorTestId="house-request-withdrawal-error" />
 						<p className="mt-2 font-body text-[13px] text-mute">
 							{t.house.queueHint}
 						</p>
@@ -690,6 +711,7 @@ export default function House() {
 											<div
 												key={entry.request_id.toString()}
 												role="listitem"
+												data-testid="house-queue-row"
 												className={`w3-queue-chip${
 													mine ? " is-mine" : ""
 												}`}
@@ -746,6 +768,7 @@ export default function House() {
 													</span>
 													<button
 														type="button"
+														data-testid="house-cancel-withdrawal"
 														onClick={() =>
 															void handleCancel(
 																entry.request_id,
@@ -768,7 +791,10 @@ export default function House() {
 									</div>
 								)}
 								{cancelWithdrawError && (
-									<p className="mt-2 break-words font-body text-[13px] text-loss">
+									<p
+										data-testid="house-cancel-withdrawal-error"
+										className="mt-2 break-words font-body text-[13px] text-loss"
+									>
 										{cancelWithdrawError}
 									</p>
 								)}
@@ -791,10 +817,11 @@ export default function House() {
 									onClick={handleCollect}
 									disabled={!connected || networkMismatch}
 									className="btn-win mt-3 w-full"
+									data-testid="house-collect"
 								>
 									{t.house.collectCta}
 								</TransactionButton>
-								<TxProgress state={collectFlow.state} steps={["verifying", "awaiting", "confirming"]} error={collectFlow.error} />
+								<TxProgress state={collectFlow.state} steps={["verifying", "awaiting", "confirming"]} error={collectFlow.error} errorTestId="house-collect-error" />
 							</div>
 						) : (
 							<p className="font-board text-[18px] text-mute">

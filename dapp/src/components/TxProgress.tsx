@@ -49,11 +49,14 @@ export function TxProgress({
 	steps,
 	error,
 	stamps,
+	errorTestId,
 }: {
 	state: TxState
 	steps: readonly TxStepKey[]
 	error?: string | null
 	stamps?: TxProgressStamps
+	/** Inert automation hook — stamped on the error text element while failed. */
+	errorTestId?: string
 }) {
 	const { theme } = useTheme()
 	const active = state === "verifying" || state === "awaiting" || state === "confirming"
@@ -74,9 +77,9 @@ export function TxProgress({
 	const stepIndex = steps.indexOf(state as TxStepKey)
 
 	return theme === "serious" ? (
-		<SeriousStepper state={state} steps={steps} stepIndex={stepIndex} error={error} elapsedMs={elapsedMs} />
+		<SeriousStepper state={state} steps={steps} stepIndex={stepIndex} error={error} elapsedMs={elapsedMs} errorTestId={errorTestId} />
 	) : (
-		<FunStepper state={state} steps={steps} stepIndex={stepIndex} error={error} stamps={stamps} />
+		<FunStepper state={state} steps={steps} stepIndex={stepIndex} error={error} stamps={stamps} errorTestId={errorTestId} />
 	)
 }
 
@@ -93,12 +96,14 @@ function SeriousStepper({
 	stepIndex,
 	error,
 	elapsedMs,
+	errorTestId,
 }: {
 	state: TxState
 	steps: readonly TxStepKey[]
 	stepIndex: number
 	error?: string | null
 	elapsedMs: number
+	errorTestId?: string
 }) {
 	const failed = state === "error"
 	const done = state === "success"
@@ -129,7 +134,10 @@ function SeriousStepper({
 					)
 				})}
 			</div>
-			<p className={`mt-2 font-body text-[13px] ${failed ? "text-loss" : "text-dim"}`}>
+			<p
+				data-testid={failed ? errorTestId : undefined}
+				className={`mt-2 font-body text-[13px] ${failed ? "text-loss" : "text-dim"}`}
+			>
 				{statusLine(state, steps, stepIndex, error)}
 			</p>
 			{!done && !failed && (
@@ -145,12 +153,14 @@ function FunStepper({
 	stepIndex,
 	error,
 	stamps,
+	errorTestId,
 }: {
 	state: TxState
 	steps: readonly TxStepKey[]
 	stepIndex: number
 	error?: string | null
 	stamps?: TxProgressStamps
+	errorTestId?: string
 }) {
 	const done = state === "success"
 	const failed = state === "error"
@@ -188,7 +198,10 @@ function FunStepper({
 					{done && <Confetti />}
 				</div>
 			)}
-			<p className={`label-px mt-1.5 ${failed ? "text-loss" : "text-mute"}`}>
+			<p
+				data-testid={failed ? errorTestId : undefined}
+				className={`label-px mt-1.5 ${failed ? "text-loss" : "text-mute"}`}
+			>
 				{done
 					? "DONE"
 					: failed

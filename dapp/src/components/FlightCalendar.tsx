@@ -191,6 +191,7 @@ export function FlightCalendar({
 			<button
 				ref={fieldRef}
 				type="button"
+				data-testid="betslip-date"
 				className="field-px w3-cal-field"
 				aria-haspopup="dialog"
 				aria-expanded={open}

@@ -55,6 +55,7 @@ function NetworkMismatchBanner() {
 	return (
 		<div
 			role="alert"
+			data-testid="network-mismatch-banner"
 			className="relative z-20 border-b border-amber-500/40 bg-amber-500/15 px-4 py-2 text-center font-body text-[13px] text-amber-200"
 		>
 			{t.wallet.mismatchBanner(stellarNetwork)}

@@ -92,7 +92,12 @@ export default function Status() {
 							</tr>
 						)}
 						{jobs.map((j) => (
-							<tr key={j.job} className="border-b border-line/60 last:border-b-0">
+							<tr
+								key={j.job}
+								data-testid="status-row"
+								data-job={j.job}
+								className="border-b border-line/60 last:border-b-0"
+							>
 								<td className="w-14 px-3 py-2.5">
 									{/* not color-only: lamp + ✓/✕ glyph + sr text */}
 									<span className="flex items-center gap-1.5">

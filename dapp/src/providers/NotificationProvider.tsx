@@ -123,13 +123,15 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({
 	return (
 		<NotificationContext value={contextValue}>
 			{children}
-			<div className="toast-stack">
+			<div data-testid="toast" className="toast-stack">
 				{toasts.map((n) => {
 					const style = TYPE_STYLE[n.type]
 					const sticky = n.type === "error"
 					return (
 						<div
 							key={n.id}
+							data-testid="toast-item"
+							data-type={n.type}
 							className="toast-px"
 							style={{ borderColor: style.border }}
 							role={sticky ? "alert" : "status"}
