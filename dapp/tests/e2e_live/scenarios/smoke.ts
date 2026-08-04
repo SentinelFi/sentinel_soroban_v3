@@ -37,12 +37,12 @@ export async function smoke(cfg: LiveConfig, j: Journal): Promise<void> {
     j.append("observation", "stats strip vs api", { uiStats, apiStats });
     journalCheck(j, "smoke: /api/status/stats reachable", "flights_insured" in apiStats);
 
-    for (const route of ["/house", "/policies", "/status", "/globe"]) {
-      await gotoRoute(page, `${cfg.appUrl}${route}`).catch(() => {});
+    for (const route of ["/house", "/policies", "/status", "/markets"]) {
+      await gotoRoute(page, route).catch(() => {});
       const shot = await snap(page, j.shotsDir, `smoke${route.replace("/", "-")}`);
       j.append("screenshot", shot, { route });
     }
-    await gotoRoute(page, `${cfg.appUrl}/admin`).catch(() => {});
+    await gotoRoute(page, "/admin").catch(() => {});
     journalCheck(j, "smoke: /admin gate renders (no crash)", await adminGateRendered(page).catch(() => false));
 
     journalCheck(
