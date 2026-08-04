@@ -76,6 +76,13 @@ bundle so the chain is touched once.
 - [ ] **Buyer whitelist ON at launch** (tenure-gated mainnet per launch plan;
   testnet runs whitelist-off). Decide the tenure criteria + credits mechanics
   (credits are mainnet-only).
+- [ ] **Disable public Supabase sign-ups** (dashboard → Authentication →
+  Sign In / Up → disable new user sign-ups): today anyone can create a
+  session (authorization still 403s non-allowlisted emails on every admin
+  API + deny-all RLS, so nothing is exposed) — but closing the outer door
+  stops stranger identities accumulating in the auth table. Also expand
+  ADMIN_EMAILS (currently a single address) to distinct per-admin emails
+  so actions_log attribution stays meaningful with more operators.
 - [ ] Seed a *curated* mainnet route set (small, high-liquidity pairs), not the
   full 1k+ catalog — seeding cost, TTL rent, and exposure all scale with it.
 
