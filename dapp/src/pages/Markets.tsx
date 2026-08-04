@@ -1084,6 +1084,7 @@ export default function Markets() {
 											<RiskBar
 												flightId={route.flightId}
 												route={`${route.origin}-${route.dest}`}
+												wide
 											/>
 										</div>
 									</td>

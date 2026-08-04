@@ -1445,6 +1445,15 @@ html[data-theme="serious"] {
 		color: var(--color-mute);
 	}
 
+	/* wide: roomier bar for the board's status column */
+	.riskbar-wide .riskbar-cell {
+		width: 9px;
+		height: 12px;
+	}
+	.riskbar-wide .riskbar-track-serious {
+		width: 140px;
+	}
+
 	/* serious: smooth rounded gradient bar */
 	.riskbar-track-serious {
 		width: 64px;

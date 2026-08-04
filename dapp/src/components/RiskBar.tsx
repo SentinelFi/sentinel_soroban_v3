@@ -16,11 +16,14 @@ export function RiskBar({
 	flightId,
 	route,
 	compact = false,
+	wide = false,
 }: {
 	flightId: string
 	/** "ORIGIN-DEST", enables the static route table lookup. */
 	route?: string
 	compact?: boolean
+	/** Roomier bar for wide layouts (the board's status column). */
+	wide?: boolean
 }) {
 	const { theme } = useTheme()
 	const serious = theme === "serious"
@@ -35,9 +38,11 @@ export function RiskBar({
 
 	const title = `Estimated delay risk ≈ ${delayedPct}% (illustrative — no live route history on testnet)`
 
+	const rootClass = wide ? "riskbar riskbar-wide" : "riskbar"
+
 	if (serious) {
 		return (
-			<div className="riskbar" title={title}>
+			<div className={rootClass} title={title}>
 				<div className="riskbar-track riskbar-track-serious">
 					<div
 						className="riskbar-fill-serious riskbar-fill-grow"
@@ -59,7 +64,7 @@ export function RiskBar({
 	const cells = 10
 	const filled = Math.round((delayedPct / 100) * cells)
 	return (
-		<div className="riskbar" title={title}>
+		<div className={rootClass} title={title}>
 			<div className="riskbar-track-px" aria-hidden="true">
 				{Array.from({ length: cells }, (_, i) => (
 					<span
