@@ -60,6 +60,14 @@ bundle so the chain is touched once.
 - [ ] **Mainnet XLM funding** for oracle / keeper / governor accounts — no
   friendbot on mainnet. Decide float per account + a low-balance alert (crons
   die silently when the signer can't pay fees).
+- [ ] **Wire an external uptime monitor to `/api/status/alert`** *(endpoint
+  shipped 2026-08-04)*: returns 200 healthy / 503 with a problem list on any
+  failed last run, job stale past 2× cadence, never-recorded job while the
+  system is alive (catches import-crash-class deaths the run recorder never
+  sees — the 2026-08-04 four-crons-dark incident), or a stalled settlement
+  barrier. UptimeRobot / cron-job.org free tier polling every 5min + email
+  alert on non-200 is sufficient; do this BEFORE the soak if possible, it is
+  free and takes 5 minutes.
 - [ ] **Fresh mainnet keypairs** for all roles (testnet secrets have lived in
   local keychain + Vercel env; mint new ones for mainnet, owner key kept
   offline/local-only as today).
