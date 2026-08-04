@@ -15,8 +15,8 @@ export interface OnChainRoute {
   /** Resolved terms (defaults folded on-chain) — only when Active. */
   terms: { premium: bigint; payoff: bigint; delayHours: number } | null;
 }
-import { logAction } from "./action_log";
-import type { RouteKey } from "./model";
+import { logAction } from "./action_log.js";
+import type { RouteKey } from "./model.js";
 
 /**
  * GovSubmitter — the single choke point for on-chain governance

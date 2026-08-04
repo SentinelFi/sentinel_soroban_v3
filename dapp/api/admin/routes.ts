@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { verifyAdmin } from "../_lib/governance/admin_auth";
-import { loadGovConfig } from "../_lib/governance/config";
-import { getDb } from "../_lib/governance/db";
-import { GovSubmitter } from "../_lib/governance/submitter";
-import { ensureTable as ensureInterventionsTable } from "../_lib/governance/interventions";
+import { verifyAdmin } from "../_lib/governance/admin_auth.js";
+import { loadGovConfig } from "../_lib/governance/config.js";
+import { getDb } from "../_lib/governance/db.js";
+import { GovSubmitter } from "../_lib/governance/submitter.js";
+import { ensureTable as ensureInterventionsTable } from "../_lib/governance/interventions.js";
 
 /**
  * Admin API — route registry (DB rows; on-chain ops live in actions.ts).

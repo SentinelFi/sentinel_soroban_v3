@@ -1,5 +1,5 @@
-import { makeGovCronHandler } from "../_lib/governance/config";
-import { run } from "../_lib/governance/exposure_collector";
+import { makeGovCronHandler } from "../_lib/governance/config.js";
+import { run } from "../_lib/governance/exposure_collector.js";
 
 /**
  * gov_exposure — hourly at :07, before the reconciler (:10): each

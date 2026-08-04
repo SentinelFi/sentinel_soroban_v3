@@ -1,5 +1,5 @@
-import { SorobanClient } from "../soroban_client";
-import type { Config, RunLogEntry } from "../types";
+import { SorobanClient } from "../soroban_client.js";
+import type { Config, RunLogEntry } from "../types.js";
 
 /**
  * Cron #3b — QueueMaintainer (every 5 minutes, decoupled from settler)

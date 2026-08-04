@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { rpc, scValToNative, xdr } from "@stellar/stellar-sdk";
-import { verifyAdmin } from "../_lib/governance/admin_auth";
-import { nativeTopics } from "../_lib/governance/event_ingest";
-import { loadPublicConfig } from "../_lib/config";
+import { verifyAdmin } from "../_lib/governance/admin_auth.js";
+import { nativeTopics } from "../_lib/governance/event_ingest.js";
+import { loadPublicConfig } from "../_lib/config.js";
 
 /**
  * Admin API — protocol diagnostics feed.

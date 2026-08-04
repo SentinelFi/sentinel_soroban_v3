@@ -1,4 +1,4 @@
-import { getDb } from "./db";
+import { getDb } from "./db.js";
 
 /**
  * pricing_runs — the audit trail for ML route pricing, one row per run.

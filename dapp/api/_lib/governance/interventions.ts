@@ -1,5 +1,5 @@
-import { getDb } from "./db";
-import { GovSubmitter } from "./submitter";
+import { getDb } from "./db.js";
+import { GovSubmitter } from "./submitter.js";
 
 /**
  * interventions — THE unified pause ledger + executor (2026-08-01 rework).

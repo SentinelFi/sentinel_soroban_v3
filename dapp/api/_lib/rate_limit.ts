@@ -1,5 +1,5 @@
 import type { VercelRequest } from "@vercel/node";
-import { getDb } from "./governance/db";
+import { getDb } from "./governance/db.js";
 
 /**
  * Fixed-window rate limiting for the public, unauthenticated endpoints

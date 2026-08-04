@@ -1,8 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { loadConfig } from "./config";
-import { cronTrigger, recordRun } from "./governance/runs";
-import type { Config, RunLogEntry } from "./types";
+import { loadConfig } from "./config.js";
+import { cronTrigger, recordRun } from "./governance/runs.js";
+import type { Config, RunLogEntry } from "./types.js";
 
 /**
  * Auth for cron endpoints — CRON_SECRET is REQUIRED (fail closed).

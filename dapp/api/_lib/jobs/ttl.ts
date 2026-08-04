@@ -1,7 +1,7 @@
-import { SorobanClient } from "../soroban_client";
-import { getDb } from "../governance/db";
-import { parseFlightStatus } from "../status";
-import type { Config, RunLogEntry, TTLResult } from "../types";
+import { SorobanClient } from "../soroban_client.js";
+import { getDb } from "../governance/db.js";
+import { parseFlightStatus } from "../status.js";
+import type { Config, RunLogEntry, TTLResult } from "../types.js";
 
 /**
  * Expired-claim sweeper: settled delayed/cancelled flights whose 60-day

@@ -1,16 +1,16 @@
-import { SorobanClient } from "../soroban_client";
-import { AeroApiClient, isConfirmedCancellation, isConfirmedDiversion } from "../aeroapi_client";
-import { classifyAndSettleFlight } from "../targeted_settlement";
-import { parseFlightStatus } from "../status";
-import { logFlightOutcome } from "../outcome_log";
-import { readScheduledArrival } from "../flight_schedules";
+import { SorobanClient } from "../soroban_client.js";
+import { AeroApiClient, isConfirmedCancellation, isConfirmedDiversion } from "../aeroapi_client.js";
+import { classifyAndSettleFlight } from "../targeted_settlement.js";
+import { parseFlightStatus } from "../status.js";
+import { logFlightOutcome } from "../outcome_log.js";
+import { readScheduledArrival } from "../flight_schedules.js";
 import {
   FlightStatus,
   type ActiveFlight,
   type Config,
   type RunLogEntry,
   type FetcherAction,
-} from "../types";
+} from "../types.js";
 
 // AeroAPI /flights/{ident} visibility: start/end must be within 10 days past
 // and 2 days future — queries outside that window are a 400 and can never

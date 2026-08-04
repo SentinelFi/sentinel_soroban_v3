@@ -1,5 +1,5 @@
-import { makeGovCronHandler } from "../_lib/governance/config";
-import { run } from "../_lib/jobs/revive";
+import { makeGovCronHandler } from "../_lib/governance/config.js";
+import { run } from "../_lib/jobs/revive.js";
 
 // Hourly: weather/exposure predicates are free-or-cheap re-checks; the
 // cancellation sweeps (2 AeroAPI calls each) only fire on rows ~20h past

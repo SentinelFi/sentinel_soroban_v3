@@ -1,5 +1,5 @@
-import { makeGovCronHandler } from "../_lib/governance/config";
-import { run } from "../_lib/governance/onboard";
+import { makeGovCronHandler } from "../_lib/governance/config.js";
+import { run } from "../_lib/governance/onboard.js";
 
 /**
  * gov_onboard — every 6 hours at :15. Syncs file/on-chain routes into the

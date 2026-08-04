@@ -1,17 +1,17 @@
 import { readFileSync } from "fs";
-import { AgentClient } from "../agent_client";
-import { toIata } from "../airline_codes";
-import { expectedLossPremiumUnits, mlBasePremiumUnits } from "../route_rules";
-import { baseUnitsToUsdc, fileTerms, loadRoutesConfig } from "../routes_config";
-import type { FetcherAction, RunLogEntry } from "../types";
-import type { GovConfig } from "../governance/config";
-import { logPricingRun } from "../governance/pricing_log";
+import { AgentClient } from "../agent_client.js";
+import { toIata } from "../airline_codes.js";
+import { expectedLossPremiumUnits, mlBasePremiumUnits } from "../route_rules.js";
+import { baseUnitsToUsdc, fileTerms, loadRoutesConfig } from "../routes_config.js";
+import type { FetcherAction, RunLogEntry } from "../types.js";
+import type { GovConfig } from "../governance/config.js";
+import { logPricingRun } from "../governance/pricing_log.js";
 import {
   openInterventions,
   pauseRoute,
   reviveRoute,
   type GovChainConfig,
-} from "../governance/interventions";
+} from "../governance/interventions.js";
 
 /**
  * reprice (monthly) — seasonal ML repricing PROPOSAL + the pricing brake.

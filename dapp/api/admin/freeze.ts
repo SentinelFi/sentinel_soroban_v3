@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { verifyAdmin } from "../_lib/governance/admin_auth";
-import { getDb } from "../_lib/governance/db";
+import { verifyAdmin } from "../_lib/governance/admin_auth.js";
+import { getDb } from "../_lib/governance/db.js";
 
 /**
  * Admin API — the governance freeze switch (ops_flags.gov_frozen).

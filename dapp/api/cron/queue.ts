@@ -1,5 +1,5 @@
-import { makeCronHandler } from "../_lib/handler";
-import { run } from "../_lib/jobs/queue";
+import { makeCronHandler } from "../_lib/handler.js";
+import { run } from "../_lib/jobs/queue.js";
 
 export const config = { maxDuration: 300 };
 

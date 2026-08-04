@@ -10,7 +10,7 @@ import {
   Address,
   rpc,
 } from "@stellar/stellar-sdk";
-import type { Config } from "./types";
+import type { Config } from "./types.js";
 
 const TX_TIMEOUT = 30; // seconds
 

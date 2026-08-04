@@ -1,12 +1,12 @@
-import { SorobanClient } from "./soroban_client";
-import { AeroApiClient, isConfirmedCancellation } from "./aeroapi_client";
-import { classifyAndSettleFlight } from "./targeted_settlement";
-import { parseFlightStatus } from "./status";
-import { loadRoutesConfig } from "./routes_config";
-import { saveFlightSchedule } from "./flight_schedules";
-import { guardRoute, type GuardRoute } from "./route_guard";
-import { getDb } from "./governance/db";
-import { FlightStatus, type Config, type FetcherAction } from "./types";
+import { SorobanClient } from "./soroban_client.js";
+import { AeroApiClient, isConfirmedCancellation } from "./aeroapi_client.js";
+import { classifyAndSettleFlight } from "./targeted_settlement.js";
+import { parseFlightStatus } from "./status.js";
+import { loadRoutesConfig } from "./routes_config.js";
+import { saveFlightSchedule } from "./flight_schedules.js";
+import { guardRoute, type GuardRoute } from "./route_guard.js";
+import { getDb } from "./governance/db.js";
+import { FlightStatus, type Config, type FetcherAction } from "./types.js";
 
 /**
  * JIT sale authorization — the demand-driven replacement for the polled

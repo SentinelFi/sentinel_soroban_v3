@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { loadPublicConfig } from "../_lib/config";
-import { SorobanClient } from "../_lib/soroban_client";
-import type { Config } from "../_lib/types";
+import { loadPublicConfig } from "../_lib/config.js";
+import { SorobanClient } from "../_lib/soroban_client.js";
+import type { Config } from "../_lib/types.js";
 
 /**
  * GET /api/cron/health — unauthenticated liveness/config probe.

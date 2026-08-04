@@ -1,10 +1,10 @@
-import { AeroApiClient, isConfirmedCancellation } from "./aeroapi_client";
+import { AeroApiClient, isConfirmedCancellation } from "./aeroapi_client.js";
 import {
   checkedRecently,
   pauseRoute,
   recordCheck,
   type GovChainConfig,
-} from "./governance/interventions";
+} from "./governance/interventions.js";
 
 /**
  * Route guard — the anomaly-triggered cancellation sweep (no cron).

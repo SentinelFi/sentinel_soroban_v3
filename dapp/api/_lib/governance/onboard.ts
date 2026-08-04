@@ -2,12 +2,12 @@ import {
   fileTerms,
   loadRoutesConfig,
   type RoutesConfig,
-} from "../routes_config";
-import type { RunLogEntry, FetcherAction } from "../types";
-import type { GovConfig } from "./config";
-import { getDb } from "./db";
-import { GovSubmitter } from "./submitter";
-import type { RouteRow } from "./model";
+} from "../routes_config.js";
+import type { RunLogEntry, FetcherAction } from "../types.js";
+import type { GovConfig } from "./config.js";
+import { getDb } from "./db.js";
+import { GovSubmitter } from "./submitter.js";
+import type { RouteRow } from "./model.js";
 
 /**
  * gov_onboard — the file↔chain↔DB STATUS SYNC that closes the

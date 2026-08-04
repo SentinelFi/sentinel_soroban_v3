@@ -1,5 +1,5 @@
-import { makeCronHandler } from "../_lib/handler";
-import { run } from "../_lib/jobs/classifier";
+import { makeCronHandler } from "../_lib/handler.js";
+import { run } from "../_lib/jobs/classifier.js";
 
 export const config = { maxDuration: 300 };
 

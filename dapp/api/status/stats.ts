@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { loadConfig } from "../_lib/config";
-import { getDb } from "../_lib/governance/db";
-import { publicError } from "../_lib/public_error";
-import { SorobanClient } from "../_lib/soroban_client";
-import { FlightStatus } from "../_lib/types";
+import { loadConfig } from "../_lib/config.js";
+import { getDb } from "../_lib/governance/db.js";
+import { publicError } from "../_lib/public_error.js";
+import { SorobanClient } from "../_lib/soroban_client.js";
+import { FlightStatus } from "../_lib/types.js";
 
 /**
  * GET /api/status/stats — PUBLIC, sanitized protocol stats for the Markets

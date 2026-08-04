@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { verifyAdmin } from "../_lib/governance/admin_auth";
-import { getDb } from "../_lib/governance/db";
-import { ensureOutcomesTable } from "../_lib/outcome_log";
+import { verifyAdmin } from "../_lib/governance/admin_auth.js";
+import { getDb } from "../_lib/governance/db.js";
+import { ensureOutcomesTable } from "../_lib/outcome_log.js";
 
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 50;

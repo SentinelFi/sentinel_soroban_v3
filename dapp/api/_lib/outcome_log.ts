@@ -1,6 +1,6 @@
-import { getDb } from "./governance/db";
-import { loadRoutesConfig } from "./routes_config";
-import { WeatherClient } from "./weather_client";
+import { getDb } from "./governance/db.js";
+import { loadRoutesConfig } from "./routes_config.js";
+import { WeatherClient } from "./weather_client.js";
 
 /** Exported so read paths (the admin outcomes panel) can guarantee the
  *  table exists without having logged an outcome yet. */

@@ -1,5 +1,5 @@
-import type { DailyForecast } from "./weather_client";
-import type { RouteRails } from "./routes_config";
+import type { DailyForecast } from "./weather_client.js";
+import type { RouteRails } from "./routes_config.js";
 
 /**
  * PURE weather + premium math shared by the governance layer (no I/O):

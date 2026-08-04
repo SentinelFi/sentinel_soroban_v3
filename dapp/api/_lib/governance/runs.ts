@@ -1,5 +1,5 @@
-import type { JobName, RunLogEntry } from "../types";
-import { getDb } from "./db";
+import type { JobName, RunLogEntry } from "../types.js";
+import { getDb } from "./db.js";
 
 /**
  * Cron run history — the ops layer behind the /admin JOBS board and the

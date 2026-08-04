@@ -1,4 +1,4 @@
-import { AIRPORTS } from "./airports";
+import { AIRPORTS } from "./airports.js";
 
 /**
  * Open-Meteo forecast client for the route agent's weather check.

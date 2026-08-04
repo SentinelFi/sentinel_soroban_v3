@@ -1,5 +1,5 @@
-import { makeGovCronHandler } from "../_lib/governance/config";
-import { run } from "../_lib/jobs/weather";
+import { makeGovCronHandler } from "../_lib/governance/config.js";
+import { run } from "../_lib/jobs/weather.js";
 
 // Stateless storm surcharge loop (every ~2h): fleet-file base + flat
 // surcharge from the live 3-day forecast, applied/cleared on-chain via

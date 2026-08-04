@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { isAuthorized } from "../handler";
-import type { RunLogEntry } from "../types";
-import { cronTrigger, recordRun } from "./runs";
+import { isAuthorized } from "../handler.js";
+import type { RunLogEntry } from "../types.js";
+import { cronTrigger, recordRun } from "./runs.js";
 
 /**
  * Config + handler wrapper for the governance crons (gov-reconcile,

@@ -1,4 +1,4 @@
-import { getDb } from "./governance/db";
+import { getDb } from "./governance/db.js";
 
 /**
  * flight_schedules — the scheduled dep/arr snapshot taken by the JIT

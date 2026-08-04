@@ -1,4 +1,4 @@
-import { FlightStatus } from "./types";
+import { FlightStatus } from "./types.js";
 
 // Map enum index to FlightStatus (matches on-chain enum order in
 // sentinel_types/src/lib.rs — LOAD-BEARING, do not reorder).

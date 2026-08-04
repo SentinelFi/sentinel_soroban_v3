@@ -1,9 +1,9 @@
-import { SorobanClient } from "../soroban_client";
-import { ingestChainEvents } from "./event_ingest";
-import { loadRoutesConfig } from "../routes_config";
-import { parseFlightStatus } from "../status";
-import { FlightStatus, type Config, type RunLogEntry, type FetcherAction } from "../types";
-import type { GovConfig } from "./config";
+import { SorobanClient } from "../soroban_client.js";
+import { ingestChainEvents } from "./event_ingest.js";
+import { loadRoutesConfig } from "../routes_config.js";
+import { parseFlightStatus } from "../status.js";
+import { FlightStatus, type Config, type RunLogEntry, type FetcherAction } from "../types.js";
+import type { GovConfig } from "./config.js";
 import {
   claimDisableSlot,
   computeDisableCap,
@@ -11,7 +11,7 @@ import {
   releaseDisableSlot,
   type GovChainConfig,
   type InterventionRoute,
-} from "./interventions";
+} from "./interventions.js";
 
 /**
  * gov_exposure — the correlated-risk brake (hourly).

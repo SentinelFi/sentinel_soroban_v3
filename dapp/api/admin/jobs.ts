@@ -1,19 +1,19 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { loadConfig } from "../_lib/config";
-import { verifyAdmin } from "../_lib/governance/admin_auth";
-import { loadGovConfig } from "../_lib/governance/config";
-import { JOB_REGISTRY, latestRuns, recentRuns, recordRun } from "../_lib/governance/runs";
-import { run as runClassifier } from "../_lib/jobs/classifier";
-import { run as runFetcher } from "../_lib/jobs/fetcher";
-import { run as runQueue } from "../_lib/jobs/queue";
-import { run as runRepricer } from "../_lib/jobs/repricer";
-import { run as runRevive } from "../_lib/jobs/revive";
-import { run as runSettler } from "../_lib/jobs/settler";
-import { run as runTtl } from "../_lib/jobs/ttl";
-import { run as runWeather } from "../_lib/jobs/weather";
-import { run as runGovExposure } from "../_lib/governance/exposure_collector";
-import { run as runGovOnboard } from "../_lib/governance/onboard";
-import type { JobName, RunLogEntry } from "../_lib/types";
+import { loadConfig } from "../_lib/config.js";
+import { verifyAdmin } from "../_lib/governance/admin_auth.js";
+import { loadGovConfig } from "../_lib/governance/config.js";
+import { JOB_REGISTRY, latestRuns, recentRuns, recordRun } from "../_lib/governance/runs.js";
+import { run as runClassifier } from "../_lib/jobs/classifier.js";
+import { run as runFetcher } from "../_lib/jobs/fetcher.js";
+import { run as runQueue } from "../_lib/jobs/queue.js";
+import { run as runRepricer } from "../_lib/jobs/repricer.js";
+import { run as runRevive } from "../_lib/jobs/revive.js";
+import { run as runSettler } from "../_lib/jobs/settler.js";
+import { run as runTtl } from "../_lib/jobs/ttl.js";
+import { run as runWeather } from "../_lib/jobs/weather.js";
+import { run as runGovExposure } from "../_lib/governance/exposure_collector.js";
+import { run as runGovOnboard } from "../_lib/governance/onboard.js";
+import type { JobName, RunLogEntry } from "../_lib/types.js";
 
 // Manual runs can be slow (fetcher walks every active flight).
 export const config = { maxDuration: 300 };

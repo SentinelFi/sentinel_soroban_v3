@@ -1,4 +1,4 @@
-import { getDb } from "./db";
+import { getDb } from "./db.js";
 
 /**
  * Append-only audit writer for actions_log. Every on-chain governance

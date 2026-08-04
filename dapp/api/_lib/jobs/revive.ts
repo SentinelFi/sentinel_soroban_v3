@@ -1,5 +1,5 @@
-import { AeroApiClient } from "../aeroapi_client";
-import type { GovConfig } from "../governance/config";
+import { AeroApiClient } from "../aeroapi_client.js";
+import type { GovConfig } from "../governance/config.js";
 import {
   openInterventions,
   recordClearCheck,
@@ -7,18 +7,18 @@ import {
   touchIntervention,
   type GovChainConfig,
   type InterventionRow,
-} from "../governance/interventions";
+} from "../governance/interventions.js";
 import {
   computeConcentrations,
   exposureContractIds,
   exposureReadClient,
   readExposure,
-} from "../governance/exposure_collector";
-import { sweepVerdict } from "../route_guard";
-import { isExtremeForecast } from "../route_rules";
-import { loadRoutesConfig } from "../routes_config";
-import { WeatherClient } from "../weather_client";
-import type { RunLogEntry, FetcherAction } from "../types";
+} from "../governance/exposure_collector.js";
+import { sweepVerdict } from "../route_guard.js";
+import { isExtremeForecast } from "../route_rules.js";
+import { loadRoutesConfig } from "../routes_config.js";
+import { WeatherClient } from "../weather_client.js";
+import type { RunLogEntry, FetcherAction } from "../types.js";
 
 /**
  * Cron — the unified REVIVE engine (hourly).

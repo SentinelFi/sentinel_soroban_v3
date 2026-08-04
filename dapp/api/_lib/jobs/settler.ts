@@ -1,6 +1,6 @@
-import { SorobanClient } from "../soroban_client";
-import { getDb } from "../governance/db";
-import type { Config, FetcherAction, RunLogEntry } from "../types";
+import { SorobanClient } from "../soroban_client.js";
+import { getDb } from "../governance/db.js";
+import type { Config, FetcherAction, RunLogEntry } from "../types.js";
 
 /**
  * Best-effort barrier-age bookkeeping (ops_flags key 'barrier'): records

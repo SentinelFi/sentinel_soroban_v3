@@ -1,5 +1,5 @@
-import { makeGovCronHandler } from "../_lib/governance/config";
-import { run } from "../_lib/jobs/repricer";
+import { makeGovCronHandler } from "../_lib/governance/config.js";
+import { run } from "../_lib/jobs/repricer.js";
 
 // Monthly seasonal repricing. Prices stay ADVISORY (proposal →
 // pricing_runs; the admin applies via price_routes → review →

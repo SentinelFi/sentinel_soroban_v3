@@ -1,4 +1,4 @@
-import type { Config } from "./types";
+import type { Config } from "./types.js";
 
 /**
  * Env-driven config for the serverless cron functions.

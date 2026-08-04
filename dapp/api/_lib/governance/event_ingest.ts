@@ -1,5 +1,5 @@
 import { rpc, scValToNative, xdr } from "@stellar/stellar-sdk";
-import { getDb } from "./db";
+import { getDb } from "./db.js";
 
 /**
  * Chain-event mirror — durable copies of the protocol events the DB

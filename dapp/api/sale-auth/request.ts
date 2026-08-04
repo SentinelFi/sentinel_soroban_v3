@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { loadConfig } from "../_lib/config";
-import { publicError } from "../_lib/public_error";
-import { allowRequest, clientIp } from "../_lib/rate_limit";
-import { authorizeSale } from "../_lib/sale_auth";
+import { loadConfig } from "../_lib/config.js";
+import { publicError } from "../_lib/public_error.js";
+import { allowRequest, clientIp } from "../_lib/rate_limit.js";
+import { authorizeSale } from "../_lib/sale_auth.js";
 
 // One AeroAPI call + up to two oracle txs (window or tombstone) + an
 // occasional 2-call route sweep — well under a minute, but not instant.

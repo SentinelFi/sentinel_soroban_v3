@@ -1,5 +1,5 @@
-import type { SorobanClient } from "./soroban_client";
-import type { Config, FetcherAction } from "./types";
+import type { SorobanClient } from "./soroban_client.js";
+import type { Config, FetcherAction } from "./types.js";
 
 /**
  * Best-effort targeted classify + settle for one exact flight instance,

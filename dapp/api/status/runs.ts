@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getDb } from "../_lib/governance/db";
-import { JOB_REGISTRY, latestRuns } from "../_lib/governance/runs";
-import { publicError } from "../_lib/public_error";
+import { getDb } from "../_lib/governance/db.js";
+import { JOB_REGISTRY, latestRuns } from "../_lib/governance/runs.js";
+import { publicError } from "../_lib/public_error.js";
 
 /**
  * GET /api/status/runs — PUBLIC job-health feed for the /status page.
