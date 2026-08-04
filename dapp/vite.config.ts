@@ -55,8 +55,14 @@ export default defineConfig({
 			// api/**/*.ts only run under Vercel's function runtime — vite dev
 			// serves the SPA, `npm run dev:api` (scripts/dev_api.ts) serves /api.
 			// E2E_PROXY_TARGET points a local UI at a deployed backend (the
-			// soak harness drives the real UI against the real Vercel API).
-			"/api": process.env.E2E_PROXY_TARGET || "http://localhost:3000",
+			// soak harness drives the real UI against the real Vercel API);
+			// changeOrigin is required there — Vercel routes by Host header.
+			"/api": process.env.E2E_PROXY_TARGET
+				? {
+						target: process.env.E2E_PROXY_TARGET,
+						changeOrigin: true,
+					}
+				: "http://localhost:3000",
 		},
 	},
 })
