@@ -486,16 +486,20 @@ async function buyDayPhase(ctx: Ctx): Promise<void> {
   // The old fetcher wrote ETAs at T−2d and settled cancellations the same
   // day. The settle sweep spends ZERO API calls until scheduled arrival +
   // settle delay — even on flights that will cancel. Everything resolves
-  // on the flight day.
+  // on the flight day. Count per-ident: the reused deployment carries
+  // flights from prior runs that are legitimately past their gate.
   console.log("\n── settle sweep (pre-gate: zero calls, zero writes) ─────");
+  const runIdents = Object.values(F);
+  const identCalls = (s: { byIdent: Record<string, number> }) =>
+    runIdents.reduce((n, id) => n + (s.byIdent[id] ?? 0), 0);
   const statsBeforeSweep = await mock.stats();
   const fetch1 = await fetcherRun(config);
   check("settle sweep run succeeds", fetch1.success, fetch1.error ?? "");
   const statsAfterSweep = await mock.stats();
   check(
-    "pre-gate sweep spends ZERO AeroAPI calls",
-    statsAfterSweep.flights === statsBeforeSweep.flights,
-    `${statsBeforeSweep.flights} → ${statsAfterSweep.flights}`
+    "pre-gate sweep spends ZERO AeroAPI calls on this run's flights",
+    identCalls(statsAfterSweep) === identCalls(statsBeforeSweep),
+    `${identCalls(statsBeforeSweep)} → ${identCalls(statsAfterSweep)} (all flights: ${statsBeforeSweep.flights} → ${statsAfterSweep.flights})`
   );
   let allNotInitiated = true;
   for (const role of ["onTime", "cancelled", "diverted", "lost"] as Role[]) {
@@ -593,15 +597,20 @@ async function flightDayPhase(ctx: Ctx): Promise<void> {
   );
 
   // ── settle sweep pass 2: idempotent (everything already settled) ────────
+  // Per-ident count — stale flights from prior cached runs may still be
+  // fetchable and don't belong to this run's idempotence claim.
   console.log("\n── settle sweep pass 2 (idempotence) ────────────────────");
+  const runIdents2 = Object.values(F);
+  const identCalls2 = (s: { byIdent: Record<string, number> }) =>
+    runIdents2.reduce((n, id) => n + (s.byIdent[id] ?? 0), 0);
   const statsBefore2 = await mock.stats();
   const fetch2 = await fetcherRun(config);
   check("settle sweep pass 2 succeeds", fetch2.success, fetch2.error ?? "");
   const statsAfter2 = await mock.stats();
   check(
-    "pass 2 spends ZERO AeroAPI calls (all outcomes recorded)",
-    statsAfter2.flights === statsBefore2.flights,
-    `${statsBefore2.flights} → ${statsAfter2.flights}`
+    "pass 2 spends ZERO AeroAPI calls on this run's flights (all outcomes recorded)",
+    identCalls2(statsAfter2) === identCalls2(statsBefore2),
+    `${identCalls2(statsBefore2)} → ${identCalls2(statsAfter2)} (all flights: ${statsBefore2.flights} → ${statsAfter2.flights})`
   );
 
   // ── G1: batch keeper jobs on the real chain ─────────────────────────────
