@@ -139,12 +139,23 @@ export class Chain {
   }
 
   // ── governance ─────────────────────────────────────────────────────────
-  routeStatus(flightId: string, origin: string, dest: string): Promise<string> {
-    return this.read(this.cfg.contracts.governance, "route_status", [
+  /** Returns the enum TAG only ("Active" | "Disabled" | "Unknown") —
+   *  scValToNative renders payload enums as [tag, value] / {tag} shapes. */
+  async routeStatus(flightId: string, origin: string, dest: string): Promise<string> {
+    const v = await this.read(this.cfg.contracts.governance, "route_status", [
       sym(flightId),
       sym(origin),
       sym(dest),
     ]);
+    if (typeof v === "string") return v;
+    if (Array.isArray(v)) return String(v[0]);
+    if (v && typeof v === "object") {
+      const tagged = v as { tag?: unknown };
+      if (typeof tagged.tag === "string") return tagged.tag;
+      const keys = Object.keys(v as Record<string, unknown>);
+      if (keys.length === 1) return keys[0]!;
+    }
+    return String(v);
   }
 
   // ── events (persisted-cursor pull across all protocol contracts) ──────

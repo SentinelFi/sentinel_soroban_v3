@@ -9,7 +9,7 @@ import { getDb } from "../../api/_lib/governance/db.js";
 
 export interface CronRunRow {
   job: string;
-  started_at: Date;
+  started_at: Date; // aliased from cron_runs.ran_at
   success: boolean;
   detail: string | null;
 }
@@ -31,8 +31,8 @@ export async function recentCronRuns(sinceIso: string): Promise<CronRunRow[] | n
   return tryQuery(async () => {
     const sql = getDb();
     const rows = await sql`
-      select job, started_at, success, detail from cron_runs
-      where started_at >= ${sinceIso} order by started_at desc limit 2000`;
+      select job, ran_at as started_at, success, error as detail from cron_runs
+      where ran_at >= ${sinceIso} order by ran_at desc limit 2000`;
     return rows as unknown as CronRunRow[];
   });
 }
@@ -42,7 +42,7 @@ export async function settlementsFor(flightIds: string[]): Promise<Record<string
   return tryQuery(async () => {
     const sql = getDb();
     const rows = await sql`
-      select * from settlements where flight_id = any(${flightIds}) order by created_at`;
+      select * from settlements where flight_id = any(${flightIds}) order by settled_at`;
     return rows as unknown as Record<string, unknown>[];
   });
 }
@@ -52,7 +52,7 @@ export async function outcomesFor(flightIds: string[]): Promise<Record<string, u
   return tryQuery(async () => {
     const sql = getDb();
     const rows = await sql`
-      select * from flight_outcomes where flight_id = any(${flightIds}) order by created_at`;
+      select * from flight_outcomes where flight_id = any(${flightIds}) order by logged_at`;
     return rows as unknown as Record<string, unknown>[];
   });
 }
@@ -62,7 +62,7 @@ export async function openInterventions(): Promise<Record<string, unknown>[] | n
   return tryQuery(async () => {
     const sql = getDb();
     const rows = await sql`
-      select * from interventions where resolved_at is null order by created_at`;
+      select * from interventions where revived_at is null order by opened_at`;
     return rows as unknown as Record<string, unknown>[];
   });
 }
