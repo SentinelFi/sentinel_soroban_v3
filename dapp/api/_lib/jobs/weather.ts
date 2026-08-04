@@ -110,9 +110,16 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
       for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
       return ((h >>> 0) % SHARDS) === shardIdx;
     };
-    const toProcess = enabled.filter(
-      (r) => !calmAirports.has(r.origin) || !calmAirports.has(r.destination) || inShard(r)
+    const extremeAirports = new Set(
+      [...forecastByAirport.entries()].filter(([, f]) => isExtremeForecast(f)).map(([iata]) => iata)
     );
+    const touchesExtreme = (r: (typeof enabled)[number]): boolean =>
+      extremeAirports.has(r.origin) || extremeAirports.has(r.destination);
+    // EXTREME-affected routes first — pauses are safety and must land
+    // inside the budget before any pricing traffic.
+    const toProcess = enabled
+      .filter((r) => !calmAirports.has(r.origin) || !calmAirports.has(r.destination) || inShard(r))
+      .sort((a, b) => Number(touchesExtreme(b)) - Number(touchesExtreme(a)));
 
     console.log(
       `[weather] ${enabled.length} enabled route(s), ${routesConfig.weatherHorizonDays}d horizon — ` +
@@ -145,10 +152,25 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
       );
     }
 
+    // Submission budget: every surcharge/clear is a sequential on-chain
+    // tx (~7–10s). A storm morning over a 1,069-route fleet queues
+    // hundreds — no read optimization fits that in 300s. Cap the txs and
+    // stop at the time budget; deferred routes heal on the next 2h pass
+    // (a wide storm's surcharges roll out over a few passes — the same
+    // "capped per run" pattern the exposure brake uses).
+    const TIME_BUDGET_MS = 220_000;
+    const MAX_TX_PER_RUN = 15;
+    let txCount = 0;
+    let deferred = 0;
+
     let surcharged = 0;
     let cleared = 0;
     for (const route of toProcess) {
       const label = `${route.flight_id} ${route.origin}→${route.destination}`;
+      if (Date.now() - start > TIME_BUDGET_MS) {
+        deferred++;
+        continue;
+      }
       try {
         const [o, d] = [await getForecast(route.origin), await getForecast(route.destination)];
 
@@ -170,6 +192,7 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
             governanceAdminSecretKey: config.govAdminSecretKey,
           };
           const result = await pauseRoute(chainConfig, route, "weather", evidence, ACTOR);
+          txCount++; // pauses run first (sort above) so they always fit
           actions.push({ flight: label, transition: `EXTREME forecast — ${result.outcome}` });
           continue;
         }
@@ -199,7 +222,12 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
           actions.push({ flight: label, skipped: `[dry-run] ${severity}: $${current !== null ? baseUnitsToUsdc(current) : "?"} → $${baseUnitsToUsdc(target)}` });
           continue;
         }
+        if (txCount >= MAX_TX_PER_RUN) {
+          deferred++;
+          continue;
+        }
         await submitter.updateTerms(key, target, "keep", "keep");
+        txCount++;
         if (target > base) surcharged++;
         else cleared++;
         actions.push({
@@ -212,6 +240,10 @@ export async function run(config: GovConfig): Promise<RunLogEntry> {
       }
     }
 
+    if (deferred > 0) {
+      console.log(`[weather] budget reached — ${deferred} route(s) deferred to the next pass`);
+      actions.push({ flight: "-", skipped: `${deferred} deferred (tx/time budget) — next 2h pass continues` });
+    }
     console.log(`[weather] done: ${surcharged} surcharged, ${cleared} cleared/adjusted`);
     return {
       timestamp: new Date().toISOString(),
