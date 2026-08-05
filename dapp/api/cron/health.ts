@@ -67,7 +67,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 async function readBarrierSince(): Promise<string | null> {
   if (!process.env.GOVERNANCE_DB_URL) return null;
   try {
-    const { getDb } = await import("../_lib/governance/db");
+    const { getDb } = await import("../_lib/governance/db.js");
     const rows = (await getDb()`
       select value, data from ops_flags where key = 'barrier'
     `) as unknown as Array<{ value: boolean; data: { since?: string } | null }>;
