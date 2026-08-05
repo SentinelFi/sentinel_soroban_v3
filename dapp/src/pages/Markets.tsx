@@ -260,6 +260,12 @@ function Ticker({
 	// duplicate content for a seamless -50% marquee loop
 	const loop = [...chips, ...chips, ...chips, ...chips]
 
+	// Hold the scroll SPEED constant instead of the loop time. The demo set
+	// of 3 chips read well at 30s, so budget the same ~10s of travel per
+	// chip; an upper bound keeps a very large active set from stalling to a
+	// crawl rather than merely reading slowly.
+	const marqueeDur = `${Math.min(600, Math.max(30, chips.length * 10))}s`
+
 	return (
 		<div className="ticker flex items-center gap-3 overflow-hidden border-2 border-line bg-inset py-2">
 			<span className="z-10 flex shrink-0 items-center gap-2 border-r-2 border-line bg-inset pl-3 pr-3">
@@ -273,7 +279,11 @@ function Ticker({
 			{/* the 4× loop is presentational — screen readers get the
 			    single-copy static list below instead, which also becomes
 			    the visible wrapped layout under prefers-reduced-motion */}
-			<div className="marquee-track gap-6" aria-hidden="true">
+			<div
+				className="marquee-track gap-6"
+				style={{ "--marquee-dur": marqueeDur } as React.CSSProperties}
+				aria-hidden="true"
+			>
 				{loop.map((chip, i) => (
 					<span
 						key={`${chip.code}-${i}`}
