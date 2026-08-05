@@ -133,14 +133,32 @@ export async function buyPass(
             { flightId: c.flightId, dateISO: c.dateISO, pCovered: c.pCovered },
             a.name,
           );
+          // Expect the CHAIN's premium, not the staged file's. The staged
+          // figure is the base; a weather surcharge lives only on-chain, so
+          // comparing against the file reports a false mismatch on any
+          // surcharged route. Fall back to the file if the read fails.
+          const onChainPremium = await chain.routePremiumUsdc(c.flightId, c.origin, c.dest);
+          const expected = onChainPremium ?? c.premiumUsdc;
+          const surcharged = onChainPremium !== null && onChainPremium !== c.premiumUsdc;
           journalCheck(
             j,
             `${a.name}: buy ${c.flightId}@${c.dateISO} — premium exact + policy on-chain`,
-            onChain && paid === c.premiumUsdc,
-            `paid=${paid} expected=${c.premiumUsdc} onChain=${onChain}`,
+            onChain && paid === expected,
+            `paid=${paid} expected=${expected}${surcharged ? ` (base ${c.premiumUsdc} + surcharge)` : ""} onChain=${onChain}`,
           );
           const shot = await snap(ctx.page, j.shotsDir, `buy-${a.name}-${c.flightId}`);
           j.append("screenshot", shot, {}, a.name);
+        } else if (res.blocked) {
+          // The UI refused before submitting — a precheck (free capital,
+          // buyer balance) held the button. Transient by nature, so the
+          // candidate is deliberately NOT retired: the next check retries
+          // it once capital frees up.
+          j.append(
+            "observation",
+            "UI precheck blocked the buy (candidate kept for retry)",
+            { flight: c.flightId, date: c.dateISO, reason: res.error },
+            a.name,
+          );
         } else {
           refusedKeys.add(`${c.flightId}|${c.dateISO}`);
           j.append("observation", "sale-auth refusal", { flight: c.flightId, date: c.dateISO, error: res.error }, a.name);

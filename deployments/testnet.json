@@ -46,7 +46,10 @@
     },
     "controller": {
       "address": "CBDJIPZOC7KH3ICK57MAUZMUXBQ5XF56WJLRP2OY6FF5V2HOFDOFXVY3",
-      "wasm_hash": "dde75c21e9213e9d360763cd77664abeaf6d6b58714162b548af82ff8b9f2120"
+      "wasm_hash": "f9444f18cc0d3e588f2f9c5ae430c3ba2cd42ec0decf815efd97c6109abe42c7",
+      "version": 2,
+      "upgraded_at": "2026-08-05",
+      "upgrade_note": "MAX_CLASSIFY_BATCH 25->8, MAX_SETTLE_BATCH 10->8 (CPU instruction budget); address and ABI unchanged"
     }
   }
 }

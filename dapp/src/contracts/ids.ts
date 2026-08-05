@@ -2,7 +2,8 @@
  * The single edit point for contract addresses. A redeploy (see the
  * vault-redeploy runbook) means updating this file — or, without a code
  * change, setting the matching PUBLIC_*_ID env vars at build time.
- * Defaults: 2026-07-18 testnet deployment (mirrors api/_lib/config.ts).
+ * Defaults: 2026-07-29 testnet deployment (mirrors api/_lib/config.ts and
+ * deployments/testnet.json). The 07-11 and 07-18 sets are abandoned.
  */
 const env = import.meta.env
 

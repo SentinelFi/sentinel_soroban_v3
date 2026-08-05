@@ -4,10 +4,22 @@ import { loadGovConfig } from "../_lib/governance/config.js";
 import { getDb } from "../_lib/governance/db.js";
 import { GovSubmitter, type DelayOp, type PremiumOp } from "../_lib/governance/submitter.js";
 
+const MAX_LIMIT = 200;
+const DEFAULT_LIMIT = 50;
+const MAX_SINCE_HOURS = 720; // 30 days
+const DEFAULT_SINCE_HOURS = 24;
+
 /**
  * Admin API — on-chain governance operations + audit trail.
  *
- * GET  → actions_log tail (?limit=, default 100, max 500)
+ * GET  → paginated actions_log page, newest first
+ *        ?limit=       default 50, max 200
+ *        ?offset=      default 0
+ *        ?since_hours= default 24, max 720 — filters on ts
+ *        ?detail=1     also return the before/after route snapshots
+ *        → { log, total, limit, offset, since_hours }
+ *        A single governance sweep over the ~1k-route fleet writes more
+ *        than 100 rows, so the tail alone could not reach yesterday.
  * POST → { op, flight_id, origin, dest, ...op-specific }
  *   whitelist  { premium_units?, payoff_units?, delay_hours? }  null → on-chain defaults
  *   disable    {}
@@ -31,9 +43,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   try {
     if (req.method === "GET") {
-      const limit = Math.min(Number(req.query.limit) || 100, 500);
-      const log = await sql`select * from actions_log order by ts desc limit ${limit}`;
-      res.status(200).json({ log });
+      const limit = Math.min(MAX_LIMIT, Math.max(1, Number(req.query.limit) || DEFAULT_LIMIT));
+      const offset = Math.max(0, Number(req.query.offset) || 0);
+      const sinceHours = Math.min(
+        MAX_SINCE_HOURS,
+        Math.max(1, Number(req.query.since_hours) || DEFAULT_SINCE_HOURS)
+      );
+      // The list view renders none of the before/after jsonb route
+      // snapshots, and they are most of each row's bytes, so the default
+      // select leaves them out. ?detail=1 opts back in for a drill-down.
+      const detail = req.query.detail === "1" || req.query.detail === "true";
+      const snapshots = detail ? sql`, before, after` : sql``;
+      // count(*) over () gets the window total on this scan instead of a
+      // second one; the cost is that the WindowAgg walks every filtered
+      // row rather than stopping at limit — which is what since_hours
+      // bounds. Note it counts the window, so an offset past the end
+      // returns an empty page and total 0.
+      const rows = await sql`
+        select id, ts, actor, action, flight_id, origin, dest, tx_hash, success, error${snapshots},
+               count(*) over () as full_count
+        from actions_log
+        where ts >= now() - make_interval(hours => ${sinceHours})
+        order by ts desc
+        limit ${limit} offset ${offset}
+      `;
+      const log = rows.map(({ full_count, ...r }) => r);
+      res.status(200).json({
+        log,
+        total: Number(rows[0]?.full_count ?? 0),
+        limit,
+        offset,
+        since_hours: sinceHours,
+      });
       return;
     }
 

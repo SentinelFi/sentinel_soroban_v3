@@ -153,12 +153,38 @@ export class AeroApiClient {
    *
    * Retries on 429 (rate limit) and 5xx with exponential backoff.
    */
+  /**
+   * Could a /flights query actually SEE the whole of `dateStr`?
+   *
+   * AeroAPI caps the window at 2 days in the future, so for a date near
+   * that edge we can only inspect part of the day — and a flight departing
+   * outside the visible slice comes back as an empty list, which is
+   * indistinguishable from "no such flight". Callers use this to tell
+   * "proven absent" from "could not look", and fall back to the published
+   * schedule rather than refusing a real flight.
+   */
+  dayFullyVisible(dateStr: string): boolean {
+    return Date.parse(`${dateStr}T23:59:59Z`) <= Date.now() + 2 * 24 * 3600_000;
+  }
+
   async getFlightData(ident: string, dateStr: string): Promise<AeroApiFlight | null> {
     if (!AeroApiClient.IDENT_RE.test(ident)) return this.badInput("ident", ident);
     if (!AeroApiClient.DATE_RE.test(dateStr)) return this.badInput("date", dateStr);
+    // AeroAPI constrains BOTH bounds to "no further than 2 days in the
+    // future", and answers an out-of-range window with an EMPTY LIST rather
+    // than an error — indistinguishable from "no such flight". Clamp `end`
+    // DOWNWARD only, so the normal same-day window is untouched and only a
+    // window that would fall outside the supported range is trimmed.
+    const MAX_FUTURE_MS = 2 * 24 * 3600_000;
+    const dayEnd = Date.parse(`${dateStr}T23:59:59Z`);
+    const ceiling = Date.now() + MAX_FUTURE_MS;
+    const endIso =
+      dayEnd <= ceiling
+        ? `${dateStr}T23:59:59Z`
+        : new Date(ceiling).toISOString().replace(/\.\d{3}Z$/, "Z");
     const url =
       `${this.baseUrl}/flights/${encodeURIComponent(ident)}` +
-      `?start=${encodeURIComponent(`${dateStr}T00:00:00Z`)}&end=${encodeURIComponent(`${dateStr}T23:59:59Z`)}`;
+      `?start=${encodeURIComponent(`${dateStr}T00:00:00Z`)}&end=${encodeURIComponent(endIso)}`;
     const data = await this.requestJson<AeroApiResponse>(url, `${ident} on ${dateStr}`);
     if (!data) return null;
 
@@ -211,7 +237,7 @@ export class AeroApiClient {
    * published schedules up to ONE YEAR into the future (vs /flights' 2-day
    * visibility), in windows of at most 3 weeks per request, filterable by
    * airline + flight_number (+ origin/destination). One call attests up to
-   * 21 days of a flight's schedule — the sale authorizer uses it to verify
+   * 21 days of a flight's schedule — sale auth uses it to verify
    * far-future days exist without burning a /flights call per day.
    *
    * Caveat (spec): schedule rows are "sourced from operator's schedule and

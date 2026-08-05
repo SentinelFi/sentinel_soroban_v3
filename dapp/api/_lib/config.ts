@@ -12,10 +12,11 @@ import type { Config } from "./types.js";
  * never bundled into the browser build.
  */
 
-// Defaults mirror the 2026-07-18 testnet deployment — the same IDs the
-// frontend hardcodes in dapp/src/contracts/*.ts. (The previous defaults
-// pointed at the retired 07-11 deployment, whose oracle predates
-// open_sale/close_sale — the sale authorizer cannot run against it.)
+// Defaults mirror the 2026-07-29 testnet deployment — the same IDs the
+// frontend hardcodes in dapp/src/contracts/*.ts and the canonical record
+// in deployments/testnet.json. The earlier 07-11 and 07-18 deployments are
+// abandoned; 07-11's oracle predates open_sale/close_sale entirely, so
+// sale authorization cannot work against it.
 const TESTNET_DEFAULTS = {
   STELLAR_RPC_URL: "https://soroban-testnet.stellar.org",
   STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
@@ -53,8 +54,8 @@ export function loadConfig(): Config {
     oracleSecretKey: requireEnv("ORACLE_SECRET_KEY"),
     keeperSecretKey: requireEnv("KEEPER_SECRET_KEY"),
     ttlExtenderSecretKey: requireEnv("TTL_EXTENDER_SECRET_KEY"),
-    // Optional 4th identity: GovernanceModule admin for the route agent
-    // and the whitelist script. Never the owner key.
+    // Optional 4th identity: GovernanceModule admin for the governance
+    // jobs and the intake scripts. Never the owner key.
     governanceAdminSecretKey: process.env.GOVERNANCE_ADMIN_SECRET_KEY || undefined,
     aeroApiBaseUrl: envOrDefault("AEROAPI_BASE_URL"),
     aeroApiKey: process.env.AEROAPI_KEY ?? "",

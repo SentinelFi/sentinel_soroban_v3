@@ -23,8 +23,14 @@
 | 10 | Integration tests — rewrite for new topology                          | complete | 2026-05-03 | 2026-05-03 |
 | 11 | Buyer whitelist — admin-toggled gate on Controller                    | complete | 2026-05-23 | 2026-07-01 |
 | 12 | Executor (centralized cron) — port from phase-2                       | complete | 2026-05-25 | 2026-05-25 |
+| 13 | Unified deploy script — testnet / futurenet / mainnet / local          | planned  | —          | —          |
 
 Status legend: `planned` → `in_progress` → `paused` (optional) → `complete`.
+
+> **Note on Phase 12.** The `executor/centralized_cron/` service it delivered was
+> deleted 2026-07-19, superseded by the Vercel serverless crons in `dapp/api/cron/`.
+> The phase record stays as history; the code is gone. Its AeroAPI fixture lives on
+> as `tools/mock-aeroapi/`.
 
 ---
 

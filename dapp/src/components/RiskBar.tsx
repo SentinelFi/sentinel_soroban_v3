@@ -2,11 +2,22 @@ import { routeRisk } from "../data"
 import { useTheme } from "../providers/ThemeProvider"
 
 /**
- * Horizontal delay-risk bar fed by the deterministic `routeRisk` estimate.
- * green (<25% delayed) → amber (<40%) → red (≥40%).
+ * Horizontal delay-risk bar.
  *
- * The value is an ESTIMATE (see routeRisk) — the component renders a small
- * "est." tag and a title tooltip so it never implies measured history.
+ * Fed by the route's REAL model probability (`p_covered`) when the catalog
+ * carries one. Because real values are small — roughly 0.4%–15% — the bar
+ * is filled by how the route compares to the network baseline, not by the
+ * raw percentage: a 10% route is three times the average and should look
+ * alarming, but a 10%-wide bar would look almost empty.
+ *
+ * With no probability the bar renders an explicit "no data" state. It never
+ * invents a number: an earlier version hashed the flight id into a
+ * plausible-looking figure, which produced confident red readings up to 44%
+ * — about triple anything this fleet can actually produce.
+ *
+ * What the number means is explained once, on the STATUS column header
+ * (see ColumnInfo) — not per row. A hover target on 1,069 rows made the
+ * board twitchy to scan and repeated the same sentence endlessly.
  *
  * Themed:
  *   FUN     = chunky segmented pixel bar (10 hard cells)
@@ -15,19 +26,36 @@ import { useTheme } from "../providers/ThemeProvider"
 export function RiskBar({
 	flightId,
 	route,
+	pCovered,
+	pCoveredIsPeak = false,
 	compact = false,
 	wide = false,
 }: {
 	flightId: string
-	/** "ORIGIN-DEST", enables the static route table lookup. */
+	/** "ORIGIN-DEST", enables the static route table fallback. */
 	route?: string
+	/** Real model probability (0–1) from the catalog, when available. */
+	pCovered?: number | null
+	/** True when pCovered is the year's peak, not a single priced date. */
+	pCoveredIsPeak?: boolean
 	compact?: boolean
 	/** Roomier bar for wide layouts (the board's status column). */
 	wide?: boolean
 }) {
 	const { theme } = useTheme()
 	const serious = theme === "serious"
-	const { delayedPct, band } = routeRisk(flightId, route)
+	const { delayedPct, band, estimated, vsBaseline } = routeRisk(flightId, route, pCovered)
+
+	const rootClass = wide ? "riskbar riskbar-wide" : "riskbar"
+
+	if (delayedPct === null) {
+		return (
+			<div className={rootClass} title="No delay model available for this route yet.">
+				<div className="riskbar-track riskbar-track-serious" />
+				<span className="riskbar-value riskbar-nodata">—</span>
+			</div>
+		)
+	}
 
 	const color =
 		band === "high"
@@ -36,9 +64,23 @@ export function RiskBar({
 				? "var(--color-gold)"
 				: "var(--color-win)"
 
-	const title = `Estimated delay risk ≈ ${delayedPct}% (illustrative — no live route history on testnet)`
+	// Fill is relative to the baseline, capped at 3x = full bar. Raw percent
+	// would make every honest value look like an empty bar.
+	const fillPct = estimated
+		? Math.min(100, delayedPct)
+		: Math.min(100, Math.round(((vsBaseline ?? 0) / 3) * 100))
 
-	const rootClass = wide ? "riskbar riskbar-wide" : "riskbar"
+	// Short native title as the no-JS / screen-reader fallback; the hover
+	// panel carries the full explanation.
+	const title = estimated
+		? `Illustrative delay risk ~${delayedPct}% — no model probability for this route.`
+		: `Peak month: up to ${delayedPct}% of these flights are 3h+ late, cancelled or diverted.`
+
+	// "up to" ONLY when the figure really is the year's ceiling. A staged
+	// file priced before peaks were computed carries a single date, and
+	// calling that "up to" would be a different lie from the one we removed.
+	const peak = !estimated && pCoveredIsPeak
+	const label = peak ? `up to ${delayedPct}%` : `${delayedPct}%`
 
 	if (serious) {
 		return (
@@ -47,22 +89,22 @@ export function RiskBar({
 					<div
 						className="riskbar-fill-serious riskbar-fill-grow"
 						style={{
-							width: `${delayedPct}%`,
+							width: `${fillPct}%`,
 							background: `linear-gradient(90deg, color-mix(in oklab, ${color} 73%, transparent), ${color})`,
 						}}
 					/>
 				</div>
 				<span className="riskbar-value" style={{ color }}>
-					{delayedPct}%
-				</span>
-				{!compact && <span className="riskbar-est">est.</span>}
+						{label}
+					</span>
+				{!compact && estimated && <span className="riskbar-est">est.</span>}
 			</div>
 		)
 	}
 
 	// fun — 10 hard pixel cells, filled proportionally
 	const cells = 10
-	const filled = Math.round((delayedPct / 100) * cells)
+	const filled = Math.round((fillPct / 100) * cells)
 	return (
 		<div className={rootClass} title={title}>
 			<div className="riskbar-track-px" aria-hidden="true">
@@ -78,9 +120,9 @@ export function RiskBar({
 				))}
 			</div>
 			<span className="riskbar-value" style={{ color }}>
-				{delayedPct}%
-			</span>
-			{!compact && <span className="riskbar-est">est.</span>}
+					{label}
+				</span>
+			{!compact && estimated && <span className="riskbar-est">est.</span>}
 		</div>
 	)
 }

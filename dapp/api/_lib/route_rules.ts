@@ -3,11 +3,10 @@ import type { RouteRails } from "./routes_config.js";
 
 /**
  * PURE weather + premium math shared by the governance layer (no I/O):
- * forecast severity classification (route_agent's Open-Meteo verdicts),
- * rails clamping and multiplier arithmetic (the reconciler's rules).
- * The old direct-action decider was removed when route_agent became a
- * facts-only collector — decideReconcileAction (governance/rules.ts) is
- * the single decision engine.
+ * forecast severity classification (the weather job's Open-Meteo verdicts,
+ * re-used by the revive engine) and the premium rails/band arithmetic.
+ * Decisions live with their detectors; the one door to acting on them is
+ * pauseRoute/reviveRoute in governance/interventions.ts.
  */
 
 // ── weather severity ───────────────────────────────────────────────

@@ -2,8 +2,8 @@
  * IATA airport code → coordinates for weather lookups (Open-Meteo takes
  * lat/lon, not airport codes). Curated set covering major US + international
  * hubs; routes whose airports are missing here simply skip the weather
- * check (fail-open to noop — the sale authorizer still gates real
- * insurability via AeroAPI).
+ * check (fail-open to noop — the buy-click sale-auth endpoint still gates
+ * real insurability via AeroAPI).
  */
 export interface AirportCoords {
   lat: number;

@@ -21,7 +21,7 @@
       "max": 1000
     }
   },
-  "sale_horizon_days": 7,
+  "sale_horizon_days": 90,
   "routes": [
     {
       "flight_id": "AAL1277",

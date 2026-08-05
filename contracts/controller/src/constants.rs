@@ -4,10 +4,25 @@
 /// bounded window of the oracle active list starting at a persisted rotating
 /// cursor, so per-call resource cost stays bounded no matter how large the
 /// list grows; the pass is idempotent on already-classified flights, so
-/// rotating across calls guarantees full coverage. Classification is light
-/// per flight — at most one oracle status rewrite plus reads and events — so
-/// a 25-window stays well inside the per-transaction entry limits.
-pub(crate) const MAX_CLASSIFY_BATCH: u32 = 25;
+/// rotating across calls guarantees full coverage.
+///
+/// Was 25, sized against the per-transaction ENTRY limits (reads/writes and
+/// event bytes). That missed the third budget: CPU INSTRUCTIONS. Measured on
+/// testnet 2026-08-05 against 50 live policies, one flight costs ~5.90M
+/// instructions even on the cheapest `NotInitiated` arm, so a 25-window needs
+/// ~147M against a 100M cap and reverts with `Error(Budget, ExceededLimit)`.
+/// The window is atomic, so it reverted without advancing the cursor and every
+/// retry failed identically — the classifier was dead for as long as the
+/// active set stayed above ~16 flights.
+///
+/// 8 keeps the cheap arm near 47M (~47% of cap) and still fits if the
+/// Landed/Cancelled arms cost twice the measured floor — they do strictly
+/// more work: a FlightPoolManager read for the locked delay threshold, an
+/// oracle status rewrite, and an event per flight. Full coverage of a
+/// 50-flight set takes 7 hourly calls, comfortably inside the settle-within-
+/// 24h-of-ETA promise, and the fetcher settles each outcome directly anyway —
+/// this sweep is the repair backstop, not the primary path.
+pub(crate) const MAX_CLASSIFY_BATCH: u32 = 8;
 
 /// Maximum flights settled per `execute_settlements` call. Sized separately
 /// from classification because settlement is far heavier per flight: each
@@ -24,7 +39,16 @@ pub(crate) const MAX_CLASSIFY_BATCH: u32 = 25;
 /// rotating cursor still covers the full list across repeated keeper calls,
 /// and `execute_settlements_bounded` lets an operator shrink a stuck window
 /// further, down to a single flight.
-pub(crate) const MAX_SETTLE_BATCH: u32 = 10;
+///
+/// Lowered 10 -> 8 on 2026-08-05, alongside the classify window. Settlement
+/// is strictly heavier per flight than classification, and classification
+/// was measured at ~5.90M CPU instructions per flight against a 100M
+/// per-transaction cap — so a 10-window is uncomfortably close on the third
+/// budget (instructions) even though it was sized with margin on the first
+/// two (writes, event bytes). 8 keeps the same worst case under ~32 writes
+/// and ~5.6 KB of events, and the `execute_settlements_bounded` ladder
+/// (3, then 1) remains the escape hatch if a window still will not fit.
+pub(crate) const MAX_SETTLE_BATCH: u32 = 8;
 
 /// Seconds per UTC day. `buy_insurance` requires the caller-supplied `date` to
 /// be day-aligned (a multiple of this) so the on-chain policy identity

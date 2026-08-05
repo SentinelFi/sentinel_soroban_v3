@@ -6,8 +6,8 @@ import { getDb } from "./db.js";
  * route_status before/after. There is deliberately no update/delete
  * counterpart.
  *
- * Actor convention (shared with pause_events.actor):
- *   'cron:<rule>'    e.g. 'cron:reconciler/pause-expand'
+ * Actor convention (shared with interventions.opened_by):
+ *   'cron:<job>'     e.g. 'cron:gov_exposure', 'cron:weather'
  *   'admin:<email>'  the Supabase-authenticated admin who clicked
  */
 

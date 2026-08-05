@@ -16,7 +16,7 @@ import {
 } from "../hooks/useContracts"
 import type { UiRoute } from "../hooks/useContracts"
 import { DEMO_ROUTES } from "../config/routes"
-import { airlineName } from "../config/airlines"
+import { airlineName, flightradarSlug } from "../config/airlines"
 import { useWallet } from "../hooks/useWallet"
 import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet } from "../util/wallet"
@@ -27,10 +27,11 @@ import { HowItWorksBubble } from "../components/InfoBubble"
 import { TransactionButton } from "../components/TransactionButton"
 import { TxProgress } from "../components/TxProgress"
 import { RiskBar } from "../components/RiskBar"
-import { TriggerGauge } from "../components/TriggerGauge"
+import { ColumnInfo } from "../components/ColumnInfo"
 import { FlightCalendar } from "../components/FlightCalendar"
 import {
 	routeRisk,
+	TRACKED_MAP_LIMIT,
 	useProtocolStats,
 	useTotalAssets,
 	useFreeCapital,
@@ -90,7 +91,7 @@ const BOARD_PAGE_SIZE = 12
 const BOARD_PAGE_SIZES = [12, 24, 48, 96]
 
 /** Sortable board columns. */
-type SortKey = "flight" | "trigger" | "status" | "stake"
+type SortKey = "flight" | "status" | "stake"
 type SortState = { key: SortKey; dir: 1 | -1 } | null
 
 /**
@@ -113,17 +114,13 @@ function compareRoutes(
 	switch (key) {
 		case "flight":
 			return byFlight
-		case "trigger": {
-			const da = a.terms?.delay_hours ?? defaults?.default_delay_hours
-			const db = b.terms?.delay_hours ?? defaults?.default_delay_hours
-			if (da === undefined || db === undefined)
-				return da === db ? byFlight : da === undefined ? 1 : -1
-			return da - db || byFlight
-		}
 		case "status": {
-			const riskA = routeRisk(a.flightId, `${a.origin}-${a.dest}`)
-			const riskB = routeRisk(b.flightId, `${b.origin}-${b.dest}`)
-			return riskA.delayedPct - riskB.delayedPct || byFlight
+			// Routes with no model probability sort last rather than as 0%.
+			const riskA = routeRisk(a.flightId, `${a.origin}-${a.dest}`, a.pCovered)
+			const riskB = routeRisk(b.flightId, `${b.origin}-${b.dest}`, b.pCovered)
+			const pa = riskA.delayedPct ?? -1
+			const pb = riskB.delayedPct ?? -1
+			return pa - pb || byFlight
 		}
 		case "stake": {
 			const ta = termsFor(a, defaults)
@@ -203,11 +200,17 @@ function HeroFlapLine({
 	)
 }
 
-/** External flight-tracking page for a flight id (lowercase slug). */
-function flightradarUrl(flightId: string): string {
-	return `https://www.flightradar24.com/data/flights/${encodeURIComponent(
-		flightId.toLowerCase(),
-	)}`
+/**
+ * External flight-tracking page. FR24 keys its flight pages by the IATA
+ * flight number ("as462"), not the ICAO ident the fleet stores ("ASA462"),
+ * so the ident must be converted first. Returns null when it cannot be
+ * resolved — the caller renders plain text rather than a dead link.
+ */
+function flightradarUrl(flightId: string, carrier?: string | null): string | null {
+	const slug = flightradarSlug(flightId, carrier)
+	return slug
+		? `https://www.flightradar24.com/data/flights/${encodeURIComponent(slug)}`
+		: null
 }
 
 /** Case-insensitive multi-token match on flight id / airport codes. */
@@ -244,8 +247,12 @@ function Ticker({
 }) {
 	const t = useCopy()
 	const isDemo = liveFlights.length === 0
+	// Capped like the globe, and for the same reason: the strip is an
+	// ambient sample of what is in the air, not a manifest. Uncapped it
+	// grows one chip per policy, which stretches the loop until any given
+	// flight comes round every several minutes.
 	const chips = !isDemo
-		? liveFlights.map((f) => ({
+		? liveFlights.slice(0, TRACKED_MAP_LIMIT).map((f) => ({
 				code: f.flightId,
 				status: f.tag ? LIVE_STATUS[f.tag] : LIVE_STATUS.NotInitiated,
 			}))
@@ -257,6 +264,12 @@ function Ticker({
 
 	// duplicate content for a seamless -50% marquee loop
 	const loop = [...chips, ...chips, ...chips, ...chips]
+
+	// Hold the scroll SPEED constant instead of the loop time: the demo set
+	// of 3 chips read well at 30s, so budget the same ~10s of travel per
+	// chip. With the cap above, the loop tops out around 100s no matter how
+	// many policies are live.
+	const marqueeDur = `${Math.max(30, chips.length * 10)}s`
 
 	return (
 		<div className="ticker flex items-center gap-3 overflow-hidden border-2 border-line bg-inset py-2">
@@ -271,7 +284,11 @@ function Ticker({
 			{/* the 4× loop is presentational — screen readers get the
 			    single-copy static list below instead, which also becomes
 			    the visible wrapped layout under prefers-reduced-motion */}
-			<div className="marquee-track gap-6" aria-hidden="true">
+			<div
+				className="marquee-track gap-6"
+				style={{ "--marquee-dur": marqueeDur } as React.CSSProperties}
+				aria-hidden="true"
+			>
 				{loop.map((chip, i) => (
 					<span
 						key={`${chip.code}-${i}`}
@@ -1063,7 +1080,7 @@ export default function Markets() {
 						<div className="scanlines absolute inset-0" />
 					<table
 						data-testid="markets-board"
-						className="w-full min-w-[820px] border-collapse"
+						className="w-full min-w-[700px] border-collapse"
 					>
 						<thead>
 							<tr className="border-b-2 border-line text-left">
@@ -1071,11 +1088,57 @@ export default function Markets() {
 									[
 										{ label: t.markets.colFlight, key: "flight" },
 										{ label: t.markets.colRoute },
-										{ label: t.markets.colTrigger, key: "trigger" },
-										{ label: t.markets.colStatus, key: "status" },
-										{ label: t.markets.colStake, key: "stake" },
+										{
+											label: t.markets.colStatus,
+											key: "status",
+											info: (
+												<ColumnInfo title="DELAY RISK">
+													The percentage is this route&rsquo;s modelled
+													chance of a payout: the flight lands{" "}
+													<span className="text-ink">3+ hours late</span>,
+													is cancelled, or diverts. Learned from{" "}
+													<span className="text-ink">
+														15 million real BTS flights
+													</span>{" "}
+													&mdash; carrier, route, month and time of day,
+													never the flight number. The bar is scaled
+													against the{" "}
+													<span className="text-ink">3.4% network
+													average</span>, so a full bar is roughly three
+													times typical rather than 100%. Same-day storms
+													are priced separately, in the premium.
+												</ColumnInfo>
+											),
+										},
+										{
+											label: t.markets.colStake,
+											key: "stake",
+											info: (
+												<ColumnInfo title="PREMIUM AND PAYOUT">
+													You pay the premium once; if the flight is 3+
+													hours late, cancelled or diverted you claim the
+													payout in full. Payout is fixed at{" "}
+													<span className="text-ink">100 USDC</span>.
+													Premium is the model&rsquo;s probability times
+													that payout, plus a{" "}
+													<span className="text-ink">30% margin</span> for
+													the underwriters, rounded up to whole dollars
+													and floored at{" "}
+													<span className="text-ink">$10</span>. Above a
+													$20 base we decline the route rather than sell
+													it at a known loss. Severe weather on your date
+													adds a surcharge on top, capped at $30 total.
+													The number you pay is always the chain&rsquo;s,
+													re-checked when you open the slip.
+												</ColumnInfo>
+											),
+										},
 										{ label: "" },
-									] as Array<{ label: string; key?: SortKey }>
+									] as Array<{
+										label: string
+										key?: SortKey
+										info?: React.ReactNode
+									}>
 								).map((col, i) => (
 									<th
 										key={i}
@@ -1114,6 +1177,9 @@ export default function Markets() {
 										) : (
 											col.label
 										)}
+										{col.info ? (
+											<span className="ml-1.5 inline-flex">{col.info}</span>
+										) : null}
 									</th>
 								))}
 							</tr>
@@ -1121,7 +1187,7 @@ export default function Markets() {
 						<tbody>
 							{filtered.length === 0 && (
 								<tr>
-									<td colSpan={6} className="px-4 py-10 text-center">
+									<td colSpan={5} className="px-4 py-10 text-center">
 										<span className="block font-board text-[24px] text-dim">
 											{t.markets.noMatch(query.trim().toUpperCase())}
 										</span>
@@ -1139,31 +1205,35 @@ export default function Markets() {
 									className="board-row-in border-b-2 border-line/60 hover:bg-raised/60"
 								>
 									<td className="px-4 py-3">
-										<a
-											href={flightradarUrl(route.flightId)}
-											target="_blank"
-											rel="noopener noreferrer"
-											title={t.markets.flightLinkTitle(
+										{(() => {
+											const fr = flightradarUrl(
 												route.flightId,
-											)}
-											className="board-figure relative z-10 hover:text-sky hover:underline"
-										>
-											{route.flightId}
-										</a>
+												route.carrier,
+											)
+											return fr ? (
+												<a
+													href={fr}
+													target="_blank"
+													rel="noopener noreferrer"
+													title={t.markets.flightLinkTitle(
+														route.flightId,
+													)}
+													className="board-figure relative z-10 hover:text-sky hover:underline"
+												>
+													{route.flightId}
+												</a>
+											) : (
+												<span className="board-figure relative z-10">
+													{route.flightId}
+												</span>
+											)
+										})()}
 									</td>
 									<td
 										className="px-4 py-3 font-body text-[14px] font-semibold tracking-[0.04em] text-ink"
-										title={airlineName(route.flightId)}
+										title={airlineName(route.flightId, route.carrier)}
 									>
 										{route.origin} → {route.dest}
-									</td>
-									<td className="px-4 py-3 whitespace-nowrap">
-										<TriggerGauge
-											hours={
-												route.terms?.delay_hours ??
-												defaults?.default_delay_hours
-											}
-										/>
 									</td>
 									<td className="px-4 py-3">
 										<div className="flex flex-col items-start gap-1.5">
@@ -1189,6 +1259,8 @@ export default function Markets() {
 											<RiskBar
 												flightId={route.flightId}
 												route={`${route.origin}-${route.dest}`}
+												pCovered={route.pCovered}
+												pCoveredIsPeak={route.pCoveredIsPeak}
 												wide
 											/>
 										</div>

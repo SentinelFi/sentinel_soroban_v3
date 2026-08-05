@@ -245,6 +245,13 @@ export interface UiRoute {
 	dest: string
 	status: "Active" | "Disabled" | "Unknown"
 	terms: ResolvedTerms | null
+	/** IATA carrier ("AS"), needed for airline names and FlightRadar links —
+	 *  flightId is the ICAO ident ("ASA462"), which neither accepts. */
+	carrier?: string | null
+	/** Real ML delay probability for this route, when the catalog has one. */
+	pCovered?: number | null
+	/** True when pCovered is the seasonal peak rather than one priced date. */
+	pCoveredIsPeak?: boolean
 }
 
 /** Row shape served by GET /api/routes (see api/routes.ts). */
@@ -255,6 +262,11 @@ interface ApiRouteRow {
 	carrier: string | null
 	status: "Active" | "Disabled"
 	premium_units: string
+	/** Resolved on-chain premium (base + any weather surcharge). Null when
+	 *  the catalog could not resolve it — fall back to premium_units. */
+	chain_premium_units: string | null
+	p_covered: number | null
+	p_covered_is_peak?: boolean
 	payoff_units: string
 	delay_hours: number
 	featured: boolean
@@ -284,10 +296,16 @@ async function fetchRouteCatalog(): Promise<UiRoute[]> {
 		origin: row.origin,
 		dest: row.destination,
 		status: row.status,
+		carrier: row.carrier,
+		pCovered: row.p_covered,
+		pCoveredIsPeak: row.p_covered_is_peak ?? false,
 		terms:
 			row.status === "Active"
 				? {
-						premium: BigInt(row.premium_units),
+						// Prefer the chain's number: the fleet-file base omits any
+						// weather surcharge, so showing it would advertise a price
+						// below what the BetSlip actually charges.
+						premium: BigInt(row.chain_premium_units ?? row.premium_units),
 						payoff: BigInt(row.payoff_units),
 						delay_hours: row.delay_hours,
 					}

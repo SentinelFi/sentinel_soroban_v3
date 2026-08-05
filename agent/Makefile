@@ -1,10 +1,16 @@
-.PHONY: install train serve test download-data clean
+.PHONY: install train train-tiers serve test download-data clean
 
 install:
 	pip install -r requirements.txt
 
 train:
 	python -m training.train
+
+# Shorter-threshold siblings of the live 180m model (see README "Delay
+# tiers"). Sequential on purpose — each run holds the full CSV in memory.
+train-tiers:
+	python -m training.train --threshold-min 60 --out-dir artifacts/arr60
+	python -m training.train --threshold-min 30 --out-dir artifacts/arr30
 
 serve:
 	python -m uvicorn app.main:app --port $${AGENT_PORT:-8000}

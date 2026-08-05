@@ -1,13 +1,13 @@
 import { AIRPORTS } from "./airports.js";
 
 /**
- * Open-Meteo forecast client for the route agent's weather check.
+ * Open-Meteo forecast client for the weather job and the revive engine.
  *
  * Keyless and free — fits Vercel with no secret. Failure semantic: any
  * error or unknown airport → null, which the decision module treats as
- * "no weather signal" (noop). The weather agent must never disable a
+ * "no weather signal" (noop). The weather job must never disable a
  * route because a forecast API hiccuped; real insurability is still
- * gated by the sale authorizer (AeroAPI, fail-closed).
+ * gated by the buy-click sale-auth endpoint (AeroAPI, fail-closed).
  */
 
 export interface DailyForecast {

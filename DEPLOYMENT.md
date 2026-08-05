@@ -1,13 +1,13 @@
 # Deployment
 
-How to deploy Sentinel end to end. The frontend and all eight cron jobs ship as **one Vercel project** rooted at `dapp/`; the ML prediction service runs on Render; the governance database is Supabase; the contracts live on Stellar testnet.
+How to deploy Sentinel end to end. The frontend and all ten cron jobs ship as **one Vercel project** rooted at `dapp/`; the ML prediction service runs on Render; the governance database is Supabase; the contracts live on Stellar testnet.
 
 ## Surfaces
 
 | Surface | Source | Host | Status |
 |---------|--------|------|--------|
 | Smart contracts (×6) | `contracts/` | Stellar testnet | Live — addresses in [`deployments/testnet.json`](deployments/testnet.json) |
-| Frontend + `/admin` + crons (×8) | `dapp/` | Vercel | This guide |
+| Frontend + `/admin` + crons (×10) | `dapp/` | Vercel | This guide |
 | ML prediction service | `agent/` | Render | Service `flight-delay-predictions` (see render.yaml) |
 | Governance DB | `supabase/` | Supabase | Live — project `murcgnleczppbooifkya` |
 
@@ -16,7 +16,7 @@ The contracts, agent, and database are already deployed. The remaining work is t
 ## Prerequisites
 
 - The four signing keypairs, each a funded testnet account: **oracle**, **keeper**, **TTL extender**, **governance admin**. The governance admin must be (or become) a `GovernanceModule` admin — see [step 4](#4-one-time-on-chain-setup).
-- A **FlightAware AeroAPI** key (optional — without it the fetcher and sale authorizer fail soft and no sales open; the four contract-only jobs still run).
+- A **FlightAware AeroAPI** key (optional — without it the fetcher, the buy-click sale-auth endpoint, and the route guard fail soft, so no sales open; the contract-only jobs still run).
 - The **Supabase** transaction-pooler connection string and an admin email allowlist.
 - A **Vercel** account. The 5-minute crons require **Vercel Pro** (see [plan caveat](#plan-caveat)).
 
@@ -74,7 +74,7 @@ SUPABASE_URL=https://murcgnleczppbooifkya.supabase.co
 SUPABASE_ANON_KEY=sb_publishable_...
 ADMIN_EMAILS=you@example.com,ops@example.com
 
-# Reconciler safety — keep true until add_admin lands (step 4).
+# Governance safety — keep true until add_admin lands (step 4).
 GOV_DRY_RUN=true
 ```
 
@@ -89,32 +89,40 @@ Click **Deploy**. Vercel builds the Vite frontend and registers the functions in
 
 ```sh
 curl https://<your-app>.vercel.app/api/cron/health      # network, contract IDs, hasKeys booleans
+curl -i https://<your-app>.vercel.app/api/status/alert  # 200 healthy / 503 + problem list
 ```
 
 Then open `https://<your-app>.vercel.app/status` — the public cron-run health page — and `https://<your-app>.vercel.app/admin` (sign in with a Supabase Auth account whose email is in `ADMIN_EMAILS`).
+
+Magic-link sign-in needs the Supabase project's **Authentication → URL Configuration** to point at the deployed app: set **Site URL** to your production URL and add it to **Redirect URLs**. If the allow-list does not match, Supabase silently falls back to Site URL — the classic symptom is an access link that opens `localhost`.
+
+Point an uptime monitor (UptimeRobot, cron-job.org — free tiers are fine) at `/api/status/alert` and alert on any non-200. It catches failed runs, stale jobs, and jobs that crashed on import and therefore never recorded a run at all.
 
 ## 4. One-time on-chain setup
 
 Done once, from a machine with the [Stellar CLI](https://developers.stellar.org/docs/tools/cli) and the **owner** key:
 
-1. **Delegate the governance admin** — the owner authorizes the governance-admin address so the route agent, reconciler, and whitelist script can write:
+1. **Delegate the governance admin** — the owner authorizes the governance-admin address so the governance jobs and the intake scripts can write:
    ```sh
    stellar contract invoke --id $GOVERNANCE_ID --source owner --network testnet \
      -- add_admin --admin <GOVERNANCE_ADMIN_PUBLIC_KEY>
    ```
-2. **Whitelist routes** — fill [`dapp/config/routes.testnet.json`](dapp/config/routes.testnet.json) (the single human source of truth: route list, term overrides, rails, `enabled` flags), then from `dapp/`:
+2. **Seed routes** — the manual intake pipeline, run from `dapp/`. Never scheduled; each step is a deliberate human action:
    ```sh
-   npm run whitelist:routes                  # list missing routes + enable/disable per file
-   npm run whitelist:routes -- --sync-terms  # also push file terms onto active routes
+   npx tsx ../scripts/discover_routes.ts   # candidates -> config/routes.discovered.json
+   npx tsx ../scripts/price_routes.ts      # ML pricing -> staged config/route_whitelist.json
+   git diff dapp/config/route_whitelist.json   # REVIEW — the human gate
+   npx tsx ../scripts/seed_routes.ts       # whitelist_route per missing route (idempotent)
+   npx tsx ../scripts/seed_routes.ts --apply-terms   # also push terms onto live routes
    ```
-   This needs `GOVERNANCE_ADMIN_SECRET_KEY` in the local env.
-3. **Flip the reconciler live** — set `GOV_DRY_RUN=false` in Vercel and redeploy (or redeploy after editing the env). Until then the reconciler computes and logs decisions without submitting.
+   This needs `GOVERNANCE_ADMIN_SECRET_KEY` in the local env, or a local Stellar identity named `sentinel-governor`. Seeding is one transaction per route, so a large catalog takes hours — size it deliberately.
+3. **Flip governance live** — set `GOV_DRY_RUN=false` in Vercel and **redeploy** (env values bind at deploy time, so editing the variable alone changes nothing). Until then every detector computes and logs without submitting.
 
-After this, sales open on the next sale-authorizer run and the pipeline is self-driving.
+After this the pipeline is self-driving: sales authorize on each buy click, and the governance jobs pause and revive routes on their own.
 
 ## Plan caveat
 
-The 5-minute crons (`settle`, `queue`) and `maxDuration: 300` require **Vercel Pro**. On the **Hobby** plan, cron granularity is daily-only and function durations are shorter — reduce or remove those entries in `vercel.json` and drive the endpoints with an external pinger (GitHub Actions schedule, cron-job.org, UptimeRobot) that curls each one with the `Authorization: Bearer $CRON_SECRET` header.
+The 5-minute crons (`settle`, `queue`) and `maxDuration: 300` require **Vercel Pro** (the live deployment runs on Pro). On the **Hobby** plan, cron granularity is daily-only and function durations are shorter — reduce or remove those entries in `vercel.json` and drive the endpoints with an external pinger (GitHub Actions schedule, cron-job.org, UptimeRobot) that curls each one with the `Authorization: Bearer $CRON_SECRET` header.
 
 ## Cron auth
 

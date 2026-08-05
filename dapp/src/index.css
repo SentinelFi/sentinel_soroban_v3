@@ -116,6 +116,18 @@
 
 html {
 	background-color: var(--color-page);
+	/* Nothing in this app is meant to scroll sideways. Without this, any
+	   single over-wide element (the footer wordmark is sized in vw, which
+	   includes the scrollbar gutter) drags the whole page with it. */
+	overflow-x: hidden;
+}
+
+/* The shell wraps every page; keep it honest about its own width so a wide
+   child clips instead of widening the document. */
+.app-shell {
+	width: 100%;
+	max-width: 100%;
+	overflow-x: clip;
 }
 
 /* Smooth in-page scrolling where the browser supports it; skipped for
@@ -712,10 +724,15 @@ html[data-theme="serious"] {
 		}
 	}
 
+	/* Duration is a variable, not a constant, because the track's WIDTH
+	   scales with its content: the same 30s over a wider track is simply a
+	   faster scroll. The live ticker went from 3 demo chips to one per
+	   in-flight policy, and read as a blur. Callers set --marquee-dur so
+	   pixels-per-second stays put no matter how many items there are. */
 	.marquee-track {
 		display: flex;
 		width: max-content;
-		animation: px-marquee 30s linear infinite;
+		animation: px-marquee var(--marquee-dur, 30s) linear infinite;
 	}
 
 	.marquee-track:hover {
@@ -1435,6 +1452,31 @@ html[data-theme="serious"] {
 		font-size: 16px;
 		line-height: 1;
 		min-width: 30px;
+	}
+
+	/* column "i" — explains its column once, from the table header */
+	.column-info {
+		cursor: help;
+	}
+	.column-info-dot {
+		border-color: var(--color-line-strong);
+		color: var(--color-sky);
+		background: var(--color-inset);
+	}
+	.column-info:hover .column-info-dot,
+	.column-info:focus-visible .column-info-dot {
+		border-color: var(--color-gold);
+		color: var(--color-gold);
+	}
+	.column-info:focus-visible {
+		outline: 2px solid var(--color-gold);
+		outline-offset: 2px;
+	}
+	/* A header cell is not a containing block for absolute children in every
+	   engine, so pin the width — otherwise long copy stretches the column. */
+	.column-info-pop {
+		white-space: normal;
+		pointer-events: none;
 	}
 
 	.riskbar-est {

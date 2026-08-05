@@ -85,6 +85,32 @@ async function fetchModelVersion(): Promise<string | null> {
   return null;
 }
 
+/**
+ * Highest covered-event probability this route reaches across the year.
+ *
+ * Samples the 15th of each month — twelve extra predictions per route
+ * against our own model service, paid once at pricing time so the board
+ * costs nothing extra to serve. The 15th is arbitrary but consistent; we
+ * want the seasonal shape (summer storms, winter weather), not a specific
+ * calendar day. Any month that fails to predict is skipped rather than
+ * failing the route: a peak over eleven months is still a peak.
+ */
+async function seasonalPeak(
+  agent: AgentClient,
+  base: { carrier: string; origin: string; dest: string; dep_time_hhmm: number; distance_mi: number },
+  flightId: string,
+  seed: number,
+): Promise<number> {
+  const samples = await Promise.all(
+    Array.from({ length: 12 }, (_, i) => i + 1).map((m) =>
+      agent
+        .predict({ ...base, month: m, day_of_month: 15, day_of_week: ((m * 3) % 7) + 1 }, flightId)
+        .catch(() => null),
+    ),
+  );
+  return samples.reduce<number>((hi, s) => (s !== null && s > hi ? s : hi), seed);
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const dateArg = args.indexOf("--date");
@@ -126,23 +152,32 @@ async function main(): Promise<void> {
     }
     const dep = localDepHhmm(c.sched_out_utc, c.origin);
     const dist = routeDistanceMi(c.origin, c.destination);
+    const base = {
+      carrier: iata,
+      origin: c.origin,
+      dest: c.destination,
+      dep_time_hhmm: dep,
+      distance_mi: dist,
+    };
     const p = await agent.predict(
-      {
-        carrier: iata,
-        origin: c.origin,
-        dest: c.destination,
-        month,
-        day_of_month: dayOfMonth,
-        day_of_week: dayOfWeek,
-        dep_time_hhmm: dep,
-        distance_mi: dist,
-      },
+      { ...base, month, day_of_month: dayOfMonth, day_of_week: dayOfWeek },
       c.flight_id
     );
     if (p === null) {
       failed++;
       continue; // reported in summary; rerun re-prices idempotently
     }
+    // Seasonal WORST CASE, for display only — never for pricing.
+    //
+    // p_covered above is a single date, and the model swings hard across the
+    // calendar: FFT1203 PHL-MIA reads 15.0% on 18 Aug and 1.6% in September.
+    // Showing one date's figure on a board where the buyer picks their own
+    // date is misleading in both directions, and re-predicting per date at
+    // page load would put the model on the render path for every visitor.
+    // So sample the year ONCE here and publish the peak, which the board can
+    // honestly label "up to X%". Premiums keep using the priced date, so
+    // this cannot move anyone's price.
+    const pMax = await seasonalPeak(agent, base, c.flight_id, p);
     // Whole-dollar base premium capped at rails.basePremiumMax; above the
     // cap the route is EXCLUDED (never clamped) — we don't sell routes at
     // a known expected loss. Excluded routes go in the run log + review.
@@ -167,6 +202,8 @@ async function main(): Promise<void> {
       distance_mi: dist,
       days_seen: c.days_seen,
       p_covered: Number(p.toFixed(5)),
+      /** Seasonal peak across the year — DISPLAY ONLY, never priced on. */
+      p_covered_max: Number(pMax.toFixed(5)),
       premium_usdc: baseUnitsToUsdc(premiumUnits),
       payoff_usdc: PAYOFF_USDC,
       delay_hours: DELAY_HOURS,

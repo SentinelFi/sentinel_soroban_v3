@@ -72,10 +72,11 @@ interface SellableRoute {
 }
 
 /**
- * Same source-of-truth rule as the old authorizer: the DB `routes` table
- * is canonical once populated (a guard/reconciler/admin disable also stops
- * authorization), the fleet file is the bootstrap seed and the no-DB
- * fallback.
+ * Same source-of-truth rule as the retired authorizer cron: the DB
+ * `routes` table is canonical once populated (so any intervention —
+ * cancellation, exposure, weather, pricing, admin — also stops
+ * authorization), and the fleet file is the bootstrap seed plus the
+ * no-DB fallback.
  */
 async function findSellableRoute(flightId: string): Promise<SellableRoute | null> {
   if (process.env.GOVERNANCE_DB_URL) {
@@ -169,12 +170,31 @@ export async function authorizeSale(
   let scheduledOut: string | null;
   let scheduledIn: string | null;
 
+  // Live tracking only for TOMORROW. AeroAPI caps /flights start+end at
+  // 2 days in the future, and we ask for the whole UTC day — so at
+  // dayOffset 2 the `end` bound lands ~2.7 days out, past the limit, and
+  // AeroAPI answers with an EMPTY LIST rather than an error. That read as
+  // "flight not verifiable" and silently killed every day-2 purchase even
+  // when the flight was published and sellable. Day 2 now goes to
+  // /schedules, which is documented to 1 year ahead.
+  // Live tracking is the ONLY path that can detect a cancellation
+  // (/schedules attests "published as scheduled", never "not cancelled"),
+  // so always TRY it inside its window. Its limit is visibility, not
+  // correctness: AeroAPI caps the query at 2 days ahead, so for a date at
+  // that edge we may only see part of the day. An empty answer therefore
+  // means "absent" ONLY if we could see the whole day; otherwise it means
+  // "could not look", and we fall through to the published schedule rather
+  // than refusing a flight that is really there.
+  const dayVisible = aero.dayFullyVisible(dateStr);
+  let liveData: Awaited<ReturnType<typeof aero.getFlightData>> = null;
   if (dayOffset <= 2) {
-    // Live tracking.
-    const apiData = await aero.getFlightData(flightId, dateStr);
-    if (!apiData) {
+    liveData = await aero.getFlightData(flightId, dateStr);
+    if (!liveData && dayVisible) {
       return refuse("flight not verifiable for that date");
     }
+  }
+  if (liveData) {
+    const apiData = liveData;
     if (apiData.cancelled) {
       if (isConfirmedCancellation(apiData)) {
         // Purchase-blocking tombstone (the contract accepts it before any
@@ -203,22 +223,53 @@ export async function authorizeSale(
     scheduledOut = apiData.scheduled_out ?? null;
     scheduledIn = apiData.scheduled_in;
   } else {
-    // Published schedule: presence check for the exact pair + date.
+    // Published schedule: presence check for this exact flight + date.
+    // Reached either because the date is past the live-tracking window
+    // (dayOffset > 2) or because AeroAPI's +2-day cap means we could not
+    // inspect the whole day. Existence only — cancellation is not knowable
+    // here, and the settle sweep re-checks every flight before payout.
+    //
+    // Filter by airline + flight number, NOT by city pair. A busy pair like
+    // DFW-LAS returns 15 rows and a next-page cursor, and the old code
+    // refused outright whenever a cursor existed — so no flight on a busy
+    // route could ever be verified this way. The precise filter returns a
+    // handful of rows and no cursor.
     const nextDayStr = new Date((dateIdx + 1) * DAY_SECS * 1000).toISOString().slice(0, 10);
+    const ident = /^([A-Z]+)0*(\d+)$/.exec(flightId.toUpperCase());
     const schedules = await aero.getSchedules(dateStr, nextDayStr, {
-      origin: route.origin,
-      destination: route.destination,
+      ...(ident
+        ? { airline: ident[1], flightNumber: ident[2] }
+        : { origin: route.origin, destination: route.destination }),
     });
-    if (!schedules || schedules.links?.next) {
+    if (!schedules) {
       return refuse("published schedule not verifiable right now");
     }
+    // Match the LEG, not just the flight number. One number routinely flies
+    // several legs a day — UAL2096 on 2026-08-09 is RNO->LAX and then
+    // LAX->EWR — so an ident-only filter returns 2 rows and reads as
+    // "ambiguous", refusing a route that is perfectly well identified.
+    // AeroAPI reports airports as ICAO (KLAX); the fleet stores IATA (LAX).
+    const sameAirport = (apiCode: string | undefined, iata: string): boolean => {
+      if (!apiCode) return false;
+      const c = apiCode.toUpperCase();
+      return c === iata || (c.length === 4 && c.slice(1) === iata);
+    };
     const rows = (schedules.scheduled ?? []).filter(
       (s) =>
         (s.actual_ident ?? s.ident) === flightId &&
-        (s.scheduled_out ?? "").slice(0, 10) === dateStr
+        (s.scheduled_out ?? "").slice(0, 10) === dateStr &&
+        sameAirport(s.origin, route.origin) &&
+        sameAirport(s.destination, route.destination)
     );
     const match = rows[0];
     if (!match) {
+      // Absence only proves absence if we saw the whole result set. With a
+      // cursor still open, the flight may be on a page we never fetched —
+      // fail closed WITHOUT calling the route guard, which would otherwise
+      // disable a live route on the strength of an incomplete read.
+      if (schedules.links?.next) {
+        return refuse("published schedule not verifiable right now");
+      }
       await guard(route);
       return refuse("flight is not in the published schedule for that date");
     }
