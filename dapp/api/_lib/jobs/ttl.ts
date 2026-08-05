@@ -113,10 +113,12 @@ async function sweepExpiredClaims(client: SorobanClient, config: Config, results
  * Fluid ignores a higher maxDuration — see api/cron/weather.ts). Two
  * guards, mirroring jobs/weather.ts:
  *   1. SHARDS — each run covers a deterministic 1/7th of the keys (stable
- *      hash × UTC-day slot). At the weekly cadence the whole fleet is
- *      covered every 49 days, comfortably inside the 120-day route TTL
- *      (~2.4x margin). See the SHARDS constant: the shard count and the
- *      cron cadence are coupled and must be changed together.
+ *      hash × RUN slot). At the weekly cadence the whole fleet is covered
+ *      every 49 days, comfortably inside the 120-day route TTL (~2.4x
+ *      margin). The slot is derived from the RUN index, not the calendar
+ *      day: a day-derived slot is the UTC weekday, which a weekly cron
+ *      pins to one value forever. Shard count, cron cadence and
+ *      RUN_INTERVAL_MS are coupled and must be changed together.
  *   2. TIME_BUDGET_MS — the batch loop ALWAYS returns rather than risking
  *      a silent platform kill. A kill writes no cron_runs row at all,
  *      which makes a dead job look merely "not re-run"; returning early
@@ -163,7 +165,20 @@ async function extendIdlePersistentKeys(
       for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
       return (h >>> 0) % SHARDS;
     };
-    const daySlot = Math.floor(Date.now() / 86_400_000) % SHARDS;
+    // Shard slot must advance ONCE PER RUN, never per calendar day.
+    //
+    // This was `floor(now/86_400_000) % SHARDS` — a DAY index. Epoch day 0 was
+    // a Thursday, so that expression IS the UTC weekday, and the cron is
+    // pinned to Sundays (`0 0 * * 0`): the slot came out 3 on every run,
+    // forever. Six of seven shards were never extended, silently, while the
+    // job reported success. It only worked while the cadence was daily.
+    //
+    // Dividing by the cadence makes the slot a RUN index, so it advances by
+    // one each Sunday and the fleet is covered in SHARDS runs — the 49-day
+    // rotation the sizing comment above assumes.
+    const RUN_INTERVAL_MS = 7 * 86_400_000; // must match the ttl cron cadence
+    const runIndex = Math.floor(Date.now() / RUN_INTERVAL_MS);
+    const daySlot = runIndex % SHARDS;
     const shardRoutes = routes.filter((r) => shardOf(`${r.flight_id}|${r.origin}|${r.dest}`) === daySlot);
     const shardBuyers = buyers.filter((b) => shardOf(String(b.buyer)) === daySlot);
 
@@ -225,7 +240,7 @@ async function extendIdlePersistentKeys(
     // exactly once, just starting from a different one.
     const interleaved: (typeof perJob)[number] = [];
     const rounds = Math.max(0, ...perJob.map((b) => b.length));
-    const weekOffset = Math.floor(Date.now() / 86_400_000 / SHARDS);
+    const weekOffset = Math.floor(Date.now() / (7 * 86_400_000) / SHARDS);
     for (let r = 0; r < rounds; r++) {
       const round = (r + weekOffset) % rounds;
       for (const batches of perJob) {
