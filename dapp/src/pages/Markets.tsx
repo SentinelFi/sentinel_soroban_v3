@@ -31,6 +31,7 @@ import { ColumnInfo } from "../components/ColumnInfo"
 import { FlightCalendar } from "../components/FlightCalendar"
 import {
 	routeRisk,
+	TRACKED_MAP_LIMIT,
 	useProtocolStats,
 	useTotalAssets,
 	useFreeCapital,
@@ -246,8 +247,12 @@ function Ticker({
 }) {
 	const t = useCopy()
 	const isDemo = liveFlights.length === 0
+	// Capped like the globe, and for the same reason: the strip is an
+	// ambient sample of what is in the air, not a manifest. Uncapped it
+	// grows one chip per policy, which stretches the loop until any given
+	// flight comes round every several minutes.
 	const chips = !isDemo
-		? liveFlights.map((f) => ({
+		? liveFlights.slice(0, TRACKED_MAP_LIMIT).map((f) => ({
 				code: f.flightId,
 				status: f.tag ? LIVE_STATUS[f.tag] : LIVE_STATUS.NotInitiated,
 			}))
@@ -260,11 +265,11 @@ function Ticker({
 	// duplicate content for a seamless -50% marquee loop
 	const loop = [...chips, ...chips, ...chips, ...chips]
 
-	// Hold the scroll SPEED constant instead of the loop time. The demo set
+	// Hold the scroll SPEED constant instead of the loop time: the demo set
 	// of 3 chips read well at 30s, so budget the same ~10s of travel per
-	// chip; an upper bound keeps a very large active set from stalling to a
-	// crawl rather than merely reading slowly.
-	const marqueeDur = `${Math.min(600, Math.max(30, chips.length * 10))}s`
+	// chip. With the cap above, the loop tops out around 100s no matter how
+	// many policies are live.
+	const marqueeDur = `${Math.max(30, chips.length * 10)}s`
 
 	return (
 		<div className="ticker flex items-center gap-3 overflow-hidden border-2 border-line bg-inset py-2">
