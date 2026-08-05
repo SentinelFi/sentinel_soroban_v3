@@ -27,7 +27,10 @@ export interface WhitelistRoute {
   carrier: string;
   origin: string;
   destination: string;
-  dep_time_hhmm: string;
+  /** HHMM as an integer — 1030 means 10:30, 745 means 07:45. price_routes
+   *  writes a NUMBER here; declaring it a string made the harness call
+   *  .slice() on it, which threw and silently killed every buy pass. */
+  dep_time_hhmm: number;
   distance_mi: number;
   p_covered: number;
   premium_usdc: number;
@@ -112,9 +115,17 @@ export async function selectCandidates(
 
   const out: Candidate[] = [];
   for (const r of active) {
-    const hh = Number(r.dep_time_hhmm.slice(0, -2) || "0");
-    const mm = Number(r.dep_time_hhmm.slice(-2) || "0");
-    for (let dayOffset = 0; dayOffset <= 3; dayOffset++) {
+    // Integer HHMM → hours + minutes. Tolerate a string too, so an older
+    // staged file cannot resurrect the crash this replaced.
+    const hhmm = Number(r.dep_time_hhmm) || 0;
+    const hh = Math.floor(hhmm / 100);
+    const mm = hhmm % 100;
+    // dayOffset starts at 1, not 0: the sale-auth endpoint gates on the
+    // CALENDAR DAY (`dayOffset = dateIdx - todayIdx; if (dayOffset < 1)
+    // refuse`), not on hours-to-departure. A late-evening flight dated
+    // today is ~26h away by our own estimate and still refused, which is
+    // exactly how every buy in the first passes was rejected.
+    for (let dayOffset = 1; dayOffset <= 3; dayOffset++) {
       const dateSecs = (Math.floor(now / DAY) + dayOffset) * DAY;
       const depEst = dateSecs + (hh + AVG_US_UTC_OFFSET_H) * 3600 + mm * 60;
       const leadH = (depEst - now) / 3600;
