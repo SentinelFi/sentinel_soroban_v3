@@ -203,10 +203,12 @@ function SiteFooter() {
 
 	if (theme === "serious") {
 		return (
-			<footer className="relative z-10 mt-16 border-t border-line/60">
-				<div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-6 text-center sm:flex-row sm:items-center sm:justify-between sm:text-left">
+			<footer className="relative z-10 mt-16 overflow-hidden border-t border-line/60">
+				{/* wrap + a later breakpoint: at sm the three columns overflowed
+				    rather than wrapping, pushing the whole page sideways */}
+				<div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-6 text-center lg:flex-row lg:items-center lg:justify-between lg:text-left">
 					<FooterCopyright />
-					<FooterLinks className="flex items-center justify-center gap-3 font-body text-[13px]" />
+					<FooterLinks className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 font-body text-[13px] whitespace-nowrap" />
 					<p className="font-body text-[12px] text-mute">
 						{t.footer.right}{" "}
 						<span aria-hidden="true" className="text-mute/50">
@@ -228,30 +230,39 @@ function SiteFooter() {
 
 	return (
 		<footer className="relative z-10 mt-16 overflow-hidden border-t-2 border-line">
-			{/* pixel type is wide — stay stacked until lg or the row overflows */}
-			<div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 py-4 text-center lg:flex-row lg:text-left">
-				<FooterCopyright />
-				<FooterLinks className="flex flex-wrap items-center justify-center gap-3 font-display text-[9px] tracking-[0.06em] uppercase" />
-				<p className="font-body text-[11px] tracking-[0.1em] text-mute">
-					{t.footer.right}{" "}
-					<span aria-hidden="true" className="text-mute/50">
-						·
-					</span>{" "}
-					<a
-						href={DOCS_URL}
-						target="_blank"
-						rel="noopener noreferrer"
-						className="footer-link"
-					>
-						DOCS
-					</a>
-				</p>
+			{/* Two rows, not three columns. Press Start 2P is ~1em per glyph,
+			    so the 42-character link run needs ~460px of type plus ~144px
+			    of gap — it never fit beside two paragraphs at any width below
+			    ~1500px, and silently reflowed to two or three ragged lines. */}
+			<div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-4">
+				<FooterLinks className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 font-display text-[9px] tracking-[0.06em] whitespace-nowrap uppercase" />
+				<div className="flex flex-col items-center justify-between gap-2 text-center md:flex-row md:text-left">
+					<FooterCopyright />
+					<p className="font-body text-[11px] tracking-[0.1em] text-mute">
+						{t.footer.right}{" "}
+						<span aria-hidden="true" className="text-mute/50">
+							·
+						</span>{" "}
+						<a
+							href={DOCS_URL}
+							target="_blank"
+							rel="noopener noreferrer"
+							className="footer-link"
+						>
+							DOCS
+						</a>
+					</p>
+				</div>
 			</div>
-			{/* oversized wordmark: whole across the width, flush to the
-			    bottom edge and bleeding slightly off it — only there */}
+			{/* Oversized wordmark, flush to the bottom edge and bleeding just
+			    past it. 8.4vw x 11 glyphs is ~92vw of type, which tips over
+			    the viewport once the scrollbar gutter is taken out — clamp it
+			    so it stays inside at every width, and hide it on narrow
+			    screens where it dominates the whole footer. */}
 			<p
 				aria-hidden="true"
-				className="pointer-events-none -mb-[0.8vw] select-none text-center font-display text-[8.4vw] leading-none whitespace-nowrap text-raised"
+				className="pointer-events-none -mb-[0.8vw] hidden max-w-full select-none overflow-hidden text-center font-display leading-none whitespace-nowrap text-raised sm:block"
+				style={{ fontSize: "clamp(28px, 7.6vw, 150px)" }}
 			>
 				FLIGHTS.FUN
 			</p>

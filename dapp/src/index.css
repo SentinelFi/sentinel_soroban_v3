@@ -116,6 +116,18 @@
 
 html {
 	background-color: var(--color-page);
+	/* Nothing in this app is meant to scroll sideways. Without this, any
+	   single over-wide element (the footer wordmark is sized in vw, which
+	   includes the scrollbar gutter) drags the whole page with it. */
+	overflow-x: hidden;
+}
+
+/* The shell wraps every page; keep it honest about its own width so a wide
+   child clips instead of widening the document. */
+.app-shell {
+	width: 100%;
+	max-width: 100%;
+	overflow-x: clip;
 }
 
 /* Smooth in-page scrolling where the browser supports it; skipped for
