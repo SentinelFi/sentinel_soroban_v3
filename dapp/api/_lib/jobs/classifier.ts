@@ -40,19 +40,47 @@ export async function run(config: Config): Promise<RunLogEntry> {
       };
     }
 
-    console.log(`[classifier] Calling Controller.classify_flights(${keeperPublicKey.slice(0, 8)}...)`);
-    await client.invokeContract(
-      config.controllerId,
-      "classify_flights",
-      [client.addressToScVal(keeperPublicKey)],
-      config.keeperSecretKey
-    );
-    console.log("[classifier] classify_flights() completed ✓");
+    // One call scans MAX_CLASSIFY_BATCH (8) entries from a rotating on-chain
+    // cursor, so a single call cannot cover a larger active set. The batch is
+    // small because classification is bounded by the CPU-INSTRUCTION budget
+    // (~5.9M per flight measured on testnet 2026-08-05) — at 25 it needed
+    // ~147M against a 100M cap and reverted every time, which killed the job
+    // outright once the fleet carried 50 policies.
+    //
+    // So loop: enough passes to cover the active set, bounded by a wall-clock
+    // budget so the run always returns and records a row. Each pass is
+    // idempotent on flights it already classified, so overshooting is free
+    // and a partial sweep simply resumes from the cursor next hour.
+    const CLASSIFY_BATCH = 8;
+    const TIME_BUDGET_MS = 240_000;
+    const passes = Math.min(Math.ceil(activeCount / CLASSIFY_BATCH), 12);
+    let done = 0;
+    for (let i = 0; i < passes; i++) {
+      if (Date.now() - start > TIME_BUDGET_MS) break;
+      await client.invokeContract(
+        config.controllerId,
+        "classify_flights",
+        [client.addressToScVal(keeperPublicKey)],
+        config.keeperSecretKey
+      );
+      done++;
+    }
+    const covered = done * CLASSIFY_BATCH;
+    console.log(`[classifier] ${done}/${passes} pass(es) — up to ${covered} of ${activeCount} flight(s) ✓`);
     return {
       timestamp: new Date().toISOString(),
       job: "classifier",
       duration_ms: Date.now() - start,
       success: true,
+      actions: [
+        {
+          flight: "-",
+          skipped:
+            done < passes
+              ? `time budget: ${done}/${passes} passes, ~${activeCount - covered} flight(s) deferred to next run`
+              : `${done} pass(es) covered the ${activeCount}-flight active set`,
+        },
+      ],
     };
   } catch (err) {
     console.error(`[classifier] Error: ${err}`);

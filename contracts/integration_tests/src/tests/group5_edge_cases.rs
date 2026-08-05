@@ -41,9 +41,15 @@ fn saturated_cancelled_window_settles_across_bounded_batches() {
     }
     assert_eq!(t.pool.get_active_flight_count(), 12);
 
-    // One classification pass covers all 12 (the classify window is wider —
-    // classification writes far less per flight than settlement).
-    t.ctrl.classify_flights(&t.keeper);
+    // Classify all 12. The classify window is 8 — deliberately NARROWER than
+    // the 10-flight settle window since 2026-08-05, because classification is
+    // bounded by the CPU-instruction budget (~5.9M per flight on-network),
+    // not by the entry limits that sized settlement. So this takes more than
+    // one pass; the cursor rotates, and the pass is idempotent on flights it
+    // has already classified.
+    for _ in 0..2 {
+        t.ctrl.classify_flights(&t.keeper);
+    }
 
     // First settlement call processes one full window (10 of 12) and leaves
     // the barrier up: outcomes are still pending.
