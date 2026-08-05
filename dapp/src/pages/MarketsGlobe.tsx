@@ -66,6 +66,8 @@ const RISK_VAR: Record<RiskBand, string> = {
 	low: "var(--color-win)",
 	med: "var(--color-gold)",
 	high: "var(--color-loss)",
+	// No model probability — draw it neutral rather than implying "safe".
+	unknown: "var(--color-line)",
 }
 
 /**
@@ -87,6 +89,8 @@ interface GlobeRoute {
 	dest: string
 	/** true → flight was cancelled (within 24h grace); paints red regardless. */
 	cancelled: boolean
+	/** Real model probability from the catalog; null when unmodelled. */
+	pCovered?: number | null
 }
 
 function matchesQuery(route: GlobeRoute, query: string): boolean {
@@ -272,7 +276,7 @@ function Globe({
 				const b = projected.get(r.dest)
 				const band: RiskBand = r.cancelled
 					? "high"
-					: routeRisk(r.flightId, `${r.origin}-${r.dest}`).band
+					: routeRisk(r.flightId, `${r.origin}-${r.dest}`, r.pCovered).band
 				return { r, a, b, band }
 			})
 			.filter((x) => x.a && x.b && (x.a.visible || x.b.visible))
@@ -431,9 +435,9 @@ function Globe({
 					let worst = 0
 					for (const r of routes) {
 						if (r.origin === n.code || r.dest === n.code) {
-							const rk = routeRisk(r.flightId, `${r.origin}-${r.dest}`)
-							if (rk.delayedPct > worst) {
-								worst = rk.delayedPct
+							const rk = routeRisk(r.flightId, `${r.origin}-${r.dest}`, r.pCovered)
+							if ((rk.delayedPct ?? 0) > worst) {
+								worst = rk.delayedPct ?? 0
 								band = rk.band
 							}
 						}
@@ -532,7 +536,16 @@ export default function MarketsGlobe() {
 	const [query, setQuery] = useState("")
 	const [selectedId, setSelectedId] = useState<string | null>(null)
 
-	// tracked flights → plottable globe routes (both endpoints have coords)
+	// tracked flights → plottable globe routes (both endpoints have coords).
+	// The model probability lives on the route catalog, not on the tracked
+	// flight, so join the two by (flight, origin, dest) — otherwise every arc
+	// paints neutral for want of a number we already fetched.
+	const pCoveredByRoute = useMemo(() => {
+		const m = new Map<string, number | null | undefined>()
+		for (const r of routes ?? []) m.set(`${r.flightId}|${r.origin}|${r.dest}`, r.pCovered)
+		return m
+	}, [routes])
+
 	const plottable = useMemo<GlobeRoute[]>(
 		() =>
 			tracked
@@ -542,8 +555,9 @@ export default function MarketsGlobe() {
 					origin: f.origin,
 					dest: f.dest,
 					cancelled: f.status === "cancelled",
+					pCovered: pCoveredByRoute.get(`${f.flightId}|${f.origin}|${f.dest}`) ?? null,
 				})),
-		[tracked],
+		[tracked, pCoveredByRoute],
 	)
 
 	// The left column lists ALL tracked flights; the globe plots only the
@@ -653,6 +667,7 @@ export default function MarketsGlobe() {
 										<RiskBar
 											flightId={r.flightId}
 											route={`${r.origin}-${r.dest}`}
+											pCovered={r.pCovered}
 											compact
 										/>
 										<span className="font-body text-[12px] whitespace-nowrap">

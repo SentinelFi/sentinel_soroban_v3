@@ -16,7 +16,7 @@ import {
 } from "../hooks/useContracts"
 import type { UiRoute } from "../hooks/useContracts"
 import { DEMO_ROUTES } from "../config/routes"
-import { airlineName } from "../config/airlines"
+import { airlineName, flightradarSlug } from "../config/airlines"
 import { useWallet } from "../hooks/useWallet"
 import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet } from "../util/wallet"
@@ -121,9 +121,12 @@ function compareRoutes(
 			return da - db || byFlight
 		}
 		case "status": {
-			const riskA = routeRisk(a.flightId, `${a.origin}-${a.dest}`)
-			const riskB = routeRisk(b.flightId, `${b.origin}-${b.dest}`)
-			return riskA.delayedPct - riskB.delayedPct || byFlight
+			// Routes with no model probability sort last rather than as 0%.
+			const riskA = routeRisk(a.flightId, `${a.origin}-${a.dest}`, a.pCovered)
+			const riskB = routeRisk(b.flightId, `${b.origin}-${b.dest}`, b.pCovered)
+			const pa = riskA.delayedPct ?? -1
+			const pb = riskB.delayedPct ?? -1
+			return pa - pb || byFlight
 		}
 		case "stake": {
 			const ta = termsFor(a, defaults)
@@ -203,11 +206,17 @@ function HeroFlapLine({
 	)
 }
 
-/** External flight-tracking page for a flight id (lowercase slug). */
-function flightradarUrl(flightId: string): string {
-	return `https://www.flightradar24.com/data/flights/${encodeURIComponent(
-		flightId.toLowerCase(),
-	)}`
+/**
+ * External flight-tracking page. FR24 keys its flight pages by the IATA
+ * flight number ("as462"), not the ICAO ident the fleet stores ("ASA462"),
+ * so the ident must be converted first. Returns null when it cannot be
+ * resolved — the caller renders plain text rather than a dead link.
+ */
+function flightradarUrl(flightId: string, carrier?: string | null): string | null {
+	const slug = flightradarSlug(flightId, carrier)
+	return slug
+		? `https://www.flightradar24.com/data/flights/${encodeURIComponent(slug)}`
+		: null
 }
 
 /** Case-insensitive multi-token match on flight id / airport codes. */
@@ -1124,21 +1133,33 @@ export default function Markets() {
 									className="board-row-in border-b-2 border-line/60 hover:bg-raised/60"
 								>
 									<td className="px-4 py-3">
-										<a
-											href={flightradarUrl(route.flightId)}
-											target="_blank"
-											rel="noopener noreferrer"
-											title={t.markets.flightLinkTitle(
+										{(() => {
+											const fr = flightradarUrl(
 												route.flightId,
-											)}
-											className="board-figure relative z-10 hover:text-sky hover:underline"
-										>
-											{route.flightId}
-										</a>
+												route.carrier,
+											)
+											return fr ? (
+												<a
+													href={fr}
+													target="_blank"
+													rel="noopener noreferrer"
+													title={t.markets.flightLinkTitle(
+														route.flightId,
+													)}
+													className="board-figure relative z-10 hover:text-sky hover:underline"
+												>
+													{route.flightId}
+												</a>
+											) : (
+												<span className="board-figure relative z-10">
+													{route.flightId}
+												</span>
+											)
+										})()}
 									</td>
 									<td
 										className="px-4 py-3 font-body text-[14px] font-semibold tracking-[0.04em] text-ink"
-										title={airlineName(route.flightId)}
+										title={airlineName(route.flightId, route.carrier)}
 									>
 										{route.origin} → {route.dest}
 									</td>
@@ -1174,6 +1195,7 @@ export default function Markets() {
 											<RiskBar
 												flightId={route.flightId}
 												route={`${route.origin}-${route.dest}`}
+												pCovered={route.pCovered}
 												wide
 											/>
 										</div>

@@ -4,10 +4,14 @@
  * or ILLUSTRATIVE series (labelled as such in the UI), NOT precise on-chain
  * truth. The one exception is `airportCoords`, which is real geographic data.
  *
- * Honesty rule (see conventions): no route is whitelisted on testnet, so live
- * per-route risk history does not exist. `routeRisk` and the sparkline series
- * are deterministic pseudo-values seeded from stable inputs so they are stable
- * across renders and clearly demo-grade. Callers must label them.
+ * Honesty rule (see conventions): anything synthesized must be labelled, and
+ * nothing invents a number that could be mistaken for a measurement. The
+ * sparkline series remain deterministic pseudo-values seeded from stable
+ * inputs — clearly demo-grade, and callers must label them.
+ *
+ * `routeRisk` is NO LONGER in that category: it reports the real ML
+ * probability the catalog carries, and returns "no data" when it has none,
+ * rather than hashing the flight id into a plausible-looking percentage.
  */
 
 import { useMemo } from "react"
@@ -45,12 +49,16 @@ function seededRng(seed: number): () => number {
 
 /* ── route delay risk ──────────────────────────────────────────────── */
 
-export type RiskBand = "low" | "med" | "high"
+export type RiskBand = "low" | "med" | "high" | "unknown"
 
 export interface RouteRisk {
-	/** Estimated % of departures delayed past threshold (0–100). */
-	delayedPct: number
+	/** Probability of the covered event, as a percent. Null = no data. */
+	delayedPct: number | null
 	band: RiskBand
+	/** True when this is NOT a model probability (static table, or absent). */
+	estimated: boolean
+	/** p_covered / network baseline. Only set for real model values. */
+	vsBaseline?: number
 }
 
 /**
@@ -82,23 +90,51 @@ const ROUTE_DELAY_TABLE: Record<string, number> = {
 }
 
 /**
- * Deterministic estimated delay risk for a flight/route. Prefers the static
- * table when a route key is known; otherwise hashes the id into a plausible
- * band centred near 20% delayed. ALWAYS an estimate — label it in the UI.
+ * Network-average rate of the covered event (arrival ≥3h late, cancelled or
+ * diverted), measured over 24 months of BTS data. Mirrors
+ * BASELINE_COVERED_RATE in agent/app/main.py — the model service grades its
+ * own risk bands against this, and so do we, so the two never disagree.
  */
-export function routeRisk(flightId: string, route?: string): RouteRisk {
-	let delayedPct: number
-	const key = route?.toUpperCase()
-	if (key && ROUTE_DELAY_TABLE[key] !== undefined) {
-		delayedPct = ROUTE_DELAY_TABLE[key]
-	} else {
-		// hash → 8..44%, centred ~20%, stable per id
-		const r = seededRng(hashStr(`${flightId}|${route ?? ""}`))()
-		delayedPct = Math.round(8 + r * 36)
+export const BASELINE_COVERED_RATE = 0.0342
+
+/**
+ * Delay risk for a route.
+ *
+ * When the catalog carries a real `p_covered` from the ML model, that is
+ * what we show, banded RELATIVE TO the network baseline exactly as the
+ * model service does (<0.75x low, <2x moderate, else high). The absolute
+ * numbers are small — real p_covered spans ~0.4%-15% — so an absolute
+ * threshold like "40% is red" would paint the entire fleet green and tell
+ * the user nothing. Relative banding is what carries the signal.
+ *
+ * With no probability, we return `estimated: true` and a coarse figure from
+ * the static table, or nothing at all. We deliberately do NOT hash the
+ * flight id into a plausible-looking percentage any more: that produced
+ * confident red numbers up to 44% — roughly triple anything physically
+ * possible on this fleet — for routes nobody had measured.
+ */
+export function routeRisk(
+	_flightId: string,
+	route?: string,
+	pCovered?: number | null,
+): RouteRisk {
+	if (typeof pCovered === "number" && pCovered >= 0) {
+		const vs = pCovered / BASELINE_COVERED_RATE
+		return {
+			delayedPct: Math.round(pCovered * 1000) / 10, // one decimal: 1.4%
+			band: vs < 0.75 ? "low" : vs < 2 ? "med" : "high",
+			estimated: false,
+			vsBaseline: Math.round(vs * 100) / 100,
+		}
 	}
-	const band: RiskBand =
-		delayedPct >= 40 ? "high" : delayedPct >= 25 ? "med" : "low"
-	return { delayedPct, band }
+	const key = route?.toUpperCase()
+	const table = key ? ROUTE_DELAY_TABLE[key] : undefined
+	if (table === undefined) return { delayedPct: null, band: "unknown", estimated: true }
+	return {
+		delayedPct: table,
+		band: table >= 40 ? "high" : table >= 25 ? "med" : "low",
+		estimated: true,
+	}
 }
 
 /* ── illustrative 30-day series (TVL / APY sparklines) ─────────────── */
