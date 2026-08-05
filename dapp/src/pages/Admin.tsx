@@ -546,6 +546,8 @@ function SignIn() {
 							<span className="label-px mb-1 block">Admin email</span>
 							<input
 								type="email"
+								name="email"
+								autoComplete="email"
 								required
 								value={email}
 								onChange={(e) => setEmail(e.target.value)}
