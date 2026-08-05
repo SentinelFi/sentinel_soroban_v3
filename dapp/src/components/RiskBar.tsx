@@ -1,5 +1,88 @@
+import { useState } from "react"
 import { routeRisk } from "../data"
 import { useTheme } from "../providers/ThemeProvider"
+
+/**
+ * Hover/focus explainer for the risk figure.
+ *
+ * The number needs a sentence next to it or it reads as a guess: it is a
+ * seasonal PEAK for a 3-hour-plus delay, from a model trained on 15 million
+ * real flights — three claims a bare "15%" makes none of. Hover-opened
+ * (not click) because it is a reading aid, not an action, and focusable so
+ * it is reachable without a mouse.
+ */
+function RiskExplainer({
+	pct,
+	vsBaseline,
+	estimated,
+	peak,
+	children,
+}: {
+	pct: number
+	vsBaseline?: number
+	estimated: boolean
+	/** figure is the year's peak (vs a single priced date) */
+	peak: boolean
+	children: React.ReactNode
+}) {
+	const [open, setOpen] = useState(false)
+	return (
+		<span
+			className="riskbar-explain relative inline-flex"
+			onMouseEnter={() => setOpen(true)}
+			onMouseLeave={() => setOpen(false)}
+			onFocus={() => setOpen(true)}
+			onBlur={() => setOpen(false)}
+			tabIndex={0}
+			role="note"
+			aria-label={`Delay risk explainer: up to ${pct} percent`}
+		>
+			{children}
+			{open && (
+				<span className="info-panel panel-raised riskbar-pop absolute bottom-full left-1/2 z-40 mb-2 block w-[19rem] max-w-[80vw] -translate-x-1/2 p-3 text-left normal-case tracking-normal">
+					<span className="label-px mb-1.5 block text-gold">
+						{peak ? "WORST MONTH" : "DELAY RISK"} · {pct}%
+					</span>
+					<span className="block font-body text-[12.5px] leading-relaxed text-dim">
+						{estimated ? (
+							<>
+								An illustrative baseline — this route has no model
+								probability yet.
+							</>
+						) : (
+							<>
+								{peak ? "In its " : "About "}
+								{peak && (
+									<>
+										<span className="text-ink">worst month</span> of the year,
+										about{" "}
+									</>
+								)}
+								<span className="text-ink">{pct} in 100</span> of these
+								flights land <span className="text-ink">3+ hours late</span>,
+								get cancelled, or divert — the exact events this policy
+								pays on.
+								{vsBaseline !== undefined && (
+									<>
+										{" "}
+										That is{" "}
+										<span className="text-ink">{vsBaseline}×</span> the
+										3.4% average across the whole network.
+									</>
+								)}{" "}
+								{peak
+									? "Quiet months run far lower, so this is the ceiling, not your date. "
+									: "This is one representative date; other months differ. "}
+								Learned from 15 million real BTS flights; storms on the day
+								are priced separately.
+							</>
+						)}
+					</span>
+				</span>
+			)}
+		</span>
+	)
+}
 
 /**
  * Horizontal delay-risk bar.
@@ -23,6 +106,7 @@ export function RiskBar({
 	flightId,
 	route,
 	pCovered,
+	pCoveredIsPeak = false,
 	compact = false,
 	wide = false,
 }: {
@@ -31,6 +115,8 @@ export function RiskBar({
 	route?: string
 	/** Real model probability (0–1) from the catalog, when available. */
 	pCovered?: number | null
+	/** True when pCovered is the year's peak, not a single priced date. */
+	pCoveredIsPeak?: boolean
 	compact?: boolean
 	/** Roomier bar for wide layouts (the board's status column). */
 	wide?: boolean
@@ -63,12 +149,17 @@ export function RiskBar({
 		? Math.min(100, delayedPct)
 		: Math.min(100, Math.round(((vsBaseline ?? 0) / 3) * 100))
 
+	// Short native title as the no-JS / screen-reader fallback; the hover
+	// panel carries the full explanation.
 	const title = estimated
-		? `Illustrative delay risk ≈ ${delayedPct}% — no model probability for this route.`
-		: `Modelled chance of a payout: ${delayedPct}% (${vsBaseline}x the network average of 3.4%). ` +
-			`Covers arrival 3h+ late, cancelled or diverted.`
+		? `Illustrative delay risk ~${delayedPct}% — no model probability for this route.`
+		: `Peak month: up to ${delayedPct}% of these flights are 3h+ late, cancelled or diverted.`
 
-	const label = `${delayedPct}%`
+	// "up to" ONLY when the figure really is the year's ceiling. A staged
+	// file priced before peaks were computed carries a single date, and
+	// calling that "up to" would be a different lie from the one we removed.
+	const peak = !estimated && pCoveredIsPeak
+	const label = peak ? `up to ${delayedPct}%` : `${delayedPct}%`
 
 	if (serious) {
 		return (
@@ -82,9 +173,11 @@ export function RiskBar({
 						}}
 					/>
 				</div>
-				<span className="riskbar-value" style={{ color }}>
-					{label}
-				</span>
+				<RiskExplainer pct={delayedPct} vsBaseline={vsBaseline} estimated={estimated} peak={peak}>
+					<span className="riskbar-value riskbar-value-hint" style={{ color }}>
+						{label}
+					</span>
+				</RiskExplainer>
 				{!compact && estimated && <span className="riskbar-est">est.</span>}
 			</div>
 		)
@@ -107,9 +200,11 @@ export function RiskBar({
 					/>
 				))}
 			</div>
-			<span className="riskbar-value" style={{ color }}>
-				{label}
-			</span>
+			<RiskExplainer pct={delayedPct} vsBaseline={vsBaseline} estimated={estimated} peak={peak}>
+				<span className="riskbar-value riskbar-value-hint" style={{ color }}>
+					{label}
+				</span>
+			</RiskExplainer>
 			{!compact && estimated && <span className="riskbar-est">est.</span>}
 		</div>
 	)

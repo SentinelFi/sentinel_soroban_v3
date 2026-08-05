@@ -71,11 +71,22 @@ const routeKey = (r: { flight_id: string; origin: string; destination: string })
   `${r.flight_id}|${r.origin}|${r.destination}`;
 
 /**
- * p_covered by route, from the staged pricing run. Built once per cold
- * start — a 1,190-entry static import, same bundled-JSON convention as
+ * Delay probability by route, from the staged pricing run. Built once per
+ * cold start — a 1,190-entry static import, same bundled-JSON convention as
  * routes_config.ts (readFileSync would depend on the function's cwd).
+ *
+ * We publish the SEASONAL PEAK (`p_covered_max`), not the priced date's
+ * figure. The model swings hard across the calendar — one route reads 15%
+ * in August and 1.6% in September — so a single date's number on a board
+ * where the buyer picks their own date misleads in both directions. The
+ * peak supports an honest "up to X%", and the board says so.
+ *
+ * Falls back to `p_covered` for staged files written before the peak was
+ * computed, so an older whitelist still renders something true (just less
+ * useful). Neither figure is ever used for pricing — premiums come from
+ * the priced date, on-chain.
  */
-const P_COVERED: Map<string, number> = new Map(
+const P_COVERED: Map<string, { p: number; peak: boolean }> = new Map(
   (
     (whitelistConfig as {
       routes?: Array<{
@@ -83,11 +94,21 @@ const P_COVERED: Map<string, number> = new Map(
         origin: string;
         destination: string;
         p_covered?: number | null;
+        p_covered_max?: number | null;
       }>;
     }).routes ?? []
   )
-    .filter((r) => typeof r.p_covered === "number")
-    .map((r) => [routeKey(r), r.p_covered as number]),
+    .map((r) => {
+      // Peak when the staged file carries one; otherwise the priced date,
+      // flagged so the UI does not claim "up to" about a single day.
+      const peak = typeof r.p_covered_max === "number";
+      const p = peak ? (r.p_covered_max as number) : r.p_covered;
+      return [routeKey(r), { p, peak }] as const;
+    })
+    .filter((e): e is readonly [string, { p: number; peak: boolean }] =>
+      typeof e[1].p === "number",
+    )
+    .map(([k, v]) => [k, v]),
 );
 
 /**
@@ -202,7 +223,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       payoff_units: terms.payoff.toString(),
       delay_hours: terms.delayHours,
       // Calibrated ML delay probability for the route (staged pricing run).
-      p_covered: P_COVERED.get(key) ?? null,
+      p_covered: P_COVERED.get(key)?.p ?? null,
+      /** true when p_covered is the seasonal peak, not a single priced date. */
+      p_covered_is_peak: P_COVERED.get(key)?.peak ?? false,
       featured: featured.has(key),
     };
   });

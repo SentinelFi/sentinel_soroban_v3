@@ -250,6 +250,8 @@ export interface UiRoute {
 	carrier?: string | null
 	/** Real ML delay probability for this route, when the catalog has one. */
 	pCovered?: number | null
+	/** True when pCovered is the seasonal peak rather than one priced date. */
+	pCoveredIsPeak?: boolean
 }
 
 /** Row shape served by GET /api/routes (see api/routes.ts). */
@@ -264,6 +266,7 @@ interface ApiRouteRow {
 	 *  the catalog could not resolve it — fall back to premium_units. */
 	chain_premium_units: string | null
 	p_covered: number | null
+	p_covered_is_peak?: boolean
 	payoff_units: string
 	delay_hours: number
 	featured: boolean
@@ -295,6 +298,7 @@ async function fetchRouteCatalog(): Promise<UiRoute[]> {
 		status: row.status,
 		carrier: row.carrier,
 		pCovered: row.p_covered,
+		pCoveredIsPeak: row.p_covered_is_peak ?? false,
 		terms:
 			row.status === "Active"
 				? {

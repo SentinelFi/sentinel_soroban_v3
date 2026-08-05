@@ -35,6 +35,50 @@ feature. A small committed fixture at
 `--data`. **Retrain every 6 months** — full runbook, BTS source links, and
 copy-paste Claude prompts: `spec/maintenance.md`.
 
+## Delay tiers
+
+The 180-minute threshold is the protocol's covered event, but the same
+pipeline trains shorter ones from the same BTS window — only the label's
+threshold changes, never the features:
+
+| Endpoint | Covered event | Artifacts | Test AUC | Brier | Base rate |
+|---|---|---|---|---|---|
+| `POST /predict` | arr ≥ **180 min** ∪ cancel ∪ divert | `artifacts/` | 0.789 | 0.0282 | 3.42% |
+| `POST /predict/60m` | arr ≥ **60 min** ∪ cancel ∪ divert | `artifacts/arr60/` | 0.745 | 0.0763 | 9.53% |
+| `POST /predict/30m` | arr ≥ **30 min** ∪ cancel ∪ divert | `artifacts/arr30/` | 0.724 | 0.1185 | 15.81% |
+
+All three trained 2026-08-05 on the same 15.4M-row window, and all three
+are calibrated to 4 decimal places (mean predicted p vs actual: 0.0953 /
+0.0953 at 60m, 0.1580 / 0.1581 at 30m). AUC slides as the threshold
+drops — a 30-minute miss is far more often ordinary noise than a 3-hour
+one, so there is less structure to learn — while calibration holds, which
+is the property that matters for any expected-value use.
+
+Same request body for all three; the tier responses add `threshold_min`.
+Each tier is graded against **its own** base rate — a 30-minute miss is
+several times commoner than a 3-hour one, so grading them all off the
+180m rate would mark every route "high".
+
+Rules of the road:
+
+- **`/predict` is the only endpoint the protocol prices from.** The tiers
+  are informational; nothing in `dapp/` calls them.
+- The tiers are **optional at runtime** — a missing `artifacts/arr30/` or
+  `artifacts/arr60/` makes that one path 503 and leaves everything else
+  healthy. Only the 180m set is required to boot.
+- The three models are fitted **independently**, so per-request
+  monotonicity isn't guaranteed (p30 ≥ p60 ≥ p180 holds for the labels
+  by construction and in aggregate, but a single route can invert
+  slightly). Don't build logic that assumes ordering.
+- `GET /models` lists what this instance actually loaded.
+
+Train a tier (or any other threshold) with the two knobs:
+
+```sh
+python -m training.train --threshold-min 60 --out-dir artifacts/arr60
+make train-tiers   # both tiers, ~7 min
+```
+
 ## Setup
 
 | Step | Command | Notes |
@@ -46,6 +90,7 @@ copy-paste Claude prompts: `spec/maintenance.md`.
 | 5. Run the service | `make serve` | uvicorn on port 8000 |
 | 6. Run the tests | `make test` | uses the committed artifacts |
 | (opt) Retrain | `make download-data`, then `make train` | ~3 min for 15M rows |
+| (opt) Delay tiers | `make train-tiers` | ~7 min; 30m + 60m siblings |
 
 ## Endpoint contract
 
@@ -80,10 +125,33 @@ Response:
 
 `dep_time_hhmm` (24-hour HHMM, default 1200) and `distance_mi` (default
 1000) are optional. `risk` compares `p_covered` to the network-average
-baseline: low < 0.75×, moderate < 2×, high ≥ 2×. Unknown carriers/airports
-don't error (encoder ignores them). When `AGENT_TOKEN` is set, `/predict`
-requires `Authorization: Bearer <token>`; `GET /healthz` (model version)
-stays open.
+baseline: low < 0.75×, moderate < 2×, high ≥ 2×. Unknown **airports**
+don't error (the encoder ignores them); an unknown **carrier** is a 422 —
+it would one-hot to all-zeros and silently price without the carrier
+signal, which is exactly the 2026-07-29 ICAO bug. Send IATA (`UA`), not
+ICAO (`UAL`). When `AGENT_TOKEN` is set, all `/predict*` paths require
+`Authorization: Bearer <token>`; `GET /healthz` (model version) stays open.
+
+### `POST /predict/60m`, `POST /predict/30m`
+
+Identical request body; response adds `threshold_min`:
+
+```json
+{
+  "p_covered": 0.0863,
+  "risk": "low",
+  "baseline": 0.0953,
+  "vs_baseline": 0.91,
+  "model_version": "…-btsM24-arr60m",
+  "threshold_min": 60
+}
+```
+
+503 when that tier's artifacts aren't present. See **Delay tiers** above.
+
+### `GET /models`
+
+Thresholds this instance loaded, descending — endpoint, version, baseline.
 
 ## Env
 

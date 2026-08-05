@@ -1449,6 +1449,23 @@ html[data-theme="serious"] {
 		min-width: 30px;
 	}
 
+	/* the risk figure is hoverable — hint it without shouting */
+	.riskbar-value-hint {
+		cursor: help;
+		border-bottom: 1px dotted currentColor;
+	}
+	.riskbar-explain:focus-visible {
+		outline: 2px solid var(--color-gold);
+		outline-offset: 2px;
+	}
+	/* The board clips rows; the panel must escape its row, and a table cell
+	   is not a containing block for absolute children in every engine —
+	   pin the width so long copy can't stretch the column. */
+	.riskbar-pop {
+		white-space: normal;
+		pointer-events: none;
+	}
+
 	.riskbar-est {
 		font-family: var(--font-body);
 		font-size: 9px;

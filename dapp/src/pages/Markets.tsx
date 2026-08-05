@@ -1196,6 +1196,7 @@ export default function Markets() {
 												flightId={route.flightId}
 												route={`${route.origin}-${route.dest}`}
 												pCovered={route.pCovered}
+												pCoveredIsPeak={route.pCoveredIsPeak}
 												wide
 											/>
 										</div>

@@ -26,8 +26,18 @@ today (no weather at serving time yet; a weather-augmented model needs the
     UniqueCarrier, Origin, Dest (one-hot, unknown-tolerant),
     DepTime (HHMM), Distance (miles).
 
+The THRESHOLD is a knob, not a constant: `--threshold-min` picks which
+covered event is learned, and `--out-dir` picks where its artifacts land,
+so several thresholds coexist as sibling models trained from one CSV.
+The shipped set (see app/main.py MODELS):
+
+    180 → artifacts/        (the protocol's live covered event)
+     60 → artifacts/arr60/
+     30 → artifacts/arr30/
+
 Run:
-    make train                                       # full data
+    make train                                       # full data, 180m → artifacts/
+    make train-tiers                                 # 30m + 60m siblings
     python -m training.train --data data/delay_data.sample.csv  # pipeline smoke
 """
 
@@ -116,11 +126,17 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", type=Path, default=DEFAULT_DATA)
     ap.add_argument("--threshold-min", type=int, default=THRESHOLD_MIN)
+    ap.add_argument(
+        "--out-dir",
+        type=Path,
+        default=ARTIFACTS_DIR,
+        help="Artifacts destination (default artifacts/ — the 180m serving set).",
+    )
     args = ap.parse_args()
 
     if not args.data.exists():
         raise FileNotFoundError(f"Training data not found at {args.data}")
-    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[train] Loading {args.data} (covered event: arr>={args.threshold_min}min OR cancelled OR diverted)")
     X, y = load_and_label(args.data, args.threshold_min)
@@ -161,19 +177,25 @@ def main() -> None:
         model = CalibratedClassifierCV(base, method="isotonic", cv="prefit")
         model.fit(X_valid_t, y_valid)
 
-    def report(name: str, Xt, yt) -> None:
+    def report(name: str, Xt, yt) -> dict[str, float]:
         p = model.predict_proba(Xt)[:, 1]
         auc = roc_auc_score(yt, p) if yt.nunique() > 1 else float("nan")
         brier = brier_score_loss(yt, p)
         print(f"[train] {name}: ROC AUC={auc:.4f}  Brier={brier:.5f}  "
               f"mean p={p.mean():.4f}  actual rate={yt.mean():.4f}")
+        return {
+            "roc_auc": float(auc),
+            "brier": float(brier),
+            "mean_predicted_p": float(p.mean()),
+            "actual_rate": float(yt.mean()),
+        }
 
     print()
     report("valid (calibration split)", X_valid_t, y_valid)
-    report("test  (held out)         ", X_test_t, y_test)
+    test_metrics = report("test  (held out)         ", X_test_t, y_test)
     print()
 
-    out_dir = ARTIFACTS_DIR / "smoke" if smoke else ARTIFACTS_DIR
+    out_dir = args.out_dir / "smoke" if smoke else args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, out_dir / "model.joblib")
     joblib.dump(preprocessor, out_dir / "encoder.joblib")
@@ -183,7 +205,26 @@ def main() -> None:
         f"-btsM24-arr{args.threshold_min}m"
     )
     (out_dir / "model_version.txt").write_text(version + "\n")
+
+    # metrics.json travels WITH the model so the serving baseline can never
+    # drift from the window it was measured on: app/main.py reads
+    # `actual_rate` as the risk-grading baseline when this file is present,
+    # and falls back to its in-code constant when it is not.
+    (out_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "model_version": version,
+                "threshold_min": args.threshold_min,
+                "rows_labeled": int(len(X)),
+                "positive_rate": float(y.mean()),
+                "test": test_metrics,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     print(f"[train] Artifacts → {out_dir}  (version={version})")
+    print(f"[train] Serving baseline (test actual rate) = {test_metrics['actual_rate']:.4f}")
 
 
 if __name__ == "__main__":

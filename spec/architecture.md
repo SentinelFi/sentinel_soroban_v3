@@ -2281,7 +2281,9 @@ plus a grade relative to the network baseline (`risk`: low < 0.75×, moderate
 Flight numbers are never a feature — a route+calendar+time tuple IS the
 model's entire input, so "UA, ORD→SFO, a December Tuesday around 9am" is a
 complete query. `GET /healthz` reports the loaded model version. An optional
-`AGENT_TOKEN` bearer-gates `/predict`.
+`AGENT_TOKEN` bearer-gates every `/predict*` path. Two shorter-threshold
+siblings — `/predict/60m` and `/predict/30m` — are served alongside it; see
+[Delay tiers](#delay-tiers--predict60m-and-predict30m-2026-08-05) below.
 
 **How to call it** (copy-paste runnable):
 
@@ -2377,6 +2379,50 @@ base = mlBasePremiumUnits( p_covered, payoff, rails )
 **Any failure returns `null`**, so a down or unset model degrades gracefully
 — the pricing run reports the failure and the admin re-runs; never a broken
 cron, never a blocked route.
+
+#### Delay tiers — `/predict/60m` and `/predict/30m` (2026-08-05)
+
+180 minutes is the protocol's covered event, not the only interesting
+threshold, so the same pipeline trains two shorter-threshold siblings from
+the same BTS window. **Only the label's threshold changes** — identical
+features, identical splits, identical isotonic calibration, identical
+carrier vocabulary and 422 guard:
+
+| Endpoint | Covered event | Artifacts | Test AUC | Brier | Base rate |
+|---|---|---|---|---|---|
+| `POST /predict` | arr ≥ **180 min** ∪ cancel ∪ divert | `artifacts/` | 0.789 | 0.0282 | 3.42% |
+| `POST /predict/60m` | arr ≥ **60 min** ∪ cancel ∪ divert | `artifacts/arr60/` | 0.745 | 0.0763 | 9.53% |
+| `POST /predict/30m` | arr ≥ **30 min** ∪ cancel ∪ divert | `artifacts/arr30/` | 0.724 | 0.1185 | 15.81% |
+
+AUC slides as the threshold drops (a 30-minute miss is more often ordinary
+noise than a 3-hour one — less structure to learn) while **calibration
+holds at 4 decimal places** across all three, which is the property any
+expected-value use depends on. Tier responses are the `/predict` shape plus
+`threshold_min`; each is graded against **its own** base rate, since
+grading a 30m probability off the 3.42% baseline would mark every route
+"high". `GET /models` lists what the running instance loaded.
+
+Three properties keep this additive rather than a change to the pricing
+surface:
+
+- **`/predict` is untouched** — same handler, same 5-field response, same
+  180m model, same constant baseline. It remains the only endpoint the
+  protocol prices from; nothing in `dapp/` calls the tiers, and
+  `agent_client.ts` has no knowledge of them.
+- **The tiers are optional at runtime.** Only the 180m artifact set is
+  required to boot; a missing `artifacts/arr30|arr60/` makes that one path
+  503 and leaves the rest of the service healthy. They cannot take the
+  protocol's endpoint down with them.
+- **No cross-model assumptions.** The three are fitted independently, so
+  `p30 ≥ p60 ≥ p180` holds for the labels by construction and in aggregate
+  but is not guaranteed for a single request.
+
+Training a tier is two flags on the existing trainer —
+`--threshold-min 60 --out-dir artifacts/arr60` (`make train-tiers` does
+both) — and the trainer now writes `metrics.json` beside each model, which
+the service reads as that model's grading baseline so a retrain can't leave
+it pinned to a stale hand-copied rate. See
+[maintenance.md](maintenance.md) step 6.
 
 ### Premium bands — ML base + weather surcharge (formula + knobs)
 

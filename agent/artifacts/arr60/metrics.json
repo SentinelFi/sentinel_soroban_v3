@@ -1,0 +1,12 @@
+{
+  "model_version": "2026-08-05T00:42:07Z-btsM24-arr60m",
+  "threshold_min": 60,
+  "rows_labeled": 15435611,
+  "positive_rate": 0.09526432092646024,
+  "test": {
+    "roc_auc": 0.7450076485665228,
+    "brier": 0.07633753991565963,
+    "mean_predicted_p": 0.09530631793419904,
+    "actual_rate": 0.09526454407167494
+  }
+}

@@ -53,10 +53,26 @@ Both are free, no account, no API quota.
      evening departures should out-risk morning ones on congested routes);
    - update `BASELINE_COVERED_RATE` in `agent/app/main.py` to the new
      window's actual positive rate (printed by the trainer).
-6. **Commit** the new `agent/artifacts/` (model, encoder, feature names,
-   version stamp) — Render serves the new model on its next redeploy
+6. **Retrain the delay tiers** (added 2026-08-05): the same CSV also
+   trains the shorter-threshold siblings served at `/predict/60m` and
+   `/predict/30m` — `cd agent && make train-tiers` (~7 min, sequential;
+   each run holds the full CSV in memory). Verify the same way: mean
+   predicted p must track the actual rate, and the base rates should
+   stay ordered 30m > 60m > 180m. If a tier is skipped its endpoint
+   503s and nothing else is affected — `/predict` never depends on them.
+7. **Commit** the new `agent/artifacts/` (model, encoder, feature names,
+   version stamp, `metrics.json`) plus `artifacts/arr30|arr60/` if
+   retrained — Render serves the new models on its next redeploy
    (`render.yaml`, rootDir `agent`).
-7. **Optional monitoring**: refresh the delay-cause aggregate from the
+
+   Note on baselines: since 2026-08-05 the trainer writes `metrics.json`
+   beside each model and the service reads `test.actual_rate` from it as
+   that model's risk-grading baseline. The in-code constants
+   (`BASELINE_COVERED_RATE`, `BASELINE_60M_RATE`, `BASELINE_30M_RATE`)
+   are fallbacks for artifact sets without the file — which today
+   includes the shipped 180m model, so step 5's "update
+   `BASELINE_COVERED_RATE`" still applies until 180m is retrained.
+8. **Optional monitoring**: refresh the delay-cause aggregate from the
    OT_DelayCause page and compare official monthly delay/cancel rates per
    carrier against the model's predictions for drift.
 
