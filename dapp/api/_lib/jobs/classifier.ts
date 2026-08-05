@@ -51,6 +51,13 @@ export async function run(config: Config): Promise<RunLogEntry> {
     // budget so the run always returns and records a row. Each pass is
     // idempotent on flights it already classified, so overshooting is free
     // and a partial sweep simply resumes from the cursor next hour.
+    // Runs at :33 deliberately. Every keeper-signed job shares one account
+    // sequence: settler is */5 (:00,:05,…) and queue_maintainer is 2-59/15
+    // (:02,:17,:32,:47). This job used to run at :00 — the same minute as
+    // the settler — which was survivable while it made ONE transaction, but
+    // the pass loop below holds the key for ~20s across several, and a
+    // sequence collision then kills the run (invokeContract retries txBadSeq
+    // exactly once). :33 is clear of both.
     const CLASSIFY_BATCH = 8;
     const TIME_BUDGET_MS = 240_000;
     const passes = Math.min(Math.ceil(activeCount / CLASSIFY_BATCH), 12);

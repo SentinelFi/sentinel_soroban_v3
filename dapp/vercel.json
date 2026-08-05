@@ -52,7 +52,7 @@
     },
     {
       "path": "/api/cron/classify",
-      "schedule": "0 * * * *"
+      "schedule": "33 * * * *"
     },
     {
       "path": "/api/cron/settle",
