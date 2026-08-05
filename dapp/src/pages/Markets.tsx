@@ -18,6 +18,8 @@ import type { UiRoute } from "../hooks/useContracts"
 import { DEMO_ROUTES } from "../config/routes"
 import { airlineName, flightradarSlug } from "../config/airlines"
 import { useWallet } from "../hooks/useWallet"
+import { useFlightSchedules } from "../hooks/useFlightSchedules"
+import { utcHm } from "../lib/format"
 import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet } from "../util/wallet"
 import { txHashOf } from "../lib/utils"
@@ -488,6 +490,9 @@ function BetSlip({
 	const t = useCopy()
 	const { theme } = useTheme()
 	const [flightDate, setFlightDate] = useState("")
+	// Scheduled departure (ISO) from the sale-auth response — the reliable
+	// source, but it only lands mid-buy. Reset on date change.
+	const [authDepIso, setAuthDepIso] = useState<string | null>(null)
 	const flow = useTxFlow({
 		invalidateKeys: [["controller"], ["usdc"]],
 		// errors also go to a sticky toast — the inline stepper resets
@@ -532,6 +537,21 @@ function BetSlip({
 		liveStatus !== undefined && liveStatus.tag !== "Active"
 	const liveTerms =
 		liveStatus?.tag === "Active" ? liveStatus.values[0] : null
+
+	// Scheduled departure for the picked day — opportunistic DB lookup of
+	// the sale-auth snapshot (only exists once someone has authorized this
+	// flight×date), upgraded to the live sale-auth answer during the buy.
+	// Unknown → the row simply doesn't render; no billed API call either way.
+	const dateSecs = flightDate ? dateStrToMidnightUtc(flightDate) : null
+	const { data: schedMap } = useFlightSchedules(
+		dateSecs !== null ? [{ flightId: route.flightId, date: dateSecs }] : [],
+	)
+	const authDepSecs = authDepIso ? Date.parse(authDepIso) / 1000 : NaN
+	const depSecs = Number.isFinite(authDepSecs)
+		? authDepSecs
+		: dateSecs !== null
+			? schedMap?.get(`${route.flightId}:${Number(dateSecs)}`)
+			: undefined
 
 	// Dialog behaviour: initial focus on the panel, Escape closes, Tab is
 	// trapped inside, and focus returns to the opener on unmount — the
@@ -598,12 +618,16 @@ function BetSlip({
 				authorized?: boolean
 				reason?: string
 				error?: string
+				scheduled_out?: string | null
 			}
 			if (!authRes.ok) {
 				throw new Error(auth.error ?? "Sale authorization request failed")
 			}
 			if (!auth.authorized) {
 				throw new Error(auth.reason ?? "Sale not authorized")
+			}
+			if (typeof auth.scheduled_out === "string") {
+				setAuthDepIso(auth.scheduled_out)
 			}
 
 			// still "verifying" here — building/simulating is an RPC step;
@@ -698,7 +722,10 @@ function BetSlip({
 					</span>
 					<FlightCalendar
 						value={flightDate}
-						onChange={setFlightDate}
+						onChange={(d) => {
+							setFlightDate(d)
+							setAuthDepIso(null)
+						}}
 					/>
 				</div>
 
@@ -706,6 +733,17 @@ function BetSlip({
 				<div className="border-t-2 border-dashed border-line-mid" />
 
 				<div className="space-y-2">
+					{depSecs !== undefined && (
+						<div className="flex items-center justify-between">
+							<span className="label-px">{t.slip.departsLabel}</span>
+							<span
+								data-testid="betslip-departs"
+								className="board-figure text-[18px] text-ink"
+							>
+								{utcHm(depSecs)}
+							</span>
+						</div>
+					)}
 					<div className="flex items-center justify-between">
 						<span className="label-px">{t.slip.premiumLabel}</span>
 						<span
