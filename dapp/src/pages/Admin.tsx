@@ -12,6 +12,10 @@ import { isoMinute, relTime, usdFromUnits, utcDateTime } from "../lib/format"
 import { explorerTxUrl } from "../lib/explorer"
 import { stellarNetwork } from "../contracts/util"
 import { useDebouncedValue } from "../hooks/useDebouncedValue"
+import { useWallet } from "../hooks/useWallet"
+import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
+import { formatUsdc, mockUsdcClient } from "../hooks/useContracts"
+import { txHashOf } from "../lib/utils"
 import { TxProgress } from "../components/TxProgress"
 import type { TxState } from "../types"
 
@@ -902,7 +906,10 @@ function Console({ session }: { session: Session }) {
 						/>
 					)}
 					{activeTab === "accounts" && (
-						<AccountsPanel data={balancesQ.data ?? null} loading={balancesQ.isLoading} />
+						<>
+							<FaucetPanel />
+							<AccountsPanel data={balancesQ.data ?? null} loading={balancesQ.isLoading} />
+						</>
 					)}
 				</div>
 			)}
@@ -2093,6 +2100,125 @@ function xlmAmount(v: string | null): string {
  * stops paying travelers. Low / unfunded / errored rows are tinted so an
  * operator sees the problem before the crons do.
  */
+
+/** A Stellar account id: "G" + 55 base32 chars. */
+const STELLAR_ADDRESS = /^G[A-Z2-7]{55}$/
+
+/** The contract's fixed faucet grant, in 7-decimal base units. */
+const FAUCET_UNITS = 10_000n * 10_000_000n
+
+/**
+ * Mock-USDC faucet.
+ *
+ * The contract's `faucet(to)` is permissionless and mints a fixed 10,000 —
+ * anyone can call it for any address, so this is a convenience, not a
+ * privilege. It lives here because the Accounts tab is already the
+ * "who needs funding" surface, and because funding a fresh test wallet
+ * otherwise means connecting as that wallet just to press +MINT.
+ *
+ * Signed by the CONNECTED wallet (it pays the fee); the recipient is
+ * whatever address is in the field. Hidden on mainnet, where mock USDC
+ * does not exist.
+ */
+function FaucetPanel() {
+	const { address, signTransaction } = useWallet()
+	const [to, setTo] = useState("")
+	const [result, setResult] = useState<{ hash?: string; to: string } | null>(null)
+	const flow = useTxFlow({ errorFallback: "Faucet failed" })
+
+	// Default to the connected wallet, but only until the operator types.
+	const [touched, setTouched] = useState(false)
+	useEffect(() => {
+		if (!touched && address) setTo(address)
+	}, [address, touched])
+
+	if (stellarNetwork === "PUBLIC") return null
+
+	const target = to.trim().toUpperCase()
+	const valid = STELLAR_ADDRESS.test(target)
+	const busy = flow.state !== "idle" && flow.state !== "error"
+
+	const send = () =>
+		flow.run(async (step) => {
+			step("verifying")
+			const tx = await mockUsdcClient.faucet({ to: target })
+			const sent = await tx.signAndSend({ signTransaction: stagedSigner(step, signTransaction) })
+			setResult({ hash: txHashOf(sent), to: target })
+			return { message: `Sent ${formatUsdc(FAUCET_UNITS)} mock USDC` }
+		})
+
+	return (
+		<section className="mb-4 border-2 border-line bg-raised p-4">
+			<div className="mb-1 flex items-baseline justify-between gap-3">
+				<h3 className="label-px text-gold">MOCK USDC FAUCET</h3>
+				<span className="font-body text-[11px] text-mute">
+					mints a fixed 10,000 · permissionless · testnet only
+				</span>
+			</div>
+			{!address ? (
+				<p className="font-body text-[13px] text-mute">
+					Connect a wallet first — it signs the mint and pays the fee.
+				</p>
+			) : (
+				<>
+					<div className="flex flex-col gap-2 sm:flex-row">
+						<input
+							value={to}
+							onChange={(e) => {
+								setTouched(true)
+								setTo(e.target.value)
+							}}
+							spellCheck={false}
+							placeholder="G…"
+							aria-label="Recipient address"
+							className="min-w-0 flex-1 border-2 border-line bg-inset px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-gold"
+						/>
+						<button
+							type="button"
+							onClick={() => void send()}
+							disabled={!valid || busy}
+							className="border-2 border-line bg-inset px-4 py-2 font-display text-[10px] tracking-[0.08em] text-win uppercase hover:border-gold hover:text-gold disabled:opacity-40"
+						>
+							{busy ? "sending…" : "send 10,000"}
+						</button>
+						{to !== address && (
+							<button
+								type="button"
+								onClick={() => {
+									setTouched(false)
+									setTo(address)
+								}}
+								className="border-2 border-line px-3 py-2 font-display text-[10px] tracking-[0.08em] text-mute uppercase hover:text-ink"
+							>
+								me
+							</button>
+						)}
+					</div>
+					{to.trim() && !valid && (
+						<p className="mt-2 font-body text-[12px] text-loss">
+							Not a Stellar account id — expected G followed by 55 characters.
+						</p>
+					)}
+					<TxProgress state={flow.state} steps={["verifying", "awaiting", "confirming"]} error={flow.error} />
+					{result?.hash && (
+						<p className="mt-2 font-body text-[12px] text-mute">
+							Sent to <span className="text-ink">{shortAddr(result.to)}</span> ·{" "}
+							<a
+								href={explorerTxUrl(result.hash)}
+								target="_blank"
+								rel="noopener noreferrer"
+								className="text-sky hover:text-gold"
+							>
+								view tx
+							</a>
+						</p>
+					)}
+				</>
+			)}
+		</section>
+	)
+}
+
 function AccountsPanel({ data, loading }: { data: BalancesResponse | null; loading: boolean }) {
 	const [copied, setCopied] = useState<string | null>(null)
 	const accounts = data?.accounts ?? []
