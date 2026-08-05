@@ -942,6 +942,19 @@ export default function Markets() {
 					<p className="hero-sub-rise mt-6 max-w-xl font-body text-[16px] leading-relaxed text-dim sm:text-[18px]">
 						{t.markets.heroSub}
 					</p>
+					<div className="hero-sub-rise mt-8 flex flex-wrap items-center gap-3">
+						<button
+							type="button"
+							className="btn-px btn-gold hero-cta"
+							onClick={() =>
+								document
+									.querySelector('[data-tour="board"]')
+									?.scrollIntoView({ block: "start" })
+							}
+						>
+							{t.markets.heroCtaBoard}
+						</button>
+					</div>
 				</section>
 			) : (
 				/* fun hero — headline row, then a full-width night-airfield band.
@@ -992,8 +1005,10 @@ export default function Markets() {
 			{/* live protocol numbers, straight from the data facade */}
 			<StatsTicker openMarkets={isDemo ? 0 : (routes?.length ?? 0)} />
 
-			{/* THE DEPARTURES BOARD — signature artifact */}
-			<section data-tour="board">
+			{/* THE DEPARTURES BOARD — signature artifact. scroll-mt keeps the
+			    board head clear of the sticky top bar when the hero CTA (or a
+			    hash link) scrolls to it. */}
+			<section data-tour="board" className="scroll-mt-24">
 				<div className="board-head flex items-center justify-between border-2 border-b-0 border-line bg-raised px-4 py-3">
 					<h2 className="h-section flex items-center gap-3">
 						{!serious && (
@@ -1299,7 +1314,7 @@ export default function Markets() {
 														type="button"
 														data-testid="board-row-buy"
 														onClick={() => setSlipRoute(route)}
-														className="btn-px btn-loss btn-sm"
+														className="btn-px btn-loss btn-sm row-insure"
 														title={t.markets.insureTitle(odds)}
 													>
 														{t.markets.insureBtn(odds)}

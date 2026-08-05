@@ -2132,6 +2132,17 @@ html[data-theme="serious"] {
 	outline-offset: 2px;
 }
 
+/* per-row "Buy Coverage": the odds suffix ("· 4.5×" vs "· 10×") varies
+   per row and would otherwise ragged the actions column — pin one width
+   per skin (sized for two-digit odds; .btn-px centers the label). */
+.row-insure {
+	min-width: 156px;
+}
+
+[data-theme="serious"] .row-insure {
+	min-width: 152px;
+}
+
 /* per-row "Earn Yield": same solid treatment as the fun skin — full win
    fill with page-colored text (near-white on the light scheme's darker
    green) — rather than the tonal step-back the other serious fills use */
@@ -2438,6 +2449,164 @@ html[data-theme="serious"] {
 	background: transparent;
 	border-color: transparent;
 	box-shadow: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   SERIOUS — MATERIAL & MOTION POLISH
+   Refinements inside the established language (sharp cards, rounded
+   buttons): one-light-source card surfaces, top-lit CTA fills, glassy
+   floating overlays, calm accent states, themed scrollbars. Sits after
+   the hard-edge pass so it wins ties; fun is untouched.
+   ══════════════════════════════════════════════════════════════════ */
+
+/* cards: a faint top sheen + 1px inner edge highlight over the existing
+   soft drop shadow, so surfaces read lit from above instead of flat.
+   On the light scheme the white-on-white sheen simply disappears. */
+[data-theme="serious"] .panel {
+	background-image: linear-gradient(180deg,
+			rgba(255, 255, 255, 0.03),
+			rgba(255, 255, 255, 0) 120px);
+	box-shadow:
+		inset 0 1px 0 rgba(255, 255, 255, 0.05),
+		var(--shadow-soft-md);
+}
+
+[data-theme="serious"] .panel-raised {
+	background-image: linear-gradient(180deg,
+			rgba(255, 255, 255, 0.04),
+			rgba(255, 255, 255, 0) 120px);
+	box-shadow:
+		inset 0 1px 0 rgba(255, 255, 255, 0.06),
+		var(--shadow-soft-md);
+}
+
+/* solid CTAs: subtle top-lit gradient + inner highlight. The press
+   state (brightness 0.96 above) flattens it naturally. */
+[data-theme="serious"] .btn-gold {
+	background: linear-gradient(180deg,
+			color-mix(in oklab, var(--color-gold) 86%, #fff),
+			var(--color-gold));
+	box-shadow:
+		inset 0 1px 0 rgba(255, 255, 255, 0.28),
+		var(--shadow-soft-sm);
+}
+
+[data-theme="serious"] .btn-win,
+[data-theme="serious"] .row-yield.btn-win {
+	background: linear-gradient(180deg,
+			color-mix(in oklab, var(--color-win) 88%, #fff),
+			var(--color-win));
+	box-shadow:
+		inset 0 1px 0 rgba(255, 255, 255, 0.22),
+		var(--shadow-soft-sm);
+}
+
+[data-theme="serious"] .btn-loss {
+	background: linear-gradient(180deg,
+			color-mix(in oklab, var(--color-loss) 88%, #fff),
+			var(--color-loss));
+	box-shadow:
+		inset 0 1px 0 rgba(255, 255, 255, 0.18),
+		var(--shadow-soft-sm);
+}
+
+/* hero CTAs — roomier than the default control size. A dedicated class
+   because the unlayered serious .btn-px skin outranks per-instance
+   Tailwind utilities. */
+[data-theme="serious"] .hero-cta {
+	font-size: 14px;
+	padding: 13px 24px;
+}
+
+/* active nav: the arcade gold fill steps back to a tonal cyan chip —
+   in serious, gold stays reserved for money and primary CTAs.
+   NavLink stamps aria-current="page", which this hangs off. */
+[data-theme="serious"] .nav-link[aria-current="page"] {
+	background: color-mix(in oklab, var(--color-highlight) 16%, transparent);
+	color: var(--color-highlight);
+}
+
+/* MODE dock active option follows the same accent swap; --color-page
+   flips with the scheme so the text stays readable on both. */
+[data-theme="serious"] .theme-toggle-opt[data-active="true"] {
+	background: var(--color-highlight);
+	color: var(--color-page);
+}
+
+/* top bar chrome joins the hairline language (the `main .border-2`
+   thinning above never reached the header) */
+[data-theme="serious"] .topbar .border-2 {
+	border-width: 1px;
+}
+
+[data-theme="serious"] .topbar .border-l-2 {
+	border-left-width: 1px;
+}
+
+[data-theme="serious"] .topbar .border-t-2 {
+	border-top-width: 1px;
+}
+
+/* the stepped pixel bob on the brand plane is fun-only motion */
+[data-theme="serious"] .floaty {
+	animation: none;
+}
+
+/* hard on/off blink is pixel-speak — serious indicators breathe */
+[data-theme="serious"] .blink {
+	animation: px-breathe 1800ms ease-in-out infinite;
+}
+
+/* marquee rails: scroll-in fades at the right edge instead of hard
+   clipping. Gated on motion — the reduced-motion fallback renders a
+   static wrapped list that must not be veiled. */
+@media (prefers-reduced-motion: no-preference) {
+	[data-theme="serious"] .ticker {
+		position: relative;
+	}
+
+	[data-theme="serious"] .ticker::after {
+		content: "";
+		position: absolute;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		width: 72px;
+		background: linear-gradient(to left, var(--color-inset), transparent);
+		pointer-events: none;
+	}
+}
+
+/* floating overlays go glassy: slip drawer, activity log, info bubbles,
+   tour card, calendar popover. Solid in-page cards stay solid. */
+[data-theme="serious"] .slip-panel,
+[data-theme="serious"] .activity-panel,
+[data-theme="serious"] .info-panel,
+[data-theme="serious"] .tour-dock,
+[data-theme="serious"] .w3-cal-pop {
+	background-color: color-mix(in srgb, var(--color-raised) 86%, transparent);
+	backdrop-filter: blur(14px) saturate(1.15);
+	-webkit-backdrop-filter: blur(14px) saturate(1.15);
+}
+
+/* tour ring follows the serious accent (gold is the fun ring) */
+[data-theme="serious"] .tour-highlight {
+	outline-color: var(--color-highlight);
+}
+
+/* themed thin scrollbars — page, board overflow, drawers, lists */
+[data-theme="serious"],
+[data-theme="serious"] * {
+	scrollbar-width: thin;
+	scrollbar-color: var(--color-line-strong) transparent;
+}
+
+/* the unlayered .blink swap above outranks the layered reduced-motion
+   kill list — restate the kill at equal (unlayered) strength */
+@media (prefers-reduced-motion: reduce) {
+	[data-theme="serious"] .blink {
+		animation: none;
+	}
 }
 
 /* ────────────────────────────────────────────────────────────────

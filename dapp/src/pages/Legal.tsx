@@ -176,6 +176,16 @@ export function Disclaimers() {
 					those contracts — the protocol exists and operates without it.
 				</p>
 			</Section>
+			<Section heading="No affiliation">
+				<p>
+					Independent, not affiliated with the Stellar Development
+					Foundation. This project builds on the Stellar network and its
+					open-source tooling, but it is not sponsored, endorsed, or
+					operated by the Stellar Development Foundation; "Stellar" and
+					"Soroban" are referenced only to describe where the protocol
+					runs.
+				</p>
+			</Section>
 			<Section heading="You keep custody">
 				<p>
 					You interact through your own wallet and remain solely responsible
