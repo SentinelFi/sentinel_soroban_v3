@@ -8,9 +8,10 @@ bundle so the chain is touched once.
 ## Contract upgrade bundle (one upgrade, re-audit together)
 
 - [ ] **[contract] Insure both legs of out-and-back flight numbers.**
-  *(Researched 2026-08-05 — supersedes the earlier one-paragraph entry. The
-  off-chain half is now split out below as its own items: this bundle entry
-  is ONLY the contract change.)*
+  *(Researched 2026-08-05 — supersedes the earlier one-paragraph entry.
+  DEFERRED until after the live soak test completes; nothing here is to be
+  started while the soak is running. The off-chain half is split out below as
+  its own items: this bundle entry is ONLY the contract change.)*
 
   GovernanceModule already keys `Route(flight_id, origin, dest)`. The block is
   entirely downstream: `OracleKey::FlightData`/`SaleAuth`,
@@ -53,6 +54,93 @@ bundle so the chain is touched once.
   no dual-read path today. The fleet must be drained to zero (settle + claim
   everything, then `wipe_routes` + re-seed) before the upgrade lands. Trivial
   on testnet; on mainnet it means "before there is real money".
+
+  ### Scale check: the composite key is NOT the main constraint on sales
+  *(Measured 2026-08-05. Read this before sizing the work — it changes what
+  the fix is worth.)*
+
+  A flight number is not a stable route identifier over time.
+  `discover_routes.ts:90-94` samples exactly TWO days (a Tuesday and the
+  following Saturday) and treats the result as permanent; airlines rotate
+  numbers across routes constantly. Sampling 30 whitelisted routes against
+  AeroAPI for how many still fly their whitelisted leg:
+
+  | horizon | flying the whitelisted leg |
+  |---|---|
+  | d+1 | 6/8 (75%) |
+  | d+7 | 2/6 (33%) |
+  | d+14 | 3/6 (50%) |
+  | d+30 | 0/6 — no published schedule at all |
+  | d+60 / d+90 | 1/6 each (17%) |
+
+  So the composite key recovers the 121 dropped legs (~10% more catalog), but
+  every one of those is still subject to the same 33-50% date availability.
+  **Schedule volatility dominates by a wide margin, and the composite key does
+  nothing for it** — it solves "two legs, same day", not "same number,
+  different route next week".
+
+  Note the two live off-chain fixes below move buyability in OPPOSITE
+  directions: resolving ambiguity RECOVERS buys (several candidates, one is
+  ours), while verifying the leg LOSES buys that currently succeed wrongly
+  (one candidate, wrong route). Expect the apparent success rate to drop when
+  the leg check lands — that is the bug becoming visible, not a regression.
+
+  ### Frontend changes this forces
+
+  **Correctness — required by the contract change:**
+  - `Markets.tsx:593` sends only `{flight_id, date}` to sale-auth, then passes
+    the full triple to `buy_insurance` fifteen lines later. Sale-auth therefore
+    calls `findSellableRoute(flight_id)`, which takes the FIRST match. Harmless
+    while the chain enforces 1:1; the moment both legs are whitelisted,
+    **buying leg B can authorise leg A**. Must send origin/dest.
+  - `Markets.tsx:1189` sets `data-flight-id={route.flightId}` — the id alone.
+    The React key is already the triple so rendering is fine, but any selector
+    is ambiguous across two legs, including the soak harness
+    (`tests/e2e_live/browser/pages/markets.ts:57` uses
+    `[data-flight-id="X"]` + `.first()`, so it would buy an arbitrary leg).
+    Needs the triple, or sibling data-origin/data-dest attributes.
+  - Policies page: `get_flights_for_traveler` returns `(flight_id, date)`;
+    under composite keys it returns 4-tuples. The page must render the leg or
+    two policies on one number are indistinguishable and a claim could target
+    the wrong one.
+  - Search needs NO change: `matchesQuery` already matches flight id AND
+    airports, and rows already display `ORIGIN → DEST`, so two legs are
+    visually distinct.
+
+  **UX — forced by the availability data above, and worth more than the
+  contract work:** the board is route-centric while buyability is
+  (route, date)-centric. A user searches DFW, sees 100+ routes, picks a date
+  and is refused with no way to have known.
+
+  The economics make this tractable: **schedule lookup is cheap per city-pair
+  and expensive per flight.** One `/schedules` call filtered by
+  origin+destination returns every flight on that pair that day, so ~80
+  directed pairs x 14 days ~= 1,100 calls buys complete near-term
+  availability — versus ~15,000 for per-flight verification. A daily cron on
+  that cheap path could populate an availability table, letting the board
+  filter by selected date, `FlightCalendar` grey out non-operating dates, and
+  a refusal say "doesn't fly that date — try the 8th" instead of dead-ending.
+
+  ### Open design question: is flight_id the right route identity at all?
+
+  The ML model NEVER sees the flight number — `price_routes.ts` prices on
+  (carrier, origin, dest, dep_time, distance). Pricing is already pair-based;
+  only the ORACLE needs a specific flight, and only per policy.
+
+  So governing **(carrier, origin, dest)** as the route, with a policy naming a
+  specific flight verified at purchase, would DELETE this problem rather than
+  solve it: no composite key, catalog drops 1,069 -> ~80 entries, the batch
+  `whitelist_routes(vec)` entrypoint becomes unnecessary, and reassignment
+  stops mattering.
+
+  The cost is real: on-chain terms would be per-pair, losing time-of-day
+  pricing — and the model says that matters (a 19:22 departure is ~2x a 07:00
+  one on the same route). You would price the pair at a blended rate and carry
+  the selection risk as buyers favour evening flights.
+
+  **Decide this BEFORE building composite keys.** If pair-based governance is
+  where this ends up, the composite-key work is effort spent on a model being
+  replaced.
 - [ ] **[contract] Batch `whitelist_routes(vec)` entrypoint.** Seeding is one
   tx per route (Stellar: one tx per source account per ~5s ledger). The
   2026-08-04 testnet seed of ~1,190 routes took ~3h and would cost real XLM on
@@ -68,7 +156,9 @@ bundle so the chain is touched once.
 
 - [ ] **Sale-auth never checks that the flight IS the route we sold.**
   *(Found 2026-08-05. Live defect — it is writing wrong policies right now,
-  and needs no contract change to fix.)* `getFlightData` verifies only that a
+  and needs no contract change to fix. DEFERRED until after the soak: the
+  fix REFUSES buys that currently succeed, which would change soak
+  behaviour mid-run.)* `getFlightData` verifies only that a
   flight with that ident exists on that date and is not cancelled. It never
   compares origin/destination — `AeroApiFlight` (`aeroapi_client.ts:3-18`)
   does not even model those fields, though AeroAPI returns them.
@@ -82,7 +172,8 @@ bundle so the chain is touched once.
   The ICAO↔IATA `sameAirport` helper added to `sale_auth.ts` on 2026-08-05
   for `/schedules` should move into the client and serve both paths.
 - [ ] **`getFlightData` cannot disambiguate a multi-leg ident.**
-  *(Found 2026-08-05. Live defect; off-chain only.)* On more than one
+  *(Found 2026-08-05. Live defect; off-chain only. DEFERRED until after the
+  soak.)* On more than one
   candidate it logs "refusing to guess" and returns `null`
   (`aeroapi_client.ts:194-201`) — the SAME `null` it returns for "no such
   flight". Three distinct outcomes (absent / wrong leg / genuinely ambiguous)
