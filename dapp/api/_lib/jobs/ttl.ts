@@ -1,7 +1,7 @@
 import { SorobanClient } from "../soroban_client.js";
 import { getDb } from "../governance/db.js";
 import { parseFlightStatus } from "../status.js";
-import type { Config, RunLogEntry, TTLResult } from "../types.js";
+import type { Config, FetcherAction, RunLogEntry, TTLResult } from "../types.js";
 
 /**
  * Expired-claim sweeper: settled delayed/cancelled flights whose 60-day
@@ -106,11 +106,36 @@ async function sweepExpiredClaims(client: SorobanClient, config: Config, results
  * - Controller TravelerFlights(buyer) for every buyer in the policies
  *   mirror (dormant travelers keep their index).
  * Extends to ~120 days; already-longer TTLs no-op. Batched ≤20 keys/tx.
+ *
+ * Fleet-scale sharding (2026-08-04, ~1,069 routes): one batch is one
+ * sequential ExtendFootprintTTLOp tx, so the whole fleet is ~54 txs —
+ * far past the platform's 300s hard cap on this function (Pro without
+ * Fluid ignores a higher maxDuration — see api/cron/weather.ts). Two
+ * guards, mirroring jobs/weather.ts:
+ *   1. SHARDS — each daily run covers a deterministic 1/7th of the keys
+ *      (stable hash × UTC-day slot), so the whole fleet is covered every
+ *      7 days. EXTEND_TO_LEDGERS is ~120 days, so a 7-day rotation
+ *      re-extends every key ~17x over before it could approach expiry.
+ *   2. TIME_BUDGET_MS — the batch loop ALWAYS returns rather than risking
+ *      a silent platform kill. A kill writes no cron_runs row at all,
+ *      which makes a dead job look merely "not re-run"; returning early
+ *      records an honest row plus the deferred count.
  */
-async function extendIdlePersistentKeys(client: SorobanClient, config: Config, results: TTLResult[]): Promise<void> {
+async function extendIdlePersistentKeys(
+  client: SorobanClient,
+  config: Config,
+  results: TTLResult[],
+  actions: FetcherAction[],
+  runStart: number
+): Promise<void> {
   if (!process.env.GOVERNANCE_DB_URL) return;
   const EXTEND_TO_LEDGERS = 120 * 17_280; // ~120 days at ~5s ledgers
   const BATCH = 20;
+  const SHARDS = 7; // one full rotation per week, inside a ~120-day TTL
+  // Budget measured from the WHOLE run's start (instance extend_ttl, the
+  // prune drain loop and the claim sweep all ran before this), leaving
+  // headroom for the in-flight batch's confirmation poll to finish.
+  const TIME_BUDGET_MS = 230_000;
   try {
     const sql = getDb();
     const routes = (await sql`select flight_id, origin, dest from routes`) as unknown as Array<{
@@ -120,11 +145,23 @@ async function extendIdlePersistentKeys(client: SorobanClient, config: Config, r
     }>;
     const buyers = (await sql`select distinct buyer from policies`) as unknown as Array<{ buyer: string }>;
 
+    // Stable string hash → shard, the same technique jobs/weather.ts uses
+    // to rotate its fleet slice (deliberately duplicated rather than
+    // imported: job modules stay independent of each other).
+    const shardOf = (s: string): number => {
+      let h = 0;
+      for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+      return (h >>> 0) % SHARDS;
+    };
+    const daySlot = Math.floor(Date.now() / 86_400_000) % SHARDS;
+    const shardRoutes = routes.filter((r) => shardOf(`${r.flight_id}|${r.origin}|${r.dest}`) === daySlot);
+    const shardBuyers = buyers.filter((b) => shardOf(String(b.buyer)) === daySlot);
+
     // OCA-M08: key construction is per-row isolated — one corrupted/empty
     // value (e.g. a bad `buyer` address) must skip THAT row, not abort TTL
     // maintenance for every route and buyer this run.
     const routeKeys: ReturnType<typeof client.scvVec>[] = [];
-    for (const r of routes) {
+    for (const r of shardRoutes) {
       try {
         routeKeys.push(
           client.scvVec([
@@ -140,7 +177,7 @@ async function extendIdlePersistentKeys(client: SorobanClient, config: Config, r
       }
     }
     const travelerKeys: ReturnType<typeof client.scvVec>[] = [];
-    for (const b of buyers) {
+    for (const b of shardBuyers) {
       try {
         travelerKeys.push(
           client.scvVec([client.symbolToScVal("TravelerFlights"), client.addressToScVal(b.buyer)])
@@ -155,19 +192,84 @@ async function extendIdlePersistentKeys(client: SorobanClient, config: Config, r
       { name: "governance Route", contractId: config.governanceId, keys: routeKeys },
       { name: "controller TravelerFlights", contractId: config.controllerId, keys: travelerKeys },
     ];
-    for (const job of jobs) {
-      for (let i = 0; i < job.keys.length; i += BATCH) {
-        const batch = job.keys.slice(i, i + BATCH);
-        try {
-          await client.extendPersistentTtl(job.contractId, batch, EXTEND_TO_LEDGERS, config.ttlExtenderSecretKey);
-          results.push({ contract: `extend ${job.name} [${i}..${i + batch.length - 1}]`, success: true });
-        } catch (err) {
-          console.warn(`[ttl-extender] key-level extend ${job.name} batch ${i} failed: ${err}`);
-          results.push({ contract: `extend ${job.name} [${i}..]`, success: false, error: String(err) });
-        }
+
+    // STARVATION FIX (2026-08-04) — this loop used to run job-by-job with
+    // the governance Route keys FIRST. Routes alone overran the function's
+    // budget, so the controller TravelerFlights batches were NEVER reached
+    // on any run: dormant buyers got no key-level TTL extension at all,
+    // silently, for as long as the job has existed. Interleave the jobs one
+    // batch at a time so BOTH key types make guaranteed progress every run,
+    // wherever the time budget happens to cut the pass short.
+    const perJob = jobs.map((job) =>
+      Array.from({ length: Math.ceil(job.keys.length / BATCH) }, (_, n) => ({
+        name: job.name,
+        contractId: job.contractId,
+        offset: n * BATCH,
+        keys: job.keys.slice(n * BATCH, n * BATCH + BATCH),
+      }))
+    );
+    // Which batch goes FIRST rotates weekly: a given shard only comes round
+    // every SHARDS days, so without the offset a run that keeps hitting the
+    // time budget would drop the same tail of the same shard forever. The
+    // offset is a bijection over the rounds — every batch is still queued
+    // exactly once, just starting from a different one.
+    const interleaved: (typeof perJob)[number] = [];
+    const rounds = Math.max(0, ...perJob.map((b) => b.length));
+    const weekOffset = Math.floor(Date.now() / 86_400_000 / SHARDS);
+    for (let r = 0; r < rounds; r++) {
+      const round = (r + weekOffset) % rounds;
+      for (const batches of perJob) {
+        const batch = batches[round];
+        if (batch) interleaved.push(batch);
       }
     }
-    console.log(`[ttl-extender] key-level TTL: ${routeKeys.length} route + ${travelerKeys.length} traveler key(s) extended.`);
+
+    let extended = 0;
+    let deferredBatches = 0;
+    let deferredKeys = 0;
+    for (const batch of interleaved) {
+      // Time budget: stop submitting rather than be killed mid-run. What
+      // is left just waits for tomorrow's run — a ~120-day TTL does not
+      // care about a day, and the shard rotation still covers the fleet.
+      if (Date.now() - runStart > TIME_BUDGET_MS) {
+        deferredBatches++;
+        deferredKeys += batch.keys.length;
+        continue;
+      }
+      try {
+        await client.extendPersistentTtl(batch.contractId, batch.keys, EXTEND_TO_LEDGERS, config.ttlExtenderSecretKey);
+        extended += batch.keys.length;
+        results.push({
+          contract: `extend ${batch.name} [${batch.offset}..${batch.offset + batch.keys.length - 1}]`,
+          success: true,
+        });
+      } catch (err) {
+        console.warn(`[ttl-extender] key-level extend ${batch.name} batch ${batch.offset} failed: ${err}`);
+        results.push({ contract: `extend ${batch.name} [${batch.offset}..]`, success: false, error: String(err) });
+      }
+    }
+
+    console.log(
+      `[ttl-extender] key-level TTL: shard ${daySlot + 1}/${SHARDS} — ` +
+        `${routeKeys.length}/${routes.length} route + ${travelerKeys.length}/${buyers.length} traveler key(s) ` +
+        `selected, ${extended} extended.`
+    );
+    actions.push({
+      flight: "-",
+      skipped:
+        `key-level TTL shard ${daySlot + 1}/${SHARDS}: ${routeKeys.length} route + ` +
+        `${travelerKeys.length} traveler key(s) selected, ${extended} extended ` +
+        `(fleet: ${routes.length} route + ${buyers.length} buyer(s), full rotation every ${SHARDS} days)`,
+    });
+    if (deferredBatches > 0) {
+      console.log(
+        `[ttl-extender] time budget reached — ${deferredKeys} key(s) in ${deferredBatches} batch(es) deferred to the next daily run`
+      );
+      actions.push({
+        flight: "-",
+        skipped: `${deferredKeys} key(s) in ${deferredBatches} batch(es) deferred (time budget) — next daily run continues`,
+      });
+    }
   } catch (err) {
     // Fold into the job's results so the ops board shows TTL maintenance
     // was NOT healthy this run (OCA-M08) — a bare log line hid this.
@@ -180,6 +282,9 @@ export async function run(config: Config): Promise<RunLogEntry> {
   const start = Date.now();
   const client = new SorobanClient(config);
   const results: TTLResult[] = [];
+  // cron_runs only persists `actions` (not `results`) — the shard/deferred
+  // counts go there so the ops board can see what this run covered.
+  const actions: FetcherAction[] = [];
 
   const contracts: { name: string; id: string }[] = [
     { name: "OracleAggregator", id: config.oracleAggregatorId },
@@ -250,8 +355,9 @@ export async function run(config: Config): Promise<RunLogEntry> {
   await sweepExpiredClaims(client, config, results);
 
   // Key-level Persistent TTL extension (the long-planned deep layer):
-  // idle entries get no on-access bumps — extend them explicitly.
-  await extendIdlePersistentKeys(client, config, results);
+  // idle entries get no on-access bumps — extend them explicitly. Sharded
+  // + time-budgeted, so it always returns inside the platform's 300s cap.
+  await extendIdlePersistentKeys(client, config, results, actions, start);
 
   console.log("[ttl-extender] Done.");
   const allSuccess = results.every((r) => r.success);
@@ -262,5 +368,6 @@ export async function run(config: Config): Promise<RunLogEntry> {
     success: allSuccess,
     error: allSuccess ? null : "Some contracts failed TTL extension",
     results,
+    actions,
   };
 }

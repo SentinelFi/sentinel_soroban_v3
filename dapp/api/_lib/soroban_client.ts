@@ -62,6 +62,44 @@ export class SorobanClient {
   }
 
   /**
+   * readContract with a small bounded retry — for pre-flight probes whose
+   * whole run is wasted when one public-RPC hiccup answers with a network
+   * error (queue_maintainer does four probes before it may submit
+   * anything; any single failure aborted the run having done nothing).
+   *
+   * READ-ONLY BY CONSTRUCTION, and that is what makes the retry safe:
+   * readContract only simulates — nothing is signed, submitted or
+   * mutated — so re-running it is idempotent. NEVER wrap invokeContract
+   * this way: it already has its own txBadSeq retry, and a blind retry
+   * around a submission risks double-submitting a transaction.
+   *
+   * Every failure mode is retried (including simulation errors, which are
+   * usually deterministic but cost only the backoff to re-check) and the
+   * last error is rethrown unchanged, so callers' error handling is
+   * exactly as before.
+   */
+  async readContractWithRetry(
+    contractId: string,
+    method: string,
+    args: xdr.ScVal[] = [],
+    attempts = 3,
+    backoffMs = 400
+  ): Promise<any> {
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        return await this.readContract(contractId, method, args);
+      } catch (err) {
+        lastErr = err;
+        if (attempt === attempts) break;
+        console.warn(`[soroban] read ${method} failed (attempt ${attempt}/${attempts}) — retrying: ${err}`);
+        await new Promise((r) => setTimeout(r, backoffMs * attempt));
+      }
+    }
+    throw lastErr;
+  }
+
+  /**
    * Write contract call — simulates, assembles auth, signs, and submits.
    * Returns the transaction result.
    *
