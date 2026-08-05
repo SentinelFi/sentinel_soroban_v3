@@ -1426,19 +1426,25 @@ SPA is served from `dist/`, the jobs from `/api/*` (see the SPA-vs-API rewrite i
 **The canonical job list lives in code, not config.** `JOB_REGISTRY` in
 [`dapp/api/_lib/governance/runs.ts`](../dapp/api/_lib/governance/runs.ts) is the
 single source of truth for every job's name, schedule, and signer key.
-`dapp/vercel.json`'s `crons` block mirrors it when the backend is deployed — but is
-**currently removed on purpose**: the present Vercel deploy is frontend-only
-(`dapp/.vercelignore` excludes `api/` while the backend is WIP; restore the crons
-block and delete `.vercelignore` to re-enable). Every run, scheduled or manual, is
-recorded to the Supabase `cron_runs` table (see [Job-Ops Layer](#job-ops-layer)).
+`dapp/vercel.json`'s `crons` block mirrors it, and **is live**: the backend
+went to production on Vercel 2026-08-04 with all ten schedules and
+`functions."api/cron/*.ts".maxDuration = 300`. The interim frontend-only
+scaffolding is gone — `dapp/.vercelignore` and `dapp/vercel.backend.json`
+were both deleted when the config flipped to backend mode (`6146a83`); if
+you find either referenced elsewhere, that reference is stale. Every run,
+scheduled or manual, is recorded to the Supabase `cron_runs` table (see
+[Job-Ops Layer](#job-ops-layer)).
 
 ### Job Summary
 
-The registry defines the jobs below. Five drive the settlement path and storage
-(this section); the rest automate governance (the `gov_exposure` brake,
-`weather`, `reprice`, the unified `revive` engine — see [Off-Chain
-Governance Automation](#off-chain-governance-automation)); `health` is a
-liveness probe.
+The registry defines **ten** jobs, all of them scheduled. Five drive the
+settlement path and storage (this section); the rest automate governance
+(the `gov_exposure` brake, `weather`, `reprice`, the unified `revive`
+engine — see [Off-Chain Governance
+Automation](#off-chain-governance-automation)). `health` is listed at the
+foot of the table for completeness but is **not** a registry entry: it is
+an unscheduled, unauthenticated liveness endpoint with no signer and no
+`cron_runs` row.
 Sale authorization is **not a cron**: it is the JIT endpoint
 `POST /api/sale-auth/request`, invoked by the frontend on every buy click
 (oracle-signed, same `_lib` layer — see [JIT sale
@@ -1454,12 +1460,12 @@ data, **keeper** drives classification/settlement, **ttl** extends storage,
 | `settler` | `/api/cron/settle` | `*/5 * * * *` (every 5 min) | `Controller.execute_settlements` | keeper |
 | `queue_maintainer` | `/api/cron/queue` | `2-59/5 * * * *` (every 5 min, +2) | `Controller.run_queue_maintenance` | keeper |
 | `ttl_extender` | `/api/cron/ttl` | `0 0 * * *` (daily) | `extend_ttl` ×5 + `OracleAggregator.prune_settled` | ttl |
-| `gov_exposure` | `/api/cron/gov-exposure` | `7 * * * *` (hourly, :07) | Exposure brake: liability concentration ≥50% of vault capacity → `exposure` intervention (`disable_route`, capped per run); ≥25% advisory. Also ingests the policies event mirror | gov-admin |
+| `gov_exposure` | `/api/cron/gov-exposure` | `7 * * * *` (hourly, :07) | Exposure brake: liability concentration ≥50% of vault capacity → `exposure` intervention (`disable_route`, cap claimed against a shared hourly window); ≥25% advisory. Also ingests the policies event mirror | gov-admin |
 | `gov_onboard` | `/api/cron/gov-onboard` | `15 */6 * * *` (6-hourly, :15) | — (fleet STATUS sync only: file/chain→DB; route intake is the manual admin pipeline in `scripts/`, never a cron) | gov-admin |
 | `weather` | `/api/cron/weather` | `20 */2 * * *` (every 2h, :20) | `GovernanceModule.update_route_terms` — stateless flat storm surcharge over the fleet-file base; EXTREME forecasts open a `weather` intervention (pause) instead | gov-admin |
 | `reprice` | `/api/cron/reprice` | `0 8 1 * *` (monthly, 1st 08:00 UTC) | Prices ADVISORY (proposal → `pricing_runs`; admin applies via `seed_routes --apply-terms`) — but live routes priced above the base cap get a `pricing` intervention (pause), revived when back under | gov-admin |
 | `revive` | `/api/cron/revive` | `40 * * * *` (hourly, :40) | `GovernanceModule.enable_route` — the unified revive engine: re-checks every open intervention with its cause's own predicate; last hold cleared → route re-enabled | gov-admin |
-| `health` | `/api/cron/health` | liveness probe | — | — |
+| `health` *(not in registry)* | `/api/cron/health` | unscheduled | — | — |
 
 The `+2` offset keeps the two keeper jobs off the same minute to avoid
 Stellar sequence-number contention; `gov_exposure` (:07) and `revive`
@@ -1898,24 +1904,38 @@ dapp/
 │   │   ├── weather.ts  reprice.ts  revive.ts  # governance automation
 │   │   └── health.ts                          # liveness probe
 │   ├── sale-auth/request.ts      # the JIT buy-click endpoint (public)
+│   ├── routes.ts                 # PUBLIC full-catalog board feed (CDN-cached)
 │   ├── admin/                    # authenticated ops API (Supabase JWT + email allowlist)
-│   │   └── actions.ts  jobs.ts  routes.ts  interventions.ts  freeze.ts
-│   ├── status/runs.ts            # PUBLIC sanitized job-health feed
+│   │   ├── actions.ts  jobs.ts  routes.ts  interventions.ts  freeze.ts
+│   │   └── diagnostics.ts  outcomes.ts
+│   ├── status/                   # PUBLIC sanitized feeds
+│   │   └── runs.ts  stats.ts  alert.ts   # alert.ts = uptime-monitor probe (200/503)
 │   └── _lib/
 │       ├── jobs/                 # runtime-agnostic settlement-path job logic
 │       │   ├── fetcher.ts  classifier.ts  settler.ts  queue.ts
 │       │   └── ttl.ts  weather.ts  repricer.ts  revive.ts
 │       ├── governance/           # governance automation subsystem (see next section)
 │       │   ├── interventions.ts  submitter.ts  model.ts
+│       │   ├── exposure_collector.ts   # <- the gov_exposure job body
+│       │   ├── onboard.ts              # <- the gov_onboard job body
+│       │   ├── event_ingest.ts  pricing_log.ts
 │       │   └── db.ts  config.ts  action_log.ts  admin_auth.ts  runs.ts
 │       ├── sale_auth.ts  route_guard.ts  flight_schedules.ts
+│       ├── route_rules.ts  routes_config.ts  outcome_log.ts  status.ts
+│       ├── airports.ts  airline_codes.ts  rate_limit.ts  public_error.ts
 │       ├── soroban_client.ts  aeroapi_client.ts  weather_client.ts
 │       └── agent_client.ts  targeted_settlement.ts  config.ts  handler.ts
+├── config/                       # routes.testnet.json (fleet) + discovered/staged/live
 ├── packages/                     # generated TS contract bindings, one per contract
 ├── src/                          # the React SPA (see "dApp Frontend")
-└── vercel.json                   # framework: vite; /api/* -> functions, everything else -> SPA
+├── tests/                        # e2e_mock/, e2e_live/ (soak harness), fixtures/
+└── vercel.json                   # framework: vite; /api/* -> functions, crons, maxDuration
 
-supabase/migrations/              # governance_core.sql + cron_runs.sql
+scripts/                          # admin intake pipeline (root, run from dapp/)
+                                  #   discover_routes  price_routes  seed_routes
+                                  #   wipe_routes  revive_routes
+supabase/migrations/              # 9 migrations (governance core, cron_runs,
+                                  #   guardrails, settlements, drops, RLS)
 agent/                            # Python XGBoost prediction service (Render-hosted)
 tools/mock-aeroapi/               # keyless AeroAPI mock for local demos
 ```
@@ -2034,8 +2054,10 @@ without freezing guesses into immutable infrastructure.
 ### The target design — event-driven keepers, no database anywhere
 
 A third-party keeper needs exactly two things: a Stellar RPC URL and a
-funded key. Work discovery comes from the contracts' own event stream (62
-typed events), not from any operator infrastructure:
+funded key. Work discovery comes from the contracts' own event stream (58
+typed events — controller 15, risk_vault 16, flight_pool_manager 9,
+governance_module 9, oracle_aggregator 7, sentinel_types 2), not from any
+operator infrastructure:
 
 ```
 LISTEN   poll RPC getEvents on the deployed contracts
@@ -2129,12 +2151,23 @@ Five causes, each owned end-to-end by one detector and one revive predicate:
 | `pricing` | monthly `reprice` — a live route's honest ML price above the base cap | a later pricing run prices it under the cap | monthly |
 | `admin` | a human, via /admin | **never auto** — the admin closes it | — |
 
-The executor (`governance/interventions.ts`) enforces the guardrails once,
-for every caller: the `ops_flags.gov_frozen` kill switch stops all
-automated pauses/revives, pinned routes are untouchable by automated
-causes, new on-chain disables are capped per run at max(3, 20% of the
-fleet), and the DB `routes.status` is mirrored so the world-map stays
-honest. The whole subsystem signs with a dedicated **gov-admin key** — a
+The executor (`governance/interventions.ts`) enforces two guardrails for
+every caller: the `ops_flags.gov_frozen` kill switch stops all automated
+pauses/revives, and pinned routes are untouchable by automated causes. It
+also mirrors the DB `routes.status` so the world-map stays honest.
+
+> **The disable cap is NOT one of them — known gap, deferred 2026-08-04.**
+> `computeDisableCap` (max(3, 20% of the fleet)) and the
+> `gov_disable_slots` claim are exported from the same module, but the only
+> caller is `governance/exposure_collector.ts`. Weather-EXTREME,
+> pricing-over-cap, cancellation and admin pauses call `pauseRoute()`
+> directly and are uncapped; weather pauses are additionally exempt from
+> the weather job's own `MAX_TX_PER_RUN`. At 1,069 routes the cap computes
+> to 214, which a single stormed hub already exceeds (LAX touches 279
+> routes, ORD 270, DFW 218). Note also that the claim is scoped to a shared
+> **hourly window**, not a run — deliberate, so a scheduled tick racing an
+> admin "run now" cannot each spend the full budget. Tracked with a
+> proposed fix in [`spec/before_mainnet.md`](before_mainnet.md). The whole subsystem signs with a dedicated **gov-admin key** — a
 fourth identity, distinct from the contract owner and from the
 oracle/keeper — registered on the module via `GovernanceModule.add_admin`.
 `GOV_DRY_RUN=true` makes every detector compute and log without touching
@@ -2155,15 +2188,18 @@ mirrored in `dapp/api/_lib/governance/model.ts`.
 |---|---|
 | `routes` | One row per insurable route (`flight_id+origin+dest` = the on-chain key). Holds admin-set **base/anchor terms**, the `status` lifecycle (`candidate/active/disabled/removed`), and the **admin pin** (`pinned`, `pin_until`). The interventions executor treats the pin as law; `gov_onboard` keeps `status` synced to the chain. |
 | `interventions` | **THE unified pause ledger** (2026-08-01 — replaces `signals`, `pause_events`, and `route_health`). One OPEN row (revived_at null) per (route, cause) that is currently holding a route off: `cause` (cancellation / exposure / weather / pricing / admin), `evidence` jsonb, `opened_by`, `opened_at`, `last_checked_at`, `clear_streak` (exposure hysteresis), `revived_at`/`revived_by`. Closed rows are the check/pause history (and the guard's 24h sweep dedupe). The admin's single answer to "what's off and why". Self-creating. |
-| `signals`, `pause_events` | RETIRED 2026-08-01 (superseded by `interventions`). Historical rows remain readable; nothing writes them. |
+| `signals`, `pause_events` | **DROPPED** 2026-08-01 (superseded by `interventions`) — the tables no longer exist; `20260801120000_drop_retired_governance_tables.sql` removed them along with `route_health`, `warm_windows`, and `aeroapi_cache`. Row counts were 0 at drop time, so nothing was lost. |
 | `flight_schedules` | Scheduled dep/arr snapshot per (flight, day), written by the JIT sale-auth endpoint at buy time — the settle sweep's timing hint (first API look at scheduled arrival + 5h). Strictly advisory: no row → the sweep falls back to date + 30h. Self-creating. |
-| `premium_adjustments` | RETIRED 2026-07-30 (the multiplier engine was removed with the weather-v2 simplification). Historical rows remain as audit history; nothing writes here anymore. |
+| `premium_adjustments` | **DROPPED** 2026-08-01 (the multiplier engine was removed with the weather-v2 simplification on 2026-07-30; the table itself went in the same drop migration). Does not exist. |
 | `pricing_runs` | One row per ML pricing run — both `manual:price_routes` (intake step 2) and `cron:reprice` (monthly advisory proposal): totals, premium distribution, excluded-over-cap routes, proposed changes. Self-creating. |
 | `flight_outcomes` | One row per insured flight-day at outcome attestation: outcome + delay minutes + ACTUAL weather at both airports — the weather-learnability log (see [The outcomes log](#the-outcomes-log-flight_outcomes--weather--outcome-learnability)). Self-creating. |
 | `actions_log` | **Append-only audit** of every on-chain governance call (actor, action, tx hash, before/after `route_status` snapshots, success/error). No update or delete path exists. |
 | `policies` | Durable mirror of `InsuranceBought` events (ingested from RPC) for exposure counting. |
 | `ingest_cursors` | Per-collector resume points (last-seen ledger). |
 | `cron_runs` | One row per job execution — feeds the admin JOBS board and public `/status` (see Job-Ops Layer). |
+| `ops_flags` | Runtime brakes keyed by flag name, with a `data` jsonb payload. Holds `gov_frozen`, the kill switch the executor reads before every automated pause/revive; toggled by `POST /api/admin/freeze`. |
+| `settlements` | Durable mirror of settled policies — the DB side of the settlement barrier, cross-checked against chain state by the reconciliation report. |
+| `gov_disable_slots` | One row per hourly window, counting on-chain disables claimed against the cap. Self-creating; the `where count < cap` conditional upsert is what makes claim-or-refuse atomic across concurrent runs over the transaction pooler. |
 
 ### The interventions executor + revive engine
 
@@ -2371,8 +2407,10 @@ Worked example: a typical route (p ≈ 0.034) prices at 0.034 × $100 × 1.3
 ≈ $4.40 → **floors at $10**; premiums leave the floor from p ≈ 0.070,
 reach the $20 base cap at p ≈ 0.146, and above p ≈ 0.154 the route is
 **excluded** (on the 2026-07 catalog that dropped exactly 2 of 1,302
-routes — both MIA/ORD→EWR evening departures). A severe storm on top of
-a $20 base sells at $30.
+routes — both MIA/ORD→EWR evening departures; the fleet seeded on
+2026-08-04 holds **1,069** routes). A severe storm on top of a $20 base
+sells at $30 — which is also the ceiling, so the highest price the system
+can express corresponds to a covered probability of about 23%.
 
 **When each band moves:**
 
@@ -2404,19 +2442,32 @@ file); base-cap changes take effect at the next pricing run.
 
 ### The weather surcharge job (`dapp/api/_lib/jobs/weather.ts`, every ~2h)
 
-The storm system is deliberately the simplest thing that works — **no DB,
-no signals, no multipliers, no hysteresis machinery**. One stateless pass:
+The **surcharge** path is deliberately the simplest thing that works — no
+signals, no multipliers, no hysteresis machinery, and no state of its own.
+One pass, every 2 hours:
 
 ```
-for each enabled fleet route:
+for each route in scope (sharded — see below):
+  if EXTREME at either airport (gusts >=120 km/h / snow >=40 cm over the
+     3-day horizon) -> open a `weather` intervention (pause), next route
   severity = worst(origin, dest) forecast over the next 3 days
              (Open-Meteo daily, airport-local dates via timezone=auto;
              thresholds in route_rules.ts: gusts/snow/thunderstorm codes)
   target   = fleet-file base premium + surcharge (ok +$0 / elevated +$2 /
              severe +$10), clamped to $30
-  on-chain premium ≠ target → update_route_terms (gov-admin signed,
+  on-chain premium != target -> update_route_terms (gov-admin signed,
              through the audited GovSubmitter)
 ```
+
+**Scope is sharded** (2026-08-04, for the 1,069-route fleet — a full pass
+no longer fits the 300s function budget). Every route touching a *non-calm*
+airport is evaluated on **every** pass; the calm remainder is split into
+four rotating shards (`SHARDS = 4`, index = `floor(now / 2h) % 4`). Writes
+are bounded by `MAX_TX_PER_RUN = 15` and a ~220s time budget, with
+over-budget routes counted as `deferred` and retried next pass. The
+tradeoff is stated in the code: a stale surcharge can outlive a storm by up
+to ~8h. Pauses are deliberately exempt from the tx cap — they sort first so
+they always fit.
 
 Raise and clear are the same comparison — a calm forecast makes
 `target = base`, so surcharges clear on the next pass. The 3-day horizon
@@ -2425,12 +2476,22 @@ storm-aware buyers) see ~3 days out, so pricing that window neutralizes
 adverse selection, while buyers further out get the base price the model
 already set for the season. The term-snapshot rule means a surcharge only
 affects flight-date buckets whose first purchase comes after it — nobody
-who already bought is ever repriced. **Weather never disables a route**:
-stopping sales is a human decision (admin) or the exposure guardrails'.
+who already bought is ever repriced.
+
+**Weather does disable a route — but only at EXTREME.** Gusts ≥120 km/h or
+snow ≥40 cm at either airport opens a `weather` intervention through the
+same executor every other cause uses, and the hourly revive engine lifts it
+the moment the forecast drops back below those numbers. That pause is the
+one place the storm system touches the DB; the surcharge path itself stays
+stateless. Note that both thresholds are evaluated over the whole 3-day
+horizon — `maxWindGustKmh` is the peak gust across it and `totalSnowfallCm`
+is the **sum** across it — so the bar is reached more easily than
+"hurricane-force" suggests.
 
 Forecast source: Open-Meteo, keyless — free tier (10k calls/day / 300k/mo)
-covers the ~14-airport fleet at hourly polling ~30× over; note the free
-tier is **non-commercial only** (mainnet revenue ⇒ the ~$29/mo API plan).
+covers the ~14-airport fleet at its 2-hourly cadence many times over (the
+revive engine adds its own hourly re-checks); note the free tier is
+**non-commercial only** (mainnet revenue ⇒ the ~$29/mo API plan).
 
 ### The outcomes log (`flight_outcomes` — weather → outcome learnability)
 
@@ -2474,9 +2535,11 @@ DETECTORS             each owns ONE danger, fires on its own evidence
   admin (/admin)        human hold — never auto-revived
         |
         v
-EXECUTOR              pauseRoute(): gov_frozen? pinned? per-run cap?
- (interventions.ts)     -> GovSubmitter.disable (audited: actions_log)
-        |               -> ONE open row in the `interventions` ledger
+EXECUTOR              pauseRoute(): gov_frozen? pinned?
+ (interventions.ts)     -> ONE open row in the `interventions` ledger FIRST
+        |                  (the record must survive a failed chain write)
+        |               -> then GovSubmitter.disable (audited: actions_log)
+        |               (disable cap: exposure path only — see gap note above)
         v
 ON-CHAIN              GovernanceModule  (+ owner term-limits backstop)
         ^
@@ -2523,9 +2586,11 @@ IMPLEMENTED, in its unified form.* What closed the routine human loops:
   exposure (`InsuranceBought` events mirrored into `policies`, hourly
   concentration vs vault capacity), extreme weather, and over-cap pricing
   — each detector→executor→ledger→revive, end to end.
-- **Fleet-level guardrails, enforced once in the executor** — the
-  mass-disable circuit breaker, the runtime freeze flag (kill switch
-  without a redeploy), pins, and per-cause revive hysteresis.
+- **Fleet-level guardrails in the executor** — the runtime freeze flag
+  (kill switch without a redeploy), pins, and per-cause revive hysteresis.
+  The mass-disable circuit breaker belongs here too but is currently wired
+  only to the exposure path — see the gap note under [the
+  guardrails](#off-chain-governance-automation).
 After L2 the only human actions left are appetite changes (rails, defaults,
 term limits — owner), emergencies (admin holds, pins, freeze), and route
 onboarding.
@@ -3355,11 +3420,22 @@ connected wallet onto each client for signing. Everything runs client-side; the 
 never holds a secret key.
 
 **Deployment target.** Contract IDs are **hardcoded in `dapp/src/contracts/*.ts`**,
-matching `deployments/testnet.json` (the 2026-07-18 testnet deployment — e.g.
-controller `CCWDQVAJ…QZGHB`); only network/RPC come from `PUBLIC_*` env
-(`dapp/.env.example` defaults to testnet). Because governance keeps no on-chain route
-enumeration, the app resolves a candidate route list (`dapp/src/config/routes.ts`)
-against `route_status`.
+matching `deployments/testnet.json` — the **2026-07-29** testnet deployment,
+controller `CBDJIPZO…FXVY3` (the earlier 07-11 and 07-18 sets are abandoned;
+see the History table in [`spec/contracts.md`](contracts.md)). Only
+network/RPC come from `PUBLIC_*` env (`dapp/.env.example` defaults to
+testnet).
+
+Because governance keeps no on-chain route enumeration, the board's
+inventory comes from **`GET /api/routes`** (`dapp/api/routes.ts`, added
+2026-08-04): one CDN-cached catalog built from the bundled fleet file plus a
+governance-DB `routes` pause overlay, fetched once by
+`src/hooks/useContracts.ts`. This replaced the per-visitor on-chain scan,
+which survives in `dapp/src/config/routes.ts` as the fallback for when the
+endpoint is down or empty; `routes.live.json` is no longer the inventory
+and now only marks the **featured** pins. BetSlip re-verifies the single
+selected route on-chain when it opens, so the cached catalog is never
+trusted for the actual buy.
 
 ### Pages (`dapp/src/pages/`)
 
@@ -3372,7 +3448,8 @@ against `route_status`.
 | `/calculator` (`/quant`) | `Quant.tsx` | Monte-Carlo underwriting / pricing simulator |
 | `/status` | `Status.tsx` | Public automation/ops health board (reads `api/status`) |
 | `/admin` | `Admin.tsx` | Hidden "Route Control" ops console (not in nav; governance signals, pins, jobs, action log) |
-| `/privacy`, `/terms` | `Legal.tsx` | Legal pages |
+| `/privacy`, `/terms`, `/disclaimers` | `Legal.tsx` | Legal pages (all three linked from the footer) |
+| `*` | → `Markets.tsx` | Catch-all falls back to the board |
 
 > **Legacy note.** `playground/` — a hand-scaffolded Next.js app that drove contracts
 > through a curated function registry (no generated bindings) — still exists in the
@@ -3414,7 +3491,11 @@ and on each request dynamically imports the handler and calls it with a
 bridged `VercelRequest`/`VercelResponse` (query, JSON body, `.status().json()`)
 — the same `export default handler(req, res)` shape Vercel's Node runtime
 uses in production. `npm run dev:api` runs it on `:3000`; `vite.config.ts`'s
-`server.proxy` forwards `/api/*` there from the `:5175` SPA dev server.
+`server.proxy` forwards `/api/*` there from the `:5175` SPA dev server
+(`--strictPort`, so a busy port fails loudly instead of drifting). The proxy
+target is conditional: setting `E2E_PROXY_TARGET` points `/api` at a
+deployed backend instead, which is how the soak harness drives a local UI
+against production.
 `scripts/env.ts`'s existing `loadDotEnv()` (already used by `npm run bot`)
 supplies the same `.env` `vercel dev` would have read.
 
@@ -3472,7 +3553,7 @@ type-checks as part of `tsc -b` (same as `scripts/run_bot.ts` always has).
              --asset_token USDC_CONTRACT_ID \
              --authorized_keeper KEEPER_EXECUTOR_ADDRESS \
              --min_lead_time_secs 3600 \
-             --claim_expiry_window_secs 5184000
+             --claim_expiry_window_secs 604800        # 7d — the deployed value
         -> returns CONTRACT_ID_CONTROLLER
         (solvency ratio is not a constructor argument — it initializes to 100
          and is tuned afterwards via controller.set_solvency_ratio, which also
@@ -3486,25 +3567,33 @@ type-checks as part of `tsc -b` (same as `scripts/run_bot.ts` always has).
         RiskVault.set_min_withdrawal_request(MIN_ASSETS)           <- optional dust floor  (wiring note 2)
         RiskVault.request_deposit(owner_lp, SEED_ASSETS)           <- recommended genesis seed (wiring note 3)
 
-4. Set global defaults:
+4. Set global defaults + the owner term-limit backstop:
         GovernanceModule.set_defaults(premium, payoff, delay_hours)
+        GovernanceModule.set_term_limits(max_payoff, max_payoff_ratio)
+        (testnet.json records max_payoff 0 / max_payoff_ratio 100)
 
-5. Whitelist initial routes:
-        cd dapp && npm run discover:routes      <- optional: find candidates via
-                                                   /schedules (~60 API calls for
-                                                   a 30-pair matrix); review +
-                                                   merge into routes.testnet.json
-        npm run whitelist:routes                <- diffs on-chain state, then
+5. Whitelist initial routes — the manual admin pipeline, NOT a cron. Run
+   from `dapp/`; full detail in the Admin Runbook below.
+        npx tsx ../scripts/discover_routes.ts   <- optional: find candidates via
+                                                   /schedules; writes ONLY
+                                                   config/routes.discovered.json
+                                                   (never touches the fleet file)
+        npx tsx ../scripts/price_routes.ts      <- ML pricing -> staged
+                                                   config/route_whitelist.json
+        # HUMAN REVIEW of the staged file happens here
+        npx tsx ../scripts/seed_routes.ts       <- diffs on-chain state, then
                                                    GovernanceModule.whitelist_route
-                                                   per missing route (idempotent;
-                                                   custom terms optional — omit
-                                                   to use defaults)
+                                                   per missing route (idempotent);
+                                                   writes routes.testnet.json
 
 6. Provision off-chain signer keys (one per role, blast-radius separated):
         stellar keys generate oracle-executor    # flight data + sale windows
         stellar keys generate keeper-executor    # classify + settle + queue maintenance
         stellar keys generate ttl-extender       # extend_ttl (permissionless; any funded key)
         stellar keys generate gov-admin          # governance automation writes
+        (the intake scripts fall back to the local identity named
+         `sentinel-governor` when GOVERNANCE_ADMIN_SECRET_KEY is unset —
+         name the key to match, or export the secret)
 
 7. Register signer addresses on-chain:
         OracleAggregator.set_oracle(ORACLE_EXECUTOR_ADDRESS)
@@ -3515,7 +3604,7 @@ type-checks as part of `tsc -b` (same as `scripts/run_bot.ts` always has).
 8. Fund the signer accounts with XLM (oracle, keeper, ttl, gov-admin) for tx fees.
 
 9. Run the backend LOCALLY first (no Vercel needed — every job is a
-   standalone bot; this is the current mode until a Vercel Pro plan exists):
+   standalone bot; still the fastest way to develop a job in isolation):
         - Apply supabase/migrations/ to the governance database.
         - Env per run (or a local .env): the signer secret keys,
           GOVERNANCE_DB_URL, and AEROAPI_KEY when real flight data is
@@ -3530,19 +3619,21 @@ type-checks as part of `tsc -b` (same as `scripts/run_bot.ts` always has).
           onboarding.
         - `npm run dev` serves the SPA on :5175 against testnet.
 
-10. Deploy to Vercel LATER (one project serves SPA + backend; 5-minute
-    crons and maxDuration 300 require Vercel Pro):
-        - mv dapp/vercel.backend.json dapp/vercel.json   <- ready-made config
-          (adds the full crons block for all 11 scheduled jobs — kept out of
-          the live vercel.json so the current frontend-only deploy and the
-          Hobby plan aren't broken by failing crons)
-        - rm dapp/.vercelignore                          <- stop excluding api/
+10. Deploy to Vercel — DONE 2026-08-04, one project (`sentinel-dapp`)
+    serving SPA + backend on Pro (5-minute crons and maxDuration 300
+    require Pro):
+        - dapp/vercel.json already carries the crons block for all 10
+          scheduled jobs plus functions."api/cron/*.ts".maxDuration = 300.
+          The old split (vercel.backend.json + .vercelignore) is deleted.
         - Set the Vercel env: four signer secret keys, AEROAPI_KEY,
           GOVERNANCE_DB_URL, CRON_SECRET, ADMIN_EMAILS, AGENT_BASE_URL,
           GOV_DRY_RUN/GOV_ONBOARD_AUTO as desired; contract IDs default to
-          the 07-18 testnet set.
-        - Deploy; verify /api/cron/health (hasKeys + pendingOutcomes) and
-          the /admin JOBS board.
+          the 07-29 testnet set.
+        - Env values bind at DEPLOY time — changing one in the dashboard
+          does nothing to running functions until you redeploy.
+        - Deploy; verify /api/cron/health (hasKeys + pendingOutcomes),
+          /api/status/alert (200 healthy / 503 + problem list), and the
+          /admin JOBS board.
         - The prediction service (agent/) deploys separately to Render
           (render.yaml).
 ```
@@ -3682,21 +3773,42 @@ flight-date buckets only.
 npx tsx ../scripts/wipe_routes.ts --yes          # DESTRUCTIVE
 ```
 
-Removes every fleet-file route from the chain (`remove_route`), clears
-the route-scoped DB tables (signals, premium_adjustments, pause_events,
-routes), empties the catalog, resets the fleet file's `routes` to `[]`
-(defaults/rails preserved), and deletes the staged whitelist — then
-re-intake from Step 1.
+Removes every fleet-file route from the chain (`remove_route`, which needs
+a `disable_route` first — the script does both), clears the route-scoped DB
+tables (`interventions`, `routes`), empties the catalog, resets the fleet
+file's `routes` to `[]` (defaults/rails preserved), and deletes the staged
+whitelist — then re-intake from Step 1.
+
+There is also `npx tsx ../scripts/revive_routes.ts` — an admin force-run of
+the revive engine across the whole interventions ledger, ignoring the
+per-cause cadence gates. Use it to clear a backlog of holds without waiting
+for the hourly cron.
 
 ## End-to-End Testing
 
-Five test layers, from fast to real. All dapp-side suites live under
+Test layers, from fast to real. All dapp-side suites live under
 `dapp/tests/`: `tests/e2e_mock/` for the mock-substrate suites (fake chain,
 fake AeroAPI/chain-reads where relevant, real Postgres for the two
 governance suites) plus their shared `dapp/scripts/e2e/harness.ts`, and
 `tests/fixtures/` for their synthetic routes JSON. `test_testnet_e2e.ts`
 stays in `dapp/scripts/` — it runs against a real deployed contract, not a
 mock, so it's a different category from everything in `e2e_mock/`.
+
+**`tests/e2e_live/` — the soak harness** (2026-08-04) is the top layer:
+only the contracts (live testnet deploy) and the money (mock USDC) are
+simulated; the Vercel API + crons, Supabase, Render ML, AeroAPI and
+Open-Meteo are all real. 17 actors run 50 policies over a 24–48h window
+while the deployed crons settle autonomously, and Playwright drives the
+**real UI** through a prod-inert test signer. Verbs: `e2e:live:start` /
+`:check` (idempotent, catch-up-capable) / `:watch` / `:report` / `:smoke`.
+It never runs admin-gated steps and holds no admin secrets. Plan and
+assertion matrix: [`spec/soak_test_plan.md`](soak_test_plan.md).
+
+Two dapp hooks make it possible, both inert in production:
+`PUBLIC_E2E_SIGNER=1` enables `src/util/e2eSigner.ts` (statically false on
+Vercel, so it is dead-code-eliminated), and `E2E_PROXY_TARGET` switches the
+vite `/api` proxy from `localhost:3000` to a deployed backend
+(`changeOrigin: true` — Vercel routes by Host header).
 
 | Suite | Chain | AeroAPI | ML API | DB | Run |
 |---|---|---|---|---|---|

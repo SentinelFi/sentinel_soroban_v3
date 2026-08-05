@@ -30,6 +30,34 @@ bundle so the chain is touched once.
 
 ## Off-chain tooling
 
+- [ ] **Fleet disable cap is wired to only one of five pause paths.**
+  *(Found 2026-08-04; deliberately deferred — leave as-is until after the
+  soak.)* The circuit breaker `max(3, 20% of fleet)` (`computeDisableCap`,
+  `interventions.ts:84`) is claimed only by `exposure_collector.ts`.
+  Weather-EXTREME, pricing-over-cap, cancellation and admin pauses all call
+  `pauseRoute()` directly, which checks only `gov_frozen` and `pinned` — so
+  four of five causes are uncapped. `architecture.md:2132` claims it is
+  "enforced once, for every caller"; it is not. Weather pauses are also
+  exempt from the job's own `MAX_TX_PER_RUN` (`weather.ts:195`), so nothing
+  bounds them from either direction. At 1,069 routes the cap is **214**, and
+  a single stormed hub already exceeds it — LAX touches 279 routes, ORD 270,
+  DFW 218; a BOS/JFK/LGA/EWR nor'easter reaches 471. Recovery is the
+  expensive half: no batch entrypoint, one tx per route per ledger, 300s
+  function cap — a few hundred re-enables is hours of partial progress and
+  real fees in both directions.
+  **Proposed fix:** cap by cause shape rather than one global rule —
+  airports for weather (≤2 of 14 per window; a route-count cap leaves an
+  incoherent partial state, e.g. 214 of LAX's 279 disabled and 65 still
+  sellable in hurricane-force gusts), route count for exposure + pricing,
+  none for cancellation (acts on confirmed per-flight AeroAPI evidence),
+  and admin exempt so a human can always pause more or revive. Emit refusals
+  as `deferred` intervention rows so the `/admin` Interventions tab surfaces
+  them with its count badge (today a refusal is only a `skipped` string
+  buried in the job run's actions array), and add a deferred check to
+  `/api/status/alert` so the uptime monitor below actually pages. Timing is
+  forgiving — EXTREME is visible up to 72h out and the sale cutoff is 24h,
+  leaving ~48h of actionable window, re-proposed every 2h — so email
+  alerting is sufficient; the gap is that **nothing pushes at all today**.
 - [ ] **Deliberate duplicate-leg dedupe in `price_routes.ts`.** Today
   first-occurrence-wins decides which leg of a duplicate flight number gets
   seeded — arbitrary, and in ~a dozen cases it picked the cheaper leg (e.g.
@@ -49,8 +77,11 @@ bundle so the chain is touched once.
   the governance DB that drives live interventions.
 - [ ] AeroAPI plan review at projected policy volume (cost scales ~½–1¢ per
   buy + one call per settle; fine at launch volume, revisit tiers with growth).
-- [ ] Render ML service: Starter ($7/mo) is fine; add a real `/healthz` route
-  (service 404s there today — probes currently use `/docs`).
+- [x] Render ML service: Starter ($7/mo) is fine — on the paid plan since
+  2026-07-29. The "add a real `/healthz`, service 404s there" note was
+  **wrong**: verified 2026-08-04 that `GET /healthz` already exists
+  (`agent/app/main.py:216`), is `render.yaml`'s `healthCheckPath`, is
+  covered by `agent/tests/test_predict.py:85`, and returns 200 live.
 - [ ] **Name + domain** (launch blocker per launch plan): waitlist on apex,
   dapp at `app.<domain>`, game separate. Wire custom domain to the
   `sentinel-dapp` Vercel project.
