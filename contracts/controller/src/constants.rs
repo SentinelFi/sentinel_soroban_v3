@@ -39,7 +39,16 @@ pub(crate) const MAX_CLASSIFY_BATCH: u32 = 8;
 /// rotating cursor still covers the full list across repeated keeper calls,
 /// and `execute_settlements_bounded` lets an operator shrink a stuck window
 /// further, down to a single flight.
-pub(crate) const MAX_SETTLE_BATCH: u32 = 10;
+///
+/// Lowered 10 -> 8 on 2026-08-05, alongside the classify window. Settlement
+/// is strictly heavier per flight than classification, and classification
+/// was measured at ~5.90M CPU instructions per flight against a 100M
+/// per-transaction cap — so a 10-window is uncomfortably close on the third
+/// budget (instructions) even though it was sized with margin on the first
+/// two (writes, event bytes). 8 keeps the same worst case under ~32 writes
+/// and ~5.6 KB of events, and the `execute_settlements_bounded` ladder
+/// (3, then 1) remains the escape hatch if a window still will not fit.
+pub(crate) const MAX_SETTLE_BATCH: u32 = 8;
 
 /// Seconds per UTC day. `buy_insurance` requires the caller-supplied `date` to
 /// be day-aligned (a multiple of this) so the on-chain policy identity

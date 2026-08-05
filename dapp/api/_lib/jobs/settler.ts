@@ -56,8 +56,8 @@ const MAX_DRAIN_PASSES = 8;
  *    still writes TTL extensions — a real fee — so blind 5-minute submits
  *    were pure waste.)
  * 2. Drain loop: alternate `classify_flights` (promotes Landed/Cancelled →
- *    ToBeSettled*, window 25) and `execute_settlements` (moves money,
- *    window 10) until pending hits zero, progress stalls, or
+ *    ToBeSettled*, window 8) and `execute_settlements` (moves money,
+ *    window 8) until pending hits zero, progress stalls, or
  *    MAX_DRAIN_PASSES. A backlog larger than one window drains in ONE run
  *    instead of dribbling out across 5-minute ticks.
  * 3. Resource-budget fallback: if `execute_settlements` fails, retry the

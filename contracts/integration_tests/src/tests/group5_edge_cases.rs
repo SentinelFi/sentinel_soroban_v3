@@ -14,7 +14,7 @@ const SECONDS_PER_DAY: u64 = 86_400;
 fn saturated_cancelled_window_settles_across_bounded_batches() {
     // A correlated cancellation event can make more flights settlement-ready
     // than one transaction's resource budget can process. The settlement
-    // window is bounded (10 per call) precisely so that no ready set — of
+    // window is bounded (8 per call) precisely so that no ready set — of
     // any size — can produce an atomically-reverting, never-advancing keeper
     // call: repeated calls must drain the backlog, and the vault's
     // settlement barrier must lift only when the LAST outcome settles.
@@ -41,9 +41,8 @@ fn saturated_cancelled_window_settles_across_bounded_batches() {
     }
     assert_eq!(t.pool.get_active_flight_count(), 12);
 
-    // Classify all 12. The classify window is 8 — deliberately NARROWER than
-    // the 10-flight settle window since 2026-08-05, because classification is
-    // bounded by the CPU-instruction budget (~5.9M per flight on-network),
+    // Classify all 12. Both windows are 8 since 2026-08-05 — classification
+    // is bounded by the CPU-instruction budget (~5.9M per flight on-network),
     // not by the entry limits that sized settlement. So this takes more than
     // one pass; the cursor rotates, and the pass is idempotent on flights it
     // has already classified.
@@ -51,10 +50,10 @@ fn saturated_cancelled_window_settles_across_bounded_batches() {
         t.ctrl.classify_flights(&t.keeper);
     }
 
-    // First settlement call processes one full window (10 of 12) and leaves
+    // First settlement call processes one full window (8 of 12) and leaves
     // the barrier up: outcomes are still pending.
     t.ctrl.execute_settlements(&t.keeper);
-    assert_eq!(t.pool.get_active_flight_count(), 2);
+    assert_eq!(t.pool.get_active_flight_count(), 4);
     assert!(t.oracle.has_pending_outcomes());
 
     // Second call drains the remainder; the barrier lifts.
