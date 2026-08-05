@@ -267,7 +267,7 @@
 
 <div id="progress"></div>
 <div id="brandmark"><span class="sq"></span>SENTINEL · 2026</div>
-<div id="counter"><b id="cur">01</b> / <span id="tot">10</span></div>
+<div id="counter"><b id="cur">01</b> / <span id="tot">17</span></div>
 <div id="dots"></div>
 <div id="hint">USE ← → ARROW KEYS</div>
 <div id="nav">
@@ -386,6 +386,11 @@
 </section>
 
 <!-- 6 · WHY STELLAR -->
+<!-- ============================================================
+     "Why Stellar" — parked, not deleted. The 16-slide running order
+     has no slot for it. Un-comment this section to restore it (the
+     counter and dots are computed from slides.length, so nothing
+     else needs changing).
 <section class="slide" id="s-stellar">
   <div class="kicker rv">Why Stellar</div>
   <h2 class="rv" style="--d:.1s">Built where payments already work.</h2>
@@ -395,6 +400,138 @@
     <div class="card rv" style="--d:.44s"><div class="big">USDC</div><div class="unit">NATIVE SETTLEMENT</div><p>Premiums, collateral and payouts in a stable unit people trust.</p></div>
     <div class="card rv" style="--d:.56s"><div class="big">Rust</div><div class="unit">SOROBAN CONTRACTS</div><p>Deterministic, resource-metered smart contracts on a payments-first chain.</p></div>
   </div>
+</section>
+     ============================================================ -->
+
+<section class="slide" id="s-tranche1">
+  <div class="kicker rv">Tranche 1 · MVP</div>
+  <h2 class="rv" style="--d:.1s">We started by contributing a standard,<br/>not just shipping a product.</h2>
+  <div class="cols c2">
+    <div class="card rv" style="--d:.25s">
+      <h3>A vault anyone can reuse</h3>
+      <p>An ERC-4626-style Soroban vault, built in collaboration with OpenZeppelin and landed as <b class="accent">SEP-0056</b>. It is infrastructure for the ecosystem, not just for us.</p>
+    </div>
+    <div class="card rv" style="--d:.4s">
+      <h3>One pool, not many</h3>
+      <p>Per-market vaults collapsed into a single central risk vault serving every flight pool — one capital base, one exposure surface, far less stranded capital.</p>
+    </div>
+  </div>
+  <ul class="list">
+    <li class="rv" style="--d:.55s"><b>A product, not a demo</b> — the generic hedge/risk interface was replaced with dedicated traveler and underwriter dashboards.</li>
+    <li class="rv" style="--d:.7s"><b>First Acurast TEE → Soroban oracle integration</b> — published with documentation and example contracts so others can follow the path.</li>
+  </ul>
+</section>
+
+<section class="slide" id="s-tranche2">
+  <div class="kicker rv">Tranche 2 · Testnet</div>
+  <h2 class="rv" style="--d:.1s">The whole protocol on testnet —<br/>and the tooling to prove it works.</h2>
+  <div class="cols c3">
+    <div class="card rv" style="--d:.2s"><div class="big">7</div><div class="unit">CONTRACTS DEPLOYED</div><p>First full deployment to Stellar testnet, March 2026.</p></div>
+    <div class="card rv" style="--d:.32s"><div class="big">150+</div><div class="unit">UNIT TESTS</div><p>Every contract covered, plus six integration groups.</p></div>
+    <div class="card rv" style="--d:.44s"><div class="big">45</div><div class="unit">BROWSER TESTS</div><p>The real UI driven end to end, headless.</p></div>
+  </div>
+  <ul class="list">
+    <li class="rv" style="--d:.6s"><b>Flight truth became its own contract</b> — an eight-state lifecycle where every transition is validated on-chain, not asserted off it.</li>
+    <li class="rv" style="--d:.72s"><b>Markets create themselves</b> — the first buyer brings a flight into existence, and the purchase is refused outright unless free capital already covers the payout.</li>
+    <li class="rv" style="--d:.84s"><b>We gave the ecosystem a tool</b> — <span class="accent">stellar-wallet-mock</span>, an open-source wallet mock that makes Soroban dApps testable in CI. Released for anyone to use.</li>
+  </ul>
+</section>
+
+<section class="slide" id="s-tranche3">
+  <div class="kicker rv">Tranche 3 · Hardening</div>
+  <h2 class="rv" style="--d:.1s">Rebuilt the topology.<br/>Then tried to break it.</h2>
+  <div class="cols c3">
+    <div class="card rv" style="--d:.2s"><div class="big">12</div><div class="unit">PHASES CLOSED</div><p>Each one planned, gated and validated before the next began.</p></div>
+    <div class="card rv" style="--d:.32s"><div class="big">480</div><div class="unit">TESTS PASSING</div><p>Plus fuzz harnesses on the solvency invariant and the oracle state machine.</p></div>
+    <div class="card rv" style="--d:.44s"><div class="big">6</div><div class="unit">CONTRACTS LIVE</div><p>Current testnet set deployed from scratch, July 2026.</p></div>
+  </div>
+  <ul class="list">
+    <li class="rv" style="--d:.6s"><b>Two contracts deleted, one added</b> — no more deploying a contract per flight. A single manager keyed by flight and date holds every policy and its recovery accounting.</li>
+    <li class="rv" style="--d:.72s"><b>Closed the underwriter's free option</b> — deposits and withdrawals both price only after a delay, so nobody can enter or exit on an outcome the oracle has seen but not yet written.</li>
+    <li class="rv" style="--d:.84s"><b>Sales authorize at the buy click</b> — an idle route now costs nothing to keep listed, instead of being polled around the clock.</li>
+  </ul>
+</section>
+
+<section class="slide" id="s-agents">
+  <div class="kicker rv">Governance automation</div>
+  <h2 class="rv" style="--d:.1s">Four watchers. One ledger.<br/>One way back.</h2>
+  <div class="cols c4">
+    <div class="card rv" style="--d:.2s"><h3>Cancellation</h3><p>A flight has stopped operating — confirmed by sweeping the days around it, not guessed from one lookup.</p></div>
+    <div class="card rv" style="--d:.3s"><h3>Exposure</h3><p>One route or airport is carrying half the vault's capacity. Concentration is capped before it becomes a loss.</p></div>
+    <div class="card rv" style="--d:.4s"><h3>Weather</h3><p>An extreme forecast at either airport. Milder weather raises the premium instead of stopping the sale.</p></div>
+    <div class="card rv" style="--d:.5s"><h3>Pricing</h3><p>The honest price has risen above the cap. We stop selling rather than sell at a known loss.</p></div>
+  </div>
+  <ul class="list">
+    <li class="rv" style="--d:.65s"><b>No watcher touches the chain directly.</b> Each one writes its evidence to a single ledger, and only then does one audited path disable the route — so the record survives even if the write fails.</li>
+    <li class="rv" style="--d:.78s"><b>Everything that pauses has a way back.</b> An hourly engine re-checks every open hold against its own condition and re-opens the route when the last one clears.</li>
+    <li class="rv" style="--d:.9s"><b>A human is always above it</b> — a freeze switch that needs no redeploy, pins the automation cannot override, and on-chain limits only the owner can move.</li>
+  </ul>
+</section>
+
+<section class="slide" id="s-ml">
+  <div class="kicker rv">Pricing</div>
+  <h2 class="rv" style="--d:.1s">Priced from fifteen million<br/>real flights.</h2>
+  <div class="cols c3">
+    <div class="card rv" style="--d:.2s"><div class="big">15.4M</div><div class="unit">FLIGHTS LEARNED FROM</div><p>Two years of U.S. Bureau of Transportation Statistics on-time data.</p></div>
+    <div class="card rv" style="--d:.32s"><div class="big">0.79</div><div class="unit">ROC AUC</div><p>Measured on flights the model never saw in training.</p></div>
+    <div class="card rv" style="--d:.44s"><div class="big">0.01%</div><div class="unit">CALIBRATION ERROR</div><p>Predicted rate versus actual rate across the network.</p></div>
+  </div>
+  <ul class="list">
+    <li class="rv" style="--d:.6s"><b>It predicts the policy's own event</b> — arrival three hours late, cancelled, or diverted. Not a proxy, the thing we actually pay on.</li>
+    <li class="rv" style="--d:.72s"><b>Calibration is the whole point.</b> The premium multiplies this probability, so a score that ranks well but is numerically wrong is a mispriced book, not a minor error.</li>
+    <li class="rv" style="--d:.84s"><b>The model never sees insurance terms</b> — it returns a probability, and the protocol turns that into a price with a fixed margin. Above a hard ceiling we decline the route rather than sell it.</li>
+  </ul>
+</section>
+
+<section class="slide" id="s-capital">
+  <div class="kicker rv">Capital efficiency</div>
+  <h2 class="rv" style="--d:.1s">Every policy backed — without<br/>stranding the capital that backs it.</h2>
+  <div class="cols c2">
+    <div class="card rv" style="--d:.25s">
+      <h3>Bounded in both directions</h3>
+      <p>A purchase is refused unless reserves already cover it — and withdrawals are capped by that same reserve. Guarding only the buy side would let capital walk out through the gap between purchases.</p>
+    </div>
+    <div class="card rv" style="--d:.4s">
+      <h3>Exits that never jam</h3>
+      <p>First in, first out, with stable positions. When the oldest request is larger than the capital free to pay it, it takes what is available and keeps its place — instead of blocking everyone behind it.</p>
+    </div>
+  </div>
+  <ul class="list">
+    <li class="rv" style="--d:.55s"><b>Queue work stops while any outcome is unsettled</b>, so the share price never moves on half-finished books.</li>
+    <li class="rv" style="--d:.68s"><b>New deposits are processed before exits</b> each cycle — arriving capital can fund a departing underwriter the same pass.</li>
+    <li class="rv" style="--d:.8s"><b>Uncollected payouts are not lost.</b> Balances are kept alive on every write, backed by scheduled upkeep, with an owner recovery path behind that.</li>
+  </ul>
+</section>
+
+<section class="slide" id="s-decentral">
+  <div class="kicker rv">Decentralization</div>
+  <h2 class="rv" style="--d:.1s">Sufficiently decentralized now.<br/>Fully decentralized <span class="accent">on evidence</span>.</h2>
+  <div class="cols c3">
+    <div class="card rv" style="--d:.2s"><h3>Already open</h3><p>Storage upkeep, pruning and expiry sweeps are permissionless today. Every keeper bot is public code anyone can run.</p></div>
+    <div class="card rv" style="--d:.32s"><h3>One contract change away</h3><p>Removing the keeper gate and paying bounties on work already reported by the contracts. The loop runs against today's code minus one check.</p></div>
+    <div class="card rv" style="--d:.44s"><h3>Never decentralized</h3><p>Who we are willing to insure, and at what price. That is an underwriting decision, not a consensus problem.</p></div>
+  </div>
+  <ul class="list">
+    <li class="rv" style="--d:.6s"><b>Publishing the keepers costs us nothing</b> — they carry no information the contracts don't re-verify. That is precisely why they are already public.</li>
+    <li class="rv" style="--d:.72s"><b>The oracle hardens rather than multiplies</b> — a trusted execution environment takes over the same address, instead of adding voters to a quorum.</li>
+    <li class="rv" style="--d:.84s"><b>Gated on measurement, not a date.</b> The beta tells us settlement latency and cost per settlement; those numbers size the bounty. Failure stays fail-closed at every step.</li>
+  </ul>
+</section>
+
+<section class="slide" id="s-audits">
+  <div class="kicker rv">Security</div>
+  <h2 class="rv" style="--d:.1s">Audited repeatedly — and the<br/>fixes were audited too.</h2>
+  <div class="cols c4">
+    <div class="card rv" style="--d:.2s"><div class="big">11</div><div class="unit">REVIEW ROUNDS</div></div>
+    <div class="card rv" style="--d:.3s"><div class="big">9</div><div class="unit">INDEPENDENT AUDITORS</div></div>
+    <div class="card rv" style="--d:.4s"><div class="big">230</div><div class="unit">FINDINGS RAISED</div></div>
+    <div class="card rv" style="--d:.5s"><div class="big">100%</div><div class="unit">CRITICAL &amp; HIGH CLOSED</div></div>
+  </div>
+  <ul class="list">
+    <li class="rv" style="--d:.65s"><b>Scope widened as the system grew</b> — contracts first, then the serverless backend, the frontend, and database access policy.</li>
+    <li class="rv" style="--d:.78s"><b>One round existed only to re-check earlier fixes</b> — and it caught a regression that a previous fix had introduced. Finding that was the point.</li>
+    <li class="rv" style="--d:.9s"><b>Deferred never meant dropped.</b> The underwriter timing issue resurfaced across three rounds before it was closed properly, with delayed pricing on both sides of the vault.</li>
+  </ul>
 </section>
 
 <!-- 7 · TECHNOLOGY -->
@@ -422,7 +559,7 @@
 
 <!-- 8 · STATUS -->
 <section class="slide" id="s-status">
-  <div class="kicker rv">Where we are</div>
+  <div class="kicker rv">Road ahead</div>
   <h2 class="rv" style="--d:.1s">Mainnet-v1 codebase, live on testnet.</h2>
   <ul class="list">
     <li class="rv" style="--d:.2s"><b>Protocol complete.</b> Third-generation contracts (v1 → v2 → v3), hardened through audit rounds and full integration test coverage.</li>
@@ -434,6 +571,22 @@
 </section>
 
 <!-- 9 · CLOSING -->
+<section class="slide" id="s-extras">
+  <div class="kicker rv">Extras</div>
+  <h2 class="rv" style="--d:.1s">Things we built along the way<br/>that nobody asked us for.</h2>
+  <div class="cols c4">
+    <div class="card rv" style="--d:.2s"><h3>Underwriting simulator</h3><p>Thousands of simulated months in the browser, so an underwriter sees the one-bad-month-in-twenty before depositing — not just the average.</p></div>
+    <div class="card rv" style="--d:.3s"><h3>Keyless flight API mock</h3><p>The entire pipeline runs with no API key and no account. Clone it, run it, watch a flight settle.</p></div>
+    <div class="card rv" style="--d:.4s"><h3>Live soak harness</h3><p>Seventeen actors and fifty policies driving the deployed system through the real interface. Only the money is simulated.</p></div>
+    <div class="card rv" style="--d:.5s"><h3>Public ops board</h3><p>Whether our automation is alive is a fact anyone can check, not a claim we make.</p></div>
+  </div>
+  <ul class="list">
+    <li class="rv" style="--d:.65s"><b>Two faces, one protocol</b> — an arcade-styled market and a sober institutional view sit over byte-identical contract calls. Same guarantees, different audience.</li>
+    <li class="rv" style="--d:.78s"><b>Written down properly</b> — a published documentation site plus a four-thousand-line architecture spec, so the next person does not have to read the source to understand the design.</li>
+    <li class="rv" style="--d:.9s"><b>Open by default</b> — Apache-2.0, with every audit report published next to the remediation that answered it.</li>
+  </ul>
+</section>
+
 <section class="slide" id="s-close">
   <div class="kicker rv">Sentinel · 2026</div>
   <h1 class="rv" style="--d:.1s">Insurance that<br/><span class="accent">settles itself.</span></h1>
