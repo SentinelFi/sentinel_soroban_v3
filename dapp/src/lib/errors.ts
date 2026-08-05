@@ -1,4 +1,5 @@
 import { errorMessage } from "./utils"
+import { describeContractError } from "./contractErrors"
 
 /**
  * Translate raw wallet/SDK/contract failures into human sentences for
@@ -14,12 +15,18 @@ export function humanizeTxError(err: unknown, fallback = "Transaction failed"): 
 	if (/user\s+(decl|denied|reject)|declin|denied|rejected by user|cancell?ed by/i.test(raw)) {
 		return "Signature request was declined in the wallet."
 	}
-	if (/insufficient|underfunded|balance is not sufficient/i.test(raw)) {
-		return "Insufficient balance for this transaction."
-	}
+	// Contract codes FIRST. A generic /insufficient/ sweep used to run ahead
+	// of this and swallow the code — a failed token transfer inside a buy
+	// reads "insufficient", and so the specific reason was replaced by a
+	// vague one. The code is the most precise thing we have; never lose it.
 	const contract = raw.match(/Error\(Contract, #(\d+)\)/)
 	if (contract) {
-		return `The contract rejected this transaction (error #${contract[1]}). Check the amounts and try again.`
+		const code = Number(contract[1])
+		const described = describeContractError(code)
+		return described ?? `The contract rejected this transaction (error #${code}).`
+	}
+	if (/insufficient|underfunded|balance is not sufficient/i.test(raw)) {
+		return "Your wallet doesn't have enough USDC for this transaction."
 	}
 	if (/txbadseq|bad_seq/i.test(raw)) {
 		return "Transaction sequence error — wait a moment and try again."
