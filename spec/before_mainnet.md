@@ -154,6 +154,79 @@ bundle so the chain is touched once.
 
 ## Off-chain tooling
 
+- [ ] **Flight-date semantics: we key on the UTC departure date, the world
+  uses the LOCAL one.** *(Audited 2026-08-05. DEFERRED until after the soak —
+  the fix changes which physical flight a date maps to.)* Every backend
+  consumer resolves a policy date as "the instance whose `scheduled_out`
+  falls on UTC date D" (`sale_auth.ts:260`, `route_guard.ts:85,116`,
+  `aeroapi_client.ts:187`, `fetcher.ts:154`). Airlines, boarding passes and
+  travellers use the local departure date at origin. **Measured: 204 of the
+  1,069 seeded routes (19%) depart late enough that the two differ** — after
+  20:00 Eastern, 19:00 Central, 18:00 Mountain, 17:00 Pacific. Worst
+  origins: LAX 42, LAS 36, SFO 25, DFW 24.
+  For those, a buyer selecting "Aug 6" holds cover on the flight departing
+  local Aug 5 evening. The system is INTERNALLY consistent — all 72 captured
+  schedules have key date == UTC departure date — so this is a
+  product-semantics decision, not a code inconsistency. It is invisible to
+  the buyer because `/api/routes` exposes no departure time.
+  **Decide explicitly:** either label the board "departure date (UTC)" and
+  surface the time, or key on local departure date end to end (which needs
+  the origin's IANA zone at every resolution site).
+- [ ] **The flight-date calendar is LOCAL while its label says UTC.**
+  *(Audited 2026-08-05. Real bug, frontend-only. DEFERRED until after the
+  soak — it changes which dates are selectable.)* `FlightCalendar.tsx` builds
+  cells with `new Date(year, month, d)` and keys them with
+  `getFullYear/getMonth/getDate` (`:33-38`, `:42`, `:58-62`) — all local —
+  and `Markets.tsx:44` reinterprets those digits as UTC midnight. The field
+  is labelled `"FLIGHT DATE (UTC)"` (`copy.ts:100,473`).
+  **Consequence:** for a Pacific buyer at 19:00 local (02:00 UTC next day)
+  the calendar's first selectable day keys to `dayOffset = 0`, which
+  `sale_auth.ts:129` hard-refuses as "inside the minimum lead time". Every
+  evening after 17:00 Pacific / 20:00 Eastern, the earliest date the UI
+  offers is guaranteed to fail — ~29% of the day for west-coast users. East
+  of UTC the failure inverts: those users silently lose the nearest sellable
+  day. Fix belongs in the calendar (UTC getters), not in sale-auth, which
+  defines the invariant correctly.
+  Two smaller ones in the same file: the calendar has **no upper bound**, so
+  a user can page to 2027 and pick a date refused as beyond the horizon; and
+  `minDay`/`today` are `useMemo(…, [])`, so a slip left open across local
+  midnight keeps a now-past day enabled.
+- [ ] **ML training rows carry the wrong day's weather for the same ~19%
+  cohort.** *(Audited 2026-08-05.)* `outcome_log.ts:89` derives `dateIso`
+  from the UTC key, then passes it to Open-Meteo with `timezone=auto`
+  (`weather_client.ts:97`), which aggregates the AIRPORT-LOCAL calendar day.
+  So `flight_date` and the eight weather columns in the same row describe
+  different 24-hour windows. The module docstring (`:41-44`) claims it uses
+  "the flight's local date"; it does not. `flight_outcomes` is explicitly the
+  weather-learnability log, so this corrupts the training signal it exists to
+  provide. The fix needs an origin-local (and separately dest-local) date
+  derived from `scheduled_out`, which `flight_schedules.scheduled_out_unix`
+  already stores. The FORECAST path is unaffected — it takes a max over the
+  horizon and never indexes a specific day.
+- [ ] **`AIRPORT_TZ` covers 14 of 37 airports and fails silently.**
+  `price_routes.ts:52-70` maps an origin to its IANA zone to derive local
+  `dep_time_hhmm`; an unmapped origin returns **noon** with no warning
+  (`:63`). Inert today because the discovery matrix only touches the mapped
+  14 — but the airports table is already provisioned for 37 and
+  `admin/airports.ts` exists to manage them, so widening the matrix would
+  silently misprice every new-airport route. At minimum warn on the unmapped
+  branch; better, fail the pricing run.
+- [ ] **Pin the soak harness browser to UTC.** `browser/context.ts:38` calls
+  `newContext()` with no `timezoneId`, so it inherits the host zone and its
+  results depend on when and where it is run. It drives the local calendar
+  via `[data-day="${dateISO}"]` where `dateISO` is a UTC date — so on a
+  UTC-negative host in the evening it would fail on `dayOffset`-1 candidates,
+  reporting the frontend bug above as an opaque harness error. Pinning
+  `timezoneId: "UTC"` makes it deterministic.
+- [ ] **Assert the DB session timezone is UTC.** `date_trunc('hour', …)` in
+  `interventions.ts:122,142` (the disable-cap window) and `date_trunc('minute')`
+  in `rate_limit.ts:57` are session-TZ dependent. Correct today only because
+  Supabase defaults to UTC; nothing in code asserts it. Also worth recording
+  as a rule: every migration column is `timestamptz` today, never bare
+  `timestamp` — that is what keeps `new Date(row.col)` safe under postgres.js,
+  and a single bare `timestamp` column would silently reintroduce local-time
+  parsing.
+
 - [ ] **Sale-auth never checks that the flight IS the route we sold.**
   *(Found 2026-08-05. Live defect — it is writing wrong policies right now,
   and needs no contract change to fix. DEFERRED until after the soak: the
@@ -246,6 +319,22 @@ bundle so the chain is touched once.
   (Superseded on-chain by the composite-key fix, but cheap and useful now.)
 - [ ] Optional: sharded seeding across 2–3 extra governance admins
   (owner `add_admin`) for faster re-seeds until the batch entrypoint lands.
+
+### Time handling — what the 2026-08-05 audit CLEARED
+
+Recorded so this is not re-audited from scratch. The backend genuinely holds
+the "UTC internally, local only as presentation" invariant: **zero** local
+`getFullYear/getMonth/getDate/getHours/getDay`, **zero** `new Date(y,m,d)`
+local constructors and **zero** `toLocale*` date formatting across
+`dapp/api/**`, `scripts/**`, `agent/**` and `supabase/migrations/**`. Every
+date string is `toISOString().slice(0,10)`; every day index is
+`floor(epoch/86400)`. All nine migrations use `timestamptz`, never bare
+`timestamp`. `sale_auth`'s `dayOffset` is UTC-vs-UTC and correct — its
+CALLER is what is wrong. Day arithmetic everywhere operates on epoch
+instants or explicit-`Z` parses, so DST cannot perturb it. `format.ts`
+(`formatDate`, `utcDateTime`, `isoMinute`, `relTime`) is UTC-correct, and
+the Status and Admin pages label their times UTC. The only local-time date
+logic in the entire frontend is `FlightCalendar.tsx`.
 
 ## Services & costs (commercial posture)
 
