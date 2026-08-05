@@ -125,6 +125,49 @@ interface InterventionsResponse {
 	open_count: number
 }
 
+/**
+ * Cron expression → the sentence an operator actually wants.
+ *
+ * A raw five-field expression tells you nothing at a glance, and the
+ * offset form ("2-59/5 ...") is worse — it reads like a range when it
+ * means "every 5 minutes, shifted by 2 so it never collides with the
+ * settler". We only write a handful of shapes, so parse those and fall
+ * back to
+ * the raw string rather than pretending to be a general cron parser. The
+ * raw expression stays available on hover — it is the thing you paste into
+ * vercel.json, so it must not disappear.
+ */
+function humanizeCron(expr: string): string {
+	const p = expr.trim().split(/\s+/)
+	if (p.length !== 5) return expr
+	const [min, hour, dom, mon, dow] = p as [string, string, string, string, string]
+	const at = (m: string) => (m === "0" ? "" : ` at :${m.padStart(2, "0")}`)
+
+	// every N minutes — plain "*/5" or an offset window "2-59/5"
+	const everyMin = /^(?:\*|\d+-\d+)\/(\d+)$/.exec(min)
+	if (everyMin && hour === "*" && dom === "*" && mon === "*" && dow === "*") {
+		const n = Number(everyMin[1])
+		const offset = /^(\d+)-/.exec(min)
+		return `every ${n} min${offset ? ` (offset +${offset[1]})` : ""}`
+	}
+	// every N hours, on a fixed minute
+	const everyHour = /^\*\/(\d+)$/.exec(hour)
+	if (everyHour && dom === "*" && mon === "*" && dow === "*") {
+		return `every ${everyHour[1]}h${at(min)}`
+	}
+	if (hour === "*" && dom === "*" && mon === "*" && dow === "*") {
+		return `hourly${at(min)}`
+	}
+	if (dom === "*" && mon === "*" && dow === "*") {
+		return `daily at ${hour.padStart(2, "0")}:${min.padStart(2, "0")} UTC`
+	}
+	if (mon === "*" && dow === "*") {
+		const nth = dom === "1" ? "1st" : `day ${dom}`
+		return `monthly, ${nth} at ${hour.padStart(2, "0")}:${min.padStart(2, "0")} UTC`
+	}
+	return expr
+}
+
 /** JOB_REGISTRY entry (api/_lib/governance/runs.ts). */
 interface JobRegistryEntry {
 	job: string
@@ -985,7 +1028,12 @@ function JobsBoard({
 											<span className="block text-[12px] text-mute">{info.description}</span>
 										</td>
 										<td className="px-3 py-2 whitespace-nowrap">
-											<span className="font-board text-[16px] text-sky">{info.schedule}</span>
+											<span
+												className="font-board text-[16px] text-sky"
+												title={`cron: ${info.schedule} (UTC)`}
+											>
+												{humanizeCron(info.schedule)}
+											</span>
 										</td>
 										<td className="px-3 py-2 text-dim">{info.signer}</td>
 										<td className="px-3 py-2 whitespace-nowrap text-dim">{relTime(last?.ran_at ?? null)}</td>
