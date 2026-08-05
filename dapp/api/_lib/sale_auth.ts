@@ -244,10 +244,22 @@ export async function authorizeSale(
     if (!schedules) {
       return refuse("published schedule not verifiable right now");
     }
+    // Match the LEG, not just the flight number. One number routinely flies
+    // several legs a day — UAL2096 on 2026-08-09 is RNO->LAX and then
+    // LAX->EWR — so an ident-only filter returns 2 rows and reads as
+    // "ambiguous", refusing a route that is perfectly well identified.
+    // AeroAPI reports airports as ICAO (KLAX); the fleet stores IATA (LAX).
+    const sameAirport = (apiCode: string | undefined, iata: string): boolean => {
+      if (!apiCode) return false;
+      const c = apiCode.toUpperCase();
+      return c === iata || (c.length === 4 && c.slice(1) === iata);
+    };
     const rows = (schedules.scheduled ?? []).filter(
       (s) =>
         (s.actual_ident ?? s.ident) === flightId &&
-        (s.scheduled_out ?? "").slice(0, 10) === dateStr
+        (s.scheduled_out ?? "").slice(0, 10) === dateStr &&
+        sameAirport(s.origin, route.origin) &&
+        sameAirport(s.destination, route.destination)
     );
     const match = rows[0];
     if (!match) {
