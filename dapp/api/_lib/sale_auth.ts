@@ -72,10 +72,11 @@ interface SellableRoute {
 }
 
 /**
- * Same source-of-truth rule as the old authorizer: the DB `routes` table
- * is canonical once populated (a guard/reconciler/admin disable also stops
- * authorization), the fleet file is the bootstrap seed and the no-DB
- * fallback.
+ * Same source-of-truth rule as the retired authorizer cron: the DB
+ * `routes` table is canonical once populated (so any intervention —
+ * cancellation, exposure, weather, pricing, admin — also stops
+ * authorization), and the fleet file is the bootstrap seed plus the
+ * no-DB fallback.
  */
 async function findSellableRoute(flightId: string): Promise<SellableRoute | null> {
   if (process.env.GOVERNANCE_DB_URL) {

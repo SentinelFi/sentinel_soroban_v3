@@ -6,7 +6,7 @@
  *      the GovernanceModule (reads status first; Unknown → skip). Signed
  *      by the gov admin via the audited GovSubmitter.
  *   2. DB (if GOVERNANCE_DB_URL is set): clears the route-scoped tables —
- *      signals, premium_adjustments, pause_events, routes.
+ *      interventions, routes.
  *   3. JSON: fleet file `routes` → [] (defaults/rails preserved), catalog
  *      routes.discovered.json → [], staged route_whitelist.json deleted.
  *
@@ -84,7 +84,7 @@ async function main(): Promise<void> {
   if (process.env.GOVERNANCE_DB_URL) {
     const { getDb } = await import("../dapp/api/_lib/governance/db");
     const sql = getDb();
-    for (const table of ["signals", "premium_adjustments", "pause_events", "routes"]) {
+    for (const table of ["interventions", "routes"]) {
       const res = await sql.unsafe(`delete from ${table}`);
       console.log(`[wipe] db: ${table} cleared (${res.count} row(s))`);
     }

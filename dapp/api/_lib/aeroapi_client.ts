@@ -211,7 +211,7 @@ export class AeroApiClient {
    * published schedules up to ONE YEAR into the future (vs /flights' 2-day
    * visibility), in windows of at most 3 weeks per request, filterable by
    * airline + flight_number (+ origin/destination). One call attests up to
-   * 21 days of a flight's schedule — the sale authorizer uses it to verify
+   * 21 days of a flight's schedule — sale auth uses it to verify
    * far-future days exist without burning a /flights call per day.
    *
    * Caveat (spec): schedule rows are "sourced from operator's schedule and

@@ -121,7 +121,7 @@ export function fileTerms(config: RoutesConfig, route: RouteEntry): {
   };
 }
 
-/** Unique flight ids of enabled routes — feeds the sale authorizer. */
+/** Unique flight ids of enabled routes — feeds the JIT sale-auth endpoint. */
 export function enabledFlightIds(config: RoutesConfig): string[] {
   return [...new Set(config.routes.filter((r) => r.enabled).map((r) => r.flight_id))];
 }

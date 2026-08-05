@@ -120,7 +120,7 @@ export interface Config {
   // Purchase cutoff: no sale window ever authorizes a buy closer than
   // this to the scheduled departure (product rule: 24h).
   saleMinLeadSecs: number;
-  // ML pricing agent (Render-hosted FastAPI). Optional — route_agent falls
+  // ML pricing agent (Render-hosted FastAPI). Optional — pricing falls
   // back to the routes-file terms when unset or unreachable.
   agentBaseUrl?: string;
   agentToken?: string;

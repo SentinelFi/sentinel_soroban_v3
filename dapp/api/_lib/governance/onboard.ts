@@ -10,13 +10,13 @@ import { GovSubmitter } from "./submitter.js";
 import type { RouteRow } from "./model.js";
 
 /**
- * gov_onboard — the file↔chain↔DB STATUS SYNC that closes the
- * reconciler's "invisibility gap".
+ * gov_onboard — the file↔chain↔DB STATUS SYNC that closes the governance
+ * layer's "invisibility gap".
  *
- * The 2026-07-27 audit found the DB `routes` table (the reconciler's
+ * The 2026-07-27 audit found the DB `routes` table (the governance jobs'
  * world) and `config/routes.testnet.json` + the on-chain whitelist (the
- * authorizer/script world) were never synced by code: a route whitelisted
- * via the file was invisible to the reconciler forever. This job is that
+ * script world) were never synced by code: a route whitelisted via the
+ * file was invisible to governance forever. This job is that
  * bridge: every route in the fleet file is upserted into the DB with its
  * ACTUAL on-chain status (Active → 'active', Disabled → 'disabled').
  * Base terms are written on first insert only (admin edits are never

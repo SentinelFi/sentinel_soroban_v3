@@ -34,8 +34,7 @@ import type { RouteKey } from "./model.js";
  * typescript --id <GOVERNANCE_ID> --network testnet` or
  * rebuild-bindings.sh), not the hand-rolled ScVal helpers in
  * ../governance.ts: the Keep | Set | UseDefault unions are then
- * compiler-checked against the deployed contract spec. The old
- * helpers remain only for route_agent until Phase 4 absorbs it.
+ * compiler-checked against the deployed contract spec.
  *
  * Audit writes never mask the on-chain outcome: a DB blip is
  * console-logged and the tx result still returned/thrown.
