@@ -1449,19 +1449,27 @@ html[data-theme="serious"] {
 		min-width: 30px;
 	}
 
-	/* the risk figure is hoverable — hint it without shouting */
-	.riskbar-value-hint {
+	/* column "i" — explains its column once, from the table header */
+	.column-info {
 		cursor: help;
-		border-bottom: 1px dotted currentColor;
 	}
-	.riskbar-explain:focus-visible {
+	.column-info-dot {
+		border-color: var(--color-line-strong);
+		color: var(--color-sky);
+		background: var(--color-inset);
+	}
+	.column-info:hover .column-info-dot,
+	.column-info:focus-visible .column-info-dot {
+		border-color: var(--color-gold);
+		color: var(--color-gold);
+	}
+	.column-info:focus-visible {
 		outline: 2px solid var(--color-gold);
 		outline-offset: 2px;
 	}
-	/* The board clips rows; the panel must escape its row, and a table cell
-	   is not a containing block for absolute children in every engine —
-	   pin the width so long copy can't stretch the column. */
-	.riskbar-pop {
+	/* A header cell is not a containing block for absolute children in every
+	   engine, so pin the width — otherwise long copy stretches the column. */
+	.column-info-pop {
 		white-space: normal;
 		pointer-events: none;
 	}

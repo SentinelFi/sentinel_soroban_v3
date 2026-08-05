@@ -27,7 +27,7 @@ import { HowItWorksBubble } from "../components/InfoBubble"
 import { TransactionButton } from "../components/TransactionButton"
 import { TxProgress } from "../components/TxProgress"
 import { RiskBar } from "../components/RiskBar"
-import { TriggerGauge } from "../components/TriggerGauge"
+import { ColumnInfo } from "../components/ColumnInfo"
 import { FlightCalendar } from "../components/FlightCalendar"
 import {
 	routeRisk,
@@ -90,7 +90,7 @@ const BOARD_PAGE_SIZE = 12
 const BOARD_PAGE_SIZES = [12, 24, 48, 96]
 
 /** Sortable board columns. */
-type SortKey = "flight" | "trigger" | "status" | "stake"
+type SortKey = "flight" | "status" | "stake"
 type SortState = { key: SortKey; dir: 1 | -1 } | null
 
 /**
@@ -113,13 +113,6 @@ function compareRoutes(
 	switch (key) {
 		case "flight":
 			return byFlight
-		case "trigger": {
-			const da = a.terms?.delay_hours ?? defaults?.default_delay_hours
-			const db = b.terms?.delay_hours ?? defaults?.default_delay_hours
-			if (da === undefined || db === undefined)
-				return da === db ? byFlight : da === undefined ? 1 : -1
-			return da - db || byFlight
-		}
 		case "status": {
 			// Routes with no model probability sort last rather than as 0%.
 			const riskA = routeRisk(a.flightId, `${a.origin}-${a.dest}`, a.pCovered)
@@ -1057,7 +1050,7 @@ export default function Markets() {
 						<div className="scanlines absolute inset-0" />
 					<table
 						data-testid="markets-board"
-						className="w-full min-w-[820px] border-collapse"
+						className="w-full min-w-[700px] border-collapse"
 					>
 						<thead>
 							<tr className="border-b-2 border-line text-left">
@@ -1065,11 +1058,57 @@ export default function Markets() {
 									[
 										{ label: t.markets.colFlight, key: "flight" },
 										{ label: t.markets.colRoute },
-										{ label: t.markets.colTrigger, key: "trigger" },
-										{ label: t.markets.colStatus, key: "status" },
-										{ label: t.markets.colStake, key: "stake" },
+										{
+											label: t.markets.colStatus,
+											key: "status",
+											info: (
+												<ColumnInfo title="DELAY RISK">
+													The percentage is this route&rsquo;s modelled
+													chance of a payout: the flight lands{" "}
+													<span className="text-ink">3+ hours late</span>,
+													is cancelled, or diverts. Learned from{" "}
+													<span className="text-ink">
+														15 million real BTS flights
+													</span>{" "}
+													&mdash; carrier, route, month and time of day,
+													never the flight number. The bar is scaled
+													against the{" "}
+													<span className="text-ink">3.4% network
+													average</span>, so a full bar is roughly three
+													times typical rather than 100%. Same-day storms
+													are priced separately, in the premium.
+												</ColumnInfo>
+											),
+										},
+										{
+											label: t.markets.colStake,
+											key: "stake",
+											info: (
+												<ColumnInfo title="PREMIUM AND PAYOUT">
+													You pay the premium once; if the flight is 3+
+													hours late, cancelled or diverted you claim the
+													payout in full. Payout is fixed at{" "}
+													<span className="text-ink">100 USDC</span>.
+													Premium is the model&rsquo;s probability times
+													that payout, plus a{" "}
+													<span className="text-ink">30% margin</span> for
+													the underwriters, rounded up to whole dollars
+													and floored at{" "}
+													<span className="text-ink">$10</span>. Above a
+													$20 base we decline the route rather than sell
+													it at a known loss. Severe weather on your date
+													adds a surcharge on top, capped at $30 total.
+													The number you pay is always the chain&rsquo;s,
+													re-checked when you open the slip.
+												</ColumnInfo>
+											),
+										},
 										{ label: "" },
-									] as Array<{ label: string; key?: SortKey }>
+									] as Array<{
+										label: string
+										key?: SortKey
+										info?: React.ReactNode
+									}>
 								).map((col, i) => (
 									<th
 										key={i}
@@ -1108,6 +1147,9 @@ export default function Markets() {
 										) : (
 											col.label
 										)}
+										{col.info ? (
+											<span className="ml-1.5 inline-flex">{col.info}</span>
+										) : null}
 									</th>
 								))}
 							</tr>
@@ -1115,7 +1157,7 @@ export default function Markets() {
 						<tbody>
 							{filtered.length === 0 && (
 								<tr>
-									<td colSpan={6} className="px-4 py-10 text-center">
+									<td colSpan={5} className="px-4 py-10 text-center">
 										<span className="block font-board text-[24px] text-dim">
 											{t.markets.noMatch(query.trim().toUpperCase())}
 										</span>
@@ -1162,14 +1204,6 @@ export default function Markets() {
 										title={airlineName(route.flightId, route.carrier)}
 									>
 										{route.origin} → {route.dest}
-									</td>
-									<td className="px-4 py-3 whitespace-nowrap">
-										<TriggerGauge
-											hours={
-												route.terms?.delay_hours ??
-												defaults?.default_delay_hours
-											}
-										/>
 									</td>
 									<td className="px-4 py-3">
 										<div className="flex flex-col items-start gap-1.5">

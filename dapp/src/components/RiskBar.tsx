@@ -1,88 +1,5 @@
-import { useState } from "react"
 import { routeRisk } from "../data"
 import { useTheme } from "../providers/ThemeProvider"
-
-/**
- * Hover/focus explainer for the risk figure.
- *
- * The number needs a sentence next to it or it reads as a guess: it is a
- * seasonal PEAK for a 3-hour-plus delay, from a model trained on 15 million
- * real flights — three claims a bare "15%" makes none of. Hover-opened
- * (not click) because it is a reading aid, not an action, and focusable so
- * it is reachable without a mouse.
- */
-function RiskExplainer({
-	pct,
-	vsBaseline,
-	estimated,
-	peak,
-	children,
-}: {
-	pct: number
-	vsBaseline?: number
-	estimated: boolean
-	/** figure is the year's peak (vs a single priced date) */
-	peak: boolean
-	children: React.ReactNode
-}) {
-	const [open, setOpen] = useState(false)
-	return (
-		<span
-			className="riskbar-explain relative inline-flex"
-			onMouseEnter={() => setOpen(true)}
-			onMouseLeave={() => setOpen(false)}
-			onFocus={() => setOpen(true)}
-			onBlur={() => setOpen(false)}
-			tabIndex={0}
-			role="note"
-			aria-label={`Delay risk explainer: up to ${pct} percent`}
-		>
-			{children}
-			{open && (
-				<span className="info-panel panel-raised riskbar-pop absolute bottom-full left-1/2 z-40 mb-2 block w-[19rem] max-w-[80vw] -translate-x-1/2 p-3 text-left normal-case tracking-normal">
-					<span className="label-px mb-1.5 block text-gold">
-						{peak ? "WORST MONTH" : "DELAY RISK"} · {pct}%
-					</span>
-					<span className="block font-body text-[12.5px] leading-relaxed text-dim">
-						{estimated ? (
-							<>
-								An illustrative baseline — this route has no model
-								probability yet.
-							</>
-						) : (
-							<>
-								{peak ? "In its " : "About "}
-								{peak && (
-									<>
-										<span className="text-ink">worst month</span> of the year,
-										about{" "}
-									</>
-								)}
-								<span className="text-ink">{pct} in 100</span> of these
-								flights land <span className="text-ink">3+ hours late</span>,
-								get cancelled, or divert — the exact events this policy
-								pays on.
-								{vsBaseline !== undefined && (
-									<>
-										{" "}
-										That is{" "}
-										<span className="text-ink">{vsBaseline}×</span> the
-										3.4% average across the whole network.
-									</>
-								)}{" "}
-								{peak
-									? "Quiet months run far lower, so this is the ceiling, not your date. "
-									: "This is one representative date; other months differ. "}
-								Learned from 15 million real BTS flights; storms on the day
-								are priced separately.
-							</>
-						)}
-					</span>
-				</span>
-			)}
-		</span>
-	)
-}
 
 /**
  * Horizontal delay-risk bar.
@@ -97,6 +14,10 @@ function RiskExplainer({
  * invents a number: an earlier version hashed the flight id into a
  * plausible-looking figure, which produced confident red readings up to 44%
  * — about triple anything this fleet can actually produce.
+ *
+ * What the number means is explained once, on the STATUS column header
+ * (see ColumnInfo) — not per row. A hover target on 1,069 rows made the
+ * board twitchy to scan and repeated the same sentence endlessly.
  *
  * Themed:
  *   FUN     = chunky segmented pixel bar (10 hard cells)
@@ -173,11 +94,9 @@ export function RiskBar({
 						}}
 					/>
 				</div>
-				<RiskExplainer pct={delayedPct} vsBaseline={vsBaseline} estimated={estimated} peak={peak}>
-					<span className="riskbar-value riskbar-value-hint" style={{ color }}>
+				<span className="riskbar-value" style={{ color }}>
 						{label}
 					</span>
-				</RiskExplainer>
 				{!compact && estimated && <span className="riskbar-est">est.</span>}
 			</div>
 		)
@@ -200,11 +119,9 @@ export function RiskBar({
 					/>
 				))}
 			</div>
-			<RiskExplainer pct={delayedPct} vsBaseline={vsBaseline} estimated={estimated} peak={peak}>
-				<span className="riskbar-value riskbar-value-hint" style={{ color }}>
+			<span className="riskbar-value" style={{ color }}>
 					{label}
 				</span>
-			</RiskExplainer>
 			{!compact && estimated && <span className="riskbar-est">est.</span>}
 		</div>
 	)
