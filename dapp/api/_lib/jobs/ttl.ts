@@ -112,10 +112,11 @@ async function sweepExpiredClaims(client: SorobanClient, config: Config, results
  * far past the platform's 300s hard cap on this function (Pro without
  * Fluid ignores a higher maxDuration — see api/cron/weather.ts). Two
  * guards, mirroring jobs/weather.ts:
- *   1. SHARDS — each daily run covers a deterministic 1/7th of the keys
- *      (stable hash × UTC-day slot), so the whole fleet is covered every
- *      7 days. EXTEND_TO_LEDGERS is ~120 days, so a 7-day rotation
- *      re-extends every key ~17x over before it could approach expiry.
+ *   1. SHARDS — each run covers a deterministic 1/7th of the keys (stable
+ *      hash × UTC-day slot). At the weekly cadence the whole fleet is
+ *      covered every 49 days, comfortably inside the 120-day route TTL
+ *      (~2.4x margin). See the SHARDS constant: the shard count and the
+ *      cron cadence are coupled and must be changed together.
  *   2. TIME_BUDGET_MS — the batch loop ALWAYS returns rather than risking
  *      a silent platform kill. A kill writes no cron_runs row at all,
  *      which makes a dead job look merely "not re-run"; returning early
@@ -131,7 +132,16 @@ async function extendIdlePersistentKeys(
   if (!process.env.GOVERNANCE_DB_URL) return;
   const EXTEND_TO_LEDGERS = 120 * 17_280; // ~120 days at ~5s ledgers
   const BATCH = 20;
-  const SHARDS = 7; // one full rotation per week, inside a ~120-day TTL
+  // Shard count is coupled to the CRON CADENCE, not chosen freely: a full
+  // fleet pass takes SHARDS × the interval, and that must stay well inside
+  // the 120-day route TTL or keys archive and routes vanish from chain.
+  //   daily  × 7 =   7 days  (17x margin)
+  //   weekly × 7 =  49 days  (2.4x margin)  <- current
+  //   monthly× 7 = 210 days  (0.57x)        <- would ARCHIVE ROUTES
+  // If the cadence is ever slowed to monthly, SHARDS must drop to 2 to keep
+  // a 2x margin — and each run then carries ~534 keys, which does NOT fit
+  // the 300s budget today. Change both together or not at all.
+  const SHARDS = 7;
   // Budget measured from the WHOLE run's start (instance extend_ttl, the
   // prune drain loop and the claim sweep all ran before this), leaving
   // headroom for the in-flight batch's confirmation poll to finish.

@@ -30,7 +30,7 @@ export interface JobInfo {
 // update BOTH when a cron changes.
 export const JOB_REGISTRY: JobInfo[] = [
   { job: "settler", path: "/api/cron/settle", schedule: "*/5 * * * *", intervalMinutes: 5, signer: "keeper", manualRunnable: true, description: "Execute due settlements" },
-  { job: "queue_maintainer", path: "/api/cron/queue", schedule: "2-59/5 * * * *", intervalMinutes: 5, signer: "keeper", manualRunnable: true, description: "Vault withdrawal-queue maintenance" },
+  { job: "queue_maintainer", path: "/api/cron/queue", schedule: "2-59/15 * * * *", intervalMinutes: 15, signer: "keeper", manualRunnable: true, description: "Vault withdrawal-queue maintenance" },
   { job: "classifier", path: "/api/cron/classify", schedule: "0 * * * *", intervalMinutes: 60, signer: "keeper", manualRunnable: true, description: "Classify flights for settlement" },
   { job: "fetcher", path: "/api/cron/fetcher", schedule: "0 */2 * * *", intervalMinutes: 120, signer: "oracle", manualRunnable: true, description: "Settle sweep — insured flights past scheduled arrival + 5h: one AeroAPI call → outcome → targeted settle (promise: settled within 24h of ETA)" },
   { job: "revive", path: "/api/cron/revive", schedule: "40 * * * *", intervalMinutes: 60, signer: "gov-admin", manualRunnable: true, description: "Unified revive engine — re-checks every open intervention with its cause's own predicate (cancellation: daily sweep · exposure: eased 2 checks · weather: forecast cleared); last hold cleared → route re-enabled" },
@@ -38,7 +38,7 @@ export const JOB_REGISTRY: JobInfo[] = [
   { job: "gov_onboard", path: "/api/cron/gov-onboard", schedule: "15 */6 * * *", intervalMinutes: 360, signer: "gov-admin", manualRunnable: true, description: "Fleet status sync — file/chain → DB (route INTAKE is the manual scripts/ pipeline, never automated)" },
   { job: "weather", path: "/api/cron/weather", schedule: "20 */2 * * *", intervalMinutes: 120, signer: "gov-admin", manualRunnable: true, description: "Storm surcharge — stateless: fleet-file base + flat forecast surcharge → update_route_terms (no DB)" },
   { job: "reprice", path: "/api/cron/reprice", schedule: "0 8 1 * *", intervalMinutes: 43200, signer: "gov-admin", manualRunnable: true, description: "Monthly seasonal repricing — prices stay ADVISORY (proposal → pricing_runs; admin applies via seed_routes --apply-terms) BUT live routes priced above the base cap get a `pricing` intervention (pause), revived when priced back under" },
-  { job: "ttl_extender", path: "/api/cron/ttl", schedule: "0 0 * * *", intervalMinutes: 1440, signer: "ttl", manualRunnable: true, description: "Extend contract TTLs, prune settled" },
+  { job: "ttl_extender", path: "/api/cron/ttl", schedule: "0 0 * * 0", intervalMinutes: 10080, signer: "ttl", manualRunnable: true, description: "Extend contract TTLs, prune settled" },
 ];
 
 /**
