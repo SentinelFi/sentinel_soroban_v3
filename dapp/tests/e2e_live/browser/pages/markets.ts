@@ -63,6 +63,43 @@ export async function openBetSlip(page: Page, flightId: string): Promise<void> {
 export interface BuyResult {
   ok: boolean;
   error?: string;
+  /**
+   * The UI refused BEFORE submitting anything — a client-side precheck
+   * (vault free capital, buyer balance) disabled the BUY button.
+   *
+   * Distinct from a sale-auth refusal on purpose: a refusal is a property
+   * of the FLIGHT (cancelled, vanished, inside the lead cutoff) and is
+   * permanent, so the candidate is retired. A block is a property of the
+   * VAULT at this instant and clears as soon as capital frees up, so the
+   * candidate must stay eligible and be retried on the next check.
+   */
+  blocked?: boolean;
+}
+
+/**
+ * How long BUY may sit disabled before we call it blocked rather than
+ * loading. A precheck that reads free capital over RPC leaves the button
+ * disabled for a beat on first paint; concluding "blocked" during that
+ * window would strand every candidate for no reason.
+ */
+const BUY_ENABLE_GRACE_MS = 15_000;
+
+/** Why is BUY disabled? Best available explanation, never throws. */
+async function blockedReason(page: Page): Promise<string> {
+  for (const id of ["betslip-blocked", "betslip-error"]) {
+    const el = page.getByTestId(id);
+    if ((await el.count().catch(() => 0)) > 0) {
+      const text = ((await el.first().textContent().catch(() => "")) ?? "").trim();
+      if (text) return text;
+    }
+  }
+  const btn = page.getByTestId("betslip-buy");
+  for (const attr of ["title", "aria-label", "data-blocked-reason"]) {
+    const v = (await btn.getAttribute(attr).catch(() => null))?.trim();
+    if (v) return v;
+  }
+  const label = ((await btn.textContent().catch(() => "")) ?? "").trim();
+  return label ? `BUY disabled (button reads "${label}")` : "BUY disabled, no reason surfaced in the UI";
 }
 
 /**
@@ -111,7 +148,29 @@ export async function buyPolicy(page: Page, flightId: string, dateISO: string): 
   }
 
   await markToasts(page);
-  await page.getByTestId("betslip-buy").click();
+
+  // A client-side precheck may disable BUY before anything is submitted.
+  // Give it a grace window (the free-capital read is async on first paint),
+  // then report WHY rather than hanging on an un-clickable button — an
+  // un-guarded .click() would burn the default timeout and the run would
+  // look like a mysterious stall instead of "the vault is empty".
+  const buyBtn = page.getByTestId("betslip-buy");
+  const enabledBy = Date.now() + BUY_ENABLE_GRACE_MS;
+  while (Date.now() < enabledBy && (await buyBtn.isDisabled().catch(() => false))) {
+    await page.waitForTimeout(200);
+  }
+  if (await buyBtn.isDisabled().catch(() => false)) {
+    const reason = await blockedReason(page);
+    await page.getByTestId("betslip-close").click().catch(() => {});
+    return { ok: false, blocked: true, error: reason };
+  }
+
+  try {
+    await buyBtn.click({ timeout: 10_000 });
+  } catch (err) {
+    await page.getByTestId("betslip-close").click().catch(() => {});
+    return { ok: false, blocked: true, error: `BUY not clickable: ${String(err).slice(0, 160)}` };
+  }
 
   const slip = page.getByTestId("betslip");
   const deadline = Date.now() + TX_TIMEOUT_MS;

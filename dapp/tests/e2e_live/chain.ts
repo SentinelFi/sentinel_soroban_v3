@@ -139,6 +139,32 @@ export class Chain {
   }
 
   // ── governance ─────────────────────────────────────────────────────────
+  /**
+   * The route's RESOLVED premium in whole USDC, straight from the chain —
+   * base plus whatever weather surcharge the governance layer has written.
+   *
+   * The staged `route_whitelist.json` carries the BASE only, so asserting a
+   * paid amount against the file reports a false mismatch the moment a
+   * storm surcharges a route. This is the number the buyer actually pays.
+   * Returns null when the route is not Active or the shape is unreadable —
+   * callers fall back to the staged figure rather than failing the check.
+   */
+  async routePremiumUsdc(flightId: string, origin: string, dest: string): Promise<number | null> {
+    const v = await this.read(this.cfg.contracts.governance, "route_status", [
+      sym(flightId),
+      sym(origin),
+      sym(dest),
+    ]).catch(() => null);
+    // Active(ResolvedTerms) renders as ["Active", {...}] or {tag, values}.
+    const payload = Array.isArray(v)
+      ? v[1]
+      : (v as { values?: unknown[] } | null)?.values?.[0];
+    const premium = (payload as { premium?: unknown } | undefined)?.premium;
+    if (premium === undefined || premium === null) return null;
+    const units = typeof premium === "bigint" ? premium : BigInt(String(premium));
+    return Number(units / 10_000_000n);
+  }
+
   /** Returns the enum TAG only ("Active" | "Disabled" | "Unknown") —
    *  scValToNative renders payload enums as [tag, value] / {tag} shapes. */
   async routeStatus(flightId: string, origin: string, dest: string): Promise<string> {
