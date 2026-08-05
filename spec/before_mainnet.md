@@ -7,16 +7,52 @@ bundle so the chain is touched once.
 
 ## Contract upgrade bundle (one upgrade, re-audit together)
 
-- [ ] **[contract] Insure both legs of out-and-back flight numbers.** The whole
-  settlement path is keyed by `(flight_id, date)`: GovernanceModule maps each
-  flight ID to exactly ONE route (`FlightIdAlreadyMapped` #505), and the oracle
-  stores one outcome per flight per day. Airlines reuse the same number for the
-  return leg (e.g. `DAL860` BOS→SFO morning / SFO→BOS evening, same date), so
-  ~10% of the priced catalog (121 of 1,190 routes in the 2026-08-04 seed) is
-  forfeited to duplicates. Fix is a coherent stack change: composite route key
-  `(flight_id, origin, dest)` in GovernanceModule + leg-disambiguated outcome
-  storage in OracleAggregator + AeroAPI client ambiguity guard selecting the
-  leg by origin/dest (the client already validates legs — tractable).
+- [ ] **[contract] Insure both legs of out-and-back flight numbers.**
+  *(Researched 2026-08-05 — supersedes the earlier one-paragraph entry. The
+  off-chain half is now split out below as its own items: this bundle entry
+  is ONLY the contract change.)*
+
+  GovernanceModule already keys `Route(flight_id, origin, dest)`. The block is
+  entirely downstream: `OracleKey::FlightData`/`SaleAuth`,
+  `PoolKey::FlightConfig`/`Buyer`/`Claimed`, the shared active-set index, and
+  `CtrlKey::TravelerFlights` are all keyed `(Symbol, u64)`. The
+  `FlightRoute(flight_id)` uniqueness index (`FlightIdAlreadyMapped` #505)
+  exists purely to stop two routes colliding in that 2-part space.
+
+  **The data already exists and is silently dropped.** `route_whitelist.json`
+  holds 1,190 rows over 1,069 distinct flight_ids — **114 ids map to more than
+  one leg** (108×2, 5×3, 1×4). All 121 whitelist triples missing from the fleet
+  file are second/third/fourth legs rejected on-chain and swallowed by
+  `seed_routes.ts`'s catch. `discover_routes`, `price_routes` and `seed_routes`
+  are ALREADY multi-leg correct — only the contract refuses.
+
+  **Blast radius:** 28 of 35 public entry points take `flight_id` without
+  origin/dest; 25 typed events; 292 of 480 tests.
+
+  **Two designs, decide by measurement, not taste:**
+  - *A — add origin/dest to the downstream keys.* Self-describing on-chain
+    data, and the fetcher gets the leg straight from `get_active_flights`.
+    Costs: `TravelerFlights` goes 61% → **98%** of the 65,536-byte entry limit,
+    so `MAX_TRAVELER_FLIGHTS` MUST drop 1,000 → ~600 (overflow permanently
+    blocks that address from buying — the append is on the `buy_insurance`
+    path); and every key gains two members on the classify/settle path.
+  - *B — compound Symbol (`AAL1771_DFW_LAS`).* No signature changes, and
+    size-safe (73% of the entry limit). But 15 chars crosses Soroban's 9-char
+    `SymbolSmall` boundary, so every flight id becomes a heap-allocated
+    `SymbolObject` — allocations and host calls where there are now register
+    ops. Also breaks `symbol_short!` at ~277 test sites.
+
+  Both land on the CPU budget that already forced `MAX_CLASSIFY_BATCH` 25 → 8
+  and `MAX_SETTLE_BATCH` 10 → 8 (measured ~5.90M instructions/flight against a
+  100M cap). **Measure `classify_flights` on a branch for each option before
+  committing** — the same measurement that sized those constants.
+
+  **Migration is the hard part, and is why this is pre-mainnet.** After the
+  upgrade, code reads 4-part keys while existing entries are 2-part: live
+  policies become invisible, collateral locked and claims impossible. There is
+  no dual-read path today. The fleet must be drained to zero (settle + claim
+  everything, then `wipe_routes` + re-seed) before the upgrade lands. Trivial
+  on testnet; on mainnet it means "before there is real money".
 - [ ] **[contract] Batch `whitelist_routes(vec)` entrypoint.** Seeding is one
   tx per route (Stellar: one tx per source account per ~5s ledger). The
   2026-08-04 testnet seed of ~1,190 routes took ~3h and would cost real XLM on
@@ -30,6 +66,55 @@ bundle so the chain is touched once.
 
 ## Off-chain tooling
 
+- [ ] **Sale-auth never checks that the flight IS the route we sold.**
+  *(Found 2026-08-05. Live defect — it is writing wrong policies right now,
+  and needs no contract change to fix.)* `getFlightData` verifies only that a
+  flight with that ident exists on that date and is not cancelled. It never
+  compares origin/destination — `AeroApiFlight` (`aeroapi_client.ts:3-18`)
+  does not even model those fields, though AeroAPI returns them.
+  **Measured against the live soak: 2 of 8 sampled policies are attested
+  against a different physical flight.** AAL1193 was sold as DFW→ORD but the
+  2026-08-06 flight is ORD→CID; AAL1424 sold DFW→ORD, actual ORD→FLL. The
+  premium was priced on one route's delay profile and settlement will read
+  another's. Extrapolated, ~12 of the 50 soak policies may be mis-attested.
+  **Fix:** model `origin`/`destination` on `AeroApiFlight`, pass the leg into
+  `getFlightData`, and REFUSE when the returned flight is not the sold leg.
+  The ICAO↔IATA `sameAirport` helper added to `sale_auth.ts` on 2026-08-05
+  for `/schedules` should move into the client and serve both paths.
+- [ ] **`getFlightData` cannot disambiguate a multi-leg ident.**
+  *(Found 2026-08-05. Live defect; off-chain only.)* On more than one
+  candidate it logs "refusing to guess" and returns `null`
+  (`aeroapi_client.ts:194-201`) — the SAME `null` it returns for "no such
+  flight". Three distinct outcomes (absent / wrong leg / genuinely ambiguous)
+  collapse into one, so callers cannot tell them apart and the UI says
+  "flight not verifiable for that date" for all three. This is what refused
+  AAL1771 and UAL2382 in the 2026-08-05 smoke test even though those flights
+  were operating and sellable.
+  **`fetcher.ts:157` is the ONLY call site with no route context** — it
+  iterates the oracle's bare `(flight_id, date)` list, so a multi-leg ident
+  never settles; it just retries until the 14-day stale-void. Everything else
+  (`sale_auth`, `route_guard`) already holds the route and discards it.
+  **Ordering constraint:** the fetcher can resolve its route from the fleet
+  file ONLY while the on-chain 1:1 constraint holds. So this fix must land
+  BEFORE the composite-key contract change, not after — once a flight_id maps
+  to two routes, the lookup is ambiguous again and the leg must come from the
+  chain.
+- [ ] **Four off-chain sites silently pick a winner when a flight_id has two
+  routes.** They are latent today (the chain enforces 1:1) and become wrong
+  the moment the contract change lands, so they are part of that bundle's
+  off-chain half: `findSellableRoute` (`sale_auth.ts:92`) takes the FIRST
+  match with no `ORDER BY`; `outcome_log.ts:86` takes the first, so the ML
+  training row gets the wrong airports and the second leg's outcome is
+  dropped by `on conflict do nothing`; `exposure_collector.ts:196-211` builds
+  a `Map` keyed on flight_id so the LAST leg wins and the other reads zero
+  liability; `event_ingest.ts:106-115` joins `routes` on flight_id alone, so
+  the join fans out and `policies.origin/dest` is wrong for ~half the rows.
+- [ ] **Two DB tables have uniqueness blind to the leg.** `settlements` is
+  `primary key (flight_id, date)` and `flight_schedules` is
+  `primary key (flight_id, date_unix)` — two legs on one day collide and the
+  second is silently dropped (`on conflict do nothing` / overwritten). Both
+  need origin/dest in the key alongside the contract change. `routes`,
+  `interventions`, `flight_outcomes` and `policies` already carry the triple.
 - [ ] **Fleet disable cap is wired to only one of five pause paths.**
   *(Found 2026-08-04; deliberately deferred — leave as-is until after the
   soak.)* The circuit breaker `max(3, 20% of fleet)` (`computeDisableCap`,
@@ -58,7 +143,9 @@ bundle so the chain is touched once.
   forgiving — EXTREME is visible up to 72h out and the sale cutoff is 24h,
   leaving ~48h of actionable window, re-proposed every 2h — so email
   alerting is sufficient; the gap is that **nothing pushes at all today**.
-- [ ] **Deliberate duplicate-leg dedupe in `price_routes.ts`.** Today
+- [ ] **Deliberate duplicate-leg dedupe in `price_routes.ts`.** *(Interim
+  measure only — obsolete once the composite-key contract change lands, since
+  both legs become insurable. Keep it while the 1:1 constraint stands.)* Today
   first-occurrence-wins decides which leg of a duplicate flight number gets
   seeded — arbitrary, and in ~a dozen cases it picked the cheaper leg (e.g.
   `AAL2086` seeded BOS→PHL $10, dropped ORD→LGA $20). Rule: keep the
