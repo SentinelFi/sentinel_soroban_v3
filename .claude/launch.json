@@ -11,6 +11,12 @@
 			"runtimeExecutable": "cmd",
 			"runtimeArgs": ["/c", "cd /d dapp && npx vite --port 5176 --strictPort"],
 			"port": 5176
+		},
+		{
+			"name": "dapp-api",
+			"runtimeExecutable": "cmd",
+			"runtimeArgs": ["/c", "cd /d dapp && npm run dev:api"],
+			"port": 3000
 		}
 	]
 }

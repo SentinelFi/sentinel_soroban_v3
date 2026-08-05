@@ -9,9 +9,10 @@ import {
 	useTravelerFlights,
 } from "../hooks/useContracts"
 import { useWallet } from "../hooks/useWallet"
+import { useFlightSchedules } from "../hooks/useFlightSchedules"
 import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { cn, txHashOf } from "../lib/utils"
-import { formatDate } from "../lib/format"
+import { formatDate, utcHm } from "../lib/format"
 import { PixelArt } from "../components/PixelArt"
 import { TxProgress } from "../components/TxProgress"
 import { useTheme } from "../providers/ThemeProvider"
@@ -47,6 +48,8 @@ interface Bet {
 	/** claim-window expiry, for the claimable countdown line */
 	claimExpiry?: bigint
 	eta?: string
+	/** scheduled departure "HH:MM" UTC, when the backend snapshot has it */
+	depTime?: string
 }
 
 type Copy = ReturnType<typeof useCopy>
@@ -121,6 +124,12 @@ export default function Policies() {
 		refetch: refetchStates,
 	} = usePolicyStateBatch(flights, address)
 	const { data: flightData } = useFlightDataBatch(flights)
+	// Scheduled departures from the sale-auth snapshot table — every policy
+	// went through sale-auth at buy time, so rows normally exist. Missing
+	// data (DB-optional backend) just leaves the time off the row.
+	const { data: depTimes } = useFlightSchedules(
+		(flights ?? []).map(([flightId, date]) => ({ flightId, date })),
+	)
 
 	if (!address) {
 		return (
@@ -233,11 +242,16 @@ export default function Policies() {
 				? computeEta(oracle.estimated_arrival_time)
 				: undefined
 
+		const depSecs = depTimes?.get(
+			`${state.flightId}:${state.date.toString()}`,
+		)
+
 		return {
 			id: `${state.flightId}-${state.date.toString()}`,
 			flightId: state.flightId,
 			date: state.date,
 			dateStr: formatDate(state.date),
+			depTime: depSecs !== undefined ? utcHm(depSecs) : undefined,
 			section,
 			payoff: state.config?.payoff,
 			claimed: state.claimed,
@@ -373,6 +387,9 @@ export default function Policies() {
 								</p>
 								<p className="mt-1 font-board text-[20px] text-dim">
 									{bet.flightId} · {bet.dateStr}
+									{bet.depTime
+										? ` · ${t.policies.depTime(bet.depTime)}`
+										: ""}
 								</p>
 								<div className="mt-2 flex justify-center">
 									<StatusBadge
@@ -447,6 +464,9 @@ export default function Policies() {
 								</span>
 								<span className="font-board text-[19px] text-dim">
 									{bet.dateStr}
+									{bet.depTime
+										? ` · ${t.policies.depTime(bet.depTime)}`
+										: ""}
 								</span>
 								<StatusBadge
 									kind="tracking"
@@ -495,6 +515,9 @@ export default function Policies() {
 								</span>
 								<span className="font-board text-[18px] text-mute">
 									{bet.dateStr}
+									{bet.depTime
+										? ` · ${t.policies.depTime(bet.depTime)}`
+										: ""}
 								</span>
 								<StatusBadge
 									kind={bet.badge}

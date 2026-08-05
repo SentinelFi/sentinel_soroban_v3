@@ -100,6 +100,7 @@ const fun = {
 		triggerLabel: "DELAY TRIGGER",
 		dateLabel: "FLIGHT DATE (UTC)",
 		datePlaceholder: "PICK A DAY ▾",
+		departsLabel: "DEPARTS (UTC)",
 		calPrevAria: "Previous month",
 		calNextAria: "Next month",
 		calCloseAria: "Close calendar",
@@ -220,6 +221,7 @@ const fun = {
 		reasonDelayedPaid: "Delayed — paid out.",
 		reasonCancelledPaid: "Cancelled — paid out.",
 		claimWindow: (d: string) => `CLAIM BY ${d}`,
+		depTime: (hm: string) => `DEP ${hm} UTC`,
 	},
 	calc: {
 		title: "UNDERWRITER CALCULATOR",
@@ -474,6 +476,7 @@ const serious: Copy = {
 		triggerLabel: "Delay trigger",
 		dateLabel: "Flight date (UTC)",
 		datePlaceholder: "Select a date",
+		departsLabel: "Departure (UTC)",
 		calPrevAria: "Previous month",
 		calNextAria: "Next month",
 		calCloseAria: "Close calendar",
@@ -594,6 +597,7 @@ const serious: Copy = {
 		reasonDelayedPaid: "Delayed — paid out.",
 		reasonCancelledPaid: "Cancelled — paid out.",
 		claimWindow: (d: string) => `Claim by ${d}`,
+		depTime: (hm: string) => `Dep ${hm} UTC`,
 	},
 	calc: {
 		title: "Underwriter Calculator",

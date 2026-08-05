@@ -85,6 +85,11 @@ export function formatDate(epoch: bigint): string {
 	return d.toISOString().slice(0, 10)
 }
 
+/** "14:35" — UTC hh:mm for a unix-seconds epoch (scheduled departures). */
+export function utcHm(epochSecs: number): string {
+	return new Date(epochSecs * 1000).toISOString().slice(11, 16)
+}
+
 /** "01 Aug 2026 09:02" (withSeconds: "01 Aug 2026 09:02:47") in UTC. */
 export function utcDateTime(iso: string, withSeconds = false): string {
 	return new Date(iso).toUTCString().slice(5, withSeconds ? 25 : 22)
