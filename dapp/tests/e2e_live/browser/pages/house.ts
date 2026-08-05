@@ -26,6 +26,34 @@ async function ensureHouse(page: Page): Promise<void> {
   await gotoIfMissing(page, "/house", "house-tvl");
 }
 
+/**
+ * Wait for a CONDITIONALLY-RENDERED action button before deciding it is absent.
+ *
+ * `ensureHouse` only waits for `house-tvl`, which paints as soon as the page
+ * mounts. COLLECT and the cancel buttons render only once a SEPARATE on-chain
+ * read resolves (claimable balance, queue contents), so checking `count()`
+ * immediately raced that read: on 2026-08-05 U4 reported "nothing to collect"
+ * while holding 600 USDC claimable, with `collect` simulating clean on-chain.
+ * It returned in ~4s — far short of the 90s tx timeout — which is what gave
+ * the race away.
+ *
+ * Also tolerates a button that mounts DISABLED while a read settles. Only
+ * after the window closes is absence treated as real.
+ */
+async function awaitActionButton(page: Page, testId: string, timeoutMs = 15_000) {
+  const btn = page.getByTestId(testId).first();
+  try {
+    await btn.waitFor({ state: "attached", timeout: timeoutMs });
+  } catch {
+    return null;
+  }
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline && (await btn.isDisabled().catch(() => false))) {
+    await page.waitForTimeout(250);
+  }
+  return btn;
+}
+
 async function readTestId(page: Page, testId: string): Promise<string> {
   const el = page.getByTestId(testId).first();
   await el.waitFor({ state: "attached", timeout: 15_000 });
@@ -59,7 +87,7 @@ async function runAmountAction(
   await ensureHouse(page);
   const input = page.locator(`[data-testid="house-amount"][data-amount-for="${amountFor}"]`);
   await input.fill(String(amount));
-  const btn = page.getByTestId(buttonTestId);
+  const btn = (await awaitActionButton(page, buttonTestId)) ?? page.getByTestId(buttonTestId);
   if (await btn.isDisabled()) {
     return {
       ok: false,
@@ -81,8 +109,8 @@ export async function requestWithdrawal(page: Page, amountShares: number): Promi
 
 async function cancelFirst(page: Page, buttonTestId: string, errorTestId: string, what: string): Promise<TxResult> {
   await ensureHouse(page);
-  const btn = page.getByTestId(buttonTestId).first();
-  if ((await btn.count()) === 0) {
+  const btn = await awaitActionButton(page, buttonTestId);
+  if (!btn) {
     return { ok: false, error: `no cancellable ${what} entry is showing` };
   }
   if (await btn.isDisabled()) {
@@ -104,8 +132,8 @@ export async function cancelWithdrawal(page: Page): Promise<TxResult> {
 
 export async function collect(page: Page): Promise<TxResult> {
   await ensureHouse(page);
-  const btn = page.getByTestId("house-collect");
-  if ((await btn.count()) === 0) {
+  const btn = await awaitActionButton(page, "house-collect");
+  if (!btn) {
     return { ok: false, error: "nothing to collect (no claimable balance is showing)" };
   }
   if (await btn.isDisabled()) {

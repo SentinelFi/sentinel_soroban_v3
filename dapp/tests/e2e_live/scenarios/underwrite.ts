@@ -36,9 +36,9 @@ export async function underwrite(
       if (a.name === "U3" && !prog.cancelTested) {
         const balBefore = await chain.usdcBalance(a.address);
         const d1 = await deposit(ctx.page, a.depositUsdc);
-        j.append("action", "deposit request (to cancel)", { ok: d1.ok, usdc: a.depositUsdc }, a.name);
+        j.append("action", "deposit request (to cancel)", { ok: d1.ok, ...(d1.error ? { error: d1.error } : {}), usdc: a.depositUsdc }, a.name);
         const c1 = await cancelDeposit(ctx.page);
-        j.append("action", "cancel_deposit", { ok: c1.ok }, a.name);
+        j.append("action", "cancel_deposit", { ok: c1.ok, ...(c1.error ? { error: c1.error } : {}) }, a.name);
         const balAfter = await chain.usdcBalance(a.address);
         journalCheck(
           j,

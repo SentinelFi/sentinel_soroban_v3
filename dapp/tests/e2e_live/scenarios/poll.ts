@@ -186,13 +186,13 @@ async function vaultLifecycleActions(
         try {
           const qBefore = (await chain.withdrawalQueue()).length;
           const r1 = await requestWithdrawal(ctx.page, Number(shares / USDC_UNITS) / 2);
-          j.append("action", "request_withdrawal (to cancel)", { ok: r1.ok }, "U4");
+          j.append("action", "request_withdrawal (to cancel)", { ok: r1.ok, ...(r1.error ? { error: r1.error } : {}) }, "U4");
           const c1 = await cancelWithdrawal(ctx.page);
-          j.append("action", "cancel_withdrawal", { ok: c1.ok }, "U4");
+          j.append("action", "cancel_withdrawal", { ok: c1.ok, ...(c1.error ? { error: c1.error } : {}) }, "U4");
           const qAfter = (await chain.withdrawalQueue()).length;
           journalCheck(j, "U4: cancel_withdrawal removes exactly one queue entry", c1.ok && qAfter === qBefore, `queue ${qBefore}→${qAfter}`);
           const r2 = await requestWithdrawal(ctx.page, Number(shares / USDC_UNITS) / 2);
-          j.append("action", "request_withdrawal (kept)", { ok: r2.ok }, "U4");
+          j.append("action", "request_withdrawal (kept)", { ok: r2.ok, ...(r2.error ? { error: r2.error } : {}) }, "U4");
           prog.cancelWithdrawalTested = true;
           j.saveState(state);
         } finally {
@@ -215,7 +215,7 @@ async function vaultLifecycleActions(
       try {
         const amt = Math.max(1, Math.floor((Number(shares / USDC_UNITS) * fraction)));
         const r = await requestWithdrawal(ctx.page, amt);
-        j.append("action", "request_withdrawal (FIFO probe)", { ok: r.ok, shares: amt, fraction }, name);
+        j.append("action", "request_withdrawal (FIFO probe)", { ok: r.ok, ...(r.error ? { error: r.error } : {}), shares: amt, fraction }, name);
         j.append("expectation", "queue processes in FIFO order as settlements free capital", { position: fired }, name);
         if (r.ok) fired++;
       } finally {
@@ -253,7 +253,21 @@ async function claimsAndCollects(
       const before = await chain.usdcBalance(a.address);
       const r = await collect(ctx.page);
       const after = await chain.usdcBalance(a.address);
-      j.append("action", "collect", { ok: r.ok, claimable: claimable.toString(), receivedUnits: (after - before).toString() }, a.name);
+      // Record r.error too: without it a failure is an opaque `ok:false`, and
+      // the reason (button never rendered vs tx reverted vs timeout) is the
+      // whole diagnosis — U4 on 2026-08-05 cost a live investigation for want
+      // of this one field.
+      j.append(
+        "action",
+        "collect",
+        {
+          ok: r.ok,
+          ...(r.error ? { error: r.error } : {}),
+          claimable: claimable.toString(),
+          receivedUnits: (after - before).toString(),
+        },
+        a.name,
+      );
       journalCheck(j, `${a.name}: COLLECT pays the claimable balance exactly`, r.ok && after - before === claimable, `Δ=${after - before} claimable=${claimable}`);
     } finally {
       await ctx.close();
@@ -283,7 +297,7 @@ async function claimsAndCollects(
       const r = await claim(ctx.page, b.flightId);
       const after = await chain.usdcBalance(a.address);
       const paidUsdc = Number((after - before) / USDC_UNITS);
-      j.append("action", "claim", { flight: key, ok: r.ok, paidUsdc }, b.actor);
+      j.append("action", "claim", { flight: key, ok: r.ok, ...(r.error ? { error: r.error } : {}), paidUsdc }, b.actor);
       journalCheck(j, `${b.actor}: claim on ${b.flightId}@${b.dateISO} pays exactly 100`, r.ok && paidUsdc === 100, `paid=${paidUsdc} settled=${JSON.stringify(settled)?.slice(0, 80)}`);
       const shot = await snap(ctx.page, j.shotsDir, `claim-${b.actor}-${b.flightId}`);
       j.append("screenshot", shot, {}, b.actor);
