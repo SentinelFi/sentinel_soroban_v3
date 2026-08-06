@@ -162,30 +162,108 @@ function illustrativeSeries(
 	return out
 }
 
+export interface SparkSeries {
+	points: number[]
+	/** true = synthesized fallback — the UI must label it */
+	illustrative: boolean
+}
+
+interface VaultHistoryRow {
+	ts: string
+	total_assets: string
+	share_price: string
+}
+
+const DAY_MS = 86_400_000
+const SPARK_MAX_POINTS = 48
+
+/** Evenly thin a long series so the tiny sparkline stays legible. */
+function thinSeries(points: number[]): number[] {
+	if (points.length <= SPARK_MAX_POINTS) return points
+	const step = (points.length - 1) / (SPARK_MAX_POINTS - 1)
+	return Array.from(
+		{ length: SPARK_MAX_POINTS },
+		(_, i) => points[Math.round(i * step)],
+	)
+}
+
 /**
- * 30-day ILLUSTRATIVE TVL series. Deterministic; not on-chain history.
- * Label as illustrative wherever it renders.
+ * REAL vault time series (hourly buckets, 14 days) from the
+ * vault_history mirror via the public status API. Empty until the
+ * queue_maintainer cron has appended history — callers fall back to the
+ * illustrative series and label it.
  */
-export function useTvlSparkline(): number[] {
-	const { data } = useQuery({
+function useVaultHistoryRows() {
+	return useQuery({
+		queryKey: ["derived", "vaultHistory"],
+		queryFn: async (): Promise<VaultHistoryRow[]> => {
+			const res = await fetch("/api/status/vault-history?hours=336")
+			if (!res.ok) throw new Error(`HTTP ${res.status}`)
+			const body = (await res.json()) as { rows?: VaultHistoryRow[] }
+			return body.rows ?? []
+		},
+		// the series gains at most one point per HOUR (hourly buckets), so
+		// anything fresher than ~30min is wasted fetching; gcTime keeps the
+		// cache alive across navigation away from the House page
+		staleTime: 1_800_000,
+		gcTime: 3_600_000,
+		retry: 1,
+	})
+}
+
+/** TVL trend — real history when the mirror has ≥2 samples. */
+export function useTvlSparkline(): SparkSeries {
+	const history = useVaultHistoryRows()
+	const { data: fallback } = useQuery({
 		queryKey: ["derived", "tvlSparkline"],
 		queryFn: async () => illustrativeSeries(hashStr("tvl"), 42000, 260, 1400),
 		staleTime: Infinity,
 	})
-	return data ?? []
+	const rows = history.data ?? []
+	if (rows.length >= 2) {
+		return {
+			points: thinSeries(rows.map((r) => Number(r.total_assets) / 1e7)),
+			illustrative: false,
+		}
+	}
+	return { points: fallback ?? [], illustrative: true }
 }
 
 /**
- * 30-day ILLUSTRATIVE APY series (%). Deterministic; not on-chain history.
- * Label as illustrative wherever it renders.
+ * Rolling realized APY (%) — each point annualizes the share-price move
+ * against the sample ≥24h earlier. Corrupt samples (daily ratio outside
+ * [0.5, 2] — a NAV series can't legitimately do that) are skipped rather
+ * than annualized into nonsense.
  */
-export function useApySparkline(): number[] {
-	const { data } = useQuery({
+export function useApySparkline(): SparkSeries {
+	const history = useVaultHistoryRows()
+	const { data: fallback } = useQuery({
 		queryKey: ["derived", "apySparkline"],
 		queryFn: async () => illustrativeSeries(hashStr("apy"), 11, 0.04, 1.1),
 		staleTime: Infinity,
 	})
-	return data ?? []
+	const rows = history.data ?? []
+	const points: number[] = []
+	if (rows.length >= 2) {
+		const times = rows.map((r) => new Date(r.ts).getTime())
+		const prices = rows.map((r) => Number(r.share_price))
+		let j = 0
+		for (let i = 0; i < rows.length; i++) {
+			// slide j to the latest sample still ≥24h behind sample i
+			while (j < i && times[i] - times[j + 1] >= DAY_MS) j++
+			const dtMs = times[i] - times[j]
+			if (dtMs < DAY_MS || prices[j] <= 0) continue
+			const days = dtMs / DAY_MS
+			const ratio = prices[i] / prices[j]
+			const daily = Math.pow(ratio, 1 / days)
+			if (daily < 0.5 || daily > 2) continue
+			points.push((Math.pow(ratio, 365 / days) - 1) * 100)
+		}
+	}
+	if (points.length >= 2) {
+		return { points: thinSeries(points), illustrative: false }
+	}
+	return { points: fallback ?? [], illustrative: true }
 }
 
 /* ── share-price series (REAL where available) ─────────────────────── */
