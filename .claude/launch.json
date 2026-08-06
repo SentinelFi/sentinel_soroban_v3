@@ -1,22 +1,11 @@
 {
-	"version": "0.0.1",
-	"configurations": [
-		{
-			"name": "dapp",
-			"url": "http://localhost:5175",
-			"port": 5175
-		},
-		{
-			"name": "dapp-verify",
-			"runtimeExecutable": "cmd",
-			"runtimeArgs": ["/c", "cd /d dapp && npx vite --port 5176 --strictPort"],
-			"port": 5176
-		},
-		{
-			"name": "dapp-api",
-			"runtimeExecutable": "cmd",
-			"runtimeArgs": ["/c", "cd /d dapp && npm run dev:api"],
-			"port": 3000
-		}
-	]
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dapp",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "dapp"],
+      "port": 5175
+    }
+  ]
 }

@@ -26,8 +26,8 @@ export function errorMessage(err: unknown, fallback = "Transaction failed"): str
 
 /**
  * Pull the transaction hash out of the value returned by
- * `AssembledTransaction.signAndSend()`. Used to attach a Stellar.expert
- * explorer link to success toasts. Returns undefined if not available.
+ * `AssembledTransaction.signAndSend()`. Used to attach a block-explorer
+ * link to success toasts. Returns undefined if not available.
  */
 export function txHashOf(sent: unknown): string | undefined {
 	const hash = (sent as { sendTransactionResponse?: { hash?: string } })

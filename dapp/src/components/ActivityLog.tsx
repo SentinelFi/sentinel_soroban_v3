@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useNotification } from "../hooks/useNotification"
 import { useWallet } from "../hooks/useWallet"
-import { explorerTxUrl } from "../providers/NotificationProvider"
+import { explorerLabel, explorerTxUrl } from "../lib/explorer"
 import type { NotificationType } from "../providers/NotificationProvider"
 import { useTheme } from "../providers/ThemeProvider"
 import { useCopy } from "../copy"
@@ -126,7 +126,7 @@ export function ActivityLog() {
 													target="_blank"
 													rel="noopener noreferrer"
 												>
-													Stellar.expert ↗
+													{explorerLabel()} ↗
 												</a>
 											)}
 										</div>

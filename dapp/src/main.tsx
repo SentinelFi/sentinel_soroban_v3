@@ -6,6 +6,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary"
 import { WalletProvider } from "./providers/WalletProvider"
 import { NotificationProvider } from "./providers/NotificationProvider"
 import { ThemeProvider } from "./providers/ThemeProvider"
+import { applyFontScale } from "./lib/settings"
 import App from "./App"
 // Self-hosted fonts (bundled, same-origin) — no third-party font CDN
 import "@fontsource/dm-sans/400.css"
@@ -34,6 +35,10 @@ console.log(String.raw`
 // exponential retries per batch entry per tick), no focus refetch on top
 // of the per-hook polling intervals, and a small default staleTime.
 // Individual hooks override where they need to.
+// Persisted font-size preference (Settings page) — apply before first
+// paint so the UI doesn't visibly jump to the chosen scale.
+applyFontScale()
+
 const queryClient = new QueryClient({
 	defaultOptions: {
 		queries: {

@@ -9,7 +9,7 @@ import type { Session } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
 import { errorMessage } from "../lib/utils"
 import { isoMinute, relTime, usdFromUnits, utcDateTime } from "../lib/format"
-import { explorerTxUrl } from "../lib/explorer"
+import { explorerAccountUrl, explorerTxUrl } from "../lib/explorer"
 import { stellarNetwork } from "../contracts/util"
 import { useDebouncedValue } from "../hooks/useDebouncedValue"
 import { useWallet } from "../hooks/useWallet"
@@ -72,14 +72,6 @@ const shortTx = (h: string) => `${h.slice(0, 4)}…${h.slice(-4)}`
 /** G… keys are 56 chars; head+tail is what an operator actually matches on. */
 const shortAddr = (a: string) => `${a.slice(0, 6)}…${a.slice(-6)}`
 
-/**
- * Account view on the explorer. lib/explorer only exposes tx links, and
- * this is the one page that shows raw G… keys — same network derivation,
- * so a mainnet redeploy moves both together.
- */
-const EXPLORER_NETWORK = stellarNetwork === "PUBLIC" ? "public" : "testnet"
-const explorerAccountUrl = (address: string) =>
-	`https://stellar.expert/explorer/${EXPLORER_NETWORK}/account/${address}`
 
 /* ── API payload types (mirror api/admin/*.ts responses) ──────────── */
 
