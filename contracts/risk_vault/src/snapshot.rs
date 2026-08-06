@@ -62,9 +62,20 @@ impl RiskVault {
         // the snapshot is meaningful regardless of stablecoin precision.
         // For 7-decimal asset this is still 10^7.
         let asset = token::Client::new(e, &Vault::query_asset(e));
-        let scale = 10i128
+        let asset_scale = 10i128
             .checked_pow(asset.decimals())
             .expect("decimals power overflow");
+        // `total_supply` counts SHARE units, which carry `decimals_offset`
+        // more decimals than asset units (share decimals = asset + offset).
+        // "Assets per 1.0 share" therefore needs the offset folded into the
+        // numerator, or the recorded price comes out 10^offset too small.
+        let share_scale = asset_scale
+            .checked_mul(
+                10i128
+                    .checked_pow(Vault::get_decimals_offset(e))
+                    .expect("decimals offset overflow"),
+            )
+            .expect("scale overflow");
 
         let total_supply = Base::total_supply(e);
         // Price on the internal managed-asset basis, the same figure queue
@@ -74,21 +85,22 @@ impl RiskVault {
         // outstanding shares, so pricing on it would publish an inflated share
         // price to off-chain analytics.
         //
-        // The recorded price is the exact net-backing-per-share ratio
-        // (TMA * scale / supply). It deliberately omits the virtual-offset
-        // terms (+1 / +10^offset) that the conversion helpers add as an
-        // inflation-attack defense, so at near-zero supply it can diverge
-        // slightly from preview_* results; at any real supply the two agree.
-        // Consumers should treat it as the vault's net asset value per share,
-        // not as an executable quote.
+        // The recorded price is the net-backing-per-1.0-share ratio at
+        // asset-decimal precision (TMA * share_scale / supply). It
+        // deliberately omits the virtual-offset terms (+1 / +10^offset)
+        // that the conversion helpers add as an inflation-attack defense,
+        // so at near-zero supply it can diverge slightly from preview_*
+        // results; at any real supply the two agree. Consumers should
+        // treat it as the vault's net asset value per share, not as an
+        // executable quote.
         let price = if total_supply > 0 {
             Self::get_total_managed_assets(e)
-                .checked_mul(scale)
+                .checked_mul(share_scale)
                 .expect("multiplication overflow")
                 .checked_div(total_supply)
                 .expect("division by zero")
         } else {
-            scale
+            asset_scale
         };
 
         // SnapshotPrice lives in Temporary storage with a 30-day TTL — old
