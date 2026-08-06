@@ -170,6 +170,8 @@ const fun = {
 		queueMine: "YOU",
 		sharePriceTitle: "SHARE PRICE",
 		sharePriceSub: (n: number) => `LAST ${n} DAYS`,
+		realizedYield: (period: string, days: number, apr: string, apy: string) =>
+			`REALIZED ${period}% OVER ${days}D ≈ ${apr}% APR · ${apy}% APY`,
 		illustrative: "ILLUSTRATIVE",
 		statsUnavailable:
 			"SOME POOL NUMBERS DIDN'T LOAD — RETRYING AUTOMATICALLY.",
@@ -550,6 +552,8 @@ const serious: Copy = {
 		queueMine: "You",
 		sharePriceTitle: "Share Price",
 		sharePriceSub: (n: number) => `Last ${n} days`,
+		realizedYield: (period: string, days: number, apr: string, apy: string) =>
+			`Realized ${period}% over ${days} day${days === 1 ? "" : "s"} ≈ ${apr}% APR · ${apy}% APY`,
 		illustrative: "Illustrative",
 		statsUnavailable:
 			"Some pool numbers didn't load — retrying automatically.",

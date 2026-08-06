@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import {
@@ -166,13 +166,38 @@ export default function House() {
 			: t.house.queueReady
 	}
 
-	// illustrative (labelled) trend series + real-where-available share price
+	// trend series — real vault history once the mirror has samples,
+	// labelled illustrative fallback until then
 	const tvlSpark = useTvlSparkline()
 	const apySpark = useApySparkline()
 	// 3 / 7 / 30-day windows; each window is its own query (day-indexed
 	// snapshot reads), so switching ranges refetches only what it needs.
 	const [sharePriceDays, setSharePriceDays] = useState(3)
 	const { data: sharePrice } = useSharePriceSeries(sharePriceDays)
+
+	// Realized yield from share-price drift across the visible window.
+	// NAV moves slowly (premium drift up, bounded payout drops), so a
+	// daily ratio outside [0.5, 2] means a corrupt sample — report the
+	// anomaly instead of annualizing garbage into a headline number.
+	const realizedYield = useMemo(() => {
+		const points = (sharePrice?.points ?? []).filter((p) => p.price > 0)
+		if (points.length < 2) return null
+		const first = points[0]!
+		const last = points[points.length - 1]!
+		const days = last.day - first.day
+		if (days <= 0 || first.price <= 0) return null
+		const ratio = last.price / first.price
+		if (Math.pow(ratio, 1 / days) < 0.5 || Math.pow(ratio, 1 / days) > 2) {
+			return { anomaly: true as const }
+		}
+		return {
+			anomaly: false as const,
+			days,
+			periodPct: (ratio - 1) * 100,
+			aprPct: (ratio - 1) * (365 / days) * 100,
+			apyPct: (Math.pow(ratio, 365 / days) - 1) * 100,
+		}
+	}, [sharePrice])
 
 	const depositAssets = parseUsdc(depositAmount)
 	const withdrawShares = parseUsdc(withdrawAmount)
@@ -368,9 +393,9 @@ export default function House() {
 								? formatUsdc(totalAssets)
 								: "…"
 					}
-					spark={tvlSpark}
+					spark={tvlSpark.points}
 					sparkColor="var(--color-win)"
-					illustrativeLabel={t.house.illustrative}
+					illustrativeLabel={tvlSpark.illustrative ? t.house.illustrative : undefined}
 					valueTestId="house-tvl"
 				/>
 				<StatTile
@@ -394,9 +419,9 @@ export default function House() {
 				<StatTile
 					label={t.house.statHealth}
 					value={solvency !== undefined ? `${solvency}%` : "…"}
-					spark={apySpark}
+					spark={apySpark.points}
 					sparkColor="var(--color-sky)"
-					illustrativeLabel={t.house.illustrative}
+					illustrativeLabel={apySpark.illustrative ? t.house.illustrative : undefined}
 				/>
 			</section>
 			{statsUnavailable && (
@@ -439,6 +464,26 @@ export default function House() {
 							</div>
 						</div>
 					</div>
+						{realizedYield && (
+							<p
+								className={`mb-2 font-body text-[12px] ${
+									realizedYield.anomaly
+										? "text-gold"
+										: realizedYield.aprPct >= 0
+											? "text-win"
+											: "text-loss"
+								}`}
+							>
+								{realizedYield.anomaly
+									? ""
+									: t.house.realizedYield(
+											`${realizedYield.periodPct >= 0 ? "+" : ""}${realizedYield.periodPct.toFixed(3)}`,
+											realizedYield.days,
+											`${realizedYield.aprPct >= 0 ? "+" : ""}${realizedYield.aprPct.toFixed(1)}`,
+											`${realizedYield.apyPct >= 0 ? "+" : ""}${realizedYield.apyPct.toFixed(1)}`
+										)}
+							</p>
+						)}
 						{/* chart renders identically in both themes (no CRT overlay) */}
 						<SharePriceChart points={sharePrice.points} />
 				</section>
