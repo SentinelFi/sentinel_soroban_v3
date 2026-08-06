@@ -385,14 +385,30 @@ export async function run(config: Config): Promise<RunLogEntry> {
   await extendIdlePersistentKeys(client, config, results, actions, start);
 
   console.log("[ttl-extender] Done.");
-  const allSuccess = results.every((r) => r.success);
+  const failures = results.filter((r) => !r.success);
   return {
     timestamp: new Date().toISOString(),
     job: "ttl_extender",
     duration_ms: Date.now() - start,
-    success: allSuccess,
-    error: allSuccess ? null : "Some contracts failed TTL extension",
+    success: failures.length === 0,
+    // cron_runs drops `results`, so the persisted error line must itself
+    // say WHICH steps failed and why — a bare "some contracts failed"
+    // left the ops board with nothing to act on.
+    error: failures.length === 0 ? null : summarizeFailures(failures, results.length),
     results,
     actions,
   };
+}
+
+/** One line per failing step, bounded so the persisted cron_runs row (and
+ *  the ops board's "Last error") stays readable however many batches fail. */
+function summarizeFailures(failures: TTLResult[], total: number): string {
+  const MAX_ITEMS = 5;
+  const ITEM_CHARS = 220;
+  const lines = failures.slice(0, MAX_ITEMS).map((f) => {
+    const msg = (f.error ?? "unknown error").replace(/\s+/g, " ").trim();
+    return `${f.contract}: ${msg.length > ITEM_CHARS ? `${msg.slice(0, ITEM_CHARS)}…` : msg}`;
+  });
+  const more = failures.length > MAX_ITEMS ? ` (+${failures.length - MAX_ITEMS} more)` : "";
+  return `${failures.length}/${total} TTL step(s) failed — ${lines.join("; ")}${more}`;
 }
