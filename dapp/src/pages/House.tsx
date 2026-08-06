@@ -169,7 +169,10 @@ export default function House() {
 	// illustrative (labelled) trend series + real-where-available share price
 	const tvlSpark = useTvlSparkline()
 	const apySpark = useApySparkline()
-	const { data: sharePrice } = useSharePriceSeries(14)
+	// 3 / 7 / 30-day windows; each window is its own query (day-indexed
+	// snapshot reads), so switching ranges refetches only what it needs.
+	const [sharePriceDays, setSharePriceDays] = useState(3)
+	const { data: sharePrice } = useSharePriceSeries(sharePriceDays)
 
 	const depositAssets = parseUsdc(depositAmount)
 	const withdrawShares = parseUsdc(withdrawAmount)
@@ -412,14 +415,29 @@ export default function House() {
 								{t.house.sharePriceTitle}
 							</p>
 							<p className="mt-1 font-body text-[12px] text-mute">
-								{t.house.sharePriceSub(sharePrice.points.length)}
+								{t.house.sharePriceSub(sharePriceDays)}
 							</p>
 						</div>
-						{sharePrice.illustrative && (
-							<span className="w3-illustrative">
-								{t.house.illustrative}
-							</span>
-						)}
+						<div className="flex items-center gap-2">
+							{sharePrice.illustrative && (
+								<span className="w3-illustrative">
+									{t.house.illustrative}
+								</span>
+							)}
+							<div role="group" aria-label="Share price window" className="flex gap-1">
+								{[3, 7, 30].map((d) => (
+									<button
+										key={d}
+										type="button"
+										aria-pressed={sharePriceDays === d}
+										onClick={() => setSharePriceDays(d)}
+										className={`btn-px btn-sm ${sharePriceDays === d ? "btn-gold" : "btn-ghost"}`}
+									>
+										{d}D
+									</button>
+								))}
+							</div>
+						</div>
 					</div>
 						{/* chart renders identically in both themes (no CRT overlay) */}
 						<SharePriceChart points={sharePrice.points} />

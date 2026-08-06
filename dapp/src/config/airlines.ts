@@ -72,3 +72,14 @@ export function flightradarSlug(flightId: string, carrier?: string | null): stri
 	if (!parts || !iata) return null
 	return `${iata}${parts.number}`.toLowerCase()
 }
+
+/**
+ * Full FlightRadar24 flight-page URL, or null when the ident cannot be
+ * resolved — callers render plain text instead of a dead link.
+ */
+export function flightradarUrl(flightId: string, carrier?: string | null): string | null {
+	const slug = flightradarSlug(flightId, carrier)
+	return slug
+		? `https://www.flightradar24.com/data/flights/${encodeURIComponent(slug)}`
+		: null
+}

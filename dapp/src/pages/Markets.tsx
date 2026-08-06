@@ -16,7 +16,7 @@ import {
 } from "../hooks/useContracts"
 import type { UiRoute } from "../hooks/useContracts"
 import { DEMO_ROUTES } from "../config/routes"
-import { airlineName, flightradarSlug } from "../config/airlines"
+import { airlineName, flightradarUrl } from "../config/airlines"
 import { useWallet } from "../hooks/useWallet"
 import { useFlightSchedules } from "../hooks/useFlightSchedules"
 import { utcHm } from "../lib/format"
@@ -200,19 +200,6 @@ function HeroFlapLine({
 			))}
 		</span>
 	)
-}
-
-/**
- * External flight-tracking page. FR24 keys its flight pages by the IATA
- * flight number ("as462"), not the ICAO ident the fleet stores ("ASA462"),
- * so the ident must be converted first. Returns null when it cannot be
- * resolved — the caller renders plain text rather than a dead link.
- */
-function flightradarUrl(flightId: string, carrier?: string | null): string | null {
-	const slug = flightradarSlug(flightId, carrier)
-	return slug
-		? `https://www.flightradar24.com/data/flights/${encodeURIComponent(slug)}`
-		: null
 }
 
 /** Case-insensitive multi-token match on flight id / airport codes. */
