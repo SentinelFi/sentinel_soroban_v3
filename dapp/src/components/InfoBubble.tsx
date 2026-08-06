@@ -74,7 +74,7 @@ export function HowItWorksBubble() {
 	return (
 		<InfoBubble>
 			This is parametric insurance played as a prediction market.
-			Travelers buy cover on their own flight (a bet on{" "}
+			Travelers buy cover on their own flight (a stake on{" "}
 			<span className="font-semibold text-loss">DELAYED</span>).
 			Underwriters take the other side and earn premiums when flights
 			land <span className="font-semibold text-win">on time</span>. No
