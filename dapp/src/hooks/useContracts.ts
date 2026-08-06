@@ -119,6 +119,15 @@ export function useIsWhitelisted(address: string | undefined) {
 
 // ─── Risk Vault reads ───
 
+// Vault-level figures (TVL / locked / free) only move when a transaction
+// lands, and every write flow invalidates the ["vault"] keys — so instead
+// of a permanent 30s poll these load once per visit, serve from cache for
+// 5 minutes across navigations, retry with exponential backoff on
+// failure, and keep self-healing on a slow 60s cadence only while in an
+// error state.
+const VAULT_STAT_STALE_MS = 300_000
+const VAULT_STAT_ERROR_RETRY_MS = 60_000
+
 export function useTotalAssets() {
 	return useQuery({
 		queryKey: ["vault", "totalAssets"],
@@ -126,8 +135,10 @@ export function useTotalAssets() {
 			const tx = await riskVaultClient.total_assets()
 			return tx.result
 		},
-		refetchInterval: 30_000,
-		retry: 1,
+		staleTime: VAULT_STAT_STALE_MS,
+		retry: 2,
+		refetchInterval: (query) =>
+			query.state.status === "error" ? VAULT_STAT_ERROR_RETRY_MS : false,
 	})
 }
 
@@ -138,8 +149,10 @@ export function useFreeCapital() {
 			const tx = await riskVaultClient.get_free_capital()
 			return tx.result
 		},
-		refetchInterval: 30_000,
-		retry: 1,
+		staleTime: VAULT_STAT_STALE_MS,
+		retry: 2,
+		refetchInterval: (query) =>
+			query.state.status === "error" ? VAULT_STAT_ERROR_RETRY_MS : false,
 	})
 }
 
@@ -150,8 +163,10 @@ export function useLockedCapital() {
 			const tx = await riskVaultClient.get_locked_capital()
 			return tx.result
 		},
-		refetchInterval: 30_000,
-		retry: 1,
+		staleTime: VAULT_STAT_STALE_MS,
+		retry: 2,
+		refetchInterval: (query) =>
+			query.state.status === "error" ? VAULT_STAT_ERROR_RETRY_MS : false,
 	})
 }
 

@@ -17,10 +17,31 @@ import { PixelArt } from "../components/PixelArt"
 import { TxProgress } from "../components/TxProgress"
 import { useTheme } from "../providers/ThemeProvider"
 import { useCopy } from "../copy"
+import { flightradarUrl } from "../config/airlines"
 import { Plane, Trophy, Clock, Check, PlaneTakeoff } from "lucide-react"
 
 type OracleTag = FlightData["status"]["tag"]
 type PolicySection = "open" | "won" | "settled"
+
+/** Flight ident as an external FR24 tracking link (same behaviour as the
+ *  departures board); falls back to plain text when the ident cannot be
+ *  mapped to an IATA flight number. */
+function FlightLink({ id, className }: { id: string; className?: string }) {
+	const t = useCopy()
+	const url = flightradarUrl(id)
+	if (!url) return <span className={className}>{id}</span>
+	return (
+		<a
+			href={url}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={t.markets.flightLinkTitle(id)}
+			className={cn(className, "hover:text-sky hover:underline")}
+		>
+			{id}
+		</a>
+	)
+}
 
 /** Colour buckets for status badges (mapped to CSS vars via --badge). */
 type BadgeKind = "tracking" | "onTime" | "claimable" | "paid" | "expired"
@@ -297,6 +318,14 @@ export default function Policies() {
 				<p className="mt-2 font-body text-[14px] text-dim">
 					{t.policies.intro}
 				</p>
+				{!isLoading && !loadFailed && policies.length > 0 && (
+					<p
+						data-testid="policies-total"
+						className="mt-1 font-body text-[13px] text-mute"
+					>
+						{t.policies.total(policies.length)}
+					</p>
+				)}
 			</div>
 
 			{isLoading && (
@@ -386,7 +415,7 @@ export default function Policies() {
 									{t.policies.claimWin}
 								</p>
 								<p className="mt-1 font-board text-[20px] text-dim">
-									{policy.flightId} · {policy.dateStr}
+									<FlightLink id={policy.flightId} /> · {policy.dateStr}
 									{policy.depTime
 										? ` · ${t.policies.depTime(policy.depTime)}`
 										: ""}
@@ -437,7 +466,7 @@ export default function Policies() {
 				</section>
 			)}
 
-			{/* ACTIVE — in the air */}
+			{/* ACTIVE — scheduled or in the air */}
 			{!isLoading && openPolicies.length > 0 && (
 				<section>
 					<h2 className="h-section mb-1 flex items-center gap-2">
@@ -459,9 +488,10 @@ export default function Policies() {
 								data-flight-id={policy.flightId}
 								className="w3-policy"
 							>
-								<span className="board-figure text-[24px]">
-									{policy.flightId}
-								</span>
+								<FlightLink
+									id={policy.flightId}
+									className="board-figure text-[24px]"
+								/>
 								<span className="font-board text-[19px] text-dim">
 									{policy.dateStr}
 									{policy.depTime
@@ -510,9 +540,10 @@ export default function Policies() {
 								data-flight-id={policy.flightId}
 								className="w3-policy w3-policy-terminal"
 							>
-								<span className="font-board text-[20px] text-dim">
-									{policy.flightId}
-								</span>
+								<FlightLink
+									id={policy.flightId}
+									className="font-board text-[20px] text-dim"
+								/>
 								<span className="font-board text-[18px] text-mute">
 									{policy.dateStr}
 									{policy.depTime
