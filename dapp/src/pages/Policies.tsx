@@ -20,7 +20,7 @@ import { useCopy } from "../copy"
 import { Plane, Trophy, Clock, Check, PlaneTakeoff } from "lucide-react"
 
 type OracleTag = FlightData["status"]["tag"]
-type BetSection = "open" | "won" | "settled"
+type PolicySection = "open" | "won" | "settled"
 
 /** Colour buckets for status badges (mapped to CSS vars via --badge). */
 type BadgeKind = "tracking" | "onTime" | "claimable" | "paid" | "expired"
@@ -33,12 +33,12 @@ const BADGE_VAR: Record<BadgeKind, string> = {
 	expired: "var(--color-mute)", // mute = expired / terminal
 }
 
-interface Bet {
+interface Policy {
 	id: string
 	flightId: string
 	date: bigint
 	dateStr: string
-	section: BetSection
+	section: PolicySection
 	payoff?: bigint
 	claimed: boolean
 	outcome: string // short display label
@@ -167,7 +167,7 @@ export default function Policies() {
 	)
 	const nowSecs = BigInt(Math.floor(Date.now() / 1000))
 
-	const bets: Bet[] = (policyStates ?? []).map((state) => {
+	const policies: Policy[] = (policyStates ?? []).map((state) => {
 		const oracle = oracleByFlight.get(
 			`${state.flightId}:${state.date.toString()}`,
 		)
@@ -181,7 +181,7 @@ export default function Policies() {
 		// ACTIVE: no config yet, or still Active (flight hasn't settled).
 		// WON: settled delayed/cancelled, not claimed, window still open.
 		// HISTORY (settled): everything terminal.
-		let section: BetSection
+		let section: PolicySection
 		if (!state.config || settlementTag === "Active") {
 			section = "open"
 		} else if (
@@ -263,25 +263,25 @@ export default function Policies() {
 		}
 	})
 
-	const openBets = bets.filter((b) => b.section === "open")
-	const wonBets = bets.filter((b) => b.section === "won")
-	const settledBets = bets.filter((b) => b.section === "settled")
+	const openPolicies = policies.filter((b) => b.section === "open")
+	const wonPolicies = policies.filter((b) => b.section === "won")
+	const settledPolicies = policies.filter((b) => b.section === "settled")
 
-	const handleClaim = (bet: Bet) => {
+	const handleClaim = (policy: Policy) => {
 		if (!address || claimingId) return
-		setClaimingId(bet.id)
+		setClaimingId(policy.id)
 		void claimFlow.run(async (step) => {
 			step("verifying")
 			const tx = await flightPoolManagerClient.claim({
 				traveler: address,
-				flight_id: bet.flightId,
-				date: bet.date,
+				flight_id: policy.flightId,
+				date: policy.date,
 			})
 			const sent = await tx.signAndSend({
 				signTransaction: stagedSigner(step, signTransaction),
 			})
 			return {
-				message: t.notify.claimed(bet.flightId),
+				message: t.notify.claimed(policy.flightId),
 				txHash: txHashOf(sent),
 			}
 		})
@@ -329,7 +329,7 @@ export default function Policies() {
 				</div>
 			)}
 
-			{!isLoading && !loadFailed && bets.length === 0 && (
+			{!isLoading && !loadFailed && policies.length === 0 && (
 				<div className="panel p-8 text-center">
 					{serious ? (
 						<Plane
@@ -352,7 +352,7 @@ export default function Policies() {
 			)}
 
 			{/* READY TO CLAIM — delayed / cancelled, window still open */}
-			{!isLoading && wonBets.length > 0 && (
+			{!isLoading && wonPolicies.length > 0 && (
 				<section>
 					<h2 className="h-section mb-1 flex items-center gap-2 text-gold">
 						{serious && (
@@ -364,11 +364,11 @@ export default function Policies() {
 						{t.policies.claimSub}
 					</p>
 					<div className="grid gap-4 sm:grid-cols-2">
-						{wonBets.map((bet) => (
+						{wonPolicies.map((policy) => (
 							<div
-								key={bet.id}
+								key={policy.id}
 								data-testid="policy-row"
-								data-flight-id={bet.flightId}
+								data-flight-id={policy.flightId}
 								className="claim-card win-flash border-2 border-gold bg-surface p-5 text-center"
 							>
 								{serious ? (
@@ -386,9 +386,9 @@ export default function Policies() {
 									{t.policies.claimWin}
 								</p>
 								<p className="mt-1 font-board text-[20px] text-dim">
-									{bet.flightId} · {bet.dateStr}
-									{bet.depTime
-										? ` · ${t.policies.depTime(bet.depTime)}`
+									{policy.flightId} · {policy.dateStr}
+									{policy.depTime
+										? ` · ${t.policies.depTime(policy.depTime)}`
 										: ""}
 								</p>
 								<div className="mt-2 flex justify-center">
@@ -398,32 +398,32 @@ export default function Policies() {
 									/>
 								</div>
 								<p className="board-figure mt-2 text-[30px] text-win">
-									{bet.payoff !== undefined
-										? `${formatUsdc(bet.payoff)} USDC`
+									{policy.payoff !== undefined
+										? `${formatUsdc(policy.payoff)} USDC`
 										: "—"}
 								</p>
-								{bet.claimExpiry !== undefined && (
+								{policy.claimExpiry !== undefined && (
 									<p className="mt-1 font-body text-[12px] text-mute">
 										{t.policies.claimWindow(
-											formatDate(bet.claimExpiry),
+											formatDate(policy.claimExpiry),
 										)}
 									</p>
 								)}
 								<button
 									type="button"
 									data-testid="policy-claim"
-									onClick={() => handleClaim(bet)}
+									onClick={() => handleClaim(policy)}
 									disabled={claimingId !== null || networkMismatch}
 									className={cn(
 										"btn-px btn-win mt-4 w-full",
 										claimingId === null && "claim-btn-pulse",
 									)}
 								>
-									{claimingId === bet.id
+									{claimingId === policy.id
 										? t.policies.claiming
 										: t.policies.claimBtn}
 								</button>
-								{claimingId === bet.id && (
+								{claimingId === policy.id && (
 									<TxProgress
 										state={claimFlow.state}
 										steps={["verifying", "awaiting", "confirming"]}
@@ -438,7 +438,7 @@ export default function Policies() {
 			)}
 
 			{/* ACTIVE — in the air */}
-			{!isLoading && openBets.length > 0 && (
+			{!isLoading && openPolicies.length > 0 && (
 				<section>
 					<h2 className="h-section mb-1 flex items-center gap-2">
 						{serious ? (
@@ -452,20 +452,20 @@ export default function Policies() {
 						{t.policies.activeSub}
 					</p>
 					<div className="space-y-2">
-						{openBets.map((bet) => (
+						{openPolicies.map((policy) => (
 							<div
-								key={bet.id}
+								key={policy.id}
 								data-testid="policy-row"
-								data-flight-id={bet.flightId}
+								data-flight-id={policy.flightId}
 								className="w3-policy"
 							>
 								<span className="board-figure text-[24px]">
-									{bet.flightId}
+									{policy.flightId}
 								</span>
 								<span className="font-board text-[19px] text-dim">
-									{bet.dateStr}
-									{bet.depTime
-										? ` · ${t.policies.depTime(bet.depTime)}`
+									{policy.dateStr}
+									{policy.depTime
+										? ` · ${t.policies.depTime(policy.depTime)}`
 										: ""}
 								</span>
 								<StatusBadge
@@ -473,14 +473,14 @@ export default function Policies() {
 									label={t.policies.badgeTracking}
 								/>
 								<span className="font-body text-[13px] text-dim">
-									{bet.outcome}
-									{bet.eta ? ` · ${bet.eta}` : ""}
+									{policy.outcome}
+									{policy.eta ? ` · ${policy.eta}` : ""}
 								</span>
 								<span className="ml-auto font-board text-[19px] text-dim">
 									{t.policies.payoutLabel}{" "}
 									<span className="text-win">
-										{bet.payoff !== undefined
-											? `${formatUsdc(bet.payoff)} USDC`
+										{policy.payoff !== undefined
+											? `${formatUsdc(policy.payoff)} USDC`
 											: "—"}
 									</span>
 								</span>
@@ -491,7 +491,7 @@ export default function Policies() {
 			)}
 
 			{/* HISTORY — terminal, with an eligibility reason each */}
-			{!isLoading && settledBets.length > 0 && (
+			{!isLoading && settledPolicies.length > 0 && (
 				<section>
 					<h2 className="h-section mb-1 flex items-center gap-2 text-mute">
 						{serious && (
@@ -503,44 +503,44 @@ export default function Policies() {
 						{t.policies.historySub}
 					</p>
 					<div className="space-y-2">
-						{settledBets.map((bet) => (
+						{settledPolicies.map((policy) => (
 							<div
-								key={bet.id}
+								key={policy.id}
 								data-testid="policy-row"
-								data-flight-id={bet.flightId}
+								data-flight-id={policy.flightId}
 								className="w3-policy w3-policy-terminal"
 							>
 								<span className="font-board text-[20px] text-dim">
-									{bet.flightId}
+									{policy.flightId}
 								</span>
 								<span className="font-board text-[18px] text-mute">
-									{bet.dateStr}
-									{bet.depTime
-										? ` · ${t.policies.depTime(bet.depTime)}`
+									{policy.dateStr}
+									{policy.depTime
+										? ` · ${t.policies.depTime(policy.depTime)}`
 										: ""}
 								</span>
 								<StatusBadge
-									kind={bet.badge}
+									kind={policy.badge}
 									label={
-										bet.badge === "paid"
+										policy.badge === "paid"
 											? t.policies.badgePaid
-											: bet.badge === "onTime"
+											: policy.badge === "onTime"
 												? t.policies.badgeOnTime
 												: t.policies.badgeExpired
 									}
 								/>
 								<span className="w3-reason flex items-center gap-1.5">
-									{serious && bet.badge === "paid" && (
+									{serious && policy.badge === "paid" && (
 										<Check
 											className="h-3.5 w-3.5 text-win"
 											strokeWidth={2.2}
 										/>
 									)}
-									{bet.reason}
+									{policy.reason}
 								</span>
 								<span className="ml-auto font-board text-[18px] text-mute">
-									{bet.payoff !== undefined
-										? `${formatUsdc(bet.payoff)} USDC`
+									{policy.payoff !== undefined
+										? `${formatUsdc(policy.payoff)} USDC`
 										: "—"}
 								</span>
 							</div>

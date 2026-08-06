@@ -82,7 +82,7 @@ export const CONTRACT_ERRORS: Record<number, ContractErrorInfo> = {
 	},
 	411: {
 		message: "You already hold a policy for this flight and date.",
-		action: "One policy per flight per wallet. Check My Bets.",
+		action: "One policy per flight per wallet. Check My Policies.",
 	},
 
 	// ── Risk vault (7xx) ────────────────────────────────────────────────
