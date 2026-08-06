@@ -9,12 +9,22 @@ import type { Session } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
 import { errorMessage } from "../lib/utils"
 import { isoMinute, relTime, usdFromUnits, utcDateTime } from "../lib/format"
-import { explorerAccountUrl, explorerTxUrl } from "../lib/explorer"
-import { stellarNetwork } from "../contracts/util"
+import { Address, rpc, xdr } from "@stellar/stellar-sdk"
+import { explorerAccountUrl, explorerContractUrl, explorerTxUrl } from "../lib/explorer"
+import { allowHttpRpc, rpcUrl, stellarNetwork } from "../contracts/util"
+import { CONTRACT_IDS } from "../contracts/ids"
 import { useDebouncedValue } from "../hooks/useDebouncedValue"
 import { useWallet } from "../hooks/useWallet"
 import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
-import { formatUsdc, mockUsdcClient } from "../hooks/useContracts"
+import { formatUsdc, mockUsdcClient, useFlightDataBatch } from "../hooks/useContracts"
+import oracleClient from "../contracts/oracle_aggregator"
+import controllerClient from "../contracts/controller"
+import riskVaultClient from "../contracts/risk_vault"
+import flightPoolManagerClient from "../contracts/flight_pool_manager"
+import governanceClient from "../contracts/governance_module"
+import type { FlightData } from "oracle_aggregator"
+import type { FlightConfig as PoolFlightConfig } from "flight_pool_manager"
+import { fetchBalances } from "../util/wallet"
 import { txHashOf } from "../lib/utils"
 import { TxProgress } from "../components/TxProgress"
 import type { TxState } from "../types"
@@ -393,6 +403,15 @@ function Pager({
 					type="button"
 					className="btn-px btn-ghost btn-sm"
 					disabled={page <= 1}
+					onClick={() => onPageChange(1)}
+					aria-label="First page"
+				>
+					« First
+				</button>
+				<button
+					type="button"
+					className="btn-px btn-ghost btn-sm"
+					disabled={page <= 1}
 					onClick={() => onPageChange(page - 1)}
 				>
 					‹ Prev
@@ -407,6 +426,15 @@ function Pager({
 					onClick={() => onPageChange(page + 1)}
 				>
 					Next ›
+				</button>
+				<button
+					type="button"
+					className="btn-px btn-ghost btn-sm"
+					disabled={page >= pageCount}
+					onClick={() => onPageChange(pageCount)}
+					aria-label="Last page"
+				>
+					Last »
 				</button>
 			</div>
 		</div>
@@ -574,6 +602,10 @@ type AdminTab =
 	| "outcomes"
 	| "log"
 	| "accounts"
+	| "oracle"
+	| "users"
+	| "solvency"
+	| "ttl"
 
 const ADMIN_TABS: Array<{ key: AdminTab; label: string }> = [
 	{ key: "jobs", label: "Jobs" },
@@ -583,6 +615,10 @@ const ADMIN_TABS: Array<{ key: AdminTab; label: string }> = [
 	{ key: "outcomes", label: "Outcomes" },
 	{ key: "log", label: "Action log" },
 	{ key: "accounts", label: "Accounts" },
+	{ key: "oracle", label: "Oracle" },
+	{ key: "users", label: "Users" },
+	{ key: "solvency", label: "Solvency" },
+	{ key: "ttl", label: "TTL" },
 ]
 
 function Console({ session }: { session: Session }) {
@@ -718,12 +754,74 @@ function Console({ session }: { session: Session }) {
 		refetchInterval: 60_000,
 	})
 
+	// Also fetched on the Oracle tab: the configured-signer address is what
+	// the on-chain authorization is compared against there.
 	const balancesQ = useQuery({
 		queryKey: ["admin-balances"],
 		queryFn: () => api<BalancesResponse>("/api/admin/balances", token),
-		enabled: activeTab === "accounts",
+		enabled: activeTab === "accounts" || activeTab === "oracle",
 		staleTime: 30_000,
 		refetchInterval: 60_000,
+	})
+
+	// Oracle overview — direct chain + Horizon reads (public data). The
+	// whole active-flight list is fetched up front (paged reads, joined),
+	// so search and pagination are instant and client-side; per-flight
+	// report data is still only read for the 20 visible rows, via the
+	// same batch hook Policies uses.
+	const [oraclePage, setOraclePage] = useState(1)
+	const [oracleSearch, setOracleSearch] = useState("")
+	const oracleNeedle = useDebouncedValue(oracleSearch, 300).trim().toUpperCase()
+	const oracleQ = useQuery({
+		queryKey: ["admin-oracle"],
+		queryFn: fetchOracleOverview,
+		enabled: activeTab === "oracle",
+		staleTime: 0,
+	})
+	const oracleFiltered = useMemo(() => {
+		const all = oracleQ.data?.flights
+		if (!all) return undefined
+		if (!oracleNeedle) return all
+		return all.filter(([id]) => id.toUpperCase().includes(oracleNeedle))
+	}, [oracleQ.data, oracleNeedle])
+	const oracleVisible = useMemo(
+		() =>
+			oracleFiltered?.slice(
+				(oraclePage - 1) * ORACLE_REPORT_PAGE,
+				oraclePage * ORACLE_REPORT_PAGE
+			),
+		[oracleFiltered, oraclePage]
+	)
+	const oracleFlightsQ = useFlightDataBatch(
+		activeTab === "oracle" ? oracleVisible : undefined
+	)
+
+	// Users overview — DB buyer stats + chain vault reads, re-read on
+	// every tab open (staleTime 0) plus a manual Refresh.
+	const usersQ = useQuery({
+		queryKey: ["admin-users"],
+		queryFn: () => api<UsersResponse>("/api/admin/users", token),
+		enabled: activeTab === "users",
+		staleTime: 0,
+	})
+
+	// Solvency — pure chain reads incl. a bounded scan of the pool's open
+	// book; the heaviest tab, so strictly on-demand.
+	const solvencyQ = useQuery({
+		queryKey: ["admin-solvency"],
+		queryFn: fetchSolvency,
+		enabled: activeTab === "solvency",
+		staleTime: 0,
+	})
+
+	// Direct RPC reads (public chain data, no admin API involved) — fetched
+	// fresh every time the tab is opened; staleTime 0 so a tab revisit is a
+	// re-read, which is the whole point of a storage-expiry inspector.
+	const ttlQ = useQuery({
+		queryKey: ["admin-ttl"],
+		queryFn: fetchContractTtls,
+		enabled: activeTab === "ttl",
+		staleTime: 0,
 	})
 
 	const [outcomeFilter, setOutcomeFilter] = useState("")
@@ -848,26 +946,29 @@ function Console({ session }: { session: Session }) {
 						/>
 					)}
 					{activeTab === "interventions" && (
-						<InterventionsPanel
-							interventions={interventions}
-							loading={interventionsQ.isLoading}
-							token={token}
-							onDone={invalidate}
-							state={interventionState}
-							onStateChange={(s) => {
-								setInterventionState(s)
-								setInterventionPage(1)
-							}}
-							cause={interventionCause}
-							onCauseChange={(c) => {
-								setInterventionCause(c)
-								setInterventionPage(1)
-							}}
-							page={interventionPage}
-							onPageChange={setInterventionPage}
-							total={interventionsQ.data?.total ?? 0}
-							limit={interventionLimit}
-						/>
+						<>
+							<InterventionsPanel
+								interventions={interventions}
+								loading={interventionsQ.isLoading}
+								token={token}
+								onDone={invalidate}
+								state={interventionState}
+								onStateChange={(s) => {
+									setInterventionState(s)
+									setInterventionPage(1)
+								}}
+								cause={interventionCause}
+								onCauseChange={(c) => {
+									setInterventionCause(c)
+									setInterventionPage(1)
+								}}
+								page={interventionPage}
+								onPageChange={setInterventionPage}
+								total={interventionsQ.data?.total ?? 0}
+								limit={interventionLimit}
+							/>
+							<DirectControls token={token} onDone={invalidate} />
+						</>
 					)}
 					{activeTab === "outcomes" && (
 						<OutcomesPanel
@@ -904,6 +1005,51 @@ function Console({ session }: { session: Session }) {
 							<FaucetPanel />
 							<AccountsPanel data={balancesQ.data ?? null} loading={balancesQ.isLoading} />
 						</>
+					)}
+					{activeTab === "oracle" && (
+						<OraclePanel
+							data={oracleQ.data ?? null}
+							reports={oracleFlightsQ.data ?? []}
+							reportsLoading={oracleFlightsQ.isLoading}
+							backendOracle={
+								balancesQ.data?.accounts.find((a) => a.role === "oracle")?.address ?? null
+							}
+							loading={oracleQ.isFetching}
+							error={oracleQ.error ? errorMessage(oracleQ.error) : null}
+							onRefresh={() => void oracleQ.refetch()}
+							page={oraclePage}
+							onPageChange={setOraclePage}
+							search={oracleSearch}
+							onSearchChange={(v) => {
+								setOracleSearch(v)
+								setOraclePage(1)
+							}}
+							filteredCount={oracleFiltered?.length ?? 0}
+						/>
+					)}
+					{activeTab === "users" && (
+						<UsersPanel
+							data={usersQ.data ?? null}
+							loading={usersQ.isFetching}
+							error={usersQ.error ? errorMessage(usersQ.error) : null}
+							onRefresh={() => void usersQ.refetch()}
+						/>
+					)}
+					{activeTab === "solvency" && (
+						<SolvencyPanel
+							data={solvencyQ.data ?? null}
+							loading={solvencyQ.isFetching}
+							error={solvencyQ.error ? errorMessage(solvencyQ.error) : null}
+							onRefresh={() => void solvencyQ.refetch()}
+						/>
+					)}
+					{activeTab === "ttl" && (
+						<TtlPanel
+							data={ttlQ.data ?? null}
+							loading={ttlQ.isFetching}
+							error={ttlQ.error ? errorMessage(ttlQ.error) : null}
+							onRefresh={() => void ttlQ.refetch()}
+						/>
 					)}
 				</div>
 			)}
@@ -1069,9 +1215,23 @@ function JobsBoard({
 										<tr className="border-b border-line/60 last:border-b-0">
 											<td colSpan={8} className="px-3 py-3">
 												{last?.success === false && (
-													<p className="mb-2 font-body text-[12px] text-loss">
-														Last error: {last.error ?? "(no message recorded)"}
-													</p>
+													<>
+														<p className="mb-2 font-body text-[12px] text-loss">
+															Last error: {last.error ?? "(no message recorded)"}
+														</p>
+														<p className="mb-2 font-body text-[12px] text-mute">
+															Full detail: Vercel → project Logs, function{" "}
+															<span className="font-board text-[13px] text-sky">
+																{info.path}
+															</span>{" "}
+															around{" "}
+															{new Date(last.ran_at)
+																.toISOString()
+																.slice(0, 16)
+																.replace("T", " ")}{" "}
+															UTC — every failing step logs its own error line there.
+														</p>
+													</>
 												)}
 												{history.length === 0 ? (
 													<p className="font-body text-[12px] text-mute">
@@ -2347,6 +2507,1547 @@ function AccountsPanel({ data, loading }: { data: BalancesResponse | null; loadi
 			</div>
 			{data && (
 				<p className="mt-2 font-body text-[12px] text-mute">Horizon: {data.horizon_url}</p>
+			)}
+		</section>
+	)
+}
+
+/* ── contract storage TTLs ────────────────────────────────────────── */
+
+/** Rough ledger close time — testnet and mainnet both run ≈5s ledgers;
+ *  every date shown is an estimate and labelled as such. */
+const LEDGER_SECS = 5
+
+const TTL_CONTRACTS: Array<{ label: string; id: string }> = [
+	{ label: "Controller", id: CONTRACT_IDS.controller },
+	{ label: "Risk Vault", id: CONTRACT_IDS.riskVault },
+	{ label: "Flight Pool Manager", id: CONTRACT_IDS.flightPoolManager },
+	{ label: "Oracle Aggregator", id: CONTRACT_IDS.oracleAggregator },
+	{ label: "Governance Module", id: CONTRACT_IDS.governanceModule },
+	{ label: "Mock USDC", id: CONTRACT_IDS.mockUsdc },
+]
+
+interface ContractTtlRow {
+	label: string
+	id: string
+	/** instance entry live-until ledger (null = not found / archived) */
+	instanceLiveUntil: number | null
+	/** wasm code entry live-until ledger (null = unknown) */
+	codeLiveUntil: number | null
+}
+
+interface ContractTtlData {
+	currentLedger: number
+	rows: ContractTtlRow[]
+}
+
+/**
+ * Instance + wasm-code TTLs for every deployed contract, read straight
+ * from RPC (public chain data — no admin API or signer involved). The
+ * instance entry's TTL covers the contract instance and all its
+ * instance storage; individual Persistent keys (FlightConfig, Route,
+ * TravelerFlights, …) carry their own per-key TTLs, which RPC cannot
+ * enumerate — the weekly ttl_extender shard rotation keeps those alive.
+ */
+async function fetchContractTtls(): Promise<ContractTtlData> {
+	const server = new rpc.Server(rpcUrl, { allowHttp: allowHttpRpc })
+	const instanceKeys = TTL_CONTRACTS.map((c) =>
+		xdr.LedgerKey.contractData(
+			new xdr.LedgerKeyContractData({
+				contract: new Address(c.id).toScAddress(),
+				key: xdr.ScVal.scvLedgerKeyContractInstance(),
+				durability: xdr.ContractDataDurability.persistent(),
+			})
+		)
+	)
+	const instRes = await server.getLedgerEntries(...instanceKeys)
+	const instByKey = new Map(instRes.entries.map((e) => [e.key.toXDR("base64"), e]))
+
+	// wasm hash per contract → one code-entry lookup per distinct hash
+	const codeKeyByHash = new Map<string, xdr.LedgerKey>()
+	const hashOfContract = new Map<string, string>()
+	for (let i = 0; i < TTL_CONTRACTS.length; i++) {
+		const entry = instByKey.get(instanceKeys[i].toXDR("base64"))
+		if (!entry) continue
+		const exec = entry.val.contractData().val().instance().executable()
+		if (exec.switch() === xdr.ContractExecutableType.contractExecutableWasm()) {
+			const hash = exec.wasmHash()
+			const b64 = hash.toString("base64")
+			if (!codeKeyByHash.has(b64)) {
+				codeKeyByHash.set(
+					b64,
+					xdr.LedgerKey.contractCode(new xdr.LedgerKeyContractCode({ hash }))
+				)
+			}
+			hashOfContract.set(TTL_CONTRACTS[i].id, b64)
+		}
+	}
+	const codeKeys = [...codeKeyByHash.values()]
+	const codeTtlByHash = new Map<string, number | null>()
+	if (codeKeys.length > 0) {
+		const codeRes = await server.getLedgerEntries(...codeKeys)
+		for (const e of codeRes.entries) {
+			codeTtlByHash.set(
+				e.key.contractCode().hash().toString("base64"),
+				e.liveUntilLedgerSeq ?? null
+			)
+		}
+	}
+
+	return {
+		currentLedger: instRes.latestLedger,
+		rows: TTL_CONTRACTS.map((c, i) => {
+			const entry = instByKey.get(instanceKeys[i].toXDR("base64"))
+			const hashB64 = hashOfContract.get(c.id)
+			return {
+				label: c.label,
+				id: c.id,
+				instanceLiveUntil: entry?.liveUntilLedgerSeq ?? null,
+				codeLiveUntil: hashB64 != null ? (codeTtlByHash.get(hashB64) ?? null) : null,
+			}
+		}),
+	}
+}
+
+/** "≈ 92d · 2026-11-06 · ledger 1,234,567" with an urgency tone. */
+function TtlCell({ liveUntil, current }: { liveUntil: number | null; current: number }) {
+	if (liveUntil == null) {
+		return <span className="status-px text-loss">not found / archived</span>
+	}
+	const ms = (liveUntil - current) * LEDGER_SECS * 1000
+	const days = ms / 86_400_000
+	const tone = days < 7 ? "text-loss" : days < 30 ? "text-gold" : "text-win"
+	return (
+		<span className="whitespace-nowrap">
+			<span className={`font-board text-[16px] ${tone}`}>
+				≈ {days.toFixed(days < 10 ? 1 : 0)}d
+			</span>{" "}
+			<span className="text-mute">
+				· {new Date(Date.now() + ms).toISOString().slice(0, 10)} · ledger{" "}
+				{liveUntil.toLocaleString("en-US")}
+			</span>
+		</span>
+	)
+}
+
+function TtlPanel({
+	data,
+	loading,
+	error,
+	onRefresh,
+}: {
+	data: ContractTtlData | null
+	loading: boolean
+	error: string | null
+	onRefresh: () => void
+}) {
+	return (
+		<section>
+			<h2 className="h-section mb-3">Contracts · storage TTL</h2>
+			<div className="mb-3 flex flex-wrap items-center gap-3">
+				<p className="font-body text-[13px] text-mute">
+					Live-until ledgers read straight from RPC
+					{data ? ` · current ledger ${data.currentLedger.toLocaleString("en-US")}` : ""} · dates
+					assume ≈{LEDGER_SECS}s ledgers
+				</p>
+				<button className="btn-px btn-ghost btn-sm" disabled={loading} onClick={onRefresh}>
+					{loading ? "Reading…" : "Refresh"}
+				</button>
+			</div>
+			{error && (
+				<p className="mb-3 font-body text-[13px] text-loss">RPC read failed: {error}</p>
+			)}
+			<div className="panel overflow-x-auto">
+				<table className="w-full border-collapse text-left">
+					<thead>
+						<tr className="border-b-2 border-line">
+							{["Contract", "Address", "Instance TTL", "Wasm code TTL"].map((h, i) => (
+								<th key={i} className="label-px px-3 py-2 whitespace-nowrap">
+									{h}
+								</th>
+							))}
+						</tr>
+					</thead>
+					<tbody className="font-body text-[13px]">
+						{loading && !data && (
+							<tr>
+								<td colSpan={4} className="px-3 py-4 text-mute">
+									Reading ledger entries…
+								</td>
+							</tr>
+						)}
+						{data?.rows.map((row) => (
+							<tr key={row.id} className="border-b border-line/60 last:border-b-0">
+								<td className="px-3 py-2">
+									<span className="font-board text-[17px] text-ink">{row.label}</span>
+								</td>
+								<td className="px-3 py-2 whitespace-nowrap">
+									<a
+										href={explorerContractUrl(row.id)}
+										target="_blank"
+										rel="noopener noreferrer"
+										className="footer-link font-board text-[15px]"
+										title={row.id}
+									>
+										{shortAddr(row.id)}
+									</a>
+								</td>
+								<td className="px-3 py-2">
+									<TtlCell liveUntil={row.instanceLiveUntil} current={data.currentLedger} />
+								</td>
+								<td className="px-3 py-2">
+									<TtlCell liveUntil={row.codeLiveUntil} current={data.currentLedger} />
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
+			<p className="mt-2 font-body text-[12px] text-mute">
+				The instance TTL covers the contract instance and everything in instance storage.
+				Per-key Persistent entries (flight configs, routes, traveler indexes, claimable
+				balances) carry their own TTLs, which RPC cannot list — the weekly ttl_extender
+				job keeps those extended on its shard rotation.
+			</p>
+		</section>
+	)
+}
+
+/* ── oracle overview ──────────────────────────────────────────────── */
+
+interface OracleOverview {
+	/** oracle account the OracleAggregator contract trusts, read on-chain */
+	authorizedOracle: string
+	paused: boolean
+	version: number
+	activeCount: number
+	pendingOutcomes: bigint
+	/** oracle account's XLM (Horizon display string); null = unfunded/unreadable */
+	xlm: string | null
+	/** the complete active flight list — searched/paged client-side */
+	flights: Array<readonly [string, bigint]>
+}
+
+const ORACLE_REPORT_PAGE = 20
+// Full-list fetch cap: 50 paged reads = 1,000 listed flights. The 7-day
+// prune retention keeps the real list far below this; the cap only stops
+// a pathological list from turning into an RPC storm.
+const ORACLE_MAX_PAGES = 50
+
+/** Public chain + Horizon reads only — no admin API, no signer. */
+async function fetchOracleOverview(): Promise<OracleOverview> {
+	const [auth, paused, version, count, pending] = await Promise.all([
+		oracleClient.get_authorized_oracle(),
+		oracleClient.paused(),
+		oracleClient.version(),
+		oracleClient.get_active_flight_count(),
+		oracleClient.get_pending_outcomes(),
+	])
+	const activeCount = Number(count.result)
+	const pageCount = Math.min(Math.ceil(activeCount / ORACLE_REPORT_PAGE), ORACLE_MAX_PAGES)
+	const pages = await Promise.all(
+		Array.from({ length: pageCount }, (_, i) =>
+			oracleClient.get_active_flights_page({
+				offset: i * ORACLE_REPORT_PAGE,
+				limit: ORACLE_REPORT_PAGE,
+			})
+		)
+	)
+	const authorizedOracle = auth.result
+	let xlm: string | null = null
+	try {
+		const balances = await fetchBalances(authorizedOracle)
+		xlm = balances.xlm?.displayBalance ?? null
+	} catch {
+		xlm = null
+	}
+	return {
+		authorizedOracle,
+		paused: paused.result,
+		version: Number(version.result),
+		activeCount,
+		pendingOutcomes: pending.result,
+		xlm,
+		flights: pages.flatMap((p) => p.result),
+	}
+}
+
+/** Unix seconds → "YYYY-MM-DD HH:MM UTC", or an em-dash for 0/unset. */
+function utcSecs(v: bigint | number | undefined): string {
+	const n = Number(v ?? 0)
+	if (n <= 0) return "—"
+	return `${new Date(n * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC`
+}
+
+const ORACLE_STATUS_TONE: Record<string, string> = {
+	NotInitiated: "text-mute",
+	Active: "text-sky",
+	Landed: "text-win",
+	Cancelled: "text-loss",
+	ToBeSettledOnTime: "text-gold",
+	ToBeSettledDelayed: "text-gold",
+	ToBeSettledCancelled: "text-gold",
+	Settled: "text-mute",
+}
+
+function OraclePanel({
+	data,
+	reports,
+	reportsLoading,
+	backendOracle,
+	loading,
+	error,
+	onRefresh,
+	page,
+	onPageChange,
+	search,
+	onSearchChange,
+	filteredCount,
+}: {
+	data: OracleOverview | null
+	reports: Array<{ flightId: string; date: bigint; data: FlightData | null; error: boolean }>
+	reportsLoading: boolean
+	backendOracle: string | null
+	loading: boolean
+	error: string | null
+	onRefresh: () => void
+	page: number
+	onPageChange: (page: number) => void
+	search: string
+	onSearchChange: (value: string) => void
+	filteredCount: number
+}) {
+	const keyMatch =
+		data === null || backendOracle === null ? null : backendOracle === data.authorizedOracle
+
+	return (
+		<section>
+			<h2 className="h-section mb-3">Oracle · identity &amp; reports</h2>
+			<div className="mb-3 flex flex-wrap items-center gap-3">
+				<p className="font-body text-[13px] text-mute">
+					Read straight from the OracleAggregator contract and Horizon on tab open
+				</p>
+				<button className="btn-px btn-ghost btn-sm" disabled={loading} onClick={onRefresh}>
+					{loading ? "Reading…" : "Refresh"}
+				</button>
+			</div>
+			{error && (
+				<p className="mb-3 font-body text-[13px] text-loss">Chain read failed: {error}</p>
+			)}
+
+			<div className="panel mb-4 overflow-x-auto">
+				<table className="w-full border-collapse text-left">
+					<tbody className="font-body text-[13px]">
+						<tr className="border-b border-line/60">
+							<td className="label-px px-3 py-2 whitespace-nowrap">Authorized oracle</td>
+							<td className="px-3 py-2">
+								{data ? (
+									<a
+										href={explorerAccountUrl(data.authorizedOracle)}
+										target="_blank"
+										rel="noopener noreferrer"
+										className="footer-link font-board text-[15px]"
+										title={data.authorizedOracle}
+									>
+										{data.authorizedOracle}
+									</a>
+								) : (
+									<span className="text-mute">…</span>
+								)}
+							</td>
+						</tr>
+						<tr className="border-b border-line/60">
+							<td className="label-px px-3 py-2 whitespace-nowrap">Backend signer</td>
+							<td className="px-3 py-2">
+								{keyMatch === null ? (
+									<span className="text-mute">
+										{backendOracle === null
+											? "ORACLE_SECRET_KEY not readable (balances API)"
+											: "…"}
+									</span>
+								) : (
+									<span className="flex items-center gap-2">
+										<Lamp tone={keyMatch ? "win" : "loss"} blink={!keyMatch} />
+										<span className={keyMatch ? "text-win" : "text-loss"}>
+											{keyMatch
+												? "matches the on-chain authorization"
+												: `MISMATCH — backend signs as ${shortAddr(backendOracle ?? "")}; its reports will be rejected`}
+										</span>
+									</span>
+								)}
+							</td>
+						</tr>
+						<tr className="border-b border-line/60">
+							<td className="label-px px-3 py-2 whitespace-nowrap">XLM balance</td>
+							<td className="px-3 py-2">
+								<span className="font-board text-[17px] text-gold">
+									{data ? (data.xlm ?? "unfunded") : "…"}
+								</span>
+								<span className="ml-2 text-[12px] text-mute">
+									fee fuel for oracle-signed reports (also on the Accounts tab)
+								</span>
+							</td>
+						</tr>
+						<tr className="border-b border-line/60">
+							<td className="label-px px-3 py-2 whitespace-nowrap">Aggregator state</td>
+							<td className="px-3 py-2">
+								{data ? (
+									<span className="flex flex-wrap items-center gap-3">
+										<span className="flex items-center gap-2">
+											<Lamp tone={data.paused ? "loss" : "win"} blink={data.paused} />
+											<span className={data.paused ? "text-loss" : "text-win"}>
+												{data.paused ? "PAUSED — reports rejected" : "accepting reports"}
+											</span>
+										</span>
+										<span className="text-mute">· contract v{data.version}</span>
+									</span>
+								) : (
+									<span className="text-mute">…</span>
+								)}
+							</td>
+						</tr>
+						<tr>
+							<td className="label-px px-3 py-2 whitespace-nowrap">Workload</td>
+							<td className="px-3 py-2">
+								{data ? (
+									<span>
+										<span className="font-board text-[17px] text-ink">
+											{data.activeCount}
+										</span>{" "}
+										<span className="text-mute">listed flights ·</span>{" "}
+										<span
+											className={`font-board text-[17px] ${data.pendingOutcomes > 0n ? "text-gold" : "text-ink"}`}
+										>
+											{String(data.pendingOutcomes)}
+										</span>{" "}
+										<span className="text-mute">
+											outcomes awaiting settlement
+										</span>
+									</span>
+								) : (
+									<span className="text-mute">…</span>
+								)}
+							</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+
+			<div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+				<h3 className="label-px text-sky">
+					Reported flight state
+					{data
+						? search.trim()
+							? ` — ${filteredCount} of ${data.activeCount} match`
+							: ` — ${data.activeCount} listed`
+						: ""}
+				</h3>
+				<input
+					className="field-px w-56"
+					value={search}
+					onChange={(e) => onSearchChange(e.target.value)}
+					placeholder="Search flight… (AA100)"
+					aria-label="Search by flight number"
+					spellCheck={false}
+				/>
+			</div>
+			<div className="panel overflow-x-auto">
+				<table className="w-full border-collapse text-left">
+					<thead>
+						<tr className="border-b-2 border-line">
+							{["Flight", "Departure (UTC)", "Status", "Scheduled arrival", "Actual arrival", "Settled at"].map(
+								(h, i) => (
+									<th key={i} className="label-px px-3 py-2 whitespace-nowrap">
+										{h}
+									</th>
+								)
+							)}
+						</tr>
+					</thead>
+					<tbody className="font-body text-[13px]">
+						{(loading || reportsLoading) && reports.length === 0 && (
+							<tr>
+								<td colSpan={6} className="px-3 py-4 text-mute">
+									Reading flight reports…
+								</td>
+							</tr>
+						)}
+						{!loading && !reportsLoading && reports.length === 0 && (
+							<tr>
+								<td colSpan={6} className="px-3 py-4 text-mute">
+									{search.trim()
+										? `No listed flight matches "${search.trim()}".`
+										: "No flights listed on the aggregator right now."}
+								</td>
+							</tr>
+						)}
+						{reports.map((r) => {
+							const tag = r.data?.status.tag
+							return (
+								<tr
+									key={`${r.flightId}:${r.date}`}
+									className="border-b border-line/60 last:border-b-0"
+								>
+									<td className="px-3 py-2">
+										<span className="font-board text-[16px] text-ink">{r.flightId}</span>
+									</td>
+									<td className="px-3 py-2 whitespace-nowrap text-dim">{utcSecs(r.date)}</td>
+									<td className="px-3 py-2 whitespace-nowrap">
+										<span className={`status-px ${tag ? (ORACLE_STATUS_TONE[tag] ?? "text-mute") : "text-loss"}`}>
+											{r.error ? "read failed" : (tag ?? "—")}
+										</span>
+									</td>
+									<td className="px-3 py-2 whitespace-nowrap text-dim">
+										{utcSecs(r.data?.estimated_arrival_time)}
+									</td>
+									<td className="px-3 py-2 whitespace-nowrap text-dim">
+										{utcSecs(r.data?.actual_arrival_time)}
+									</td>
+									<td className="px-3 py-2 whitespace-nowrap text-mute">
+										{utcSecs(r.data?.settled_at)}
+									</td>
+								</tr>
+							)
+						})}
+					</tbody>
+				</table>
+			</div>
+			{data && (
+				<Pager
+					page={page}
+					onPageChange={onPageChange}
+					total={filteredCount}
+					limit={ORACLE_REPORT_PAGE}
+					label={
+						search.trim()
+							? `${filteredCount} match${filteredCount === 1 ? "" : "es"} of ${data.activeCount} listed`
+							: `${data.activeCount} flight${data.activeCount === 1 ? "" : "s"} listed on-chain`
+					}
+				/>
+			)}
+			<p className="mt-2 font-body text-[12px] text-mute">
+				Every row is on-chain state the oracle wrote: the scheduled arrival at
+				activation, then landed / cancelled outcomes (the fetcher cron signs these).
+				ToBeSettled* means an outcome is reported and waiting for the settler.
+			</p>
+		</section>
+	)
+}
+
+/* ── users overview ───────────────────────────────────────────────── */
+
+/** api/admin/users.ts — buyer stats (DB mirror) + vault reads (chain). */
+interface UsersResponse {
+	policy_holders: {
+		unique_buyers: number
+		policies: number
+		premium_units_total: string
+		payoff_units_total: string
+		top: Array<{
+			buyer: string
+			policies: number
+			premium_units: string
+			payoff_units: string
+			last_at: string
+		}>
+	} | null
+	vault: {
+		total_shares: string
+		total_assets: string
+		deposit_queue: { count: number; assets_units_total: string; unique_owners: number }
+		withdrawal_queue: { count: number; shares_total: string; unique_owners: number }
+		top_positions: Array<{ address: string; shares: string; assets_units: string }>
+		holders_probed: number
+		holders_with_shares: number
+	}
+	as_of: string
+}
+
+/** RVS shares carry 10 decimals (asset 7 + virtual offset 3). */
+function sharesAmount(units: string): string {
+	return (Number(units) / 1e10).toLocaleString("en-US", { maximumFractionDigits: 2 })
+}
+
+function usdcAmount(units: string): string {
+	return formatUsdc(BigInt(units))
+}
+
+function AddressCell({ address }: { address: string }) {
+	return (
+		<a
+			href={explorerAccountUrl(address)}
+			target="_blank"
+			rel="noopener noreferrer"
+			className="footer-link font-board text-[15px]"
+			title={address}
+		>
+			{shortAddr(address)}
+		</a>
+	)
+}
+
+function UsersPanel({
+	data,
+	loading,
+	error,
+	onRefresh,
+}: {
+	data: UsersResponse | null
+	loading: boolean
+	error: string | null
+	onRefresh: () => void
+}) {
+	const ph = data?.policy_holders ?? null
+	const vault = data?.vault ?? null
+	return (
+		<section>
+			<h2 className="h-section mb-3">Users · travelers &amp; underwriters</h2>
+			<div className="mb-3 flex flex-wrap items-center gap-3">
+				<p className="font-body text-[13px] text-mute">
+					Buyers from the policies event mirror · vault from chain
+					{data ? ` · read ${relTime(data.as_of)}` : ""}
+				</p>
+				<button className="btn-px btn-ghost btn-sm" disabled={loading} onClick={onRefresh}>
+					{loading ? "Reading…" : "Refresh"}
+				</button>
+			</div>
+			{error && (
+				<p className="mb-3 font-body text-[13px] text-loss">Read failed: {error}</p>
+			)}
+			{loading && !data && (
+				<p className="font-body text-[13px] text-mute">Counting heads…</p>
+			)}
+
+			{/* ── travelers ── */}
+			<h3 className="label-px mb-2 text-sky">Policy holders</h3>
+			{data && ph === null && (
+				<p className="mb-4 font-body text-[13px] text-gold">
+					Governance DB not configured — buyer stats unavailable in this deployment.
+				</p>
+			)}
+			{ph && (
+				<>
+					<div className="mb-3 flex flex-wrap gap-x-6 gap-y-1 font-body text-[13px]">
+						<span>
+							<span className="font-board text-[18px] text-ink">{ph.unique_buyers}</span>{" "}
+							<span className="text-mute">unique buyers</span>
+						</span>
+						<span>
+							<span className="font-board text-[18px] text-ink">{ph.policies}</span>{" "}
+							<span className="text-mute">policies bought</span>
+						</span>
+						<span>
+							<span className="font-board text-[18px] text-gold">
+								{usdcAmount(ph.premium_units_total)}
+							</span>{" "}
+							<span className="text-mute">USDC premiums paid</span>
+						</span>
+						<span>
+							<span className="font-board text-[18px] text-gold">
+								{usdcAmount(ph.payoff_units_total)}
+							</span>{" "}
+							<span className="text-mute">USDC payoff written</span>
+						</span>
+					</div>
+					<div className="panel mb-5 overflow-x-auto">
+						<table className="w-full border-collapse text-left">
+							<thead>
+								<tr className="border-b-2 border-line">
+									{["#", "Buyer", "Policies", "Premiums paid", "Payoff written", "Last purchase"].map(
+										(h, i) => (
+											<th key={i} className="label-px px-3 py-2 whitespace-nowrap">
+												{h}
+											</th>
+										)
+									)}
+								</tr>
+							</thead>
+							<tbody className="font-body text-[13px]">
+								{ph.top.length === 0 && (
+									<tr>
+										<td colSpan={6} className="px-3 py-4 text-mute">
+											No policies bought yet.
+										</td>
+									</tr>
+								)}
+								{ph.top.map((b, i) => (
+									<tr key={b.buyer} className="border-b border-line/60 last:border-b-0">
+										<td className="px-3 py-2 text-mute">{i + 1}</td>
+										<td className="px-3 py-2 whitespace-nowrap">
+											<AddressCell address={b.buyer} />
+										</td>
+										<td className="px-3 py-2">
+											<span className="font-board text-[16px] text-ink">{b.policies}</span>
+										</td>
+										<td className="px-3 py-2 whitespace-nowrap">
+											<span className="font-board text-[16px] text-gold">
+												{usdcAmount(b.premium_units)}
+											</span>{" "}
+											<span className="text-mute">USDC</span>
+										</td>
+										<td className="px-3 py-2 whitespace-nowrap">
+											<span className="font-board text-[16px] text-dim">
+												{usdcAmount(b.payoff_units)}
+											</span>{" "}
+											<span className="text-mute">USDC</span>
+										</td>
+										<td className="px-3 py-2 whitespace-nowrap text-dim">{relTime(b.last_at)}</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				</>
+			)}
+
+			{/* ── underwriters ── */}
+			<h3 className="label-px mb-2 text-sky">Underwriters (vault)</h3>
+			{vault && (
+				<>
+					<div className="mb-3 flex flex-wrap gap-x-6 gap-y-1 font-body text-[13px]">
+						<span>
+							<span className="font-board text-[18px] text-ink">
+								{usdcAmount(vault.total_assets)}
+							</span>{" "}
+							<span className="text-mute">USDC TVL</span>
+						</span>
+						<span>
+							<span className="font-board text-[18px] text-ink">
+								{sharesAmount(vault.total_shares)}
+							</span>{" "}
+							<span className="text-mute">shares outstanding</span>
+						</span>
+						<span>
+							<span className="font-board text-[18px] text-ink">
+								{vault.holders_with_shares}
+							</span>{" "}
+							<span className="text-mute">
+								holder{vault.holders_with_shares === 1 ? "" : "s"} found (of{" "}
+								{vault.holders_probed} probed)
+							</span>
+						</span>
+						<span>
+							<span className="font-board text-[18px] text-dim">
+								{vault.deposit_queue.count}
+							</span>{" "}
+							<span className="text-mute">
+								queued deposit{vault.deposit_queue.count === 1 ? "" : "s"} (
+								{usdcAmount(vault.deposit_queue.assets_units_total)} USDC)
+							</span>
+						</span>
+						<span>
+							<span className="font-board text-[18px] text-dim">
+								{vault.withdrawal_queue.count}
+							</span>{" "}
+							<span className="text-mute">
+								queued withdrawal{vault.withdrawal_queue.count === 1 ? "" : "s"} (
+								{sharesAmount(vault.withdrawal_queue.shares_total)} shares)
+							</span>
+						</span>
+					</div>
+					<div className="panel overflow-x-auto">
+						<table className="w-full border-collapse text-left">
+							<thead>
+								<tr className="border-b-2 border-line">
+									{["#", "Underwriter", "Shares", "Current value"].map((h, i) => (
+										<th key={i} className="label-px px-3 py-2 whitespace-nowrap">
+											{h}
+										</th>
+									))}
+								</tr>
+							</thead>
+							<tbody className="font-body text-[13px]">
+								{vault.top_positions.length === 0 && (
+									<tr>
+										<td colSpan={4} className="px-3 py-4 text-mute">
+											No share balances found among known addresses.
+										</td>
+									</tr>
+								)}
+								{vault.top_positions.map((p, i) => (
+									<tr key={p.address} className="border-b border-line/60 last:border-b-0">
+										<td className="px-3 py-2 text-mute">{i + 1}</td>
+										<td className="px-3 py-2 whitespace-nowrap">
+											<AddressCell address={p.address} />
+										</td>
+										<td className="px-3 py-2 whitespace-nowrap">
+											<span className="font-board text-[16px] text-ink">
+												{sharesAmount(p.shares)}
+											</span>
+										</td>
+										<td className="px-3 py-2 whitespace-nowrap">
+											<span className="font-board text-[16px] text-gold">
+												{usdcAmount(p.assets_units)}
+											</span>{" "}
+											<span className="text-mute">USDC</span>
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+					<p className="mt-2 font-body text-[12px] text-mute">
+						Share holders cannot be enumerated on-chain, so positions are probed across
+						every address the protocol has seen (policy buyers + currently queued LPs,
+						capped at 200). An underwriter who never bought a policy and has nothing
+						queued right now will hold shares without appearing here.
+					</p>
+				</>
+			)}
+		</section>
+	)
+}
+
+/* ── direct controls (interventions tab) ──────────────────────────── */
+
+/** The structural surface every pausable contract client shares — the
+ *  generated Client classes are distinct types, so the board talks to
+ *  them through this narrowed shape. */
+type WalletSignTx = ReturnType<typeof useWallet>["signTransaction"]
+
+interface PausableClient {
+	paused(): Promise<{ result: boolean }>
+	pause(args: { caller: string }): Promise<{
+		signAndSend(opts?: { signTransaction?: WalletSignTx }): Promise<unknown>
+	}>
+	unpause(args: { caller: string }): Promise<{
+		signAndSend(opts?: { signTransaction?: WalletSignTx }): Promise<unknown>
+	}>
+}
+
+const PAUSABLE_CONTRACTS: Array<{
+	key: string
+	label: string
+	client: PausableClient
+	note: string
+}> = [
+	{
+		key: "controller",
+		label: "Controller",
+		client: controllerClient as unknown as PausableClient,
+		note: "halts every purchase and settlement entry point",
+	},
+	{
+		key: "risk_vault",
+		label: "Risk Vault",
+		client: riskVaultClient as unknown as PausableClient,
+		note: "halts deposits, withdrawals and queue processing",
+	},
+	{
+		key: "flight_pool_manager",
+		label: "Flight Pool Manager",
+		client: flightPoolManagerClient as unknown as PausableClient,
+		note: "halts claims and premium flows",
+	},
+	{
+		key: "oracle_aggregator",
+		label: "Oracle Aggregator",
+		client: oracleClient as unknown as PausableClient,
+		note: "halts flight reports (close_sale stays pause-exempt)",
+	},
+	{
+		key: "governance_module",
+		label: "Governance Module",
+		client: governanceClient as unknown as PausableClient,
+		note: "CAUTION: also blocks disable/remove route while paused — routes keep selling",
+	},
+]
+
+function DirectControls({ token, onDone }: { token: string; onDone: () => void }) {
+	const { address, signTransaction } = useWallet()
+
+	// paused() ×5 + the buyer-whitelist gate, re-read after every action
+	const statusQ = useQuery({
+		queryKey: ["admin-controls-status"],
+		queryFn: async () => {
+			const [gate, ...paused] = await Promise.all([
+				controllerClient.whitelist_enabled(),
+				...PAUSABLE_CONTRACTS.map((c) => c.client.paused()),
+			])
+			return {
+				whitelistEnabled: gate.result,
+				paused: Object.fromEntries(
+					PAUSABLE_CONTRACTS.map((c, i) => [c.key, paused[i]?.result ?? false])
+				) as Record<string, boolean>,
+			}
+		},
+		staleTime: 0,
+	})
+
+	// owner-signed calls (contract pause + whitelist gate) — the owner
+	// secret never reaches the server, so these sign with the connected
+	// wallet; a non-owner wallet fails auth on-chain and surfaces here.
+	const flow = useTxFlow({ errorFallback: "Owner-signed call failed", notifyError: true })
+	const [busyKey, setBusyKey] = useState<string | null>(null)
+	const walletBusy = flow.state !== "idle" && flow.state !== "error"
+
+	const ownerRun = (key: string, fn: (step: (s: TxState) => void) => Promise<{ message: string; txHash?: string }>) => {
+		setBusyKey(key)
+		void flow
+			.run(async (step) => {
+				const out = await fn(step)
+				await statusQ.refetch()
+				onDone()
+				return out
+			})
+			.finally(() => setBusyKey(null))
+	}
+
+	const togglePause = (c: (typeof PAUSABLE_CONTRACTS)[number]) => {
+		if (!address) return
+		const isPaused = statusQ.data?.paused[c.key] ?? false
+		ownerRun(c.key, async (step) => {
+			step("verifying")
+			const tx = isPaused
+				? await c.client.unpause({ caller: address })
+				: await c.client.pause({ caller: address })
+			const sent = await tx.signAndSend({
+				signTransaction: stagedSigner(step, signTransaction),
+			})
+			return {
+				message: `${c.label} ${isPaused ? "unpaused" : "PAUSED"}`,
+				txHash: txHashOf(sent),
+			}
+		})
+	}
+
+	const toggleGate = () => {
+		const enabled = statusQ.data?.whitelistEnabled ?? false
+		ownerRun("whitelist_gate", async (step) => {
+			step("verifying")
+			const tx = await controllerClient.set_whitelist_enabled({ enabled: !enabled })
+			const sent = await tx.signAndSend({
+				signTransaction: stagedSigner(step, signTransaction),
+			})
+			return {
+				message: `Buyer whitelist gate ${enabled ? "disabled — open to anyone" : "ENABLED — approved buyers only"}`,
+				txHash: txHashOf(sent),
+			}
+		})
+	}
+
+	// gov-admin-signed calls (server side, audited in actions_log)
+	const [buyerAddr, setBuyerAddr] = useState("")
+	const [buyerNote, setBuyerNote] = useState<string | null>(null)
+	const buyerTarget = buyerAddr.trim().toUpperCase()
+	const buyerValid = STELLAR_ADDRESS.test(buyerTarget)
+	const buyerMut = useMutation({
+		mutationFn: (p: { action: "buyer_add" | "buyer_remove"; addr: string }) =>
+			api<{ ok: boolean; tx_hash: string | null }>("/api/admin/controls", token, {
+				method: "POST",
+				body: JSON.stringify(p),
+			}),
+		onSuccess: (r, p) => {
+			setBuyerNote(
+				`${p.action === "buyer_add" ? "Added" : "Removed"} ${shortAddr(p.addr)}${r.tx_hash ? ` — tx ${r.tx_hash.slice(0, 8)}…` : ""}`
+			)
+			onDone()
+		},
+		onError: () => setBuyerNote(null),
+	})
+	const checkBuyer = async () => {
+		try {
+			const tx = await controllerClient.is_whitelisted({ addr: buyerTarget })
+			setBuyerNote(
+				`${shortAddr(buyerTarget)} is ${tx.result ? "WHITELISTED (valid approval)" : "not whitelisted"}`
+			)
+		} catch (err) {
+			setBuyerNote(`Check failed: ${errorMessage(err)}`)
+		}
+	}
+
+	const [rmFlight, setRmFlight] = useState("")
+	const [rmOrigin, setRmOrigin] = useState("")
+	const [rmDest, setRmDest] = useState("")
+	const [rmNote, setRmNote] = useState<string | null>(null)
+	const removeMut = useMutation({
+		mutationFn: () =>
+			api<{ ok: boolean; tx_hash: string | null }>("/api/admin/controls", token, {
+				method: "POST",
+				body: JSON.stringify({
+					action: "remove_route",
+					flight_id: rmFlight.trim().toUpperCase(),
+					origin: rmOrigin.trim().toUpperCase(),
+					dest: rmDest.trim().toUpperCase(),
+				}),
+			}),
+		onSuccess: (r) => {
+			setRmNote(
+				`Route removed${r.tx_hash ? ` — tx ${r.tx_hash.slice(0, 8)}…` : ""}`
+			)
+			setRmFlight("")
+			setRmOrigin("")
+			setRmDest("")
+			onDone()
+		},
+		onError: () => setRmNote(null),
+	})
+	const rmValid = rmFlight.trim() !== "" && rmOrigin.trim() !== "" && rmDest.trim() !== ""
+
+	const inputClass =
+		"min-w-0 border-2 border-line bg-inset px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-gold"
+
+	return (
+		<section className="mt-8">
+			<h2 className="h-section mb-3">Direct controls</h2>
+			<p className="mb-4 font-body text-[13px] text-mute">
+				Route pauses live in the ledger above. These are the sharper tools: contract
+				pause switches and the whitelist-gate toggle are owner-only and sign with
+				your connected wallet; buyer add/remove and route removal run server-side
+				with the gov-admin key and land in the action log.
+			</p>
+
+			{/* ── contract pause board ── */}
+			<h3 className="label-px mb-2 text-sky">Contract pause · owner wallet</h3>
+			{!address && (
+				<p className="mb-2 font-body text-[13px] text-gold">
+					Connect the contract-owner wallet (top right) to pause or unpause.
+				</p>
+			)}
+			<div className="panel mb-2 overflow-x-auto">
+				<table className="w-full border-collapse text-left">
+					<tbody className="font-body text-[13px]">
+						{PAUSABLE_CONTRACTS.map((c) => {
+							const isPaused = statusQ.data?.paused[c.key]
+							return (
+								<tr key={c.key} className="border-b border-line/60 last:border-b-0">
+									<td className="px-3 py-2">
+										<span className="font-board text-[16px] text-ink">{c.label}</span>
+										<span className="block text-[12px] text-mute">{c.note}</span>
+									</td>
+									<td className="px-3 py-2 whitespace-nowrap">
+										<span className="flex items-center gap-2">
+											<Lamp
+												tone={isPaused === undefined ? "gold" : isPaused ? "loss" : "win"}
+												blink={isPaused === true}
+											/>
+											<span className={isPaused ? "text-loss" : "text-win"}>
+												{isPaused === undefined ? "…" : isPaused ? "PAUSED" : "live"}
+											</span>
+										</span>
+									</td>
+									<td className="px-3 py-2 whitespace-nowrap">
+										<button
+											type="button"
+											className={`btn-px btn-sm ${isPaused ? "btn-gold" : "btn-ghost"}`}
+											disabled={!address || walletBusy || isPaused === undefined}
+											onClick={() => togglePause(c)}
+										>
+											{busyKey === c.key && walletBusy
+												? "Signing…"
+												: isPaused
+													? "Unpause"
+													: "Pause"}
+										</button>
+									</td>
+								</tr>
+							)
+						})}
+					</tbody>
+				</table>
+			</div>
+			{walletBusy && busyKey !== null && (
+				<TxProgress state={flow.state} steps={["verifying", "awaiting", "confirming"]} />
+			)}
+
+			{/* ── buyer whitelist ── */}
+			<h3 className="label-px mt-5 mb-2 text-sky">Buyer whitelist</h3>
+			<p className="mb-2 font-body text-[13px]">
+				<span className="text-mute">Gate:</span>{" "}
+				<span
+					className={
+						statusQ.data?.whitelistEnabled ? "text-gold" : "text-win"
+					}
+				>
+					{statusQ.data === undefined
+						? "…"
+						: statusQ.data.whitelistEnabled
+							? "ENABLED — only approved buyers can purchase"
+							: "disabled — anyone can purchase"}
+				</span>{" "}
+				<button
+					type="button"
+					className="btn-px btn-ghost btn-sm ml-2"
+					disabled={!address || walletBusy || statusQ.data === undefined}
+					onClick={toggleGate}
+					title="Owner-only on-chain — signs with the connected wallet"
+				>
+					{busyKey === "whitelist_gate" && walletBusy
+						? "Signing…"
+						: statusQ.data?.whitelistEnabled
+							? "Disable gate"
+							: "Enable gate"}
+				</button>
+			</p>
+			<div className="flex flex-col gap-2 sm:flex-row">
+				<input
+					value={buyerAddr}
+					onChange={(e) => {
+						setBuyerAddr(e.target.value)
+						setBuyerNote(null)
+					}}
+					spellCheck={false}
+					placeholder="G… buyer address"
+					aria-label="Buyer address"
+					className={`${inputClass} flex-1`}
+				/>
+				<button
+					type="button"
+					className="btn-px btn-ghost btn-sm"
+					disabled={!buyerValid}
+					onClick={() => void checkBuyer()}
+				>
+					Check
+				</button>
+				<button
+					type="button"
+					className="btn-px btn-blip btn-sm"
+					disabled={!buyerValid || buyerMut.isPending}
+					onClick={() => buyerMut.mutate({ action: "buyer_add", addr: buyerTarget })}
+				>
+					{buyerMut.isPending ? "Working…" : "Whitelist"}
+				</button>
+				<button
+					type="button"
+					className="btn-px btn-ghost btn-sm"
+					disabled={!buyerValid || buyerMut.isPending}
+					onClick={() => buyerMut.mutate({ action: "buyer_remove", addr: buyerTarget })}
+				>
+					Remove
+				</button>
+			</div>
+			{buyerNote && <p className="mt-2 font-body text-[13px] text-dim">{buyerNote}</p>}
+			{buyerMut.error != null && (
+				<p className="mt-2 font-body text-[13px] text-loss">
+					{errorMessage(buyerMut.error)}
+				</p>
+			)}
+			<p className="mt-1 font-body text-[12px] text-mute">
+				Add/remove signs with the gov-admin key (authorized on-chain) and is audited
+				in the action log. Approvals expire after 180 dormant days; re-adding
+				restarts the window.
+			</p>
+
+			{/* ── route removal ── */}
+			<h3 className="label-px mt-5 mb-2 text-sky">Remove route · governance</h3>
+			<p className="mb-2 font-body text-[12px] text-mute">
+				Permanent: deletes the route entry from GovernanceModule. The contract
+				requires the route to be DISABLED first — pause it via the ledger above,
+				then remove.
+			</p>
+			<div className="flex flex-col gap-2 sm:flex-row">
+				<input
+					value={rmFlight}
+					onChange={(e) => {
+						setRmFlight(e.target.value)
+						setRmNote(null)
+					}}
+					spellCheck={false}
+					placeholder="Flight (AA100)"
+					aria-label="Flight id"
+					className={`${inputClass} sm:w-40`}
+				/>
+				<input
+					value={rmOrigin}
+					onChange={(e) => {
+						setRmOrigin(e.target.value)
+						setRmNote(null)
+					}}
+					spellCheck={false}
+					placeholder="Origin (JFK)"
+					aria-label="Origin"
+					className={`${inputClass} sm:w-32`}
+				/>
+				<input
+					value={rmDest}
+					onChange={(e) => {
+						setRmDest(e.target.value)
+						setRmNote(null)
+					}}
+					spellCheck={false}
+					placeholder="Dest (LAX)"
+					aria-label="Destination"
+					className={`${inputClass} sm:w-32`}
+				/>
+				<button
+					type="button"
+					className="btn-px btn-loss btn-sm"
+					disabled={!rmValid || removeMut.isPending}
+					onClick={() => removeMut.mutate()}
+				>
+					{removeMut.isPending ? "Removing…" : "Remove route"}
+				</button>
+			</div>
+			{rmNote && <p className="mt-2 font-body text-[13px] text-dim">{rmNote}</p>}
+			{removeMut.error != null && (
+				<p className="mt-2 font-body text-[13px] text-loss">
+					{errorMessage(removeMut.error)}
+				</p>
+			)}
+		</section>
+	)
+}
+
+/* ── solvency & money flow ────────────────────────────────────────── */
+
+const POOL_SCAN_PAGE = 20
+const POOL_SCAN_MAX_PAGES = 50
+const POOL_SCAN_CONCURRENCY = 6
+
+/** Bounded-concurrency map for the pool-book scan. */
+async function mapLimitedAdmin<T, R>(
+	items: T[],
+	limit: number,
+	fn: (item: T) => Promise<R>
+): Promise<R[]> {
+	const out: R[] = new Array(items.length)
+	let next = 0
+	await Promise.all(
+		Array.from({ length: Math.min(limit, items.length) }, async () => {
+			for (;;) {
+				const i = next++
+				if (i >= items.length) return
+				out[i] = await fn(items[i] as T)
+			}
+		})
+	)
+	return out
+}
+
+interface SolvencyData {
+	/** vault accounting */
+	tvl: bigint
+	free: bigint
+	locked: bigint
+	tma: bigint
+	withdrawable: bigint
+	totalShares: bigint
+	/** USDC value of exactly 1.0 share (7-dp units) */
+	sharePrice: bigint
+	ratioCfg: number
+	/** controller lifetime counters */
+	stats: { sold: number; premiums: bigint; payouts: bigint }
+	/** actual token balances */
+	vaultUsdc: bigint
+	poolUsdc: bigint
+	recovered: bigint
+	depositQueueAssets: bigint
+	withdrawalQueueShares: bigint
+	/** pool open-book scan */
+	scannedFlights: number
+	scanErrors: number
+	activePremiumsHeld: bigint
+	expectedLocked: bigint
+	/** claimable payoffs whose claim window is still open */
+	owedUnclaimed: bigint
+	/** claimable payoffs whose window expired (awaiting sweep) */
+	expiredUnclaimed: bigint
+}
+
+/** Pure chain reads — TVL, both token balances, and a bounded scan of
+ *  the pool's open book so the invariants below compare what the vault
+ *  SAYS is locked against what the policies actually require. */
+async function fetchSolvency(): Promise<SolvencyData> {
+	const [
+		tvl,
+		free,
+		locked,
+		tma,
+		withdrawable,
+		supply,
+		oneShare,
+		ratioCfg,
+		stats,
+		vaultUsdc,
+		poolUsdc,
+		recovered,
+		depQ,
+		wdQ,
+		poolCount,
+	] = await Promise.all([
+		riskVaultClient.total_assets(),
+		riskVaultClient.get_free_capital(),
+		riskVaultClient.get_locked_capital(),
+		riskVaultClient.get_total_managed_assets(),
+		riskVaultClient.get_withdrawable_capital(),
+		riskVaultClient.total_supply(),
+		riskVaultClient.convert_to_assets({ shares: 10_000_000_000n }),
+		controllerClient.get_solvency_ratio(),
+		controllerClient.get_stats(),
+		mockUsdcClient.balance({ account: CONTRACT_IDS.riskVault }),
+		mockUsdcClient.balance({ account: CONTRACT_IDS.flightPoolManager }),
+		flightPoolManagerClient.get_recovered_balance(),
+		riskVaultClient.get_deposit_queue(),
+		riskVaultClient.get_withdrawal_queue(),
+		flightPoolManagerClient.get_active_flight_count(),
+	])
+
+	const count = Number(poolCount.result)
+	const pages = Math.min(Math.ceil(count / POOL_SCAN_PAGE), POOL_SCAN_MAX_PAGES)
+	const pageResults = await Promise.all(
+		Array.from({ length: pages }, (_, i) =>
+			flightPoolManagerClient.get_active_flights_page({
+				offset: i * POOL_SCAN_PAGE,
+				limit: POOL_SCAN_PAGE,
+			})
+		)
+	)
+	const flights = pageResults.flatMap((p) => p.result)
+
+	let scanErrors = 0
+	const configs = await mapLimitedAdmin(
+		flights,
+		POOL_SCAN_CONCURRENCY,
+		async ([flightId, date]): Promise<PoolFlightConfig | null> => {
+			try {
+				const tx = await flightPoolManagerClient.get_flight_config({
+					flight_id: flightId,
+					date,
+				})
+				return tx.result ?? null
+			} catch {
+				scanErrors++
+				return null
+			}
+		}
+	)
+
+	const nowSecs = BigInt(Math.floor(Date.now() / 1000))
+	let activePremiumsHeld = 0n
+	let expectedLocked = 0n
+	let owedUnclaimed = 0n
+	let expiredUnclaimed = 0n
+	for (const cfg of configs) {
+		if (!cfg) continue
+		const buyers = BigInt(cfg.buyer_count)
+		const unclaimed = buyers - BigInt(cfg.claimed_count)
+		if (cfg.status.tag === "Active") {
+			// premium sits in the pool; the vault locked the full payoff
+			activePremiumsHeld += cfg.premium * buyers
+			expectedLocked += cfg.payoff * buyers
+		} else if (
+			cfg.status.tag === "SettledDelayed" ||
+			cfg.status.tag === "SettledCancelled"
+		) {
+			if (unclaimed > 0n) {
+				if (BigInt(cfg.claim_expiry) > nowSecs) owedUnclaimed += cfg.payoff * unclaimed
+				else expiredUnclaimed += cfg.payoff * unclaimed
+			}
+		}
+	}
+
+	return {
+		tvl: tvl.result,
+		free: free.result,
+		locked: locked.result,
+		tma: tma.result,
+		withdrawable: withdrawable.result,
+		totalShares: supply.result,
+		sharePrice: oneShare.result,
+		ratioCfg: Number(ratioCfg.result),
+		stats: {
+			sold: Number(stats.result[0]),
+			premiums: stats.result[1],
+			payouts: stats.result[2],
+		},
+		vaultUsdc: vaultUsdc.result,
+		poolUsdc: poolUsdc.result,
+		recovered: recovered.result,
+		depositQueueAssets: depQ.result.reduce((s, d) => s + d.assets, 0n),
+		withdrawalQueueShares: wdQ.result.reduce((s, w) => s + w.shares, 0n),
+		scannedFlights: flights.length,
+		scanErrors,
+		activePremiumsHeld,
+		expectedLocked,
+		owedUnclaimed,
+		expiredUnclaimed,
+	}
+}
+
+function InvariantRow({
+	name,
+	detail,
+	pass,
+	delta,
+}: {
+	name: string
+	detail: string
+	pass: boolean
+	/** signed 7-dp USDC delta; 0n renders as "exact" */
+	delta: bigint
+}) {
+	return (
+		<tr className={`border-b border-line/60 last:border-b-0 ${pass ? "" : "bg-loss/10"}`}>
+			<td className="px-3 py-2 whitespace-nowrap">
+				<span className="flex items-center gap-2">
+					<Lamp tone={pass ? "win" : "loss"} blink={!pass} />
+					<span className={`status-px ${pass ? "text-win" : "text-loss"}`}>
+						{pass ? "HOLDS" : "BROKEN"}
+					</span>
+				</span>
+			</td>
+			<td className="px-3 py-2">
+				<span className="font-board text-[16px] text-ink">{name}</span>
+				<span className="block text-[12px] text-mute">{detail}</span>
+			</td>
+			<td className="px-3 py-2 whitespace-nowrap">
+				<span className={`font-board text-[16px] ${pass ? "text-mute" : "text-loss"}`}>
+					{delta === 0n
+						? "exact"
+						: `${delta > 0n ? "+" : "−"}${formatUsdc(delta < 0n ? -delta : delta)} USDC`}
+				</span>
+			</td>
+		</tr>
+	)
+}
+
+function MoneyStat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+	return (
+		<div className="border-2 border-line bg-raised px-3 py-2">
+			<p className="label-px">{label}</p>
+			<p className={`font-board text-[18px] ${tone ?? "text-ink"}`}>{value}</p>
+		</div>
+	)
+}
+
+function SolvencyPanel({
+	data,
+	loading,
+	error,
+	onRefresh,
+}: {
+	data: SolvencyData | null
+	loading: boolean
+	error: string | null
+	onRefresh: () => void
+}) {
+	// Invariants — integer math on 7-dp units, so "green" means EXACT.
+	const inv = data
+		? {
+				internal: data.free + data.locked - data.tma,
+				backing: data.vaultUsdc - (data.tma + data.depositQueueAssets),
+				lockedBook: data.locked - data.expectedLocked,
+				poolCover:
+					data.poolUsdc -
+					(data.activePremiumsHeld +
+						data.owedUnclaimed +
+						data.expiredUnclaimed +
+						data.recovered),
+			}
+		: null
+	const coverageRatio =
+		data && data.locked > 0n ? Number((data.tma * 100n) / data.locked) : null
+
+	return (
+		<section>
+			<h2 className="h-section mb-3">Solvency · is the money where the contracts think it is?</h2>
+			<div className="mb-3 flex flex-wrap items-center gap-3">
+				<p className="font-body text-[13px] text-mute">
+					Pure chain reads, including a full scan of the pool's open book
+					{data
+						? ` — ${data.scannedFlights} flight bucket(s)${data.scanErrors ? `, ${data.scanErrors} unreadable` : ""}`
+						: ""}
+				</p>
+				<button className="btn-px btn-ghost btn-sm" disabled={loading} onClick={onRefresh}>
+					{loading ? "Auditing…" : "Refresh"}
+				</button>
+			</div>
+			{error && (
+				<p className="mb-3 font-body text-[13px] text-loss">Chain read failed: {error}</p>
+			)}
+			{loading && !data && (
+				<p className="font-body text-[13px] text-mute">Counting the money…</p>
+			)}
+
+			{data && inv && (
+				<>
+					<div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+						<MoneyStat label="TVL (total assets)" value={`${formatUsdc(data.tvl)} USDC`} />
+						<MoneyStat label="Free capital" value={`${formatUsdc(data.free)} USDC`} />
+						<MoneyStat
+							label="Locked capital"
+							value={`${formatUsdc(data.locked)} USDC`}
+							tone={data.locked > 0n ? "text-gold" : "text-ink"}
+						/>
+						<MoneyStat
+							label="Coverage vs min"
+							value={
+								coverageRatio === null
+									? `∞ / ${data.ratioCfg}%`
+									: `${coverageRatio}% / ${data.ratioCfg}%`
+							}
+							tone={
+								coverageRatio !== null && coverageRatio < data.ratioCfg
+									? "text-loss"
+									: "text-win"
+							}
+						/>
+						<MoneyStat label="Vault USDC balance" value={`${formatUsdc(data.vaultUsdc)} USDC`} />
+						<MoneyStat label="Pool USDC balance" value={`${formatUsdc(data.poolUsdc)} USDC`} />
+						<MoneyStat
+							label="Share price"
+							value={`${(Number(data.sharePrice) / 1e7).toFixed(4)} USDC`}
+						/>
+						<MoneyStat
+							label="Lifetime premiums / payouts"
+							value={`${formatUsdc(data.stats.premiums)} / ${formatUsdc(data.stats.payouts)}`}
+						/>
+					</div>
+
+					<div className="panel mb-2 overflow-x-auto">
+						<table className="w-full border-collapse text-left">
+							<thead>
+								<tr className="border-b-2 border-line">
+									{["", "Invariant", "Delta"].map((h, i) => (
+										<th key={i} className="label-px px-3 py-2 whitespace-nowrap">
+											{h}
+										</th>
+									))}
+								</tr>
+							</thead>
+							<tbody className="font-body text-[13px]">
+								<InvariantRow
+									name="Vault internal ledger"
+									detail={`free ${formatUsdc(data.free)} + locked ${formatUsdc(data.locked)} = managed ${formatUsdc(data.tma)}`}
+									pass={inv.internal === 0n}
+									delta={inv.internal}
+								/>
+								<InvariantRow
+									name="Vault token backing"
+									detail={`USDC balance ${formatUsdc(data.vaultUsdc)} covers managed ${formatUsdc(data.tma)} + queued deposits ${formatUsdc(data.depositQueueAssets)}`}
+									pass={inv.backing >= 0n}
+									delta={inv.backing}
+								/>
+								<InvariantRow
+									name="Locked = open policy book"
+									detail={`vault locked ${formatUsdc(data.locked)} vs Σ payoff×buyers on unsettled flights ${formatUsdc(data.expectedLocked)}`}
+									pass={inv.lockedBook === 0n}
+									delta={inv.lockedBook}
+								/>
+								<InvariantRow
+									name="Pool covers obligations"
+									detail={`pool USDC ${formatUsdc(data.poolUsdc)} covers premiums held ${formatUsdc(data.activePremiumsHeld)} + open claims ${formatUsdc(data.owedUnclaimed)} + expired unswept ${formatUsdc(data.expiredUnclaimed)} + recovered ${formatUsdc(data.recovered)}`}
+									pass={inv.poolCover >= 0n}
+									delta={inv.poolCover}
+								/>
+							</tbody>
+						</table>
+					</div>
+
+					<p className="font-body text-[12px] text-mute">
+						{data.stats.sold} policies sold lifetime · withdrawable now{" "}
+						{formatUsdc(data.withdrawable)} USDC · withdrawal queue{" "}
+						{(Number(data.withdrawalQueueShares) / 1e10).toLocaleString("en-US", {
+							maximumFractionDigits: 2,
+						})}{" "}
+						shares · shares outstanding{" "}
+						{(Number(data.totalShares) / 1e10).toLocaleString("en-US", {
+							maximumFractionDigits: 2,
+						})}
+						. Deltas are exact integer math on 7-dp units — a broken row means the
+						books do NOT balance and deserves immediate attention.
+					</p>
+				</>
 			)}
 		</section>
 	)
