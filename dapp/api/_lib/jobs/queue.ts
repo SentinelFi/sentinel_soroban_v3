@@ -1,4 +1,5 @@
 import { SorobanClient } from "../soroban_client.js";
+import { recordVaultHistory } from "../governance/vault_history.js";
 import type { Config, RunLogEntry } from "../types.js";
 
 /**
@@ -20,6 +21,11 @@ export async function run(config: Config): Promise<RunLogEntry> {
   const keeperPublicKey = client.publicKeyFromSecret(config.keeperSecretKey);
 
   console.log("[queue] Starting queue maintenance...");
+
+  // Vault time-series mirror — appended on EVERY run (including the
+  // early-return paths below) so the Security board's rate-of-change
+  // detectors get a steady cadence. Never fails the job.
+  await recordVaultHistory(client, config.riskVaultId);
 
   try {
     // Pre-flight reads (free simulations) — submit a transaction ONLY when
