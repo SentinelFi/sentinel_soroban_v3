@@ -1,8 +1,18 @@
 {
-  "name": "sentinel-arcade",
+  "name": "flight-insurance",
   "type": "module",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
+  "description": "Parametric flight-delay insurance on Stellar/Soroban",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SentinelFi/sentinel_soroban_v3.git",
+    "directory": "dapp"
+  },
+  "bugs": {
+    "url": "https://github.com/SentinelFi/sentinel_soroban_v3/issues"
+  },
   "engines": {
     "node": ">=22.12"
   },

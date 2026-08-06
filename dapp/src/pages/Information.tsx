@@ -1,13 +1,13 @@
 import { stellarNetwork } from "../contracts/util"
 import { CONTRACT_IDS } from "../contracts/ids"
 import { explorerContractUrl } from "../lib/explorer"
-import pkg from "../../package.json"
+import { REPO_URL } from "../config/links"
 
 /**
  * INFORMATION — read-only facts about this deployment (reached from the
- * top-bar hamburger menu): app version, the Stellar network the
- * contracts live on, and the deployed contract addresses. Preferences
- * live on the Settings page.
+ * top-bar hamburger menu): app version + the public commit it was built
+ * from, the Stellar network the contracts live on, and the deployed
+ * contract addresses. Preferences live on the Settings page.
  */
 
 const NETWORK_LABEL: Record<string, string> = {
@@ -45,7 +45,23 @@ export default function Information() {
 				<div className="mt-4">
 					<p className="label-px">App version</p>
 					<p className="mt-2 board-figure text-[18px] text-ink">
-						v{pkg.version}
+						v{__APP_VERSION__}
+						{__COMMIT_SHA__ !== "dev" ? (
+							<a
+								href={`${REPO_URL}/commit/${__COMMIT_SHA__}`}
+								target="_blank"
+								rel="noopener noreferrer"
+								className="footer-link ml-2 font-body text-[13px]"
+								title="Source commit this deploy was built from"
+								data-testid="info-commit"
+							>
+								{__COMMIT_SHA__.slice(0, 7)} ↗
+							</a>
+						) : (
+							<span className="ml-2 font-body text-[13px] text-mute">
+								dev build
+							</span>
+						)}
 					</p>
 				</div>
 				<div className="mt-4">

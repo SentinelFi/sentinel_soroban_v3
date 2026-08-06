@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react"
 import { createLogger, defineConfig } from "vite"
 import { nodePolyfills } from "vite-plugin-node-polyfills"
 import wasm from "vite-plugin-wasm"
+import pkg from "./package.json"
 
 // The SPA polls /api on intervals, so while `npm run dev:api` is down every
 // tick logs a full proxy-error stack. Collapse them to one line per 10s.
@@ -46,6 +47,14 @@ export default defineConfig({
 	},
 	define: {
 		global: "window",
+		// Release identity, shown on the Information page: semver from
+		// package.json (bump minor per release) + the exact commit the
+		// deploy was built from (Vercel injects VERCEL_GIT_COMMIT_SHA;
+		// local builds show "dev").
+		__APP_VERSION__: JSON.stringify(pkg.version),
+		__COMMIT_SHA__: JSON.stringify(
+			process.env.VERCEL_GIT_COMMIT_SHA ?? "dev",
+		),
 	},
 	envPrefix: "PUBLIC_",
 	server: {
