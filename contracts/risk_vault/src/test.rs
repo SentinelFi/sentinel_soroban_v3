@@ -1292,11 +1292,43 @@ fn test_snapshot_uses_managed_assets_not_physical_balance() {
     let snap = client.get_snapshot_price(&day);
 
     let supply = client.total_supply();
-    let scale = 10i128.pow(asset.decimals());
+    // Per-1.0-share scale: asset decimals plus the vault's decimals offset
+    // (supply counts 10-dp share units).
+    let scale = 10i128.pow(asset.decimals() + 3);
     // Snapshot equals the managed-asset price, and is strictly below the
     // (inflated) physical-balance price.
     assert_eq!(snap, tma * scale / supply);
     assert!(snap < physical * scale / supply);
+}
+
+#[test]
+fn test_snapshot_price_matches_executable_share_price() {
+    // The recorded price must mean "asset units per 1.0 share" at asset-
+    // decimal precision — the same number convert_to_assets(one share)
+    // yields. Supply counts 10-dp share units, so a formula that scales by
+    // asset decimals alone publishes a price 10^offset (1000x) too small;
+    // supply-zero days masked this by recording the else-branch constant.
+    let (env, client, _owner, controller, depositor) = setup();
+    lp_deposit(&env, &client, &controller, &depositor, 1_000_0000000);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 100_000;
+    });
+    client.snapshot();
+
+    let day = 100_000 / SECONDS_PER_DAY;
+    let snap = client.get_snapshot_price(&day);
+
+    // 1.0 share = 10^10 units (asset 7 decimals + offset 3). The executable
+    // quote carries the +1/+10^offset anti-inflation terms, so allow one
+    // rounding unit of divergence.
+    let one_share_value = client.convert_to_assets(&1_0000000000);
+    assert!(
+        (snap - one_share_value).abs() <= 1,
+        "snapshot {snap} diverges from executable price {one_share_value}"
+    );
+    // 1,000 USDC backing 1,000 shares → exactly 1.0 USDC per share (7 dp).
+    assert_eq!(snap, 1_0000000);
 }
 
 #[test]
