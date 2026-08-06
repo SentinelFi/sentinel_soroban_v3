@@ -10,17 +10,13 @@ import { useTheme } from "./providers/ThemeProvider"
 import { useWallet } from "./hooks/useWallet"
 import { stellarNetwork } from "./contracts/util"
 import { useCopy } from "./copy"
-import {
-	BRIDGE_URL,
-	DOCS_URL,
-	GITHUB_URL,
-	STELLAR_URL,
-	X_URL,
-} from "./config/links"
+import { BRIDGE_URL, GITHUB_URL, STELLAR_URL, X_URL } from "./config/links"
 import Markets from "./pages/Markets"
 import Policies from "./pages/Policies"
 import House from "./pages/House"
 import Status from "./pages/Status"
+import Settings from "./pages/Settings"
+import Information from "./pages/Information"
 import { Disclaimers, Privacy, Terms } from "./pages/Legal"
 
 // Heavy pages load on first navigation, not with the landing page:
@@ -91,6 +87,8 @@ export default function App() {
 						<Route path="/terms" element={<Terms />} />
 						<Route path="/disclaimers" element={<Disclaimers />} />
 						<Route path="/status" element={<Status />} />
+						<Route path="/settings" element={<Settings />} />
+						<Route path="/information" element={<Information />} />
 						{/* hidden — not linked from any nav; ops only */}
 						<Route path="/admin" element={<Admin />} />
 						<Route path="*" element={<Markets />} />
@@ -209,20 +207,7 @@ function SiteFooter() {
 				<div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-6 text-center lg:flex-row lg:items-center lg:justify-between lg:text-left">
 					<FooterCopyright />
 					<FooterLinks className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 font-body text-[13px] whitespace-nowrap" />
-					<p className="font-body text-[12px] text-mute">
-						{t.footer.right}{" "}
-						<span aria-hidden="true" className="text-mute/50">
-							·
-						</span>{" "}
-						<a
-							href={DOCS_URL}
-							target="_blank"
-							rel="noopener noreferrer"
-							className="footer-link"
-						>
-							Docs
-						</a>
-					</p>
+					<p className="font-body text-[12px] text-mute">{t.footer.right}</p>
 				</div>
 			</footer>
 		)
@@ -239,18 +224,7 @@ function SiteFooter() {
 				<div className="flex flex-col items-center justify-between gap-2 text-center md:flex-row md:text-left">
 					<FooterCopyright />
 					<p className="font-body text-[11px] tracking-[0.1em] text-mute">
-						{t.footer.right}{" "}
-						<span aria-hidden="true" className="text-mute/50">
-							·
-						</span>{" "}
-						<a
-							href={DOCS_URL}
-							target="_blank"
-							rel="noopener noreferrer"
-							className="footer-link"
-						>
-							DOCS
-						</a>
+						{t.footer.right}
 					</p>
 				</div>
 			</div>

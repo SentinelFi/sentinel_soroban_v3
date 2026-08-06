@@ -2440,17 +2440,6 @@ html[data-theme="serious"] {
 	border-color: transparent !important;
 }
 
-/* scheme toggle is icon-only: no border, no fill, in every skin/scheme.
-   The serious selector outranks the serious .btn-ghost skin rules;
-   unlayered, so it also beats the layered .btn-px box. */
-.scheme-toggle,
-.scheme-toggle:active:not(:disabled),
-[data-theme="serious"] .scheme-toggle {
-	background: transparent;
-	border-color: transparent;
-	box-shadow: none;
-}
-
 /* ══════════════════════════════════════════════════════════════════
    SERIOUS — MATERIAL & MOTION POLISH
    Refinements inside the established language (sharp cards, rounded

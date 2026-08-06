@@ -15,6 +15,9 @@ const fun = {
 		globe: "LIVE",
 		policies: "POLICIES",
 		yield: "YIELD",
+		settings: "SETTINGS",
+		information: "INFORMATION",
+		docs: "DOCS",
 	},
 	wallet: {
 		connect: "INSERT COIN — CONNECT",
@@ -391,6 +394,9 @@ const serious: Copy = {
 		globe: "Live",
 		policies: "Policies",
 		yield: "Yield",
+		settings: "Settings",
+		information: "Information",
+		docs: "Docs",
 	},
 	wallet: {
 		connect: "Connect Wallet",

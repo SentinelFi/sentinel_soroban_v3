@@ -4,7 +4,8 @@
  * API (backwards-compatible):
  *   addNotification(message, type)                       — original signature
  *   addNotification(message, type, { txHash })           — attaches a
- *       Stellar.expert explorer link to the toast + log entry.
+ *       block-explorer link (user's preferred explorer) to the toast +
+ *       log entry.
  *
  * Behaviour:
  *   - success/info/warning toasts auto-dismiss (~5s)
@@ -23,7 +24,7 @@ import React, {
 	useState,
 	type ReactNode,
 } from "react"
-import { explorerTxUrl } from "../lib/explorer"
+import { explorerLabel, explorerTxUrl } from "../lib/explorer"
 
 type NotificationType =
 	| "primary"
@@ -33,7 +34,7 @@ type NotificationType =
 	| "warning"
 
 interface NotifyOptions {
-	/** Transaction hash — renders a "View on Stellar.expert" link. */
+	/** Transaction hash — renders a "View on <explorer>" link. */
 	txHash?: string
 }
 
@@ -76,10 +77,6 @@ const AUTO_DISMISS_MS = 5000
 // survives in the Activity Log either way
 const ERROR_DISMISS_MS = 10_000
 const HISTORY_LIMIT = 50
-
-// Re-exported for existing importers; the implementation derives the
-// explorer network from the app's configured Stellar network.
-export { explorerTxUrl }
 
 export const NotificationProvider: React.FC<{ children: ReactNode }> = ({
 	children,
@@ -162,7 +159,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({
 									target="_blank"
 									rel="noopener noreferrer"
 								>
-									View on Stellar.expert ↗
+									View on {explorerLabel()} ↗
 								</a>
 							)}
 						</div>

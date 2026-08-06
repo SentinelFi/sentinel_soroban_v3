@@ -75,7 +75,7 @@ interface TxFlowOptions {
 export interface TxFlowResult {
 	/** Success-toast message; omit to skip the toast. */
 	message?: string
-	/** Attaches a Stellar.expert link to the toast. */
+	/** Attaches a block-explorer link to the toast. */
 	txHash?: string
 }
 

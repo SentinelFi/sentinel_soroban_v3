@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from "react"
 import { NavLink } from "react-router-dom"
+import { BookOpen, Info, Settings as SettingsIcon } from "lucide-react"
 import { useWallet } from "../hooks/useWallet"
 import { useNotification } from "../hooks/useNotification"
 import { formatUsdc, mockUsdcClient, useUsdcBalance } from "../hooks/useContracts"
 import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet, disconnectWallet } from "../util/wallet"
 import { stellarNetwork } from "../contracts/util"
+import { DOCS_URL } from "../config/links"
 import { cn, txHashOf } from "../lib/utils"
 import { useCopy } from "../copy"
 import { useTheme } from "../providers/ThemeProvider"
 import { PixelArt } from "./PixelArt"
-import { SchemeToggle } from "./ThemeToggle"
 
 const NAV = [
 	{ to: "/", key: "markets" },
@@ -127,6 +128,114 @@ function WalletMenu({ address }: { address: string }) {
 					>
 						{t.wallet.disconnect}
 					</button>
+				</div>
+			)}
+		</div>
+	)
+}
+
+/** Animated hamburger at the far right: opens a small menu → Settings. */
+function HamburgerMenu() {
+	const [open, setOpen] = useState(false)
+	const rootRef = useRef<HTMLDivElement>(null)
+	const t = useCopy()
+
+	// same dismissal contract as WalletMenu: outside click / Escape
+	useEffect(() => {
+		if (!open) return
+		const onPointer = (e: MouseEvent) => {
+			if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+		}
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") setOpen(false)
+		}
+		document.addEventListener("mousedown", onPointer)
+		document.addEventListener("keydown", onKey)
+		return () => {
+			document.removeEventListener("mousedown", onPointer)
+			document.removeEventListener("keydown", onKey)
+		}
+	}, [open])
+
+	// shared look for every entry in the dropdown
+	const itemClass =
+		"flex w-full items-center gap-2 px-3 py-2 text-left font-body text-[12px] font-semibold text-dim hover:bg-raised hover:text-ink"
+
+	return (
+		// `flex` (not a plain block) — an inline-flex button inside a block
+		// wrapper sits on the text baseline and renders a few px lower than
+		// its top-bar siblings
+		<div ref={rootRef} className="relative flex">
+			<button
+				type="button"
+				aria-haspopup="menu"
+				aria-expanded={open}
+				aria-label="App menu"
+				data-testid="topbar-hamburger"
+				onClick={() => setOpen((o) => !o)}
+				className="btn-px btn-ghost btn-sm"
+			>
+				<span
+					aria-hidden="true"
+					className="flex h-3.5 w-4 flex-col justify-between"
+				>
+					<span
+						className={cn(
+							"h-[2px] w-full bg-current transition-transform duration-200",
+							open && "translate-y-[6px] rotate-45",
+						)}
+					/>
+					<span
+						className={cn(
+							"h-[2px] w-full bg-current transition-opacity duration-200",
+							open && "opacity-0",
+						)}
+					/>
+					<span
+						className={cn(
+							"h-[2px] w-full bg-current transition-transform duration-200",
+							open && "-translate-y-[6px] -rotate-45",
+						)}
+					/>
+				</span>
+			</button>
+			{open && (
+				<div
+					role="menu"
+					className="panel-raised absolute right-0 top-full z-30 mt-2 min-w-[11rem] p-1"
+				>
+					<NavLink
+						role="menuitem"
+						to="/settings"
+						data-testid="menu-settings"
+						onClick={() => setOpen(false)}
+						className={itemClass}
+					>
+						<SettingsIcon size={14} aria-hidden="true" />
+						{t.nav.settings}
+					</NavLink>
+					<NavLink
+						role="menuitem"
+						to="/information"
+						data-testid="menu-information"
+						onClick={() => setOpen(false)}
+						className={itemClass}
+					>
+						<Info size={14} aria-hidden="true" />
+						{t.nav.information}
+					</NavLink>
+					<a
+						role="menuitem"
+						href={DOCS_URL}
+						target="_blank"
+						rel="noopener noreferrer"
+						data-testid="menu-docs"
+						onClick={() => setOpen(false)}
+						className={itemClass}
+					>
+						<BookOpen size={14} aria-hidden="true" />
+						{t.nav.docs} ↗
+					</a>
 				</div>
 			)}
 		</div>
@@ -257,7 +366,6 @@ export function TopBar() {
 				</nav>
 
 				<div className="ml-auto flex items-center gap-3">
-					<SchemeToggle />
 					<CoinChip />
 					{address ? (
 						<WalletMenu address={address} />
@@ -271,6 +379,7 @@ export function TopBar() {
 							{t.wallet.connect}
 						</button>
 					)}
+					<HamburgerMenu />
 				</div>
 			</div>
 

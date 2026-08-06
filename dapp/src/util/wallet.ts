@@ -6,6 +6,7 @@ import {
 import { defaultModules } from "@creit.tech/stellar-wallets-kit/modules/utils"
 import { Horizon } from "@stellar/stellar-sdk"
 import { networkPassphrase, stellarNetwork } from "../contracts/util"
+import { getCustomHorizonUrl, isLoopbackHttp } from "../lib/settings"
 import storage from "./storage"
 
 /**
@@ -105,8 +106,15 @@ function getHorizonHost(mode: string) {
 	}
 }
 
-const horizon = new Horizon.Server(getHorizonHost(stellarNetwork), {
-	allowHttp: stellarNetwork === "LOCAL",
+/** Network-derived Horizon endpoint — shown on Settings as "default". */
+export const defaultHorizonUrl = getHorizonHost(stellarNetwork)
+
+// A user-saved custom Horizon (Settings page) overrides the default;
+// like the RPC clients, cleartext is only ever allowed to local/loopback.
+const horizonUrl = getCustomHorizonUrl() ?? defaultHorizonUrl
+
+const horizon = new Horizon.Server(horizonUrl, {
+	allowHttp: stellarNetwork === "LOCAL" || isLoopbackHttp(horizonUrl),
 })
 
 const formatter = new Intl.NumberFormat()
