@@ -16,6 +16,7 @@ import Policies from "./pages/Policies"
 import PolicyDetail from "./pages/PolicyDetail"
 import House from "./pages/House"
 import Status from "./pages/Status"
+import Keepers from "./pages/Keepers"
 import Settings from "./pages/Settings"
 import Information from "./pages/Information"
 import { Disclaimers, Privacy, Terms } from "./pages/Legal"
@@ -93,6 +94,8 @@ export default function App() {
 						<Route path="/terms" element={<Terms />} />
 						<Route path="/disclaimers" element={<Disclaimers />} />
 						<Route path="/status" element={<Status />} />
+						{/* hamburger-menu page — the run-a-keeper front door */}
+						<Route path="/keepers" element={<Keepers />} />
 						<Route path="/settings" element={<Settings />} />
 						<Route path="/information" element={<Information />} />
 						{/* hidden — not linked from any nav; ops only */}

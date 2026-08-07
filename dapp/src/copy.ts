@@ -17,6 +17,7 @@ const fun = {
 		earn: "EARN",
 		settings: "SETTINGS",
 		information: "INFORMATION",
+		keepers: "KEEPERS",
 		docs: "DOCS",
 	},
 	wallet: {
@@ -311,6 +312,30 @@ const fun = {
 		shareTextGeneric: (f: string) =>
 			`Flight ${f} cover on FLIGHTS.FUN — the whole lifecycle is on-chain ✈`,
 	},
+	keepers: {
+		heroLine1: "RUN THE ROBOTS.",
+		heroLine2: "KEEP THE GAME HONEST.",
+		sub: "Keepers are the anyone-can-run tier of the protocol: bots that move no new information on-chain, only execute what the oracle already attested. No permission needed to read the code — and for TTL upkeep, none to run it either.",
+		liveTitle: "LIVE WORKLOAD",
+		liveSub:
+			"What the keeper fleet is chewing on right now — read from chain, refreshed every 30s.",
+		statPending: "PENDING SETTLEMENTS",
+		statActive: "INSURED FLIGHTS LIVE",
+		statDeposits: "QUEUED DEPOSITS",
+		statWithdrawals: "QUEUED CASH-OUTS",
+		tiersTitle: "WHAT KEEPERS DO",
+		tierKeepers: "KEEPERS — YOU (YES, YOU)",
+		tierKeepersBody:
+			"classifier · settler · queue_maintainer · ttl_extender. They execute what's already attested: classify flights, drain settlements, run the LP queues, keep storage alive. The decentralization target.",
+		runTitle: "RUN A KEEPER YOURSELF",
+		runSub:
+			"Plain TypeScript. Node 20+, a Stellar RPC URL and a funded key — laptop, server, CI, whatever stays awake.",
+		runPermissionless:
+			"ttl_extender IS PERMISSIONLESS TODAY — any funded key can run TTL upkeep + pruning right now.",
+		runGated:
+			"classifier / settler / queue_maintainer still check for the registered keeper key (spam control, not integrity — classification is deterministic from attested oracle data). An unauthorized run fails the auth check with zero side effects.",
+		sourceCta: "READ THE KEEPER CODE ↗",
+	},
 	calc: {
 		title: "UNDERWRITER CALCULATOR",
 		titleHead: "UNDERWRITER",
@@ -481,6 +506,7 @@ const serious: Copy = {
 		earn: "Earn",
 		settings: "Settings",
 		information: "Information",
+		keepers: "Keepers",
 		docs: "Docs",
 	},
 	wallet: {
@@ -779,6 +805,30 @@ const serious: Copy = {
 			`Flight ${f} was delayed — a ${amt} USDC payout is waiting on-chain.`,
 		shareTextGeneric: (f: string) =>
 			`Flight ${f} coverage on Flights.Fun — the full policy lifecycle, on-chain.`,
+	},
+	keepers: {
+		heroLine1: "Keeper bots.",
+		heroLine2: "The anyone-can-run tier.",
+		sub: "Keepers are the protocol's permissionless operations tier: bots that move no new information on-chain, only execute what the oracle has already attested. The code is open source — and for TTL upkeep, running it requires no authorization at all.",
+		liveTitle: "Live workload",
+		liveSub:
+			"What the keeper fleet is processing right now.",
+		statPending: "Pending settlements",
+		statActive: "Insured flights live",
+		statDeposits: "Queued deposits",
+		statWithdrawals: "Queued withdrawals",
+		tiersTitle: "What keepers do",
+		tierKeepers: "Keepers — open to anyone",
+		tierKeepersBody:
+			"classifier · settler · queue_maintainer · ttl_extender. They execute what's already attested: classify flights, drain settlements, process the LP queues, keep contract storage alive. This tier is the decentralization target.",
+		runTitle: "Run a keeper yourself",
+		runSub:
+			"Plain TypeScript. Node 20+, a Stellar RPC URL and a funded key — a laptop, server, or CI job all work.",
+		runPermissionless:
+			"ttl_extender is permissionless today — any funded key can run TTL upkeep and pruning right now.",
+		runGated:
+			"classifier / settler / queue_maintainer still require the registered keeper key (spam control, not integrity — classification is deterministic from attested oracle data). An unauthorized run fails the on-chain auth check with no side effects.",
+		sourceCta: "Read the keeper code ↗",
 	},
 	calc: {
 		title: "Underwriter Calculator",

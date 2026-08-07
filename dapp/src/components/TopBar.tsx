@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { NavLink } from "react-router-dom"
-import { BookOpen, Info, Settings as SettingsIcon } from "lucide-react"
+import { BookOpen, Bot, Info, Settings as SettingsIcon } from "lucide-react"
 import { useWallet } from "../hooks/useWallet"
 import { useNotification } from "../hooks/useNotification"
 import { formatUsdc, mockUsdcClient, useUsdcBalance } from "../hooks/useContracts"
@@ -223,6 +223,16 @@ function HamburgerMenu() {
 					>
 						<Info size={14} aria-hidden="true" />
 						{t.nav.information}
+					</NavLink>
+					<NavLink
+						role="menuitem"
+						to="/keepers"
+						data-testid="menu-keepers"
+						onClick={() => setOpen(false)}
+						className={itemClass}
+					>
+						<Bot size={14} aria-hidden="true" />
+						{t.nav.keepers}
 					</NavLink>
 					<a
 						role="menuitem"
