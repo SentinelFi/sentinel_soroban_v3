@@ -14,9 +14,10 @@
 import type { Browser } from "playwright";
 import type { LiveConfig } from "../config.js";
 import { USDC_UNITS } from "../config.js";
-import { Chain } from "../chain.js";
+import { Chain, enumTag, describeError } from "../chain.js";
 import type { Actor } from "../actors.js";
 import type { Journal } from "../journal.js";
+import { bigintSafe } from "../journal.js";
 import { journalCheck, journalSkip } from "../checks.js";
 import { fetchCatalog } from "../flights.js";
 import { recentCronRuns, openInterventions, outcomesFor, dbAvailable } from "../db.js";
@@ -81,7 +82,10 @@ export async function checkPass(
     state.eventCursor = cursor;
     j.saveState(state);
   } catch (err) {
-    j.append("note", "event pull failed", { error: String(err) });
+    // NOT String(err): RPC rejections are structured objects that stringify to
+    // "[object Object]", which hid a hard 6-contract-ID filter error for an
+    // entire soak run. Keep whatever the error actually carries.
+    j.append("note", "event pull failed", { error: describeError(err) });
   }
 
   // ── 3. oracle + policy state per insured flight ───────────────────────
@@ -92,7 +96,7 @@ export async function checkPass(
     const key = `${b.flightId}|${b.dateISO}`;
     try {
       const fd = await chain.flightData(b.flightId, BigInt(b.dateSecs));
-      const tag = (fd.status as { tag?: string })?.tag ?? String(fd.status);
+      const tag = enumTag(fd.status);
       if (seen[key] !== tag) {
         transitions.push(`${key}: ${seen[key] ?? "∅"} → ${tag}`);
         j.append("observation", "oracle transition", { flight: key, from: seen[key], to: tag });
@@ -117,20 +121,28 @@ export async function checkPass(
     tvlUsdc: (tvl / USDC_UNITS).toString(),
     freeUsdc: (free / USDC_UNITS).toString(),
     lockedUsdc: (locked / USDC_UNITS).toString(),
-    flightsInsured: stats[0].toString(),
-    paidCount: stats[1].toString(),
-    totalPaidOut: (stats[2] / USDC_UNITS).toString(),
+    // get_stats is (policies_sold, premiums_collected, payouts_distributed) —
+    // the last two are raw units, NOT counts. They were previously labelled
+    // "flightsInsured"/"paidCount" and premiums were logged undivided, so every
+    // snapshot of this run reported premiums as a nine-digit "paid count".
+    policiesSold: stats[0].toString(),
+    premiumsUsdc: (stats[1] / USDC_UNITS).toString(),
+    payoutsUsdc: (stats[2] / USDC_UNITS).toString(),
     pendingOutcomes: pending,
   };
   j.append("observation", "protocol snapshot", snapshot);
   console.log(
-    `  vault: TVL ${snapshot.tvlUsdc} (free ${snapshot.freeUsdc} / locked ${snapshot.lockedUsdc}) | insured ${snapshot.flightsInsured} paid ${snapshot.paidCount}`,
+    `  vault: TVL ${snapshot.tvlUsdc} (free ${snapshot.freeUsdc} / locked ${snapshot.lockedUsdc}) | sold ${snapshot.policiesSold} premiums ${snapshot.premiumsUsdc} payouts ${snapshot.payoutsUsdc}`,
   );
 
   if (dbAvailable()) {
     const runs = await recentCronRuns(new Date(now - 2 * 3600_000).toISOString());
     const staleJobs: string[] = [];
-    const cadenceMin: Record<string, number> = { settler: 5, queue_maintainer: 5, classifier: 60, fetcher: 120, revive: 60, gov_exposure: 60, weather: 120 };
+    // Must track dapp/vercel.json — a cadence that is too tight here reports a
+    // healthy job as stale on every check (queue_maintainer ran `*/5` when this
+    // map was written; it is `2-59/15` now, so a 10-min threshold false-flagged
+    // it constantly and trained the eye to ignore the stale-cron warning).
+    const cadenceMin: Record<string, number> = { settler: 5, queue_maintainer: 15, classifier: 60, fetcher: 120, revive: 60, gov_exposure: 60, weather: 120 };
     for (const [job, mins] of Object.entries(cadenceMin)) {
       const latest = runs?.find((r) => r.job === job);
       if (!latest || now - new Date(latest.started_at).getTime() > 2 * mins * 60_000) staleJobs.push(job);
@@ -298,7 +310,7 @@ async function claimsAndCollects(
       const after = await chain.usdcBalance(a.address);
       const paidUsdc = Number((after - before) / USDC_UNITS);
       j.append("action", "claim", { flight: key, ok: r.ok, ...(r.error ? { error: r.error } : {}), paidUsdc }, b.actor);
-      journalCheck(j, `${b.actor}: claim on ${b.flightId}@${b.dateISO} pays exactly 100`, r.ok && paidUsdc === 100, `paid=${paidUsdc} settled=${JSON.stringify(settled)?.slice(0, 80)}`);
+      journalCheck(j, `${b.actor}: claim on ${b.flightId}@${b.dateISO} pays exactly 100`, r.ok && paidUsdc === 100, `paid=${paidUsdc} settled=${JSON.stringify(settled, bigintSafe)?.slice(0, 80)}`);
       const shot = await snap(ctx.page, j.shotsDir, `claim-${b.actor}-${b.flightId}`);
       j.append("screenshot", shot, {}, b.actor);
       if (r.ok) {
@@ -315,13 +327,10 @@ async function claimsAndCollects(
   if (n1 && !run.negClaimDone) {
     for (const b of bought) {
       const fd = await chain.flightData(b.flightId, BigInt(b.dateSecs)).catch(() => null);
-      const tag = fd ? ((fd.status as { tag?: string })?.tag ?? "") : "";
-      if (tag !== "Settled") continue;
-      const payable = await chain
-        .flightConfig(b.flightId, BigInt(b.dateSecs))
-        .then((c) => Boolean((c as { payable?: boolean } | undefined)?.payable))
-        .catch(() => false);
-      if (payable) continue;
+      if (!fd || enumTag(fd.status) !== "Settled") continue;
+      // Only an ON-TIME settlement is a valid negative case. Asserting "claim
+      // fails" against a delayed/cancelled flight would be a false failure.
+      if (await chain.isPayable(b.flightId, BigInt(b.dateSecs))) continue;
       const ctx = await newActorContext(browser, uiUrl, n1);
       try {
         const r = await claim(ctx.page, b.flightId);
