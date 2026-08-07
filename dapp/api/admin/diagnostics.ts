@@ -37,6 +37,17 @@ const DIAG_TOPICS = new Set([
 const LOOKBACK_LEDGERS = 17_500; // ~24h at ~5s
 const PAGE_LIMIT = 200;
 
+// scValToNative maps u64/i128 to BigInt, which JSON.stringify rejects —
+// stringify those (and byte arrays) before the payload reaches res.json.
+function jsonSafe(v: unknown): unknown {
+  if (typeof v === "bigint") return v.toString();
+  if (v instanceof Uint8Array) return Buffer.from(v).toString("base64");
+  if (Array.isArray(v)) return v.map(jsonSafe);
+  if (v && typeof v === "object")
+    return Object.fromEntries(Object.entries(v).map(([k, val]) => [k, jsonSafe(val)]));
+  return v;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   const admin = await verifyAdmin(req);
   if (!admin) {
@@ -90,7 +101,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
           closed_at: (ev as { ledgerClosedAt?: string }).ledgerClosedAt ?? null,
           contract: contracts[String(ev.contractId)] ?? String(ev.contractId),
           kind: String(topics[1]),
-          detail,
+          detail: jsonSafe(detail),
         });
       }
 

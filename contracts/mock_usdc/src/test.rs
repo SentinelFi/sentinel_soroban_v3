@@ -93,6 +93,17 @@ fn test_burn() {
 }
 
 #[test]
+fn test_extend_ttl_is_callable() {
+    let env = Env::default();
+    // No mock_all_auths — extend_ttl is permissionless
+    let admin = Address::generate(&env);
+    let contract_id = env.register(MockUSDC, (&admin,));
+    let client = MockUSDCClient::new(&env, &contract_id);
+
+    client.extend_ttl();
+}
+
+#[test]
 fn test_permissionless_mint() {
     let env = Env::default();
     // No mock_all_auths — mint is permissionless
