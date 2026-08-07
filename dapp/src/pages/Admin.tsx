@@ -34,6 +34,7 @@ import type { FlightConfig as PoolFlightConfig } from "flight_pool_manager"
 import { fetchBalances } from "../util/wallet"
 import { txHashOf } from "../lib/utils"
 import { TxProgress } from "../components/TxProgress"
+import { Sparkline } from "../components/Sparkline"
 import type { TxState } from "../types"
 
 /**
@@ -613,6 +614,7 @@ type AdminTab =
 	| "funnel"
 	| "diagnostics"
 	| "exposure"
+	| "trends"
 	| "security"
 	| "users"
 	| "solvency"
@@ -630,6 +632,7 @@ const ADMIN_TABS: Array<{ key: AdminTab; label: string }> = [
 	{ key: "funnel", label: "Funnel" },
 	{ key: "diagnostics", label: "Diagnostics" },
 	{ key: "exposure", label: "Exposure" },
+	{ key: "trends", label: "Trends" },
 	{ key: "security", label: "Security" },
 	{ key: "users", label: "Users" },
 	{ key: "solvency", label: "Solvency" },
@@ -853,6 +856,18 @@ function Console({ session }: { session: Session }) {
 		queryKey: ["admin-exposure"],
 		queryFn: () => api<ExposureResponse>("/api/admin/exposure", token),
 		enabled: activeTab === "exposure",
+		staleTime: 60_000,
+	})
+
+	// Trends — DB-mirror time series only (zero RPC reads), so unlike the
+	// other chain-flavored tabs it is cheap enough to keep a window state
+	// and refetch on window change.
+	const [trendsHours, setTrendsHours] = useState(168)
+	const trendsQ = useQuery({
+		queryKey: ["admin-metrics", trendsHours],
+		queryFn: () => api<MetricsResponse>(`/api/admin/metrics?hours=${trendsHours}`, token),
+		enabled: activeTab === "trends",
+		placeholderData: keepPreviousData,
 		staleTime: 60_000,
 	})
 
@@ -1112,6 +1127,16 @@ function Console({ session }: { session: Session }) {
 							loading={exposureQ.isFetching}
 							error={exposureQ.error ? errorMessage(exposureQ.error) : null}
 							onRefresh={() => void exposureQ.refetch()}
+						/>
+					)}
+					{activeTab === "trends" && (
+						<TrendsPanel
+							data={trendsQ.data ?? null}
+							loading={trendsQ.isFetching}
+							error={trendsQ.error ? errorMessage(trendsQ.error) : null}
+							onRefresh={() => void trendsQ.refetch()}
+							hours={trendsHours}
+							onHoursChange={setTrendsHours}
 						/>
 					)}
 					{activeTab === "security" && (
@@ -5102,6 +5127,238 @@ function ExposurePanel({
 						toward action): payoff × buyers per unsettled flight, scoped via the routes
 						file, divided by the vault's total managed assets. At the brake threshold
 						the cron pauses every affected route; here you watch it approach.
+					</p>
+				</>
+			)}
+		</section>
+	)
+}
+
+/* ── trends: the money metrics over time ──────────────────────────── */
+
+/** api/admin/metrics.ts — every series comes from a DB mirror, no RPC. */
+interface MetricsResponse {
+	hours: number
+	vault: Array<{
+		ts: string
+		total_assets: string
+		free_capital: string
+		locked_capital: string
+		share_price: string
+	}>
+	exposure: Array<{
+		ts: string
+		total_liability_units: string
+		total_managed_units: string
+		open_policies: number
+		insured_flights: number
+		worst_route_fraction: number
+		worst_airport_fraction: number
+	}>
+	premiums: Array<{ day: string; policies: number; premium_units: string }>
+	payouts: Array<{ day: string; settled_flights: number; policies_paid: number; payout_units: string }>
+	totals: {
+		policies_bought: number
+		premium_units: string
+		policies_paid: number
+		payout_units: string
+		/** Calendar loss ratio (window payouts / window premiums); null when no premiums. */
+		loss_ratio: number | null
+	}
+	as_of: string
+}
+
+/**
+ * Daily buckets skip zero days (GROUP BY only returns rows that exist) —
+ * refill them so a sales stop reads as a line dropping to zero, not as a
+ * flat line drawn between the last two nonzero days.
+ */
+function fillDaily<T extends { day: string }>(
+	rows: T[],
+	hours: number,
+	pick: (row: T) => number
+): number[] {
+	const byDay = new Map(rows.map((r) => [r.day.slice(0, 10), pick(r)]))
+	const days = Math.max(2, Math.ceil(hours / 24))
+	const out: number[] = []
+	for (let i = days - 1; i >= 0; i--) {
+		const key = new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10)
+		out.push(byDay.get(key) ?? 0)
+	}
+	return out
+}
+
+/** MoneyStat with a history line under the figure. */
+function TrendCard({
+	label,
+	value,
+	data,
+	tone,
+	color,
+}: {
+	label: string
+	value: string
+	data: number[]
+	tone?: string
+	color?: string
+}) {
+	return (
+		<div className="border-2 border-line bg-raised px-3 py-2">
+			<p className="label-px">{label}</p>
+			<p className={`font-board text-[18px] ${tone ?? "text-ink"}`}>{value}</p>
+			{data.length < 2 ? (
+				<p className="mt-1 font-body text-[11px] text-mute">collecting history…</p>
+			) : (
+				<Sparkline data={data} width={170} height={30} color={color} className="mt-1" />
+			)}
+		</div>
+	)
+}
+
+function TrendsPanel({
+	data,
+	loading,
+	error,
+	onRefresh,
+	hours,
+	onHoursChange,
+}: {
+	data: MetricsResponse | null
+	loading: boolean
+	error: string | null
+	onRefresh: () => void
+	hours: number
+	onHoursChange: (hours: number) => void
+}) {
+	const vault = data?.vault ?? []
+	const exposure = data?.exposure ?? []
+	const lastVault = vault[vault.length - 1]
+	const lastExposure = exposure[exposure.length - 1]
+	const lossRatio = data?.totals.loss_ratio ?? null
+
+	return (
+		<section>
+			<h2 className="h-section mb-3">Trends · the money metrics over time</h2>
+			<div className="mb-3 flex flex-wrap items-center gap-3">
+				<SinceWindow value={hours} onChange={onHoursChange} />
+				<p className="font-body text-[13px] text-mute">
+					All series from the DB mirrors — vault every ~15min (queue_maintainer), risk
+					book hourly (gov_exposure), premiums/payouts per UTC day (event mirror)
+					{data ? ` · read ${relTime(data.as_of)}` : ""}
+				</p>
+				<button className="btn-px btn-ghost btn-sm" disabled={loading} onClick={onRefresh}>
+					{loading ? "Reading…" : "Refresh"}
+				</button>
+			</div>
+			{error && <p className="mb-3 font-body text-[13px] text-loss">Read failed: {error}</p>}
+			{loading && !data && (
+				<p className="font-body text-[13px] text-mute">Charting the window…</p>
+			)}
+
+			{data && (
+				<>
+					<div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+						<MoneyStat
+							label={`Premiums sold (${data.totals.policies_bought} policies)`}
+							value={`${usdcAmount(data.totals.premium_units)} USDC`}
+						/>
+						<MoneyStat
+							label={`Payouts settled (${data.totals.policies_paid} policies)`}
+							value={`${usdcAmount(data.totals.payout_units)} USDC`}
+							tone={BigInt(data.totals.payout_units) > 0n ? "text-gold" : "text-ink"}
+						/>
+						<MoneyStat
+							label="Loss ratio (payouts / premiums)"
+							value={lossRatio === null ? "— no premiums" : `${(lossRatio * 100).toFixed(1)}%`}
+							tone={
+								lossRatio === null
+									? "text-mute"
+									: lossRatio >= 1
+										? "text-loss"
+										: lossRatio >= 0.7
+											? "text-gold"
+											: "text-win"
+							}
+						/>
+						<MoneyStat
+							label="Open policies now"
+							value={
+								lastExposure
+									? `${lastExposure.open_policies} on ${lastExposure.insured_flights} flight(s)`
+									: "—"
+							}
+						/>
+					</div>
+
+					<div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+						<TrendCard
+							label="TVL"
+							value={lastVault ? `${usdcAmount(lastVault.total_assets)} USDC` : "—"}
+							data={vault.map((r) => Number(r.total_assets) / 1e7)}
+						/>
+						<TrendCard
+							label="Free capital"
+							value={lastVault ? `${usdcAmount(lastVault.free_capital)} USDC` : "—"}
+							data={vault.map((r) => Number(r.free_capital) / 1e7)}
+						/>
+						<TrendCard
+							label="Locked capital"
+							value={lastVault ? `${usdcAmount(lastVault.locked_capital)} USDC` : "—"}
+							data={vault.map((r) => Number(r.locked_capital) / 1e7)}
+							color="var(--color-gold)"
+						/>
+						<TrendCard
+							label="Share price"
+							value={lastVault ? `${(Number(lastVault.share_price) / 1e7).toFixed(4)} USDC` : "—"}
+							data={vault.map((r) => Number(r.share_price) / 1e7)}
+						/>
+						<TrendCard
+							label="Open liability"
+							value={
+								lastExposure ? `${usdcAmount(lastExposure.total_liability_units)} USDC` : "—"
+							}
+							data={exposure.map((r) => Number(r.total_liability_units) / 1e7)}
+							color="var(--color-gold)"
+						/>
+						<TrendCard
+							label="Worst exposure bucket"
+							value={
+								lastExposure
+									? `${(Math.max(lastExposure.worst_route_fraction, lastExposure.worst_airport_fraction) * 100).toFixed(1)}% of capacity`
+									: "—"
+							}
+							data={exposure.map(
+								(r) => Math.max(r.worst_route_fraction, r.worst_airport_fraction) * 100
+							)}
+							color="var(--color-gold)"
+						/>
+						<TrendCard
+							label="Premiums / day"
+							value={
+								data.premiums.length > 0
+									? `${usdcAmount(data.premiums[data.premiums.length - 1].premium_units)} USDC`
+									: "0 USDC"
+							}
+							data={fillDaily(data.premiums, data.hours, (r) => Number(r.premium_units) / 1e7)}
+						/>
+						<TrendCard
+							label="Payouts / day"
+							value={
+								data.payouts.length > 0
+									? `${usdcAmount(data.payouts[data.payouts.length - 1].payout_units)} USDC`
+									: "0 USDC"
+							}
+							data={fillDaily(data.payouts, data.hours, (r) => Number(r.payout_units) / 1e7)}
+							color="var(--color-loss)"
+						/>
+					</div>
+
+					<p className="font-body text-[12px] text-mute">
+						The loss ratio is CALENDAR-windowed — payouts settled in the window over
+						premiums sold in the window, so the cohorts differ (a policy sold last week
+						can pay out this week). Fine for watching pricing drift; not a per-cohort
+						actuarial figure. Risk-book series start accruing when the gov_exposure cron
+						first runs with this build — older windows simply show fewer points.
 					</p>
 				</>
 			)}

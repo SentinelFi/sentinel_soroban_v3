@@ -1,5 +1,6 @@
 import { SorobanClient } from "../soroban_client.js";
 import { ingestChainEvents } from "./event_ingest.js";
+import { recordExposureHistory } from "./exposure_history.js";
 import { loadRoutesConfig } from "../routes_config.js";
 import { parseFlightStatus } from "../status.js";
 import { FlightStatus, type Config, type RunLogEntry, type FetcherAction } from "../types.js";
@@ -191,6 +192,9 @@ export async function readExposure(
    *  rather than silently dropped from the brake's numerator. */
   unknownLiabilityUnits: bigint;
   unknownFlights: string[];
+  /** Σ buyer_count across the same unsettled flights (scoped + unknown) —
+   *  the open policy book behind the liability figures. */
+  openPolicies: number;
 }> {
   const routesConfig = loadRoutesConfig();
   const routeByFlight = new Map(
@@ -207,6 +211,7 @@ export async function readExposure(
   const flights: FlightExposure[] = [];
   let unknownLiabilityUnits = 0n;
   const unknownFlights: string[] = [];
+  let openPolicies = 0;
   for (const [flightId, date] of active as [string, bigint][]) {
     const route = routeByFlight.get(flightId);
     const cfg = await client.readContract(config.flightPoolManagerId, "get_flight_config", [
@@ -227,6 +232,7 @@ export async function readExposure(
     const payoff = BigInt(cfg.payoff ?? 0);
     const buyers = BigInt(cfg.buyer_count ?? 0);
     if (buyers === 0n) continue;
+    openPolicies += Number(buyers);
     if (!route) {
       // Unknown to the routes file (removed after sale, or never added).
       unknownLiabilityUnits += payoff * buyers;
@@ -240,7 +246,7 @@ export async function readExposure(
       liabilityUnits: payoff * buyers,
     });
   }
-  return { flights, totalManaged, unknownLiabilityUnits, unknownFlights };
+  return { flights, totalManaged, unknownLiabilityUnits, unknownFlights, openPolicies };
 }
 
 /** Shared env-defaulted contract ids (GovConfig carries only governance). */
@@ -317,14 +323,33 @@ export async function run(config: GovConfig, deps: ExposureDeps = {}): Promise<R
     let totalManaged: bigint;
     let unknownLiabilityUnits: bigint;
     let unknownFlights: string[];
+    let openPolicies: number;
     try {
-      ({ flights, totalManaged, unknownLiabilityUnits, unknownFlights } = await readExposure(client, {
-        flightPoolManagerId: poolId,
-        riskVaultId: vaultId,
-      }));
+      ({ flights, totalManaged, unknownLiabilityUnits, unknownFlights, openPolicies } =
+        await readExposure(client, {
+          flightPoolManagerId: poolId,
+          riskVaultId: vaultId,
+        }));
     } catch (err) {
       console.error(`[gov-exposure] on-chain read failed — no actions this run: ${err}`);
       return done(false, `on-chain read failed: ${err}`);
+    }
+
+    // Risk-book time-series mirror (Trends board) — one row per measured
+    // run, appended even in dry-run (observation, not action). Never
+    // blocks the brake.
+    {
+      const conc = computeConcentrations(flights, totalManaged);
+      await recordExposureHistory({
+        totalLiabilityUnits:
+          flights.reduce((s, f) => s + f.liabilityUnits, 0n) + unknownLiabilityUnits,
+        totalManagedUnits: totalManaged,
+        unknownLiabilityUnits,
+        openPolicies,
+        insuredFlights: flights.length,
+        worstRouteFraction: Math.max(0, ...[...conc.routes.values()].map((r) => r.fraction)),
+        worstAirportFraction: Math.max(0, ...conc.airports.values()),
+      });
     }
 
     // OCA-M01: liability the brake CANNOT scope (flight missing from the
