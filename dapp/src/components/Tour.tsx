@@ -141,10 +141,10 @@ export function Tour() {
 				role="dialog"
 				aria-label={t.tour.welcomeTitle}
 			>
-				<p className="font-display text-[11px] leading-[1.6] text-gold">
+				<p className="font-display text-fine leading-[1.6] text-gold">
 					{t.tour.welcomeTitle}
 				</p>
-				<p className="mt-2 font-body text-[13px] leading-relaxed text-dim">
+				<p className="mt-2 font-body text-meta leading-relaxed text-dim">
 					{t.tour.welcomeBody}
 				</p>
 				<div className="mt-3 flex flex-wrap items-center gap-2">
@@ -189,21 +189,21 @@ export function Tour() {
 					type="button"
 					onClick={close}
 					aria-label={t.tour.skipAria}
-					className="font-body text-[13px] font-bold text-mute hover:text-ink"
+					className="font-body text-meta font-bold text-mute hover:text-ink"
 				>
 					✕
 				</button>
 			</div>
 			{ready ? (
 				<>
-					<p className="mt-2 font-display text-[11px] leading-[1.6] text-gold">
+					<p className="mt-2 font-display text-fine leading-[1.6] text-gold">
 						{s.title}
 					</p>
-					<p className="mt-2 font-body text-[13px] leading-relaxed text-dim">
+					<p className="mt-2 font-body text-meta leading-relaxed text-dim">
 						{s.body}
 					</p>
 					{target === "nav" && (
-						<p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-body text-[12px] font-semibold">
+						<p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-body text-fine font-semibold">
 							<a
 								href={FREIGHTER_URL}
 								target="_blank"
@@ -226,7 +226,7 @@ export function Tour() {
 			) : (
 				<p
 					aria-live="polite"
-					className="mt-2 font-body text-[13px] leading-relaxed text-mute"
+					className="mt-2 font-body text-meta leading-relaxed text-mute"
 				>
 					{t.tour.loading}
 				</p>

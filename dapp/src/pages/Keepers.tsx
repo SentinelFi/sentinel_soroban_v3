@@ -47,12 +47,12 @@ function TierCard({
 			className={`panel flex-1 basis-60 p-4 ${highlight ? "border-gold" : ""}`}
 		>
 			<h3
-				className={`flex items-center gap-2 font-display text-[11px] tracking-[0.05em] ${highlight ? "text-gold" : "text-ink"}`}
+				className={`flex items-center gap-2 font-display text-fine tracking-[0.05em] ${highlight ? "text-gold" : "text-ink"}`}
 			>
 				{icon}
 				{title}
 			</h3>
-			<p className="mt-2 font-body text-[13px] leading-relaxed text-dim">
+			<p className="mt-2 font-body text-meta leading-relaxed text-dim">
 				{body}
 			</p>
 		</div>
@@ -95,7 +95,7 @@ export default function Keepers() {
 					{serious ? " " : <br />}
 					{t.keepers.heroLine2}
 				</h1>
-				<p className="mt-3 max-w-2xl font-body text-[14px] leading-relaxed text-dim">
+				<p className="mt-3 max-w-2xl font-body text-meta leading-relaxed text-dim">
 					{t.keepers.sub}
 				</p>
 			</div>
@@ -103,7 +103,7 @@ export default function Keepers() {
 			{/* live workload — the chain is the source, no backend involved */}
 			<section>
 				<h2 className="h-section mb-1">{t.keepers.liveTitle}</h2>
-				<p className="mb-3 font-body text-[13px] text-mute">
+				<p className="mb-3 font-body text-meta text-mute">
 					{t.keepers.liveSub}
 				</p>
 				<div className="flex flex-wrap gap-3">
@@ -140,16 +140,16 @@ export default function Keepers() {
 			{/* run one yourself */}
 			<section>
 				<h2 className="h-section mb-1">{t.keepers.runTitle}</h2>
-				<p className="mb-3 max-w-2xl font-body text-[13px] text-mute">
+				<p className="mb-3 max-w-2xl font-body text-meta text-mute">
 					{t.keepers.runSub}
 				</p>
-				<pre className="panel overflow-x-auto p-4 font-board text-[15px] leading-relaxed text-dim">
+				<pre className="panel overflow-x-auto p-4 font-board text-body leading-relaxed text-dim">
 					{RUN_SNIPPET}
 				</pre>
-				<p className="mt-3 font-body text-[13px] leading-relaxed text-win">
+				<p className="mt-3 font-body text-meta leading-relaxed text-win">
 					{t.keepers.runPermissionless}
 				</p>
-				<p className="mt-2 max-w-2xl font-body text-[13px] leading-relaxed text-mute">
+				<p className="mt-2 max-w-2xl font-body text-meta leading-relaxed text-mute">
 					{t.keepers.runGated}
 				</p>
 				<a

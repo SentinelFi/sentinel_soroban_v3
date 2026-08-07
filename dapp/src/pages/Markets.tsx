@@ -657,7 +657,7 @@ function BetSlip({
 				<div className="flex items-start justify-between">
 					<div>
 						<p className="label-px text-gold">{t.slip.eyebrow}</p>
-						<h2 id="betslip-title" className="h-display mt-1 text-[15px]">
+						<h2 id="betslip-title" className="h-display mt-1 text-body">
 							{t.slip.title}
 						</h2>
 					</div>
@@ -696,7 +696,7 @@ function BetSlip({
 							)}
 						</span>
 					</div>
-					<p className="mt-2 font-body text-[14px] text-dim">
+					<p className="mt-2 font-body text-meta text-dim">
 						<span className="font-board text-[20px] leading-none text-ink">
 							{route.origin} ✈ {route.dest}
 						</span>
@@ -789,14 +789,14 @@ function BetSlip({
 					// guard above keeps the two from ever coexisting.
 					<p
 						data-testid="betslip-error"
-						className="font-body text-[13px] text-loss"
+						className="font-body text-meta text-loss"
 					>
 						{t.slip.unavailablePrompt}
 					</p>
 				)}
 				{!address && (
 					<div className="space-y-2">
-						<p className="font-body text-[13px] text-gold">
+						<p className="font-body text-meta text-gold">
 							{t.slip.connectPrompt}
 						</p>
 						<button
@@ -809,12 +809,12 @@ function BetSlip({
 					</div>
 				)}
 				{whitelistBlocked && (
-					<p className="font-body text-[13px] text-gold">
+					<p className="font-body text-meta text-gold">
 						{t.slip.blockedPrompt}
 					</p>
 				)}
 
-				<p className="mt-auto font-body text-[13px] leading-relaxed text-mute">
+				<p className="mt-auto font-body text-meta leading-relaxed text-mute">
 					{t.slip.fineprint}
 				</p>
 			</aside>
@@ -1000,7 +1000,7 @@ export default function Markets() {
 								/>
 							</span>
 						</h1>
-						<p className="hero-sub-rise max-w-sm font-body text-[15px] leading-relaxed text-dim">
+						<p className="hero-sub-rise max-w-sm font-body text-body leading-relaxed text-dim">
 							<EmphasizeDelayed text={t.markets.heroSub} />
 						</p>
 					</div>
@@ -1167,7 +1167,7 @@ export default function Markets() {
 								).map((col, i) => (
 									<th
 										key={i}
-										className="label-px px-4 py-2 font-normal"
+										className="label-px px-4 py-2 text-fine font-normal"
 										aria-sort={
 											col.key && sort?.key === col.key
 												? sort.dir === 1
@@ -1180,7 +1180,7 @@ export default function Markets() {
 											<button
 												type="button"
 												onClick={() => toggleSort(col.key!)}
-												className="label-px relative z-10 inline-flex items-center gap-1.5 cursor-pointer hover:text-ink"
+												className="label-px relative z-10 inline-flex items-center gap-1.5 text-fine cursor-pointer hover:text-ink"
 												aria-label={t.markets.sortAria(col.label)}
 											>
 												{col.label}
@@ -1216,7 +1216,7 @@ export default function Markets() {
 										<span className="block font-board text-[24px] text-dim">
 											{t.markets.noMatch(query.trim().toUpperCase())}
 										</span>
-										<span className="mt-1 block font-body text-[13px] text-mute">
+										<span className="mt-1 block font-body text-meta text-mute">
 											{t.markets.noMatchHint}
 										</span>
 									</td>
@@ -1255,7 +1255,7 @@ export default function Markets() {
 										})()}
 									</td>
 									<td
-										className="px-4 py-3 font-body text-[14px] font-semibold tracking-[0.04em] text-ink"
+										className="px-4 py-3 font-body text-body font-semibold tracking-[0.04em] text-ink"
 										title={airlineName(route.flightId, route.carrier)}
 									>
 										{route.origin} → {route.dest}
@@ -1266,7 +1266,7 @@ export default function Markets() {
 												<span
 													key={scanning ? "scan" : "demo"}
 													data-testid="board-row-status"
-													className="status-px status-flap text-gold"
+													className="status-px status-flap text-meta text-gold"
 												>
 													{scanning
 														? t.markets.statusScanning
@@ -1276,7 +1276,7 @@ export default function Markets() {
 												<span
 													key="boarding"
 													data-testid="board-row-status"
-													className="status-px status-flap text-win"
+													className="status-px status-flap text-meta text-win"
 												>
 													{t.markets.statusBoarding}
 												</span>
@@ -1310,7 +1310,7 @@ export default function Markets() {
 														fmtPremium,
 														fmtPayoff,
 													)}
-													className="font-body text-[14px] font-semibold"
+													className="font-body text-body font-semibold"
 												>
 													<span className="text-ink">
 														{fmtPremium}
@@ -1321,7 +1321,7 @@ export default function Markets() {
 													<span className="text-win">
 														{fmtPayoff}
 													</span>
-													<span className="ml-1 text-[11px] font-normal text-mute">
+													<span className="ml-1 text-meta font-normal text-mute">
 														USDC
 													</span>
 												</span>
@@ -1376,7 +1376,7 @@ export default function Markets() {
 							<label className="flex items-center gap-2">
 								<span className="label-px">{t.markets.perPage}</span>
 								<select
-									className="field-px w-auto px-2 py-1 text-[13px]"
+									className="field-px w-auto px-2 py-1 text-meta"
 									value={pageSize}
 									onChange={(e) => {
 										setPageSize(Number(e.target.value))
@@ -1423,7 +1423,7 @@ export default function Markets() {
 					</div>
 				)}
 
-				<p className="mt-3 font-body text-[13px] text-mute">
+				<p className="mt-3 font-body text-meta text-mute">
 					<span className="font-semibold text-win">
 						{t.markets.yieldExplainLead}
 					</span>{" "}

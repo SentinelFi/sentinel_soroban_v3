@@ -136,12 +136,12 @@ function SeriousStepper({
 			</div>
 			<p
 				data-testid={failed ? errorTestId : undefined}
-				className={`mt-2 font-body text-[13px] ${failed ? "text-loss" : "text-dim"}`}
+				className={`mt-2 font-body text-meta ${failed ? "text-loss" : "text-dim"}`}
 			>
 				{statusLine(state, steps, stepIndex, error)}
 			</p>
 			{!done && !failed && (
-				<p className="font-body text-[11px] text-mute">{(elapsedMs / 1000).toFixed(1)}s</p>
+				<p className="font-body text-fine text-mute">{(elapsedMs / 1000).toFixed(1)}s</p>
 			)}
 		</div>
 	)

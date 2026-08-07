@@ -42,7 +42,7 @@ function withMeta(page: ReactNode, title?: string, description?: string) {
 function PageLoading() {
 	return (
 		<div className="flex min-h-[50vh] items-center justify-center">
-			<p className="font-display text-[11px] tracking-[0.1em] text-mute uppercase">
+			<p className="font-display text-fine tracking-[0.1em] text-mute uppercase">
 				LOADING…
 			</p>
 		</div>
@@ -65,7 +65,7 @@ function NetworkMismatchBanner() {
 		<div
 			role="alert"
 			data-testid="network-mismatch-banner"
-			className="relative z-20 border-b border-amber-500/40 bg-amber-500/15 px-4 py-2 text-center font-body text-[13px] text-amber-200"
+			className="relative z-20 border-b border-amber-500/40 bg-amber-500/15 px-4 py-2 text-center font-body text-meta text-amber-200"
 		>
 			{t.wallet.mismatchBanner(stellarNetwork)}
 		</div>
@@ -237,7 +237,7 @@ function FooterCopyright() {
 	const t = useCopy()
 	const year = new Date().getFullYear()
 	return (
-		<p className="font-body text-[13px] text-mute">
+		<p className="font-body text-meta text-mute">
 			© {year} {t.brand.name} ·{" "}
 			<a
 				href={STELLAR_URL}
@@ -327,8 +327,8 @@ function SiteFooter() {
 				    rather than wrapping, pushing the whole page sideways */}
 				<div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-6 text-center lg:flex-row lg:items-center lg:justify-between lg:text-left">
 					<FooterCopyright />
-					<FooterLinks className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 font-body text-[13px] whitespace-nowrap" />
-					<p className="font-body text-[12px] text-mute">{t.footer.right}</p>
+					<FooterLinks className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 font-body text-meta whitespace-nowrap" />
+					<p className="font-body text-fine text-mute">{t.footer.right}</p>
 				</div>
 			</footer>
 		)
@@ -344,7 +344,7 @@ function SiteFooter() {
 				<FooterLinks className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 font-display text-[9px] tracking-[0.06em] whitespace-nowrap uppercase" />
 				<div className="flex flex-col items-center justify-between gap-2 text-center md:flex-row md:text-left">
 					<FooterCopyright />
-					<p className="font-body text-[11px] tracking-[0.1em] text-mute">
+					<p className="font-body text-fine tracking-[0.1em] text-mute">
 						{t.footer.right}
 					</p>
 				</div>

@@ -417,11 +417,11 @@ export default function House() {
 						<HowItWorksBubble />
 					</h1>
 					{!serious && (
-						<p className="mt-2 font-display text-[13px] leading-[1.35] text-win sm:text-[15px]">
+						<p className="mt-2 font-display text-meta leading-[1.35] text-win sm:text-body">
 							{t.house.heroLine2}
 						</p>
 					)}
-					<p className="mt-4 max-w-lg font-body text-[15px] leading-relaxed text-dim sm:text-[16px]">
+					<p className="mt-4 max-w-lg font-body text-body leading-relaxed text-dim sm:text-[16px]">
 						{t.house.sub}
 					</p>
 				</div>
@@ -435,7 +435,7 @@ export default function House() {
 				to="/calculator"
 				className="calc-cta group flex flex-wrap items-center justify-between gap-3 border-2 border-gold bg-surface px-5 py-4 shadow-[0_4px_0_0_#07102a] hover:bg-raised"
 			>
-				<span className="h-display text-[13px] sm:text-[15px]">
+				<span className="h-display text-meta sm:text-body">
 					{t.house.calcCtaHead}
 				</span>
 				<span className="font-display text-[10px] text-gold">
@@ -488,7 +488,7 @@ export default function House() {
 				/>
 			</section>
 			{statsUnavailable && (
-				<p role="status" className="font-body text-[13px] text-gold">
+				<p role="status" className="font-body text-meta text-gold">
 					{t.house.statsUnavailable}
 				</p>
 			)}
@@ -502,7 +502,7 @@ export default function House() {
 							<p className="label-px text-sky">
 								{t.house.sharePriceTitle}
 							</p>
-							<p className="mt-1 font-body text-[12px] text-mute">
+							<p className="mt-1 font-body text-fine text-mute">
 								{t.house.sharePriceSub(sharePriceDays)}
 							</p>
 						</div>
@@ -529,7 +529,7 @@ export default function House() {
 					</div>
 						{realizedYield && (
 							<p
-								className={`mb-2 font-body text-[12px] ${
+								className={`mb-2 font-body text-fine ${
 									realizedYield.anomaly
 										? "text-gold"
 										: realizedYield.aprPct >= 0
@@ -596,11 +596,11 @@ export default function House() {
 						</div>
 					</label>
 					{insufficientBalance && (
-						<p className="mt-2 font-body text-[13px] text-loss">
+						<p className="mt-2 font-body text-meta text-loss">
 							{t.house.insufficientBalance}
 						</p>
 					)}
-					<p className="mt-2 font-body text-[13px] text-mute">
+					<p className="mt-2 font-body text-meta text-mute">
 						{t.house.walletBalance}{" "}
 						<span className="text-dim">
 							{usdcBalance != null ? formatUsdc(usdcBalance) : "…"} USDC
@@ -635,7 +635,7 @@ export default function House() {
 						{connected ? t.house.depositCta : t.house.connectWallet}
 					</TransactionButton>
 					<TxProgress state={depositFlow.state} steps={["verifying", "awaiting", "confirming"]} error={depositFlow.error} errorTestId="house-deposit-error" />
-					<p className="mt-2 font-body text-[13px] text-mute">
+					<p className="mt-2 font-body text-meta text-mute">
 						{t.house.depositQueueHint}
 					</p>
 
@@ -682,7 +682,7 @@ export default function House() {
 					{cancelDepositError && (
 						<p
 							data-testid="house-cancel-deposit-error"
-							className="mt-2 break-words font-body text-[13px] text-loss"
+							className="mt-2 break-words font-body text-meta text-loss"
 						>
 							{cancelDepositError}
 						</p>
@@ -759,14 +759,14 @@ export default function House() {
 							</div>
 						</label>
 						{insufficientShares && (
-							<p className="mt-2 font-body text-[13px] text-loss">
+							<p className="mt-2 font-body text-meta text-loss">
 								{t.house.insufficient}
 							</p>
 						)}
 						{withdrawShares > 0n &&
 							!insufficientShares &&
 							withdrawPreview !== undefined && (
-								<p className="mt-2 font-body text-[13px] text-dim">
+								<p className="mt-2 font-body text-meta text-dim">
 									{t.house.withdrawPreview(
 										formatUsdc(withdrawPreview),
 									)}
@@ -787,7 +787,7 @@ export default function House() {
 										▲
 									</span>
 								)}
-								<p className="font-body text-[13px] leading-snug text-dim">
+								<p className="font-body text-meta leading-snug text-dim">
 									{t.house.utilWarn}
 								</p>
 							</div>
@@ -813,7 +813,7 @@ export default function House() {
 							{connected ? t.house.queueCta : t.house.connectWallet}
 						</TransactionButton>
 						<TxProgress state={requestFlow.state} steps={["verifying", "awaiting", "confirming"]} error={requestFlow.error} errorTestId="house-request-withdrawal-error" />
-						<p className="mt-2 font-body text-[13px] text-mute">
+						<p className="mt-2 font-body text-meta text-mute">
 							{t.house.queueHint}
 						</p>
 					</div>
@@ -904,7 +904,7 @@ export default function House() {
 								{cancelWithdrawError && (
 									<p
 										data-testid="house-cancel-withdrawal-error"
-										className="mt-2 break-words font-body text-[13px] text-loss"
+										className="mt-2 break-words font-body text-meta text-loss"
 									>
 										{cancelWithdrawError}
 									</p>
@@ -944,7 +944,7 @@ export default function House() {
 
 			</section>
 
-			<p className="font-body text-[13px] text-mute">
+			<p className="font-body text-meta text-mute">
 				{t.house.fineprint}
 			</p>
 		</div>

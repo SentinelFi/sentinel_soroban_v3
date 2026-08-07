@@ -16,4 +16,16 @@
 	}
 	document.documentElement.setAttribute("data-theme", theme)
 	document.documentElement.setAttribute("data-scheme", scheme)
+	// Serious swaps the display face to Outfit; preload it here (index.html
+	// can't — a static preload would tax fun-theme visitors ~32KB for a
+	// face they never render).
+	if (theme === "serious") {
+		var link = document.createElement("link")
+		link.rel = "preload"
+		link.href = "/fonts/outfit-latin-wght-normal.woff2"
+		link.as = "font"
+		link.type = "font/woff2"
+		link.crossOrigin = "anonymous"
+		document.head.appendChild(link)
+	}
 })()

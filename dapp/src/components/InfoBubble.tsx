@@ -52,7 +52,7 @@ export function InfoBubble({ children }: { children: React.ReactNode }) {
 					className="info-panel panel-raised absolute left-1/2 top-full z-30 mt-2 w-[19rem] max-w-[80vw] -translate-x-1/2 p-4 text-left normal-case tracking-normal sm:w-[21rem]"
 				>
 					<p className="label-px mb-2 text-gold">{t.info.title}</p>
-					<p className="font-body text-[13px] leading-relaxed text-dim">
+					<p className="font-body text-meta leading-relaxed text-dim">
 						{children}
 					</p>
 					<a
