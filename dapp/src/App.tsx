@@ -13,6 +13,7 @@ import { useCopy } from "./copy"
 import { BRIDGE_URL, GITHUB_URL, STELLAR_URL, X_URL } from "./config/links"
 import Markets from "./pages/Markets"
 import Policies from "./pages/Policies"
+import PolicyDetail from "./pages/PolicyDetail"
 import House from "./pages/House"
 import Status from "./pages/Status"
 import Settings from "./pages/Settings"
@@ -79,6 +80,8 @@ export default function App() {
 						<Route path="/" element={<Markets />} />
 						<Route path="/markets" element={<MarketsGlobe />} />
 						<Route path="/policies" element={<Policies />} />
+						{/* deep-linkable per-policy lifecycle record */}
+						<Route path="/policy/:id" element={<PolicyDetail />} />
 						<Route path="/earn" element={<House />} />
 						{/* legacy alias — /house is live in the wild (nav, docs,
 						    the soak harness), so keep the URL resolving. */}

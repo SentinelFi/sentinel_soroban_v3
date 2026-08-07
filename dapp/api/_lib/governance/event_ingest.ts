@@ -94,19 +94,21 @@ export async function ingestChainEvents(
 
       if (topics[1] === "bought") {
         // topics: [sentinel, bought, traveler, flight_id, date]; value: premium
-        const [, , traveler, flightId] = topics;
+        const [, , traveler, flightId, date] = topics;
         let premium: string | null = null;
         try {
           premium = String(scValToNative(ev.value as xdr.ScVal));
         } catch {
           /* keep null */
         }
+        const dateNum = Number(date);
+        const dateBucket = Number.isFinite(dateNum) && dateNum > 0 ? dateNum : null;
         const [txHash = "", evIndex] = String(ev.id).split("-");
         const boughtAt = (ev as { ledgerClosedAt?: string }).ledgerClosedAt ?? new Date().toISOString();
         await sql`
-          insert into policies (tx_hash, event_index, ledger, flight_id, origin, dest,
+          insert into policies (tx_hash, event_index, ledger, flight_id, date, origin, dest,
                                 buyer, premium_units, bought_at)
-          select ${txHash}, ${Number(evIndex ?? 0)}, ${ev.ledger}, ${String(flightId)},
+          select ${txHash}, ${Number(evIndex ?? 0)}, ${ev.ledger}, ${String(flightId)}, ${dateBucket},
                  coalesce(r.origin, ''), coalesce(r.dest, ''),
                  ${String(traveler)}, ${premium}, ${boughtAt}
           from (select 1) one

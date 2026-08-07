@@ -1,0 +1,218 @@
+/*
+ * Page-scoped styling for the policy detail page (/policy/:id):
+ * the verdict header, the lifecycle timeline, tx-link chips, and the
+ * share/copy row.
+ *
+ * Pulled in via index.css (same cascade note as wave3). Same rules as
+ * wave3.css: everything
+ * references the shared theme tokens (--color-*, --font-*, --shadow-*,
+ * --radius-*) so it re-tints when the MODE dock flips fun <-> serious;
+ * structural differences are branched here via [data-theme="serious"]
+ * bolt-ons, and SERIOUS NEVER SEES A PIXEL FONT.
+ */
+
+@layer components {
+
+	/* ─────────────────────────── verdict header ───────────────────── */
+	.w4-verdict {
+		padding: 20px;
+		background: var(--color-surface);
+		border: 2px solid var(--color-line);
+		box-shadow: var(--shadow-px-sm);
+	}
+
+	[data-theme="serious"] .w4-verdict {
+		border-width: 1px;
+		border-radius: var(--radius-card);
+		box-shadow: var(--shadow-soft-sm);
+	}
+
+	/* the verdict card borrows the winning-slip glow when the policy paid */
+	.w4-verdict.is-win {
+		border-color: var(--color-gold);
+	}
+
+	/* ─────────────────────────── timeline ─────────────────────────── */
+	.w4-timeline {
+		display: flex;
+		flex-direction: column;
+	}
+
+	/* one step: marker column + content, with a rail connecting markers */
+	.w4-step {
+		position: relative;
+		display: flex;
+		gap: 14px;
+		padding: 0 0 22px 0;
+	}
+
+	.w4-step:last-child {
+		padding-bottom: 0;
+	}
+
+	/* the rail — drawn by each step so it stops at the last marker */
+	.w4-step::before {
+		content: "";
+		position: absolute;
+		left: 7px;
+		top: 18px;
+		bottom: 0;
+		width: 2px;
+		background: var(--color-line-mid);
+	}
+
+	.w4-step:last-child::before {
+		display: none;
+	}
+
+	/* marker: FUN = hard pixel square, SERIOUS = soft dot */
+	.w4-step-dot {
+		flex: none;
+		width: 16px;
+		height: 16px;
+		margin-top: 2px;
+		border: 2px solid var(--step, var(--color-line-strong));
+		background: color-mix(in srgb, var(--step, var(--color-line)) 18%, var(--color-surface));
+		box-shadow: var(--shadow-px-sm);
+		z-index: 1;
+	}
+
+	.w4-step.is-done .w4-step-dot {
+		background: var(--step, var(--color-win));
+	}
+
+	.w4-step.is-active .w4-step-dot {
+		animation: w4-pulse 1.6s ease-in-out infinite;
+	}
+
+	.w4-step.is-pending .w4-step-dot {
+		background: var(--color-surface);
+		box-shadow: none;
+	}
+
+	.w4-step.is-pending {
+		opacity: 0.65;
+	}
+
+	@keyframes w4-pulse {
+		0%, 100% { filter: brightness(1); }
+		50% { filter: brightness(1.55); }
+	}
+
+	[data-theme="serious"] .w4-step-dot {
+		border-width: 2px;
+		border-radius: 999px;
+		box-shadow: none;
+	}
+
+	.w4-step-title {
+		font-family: var(--font-display);
+		font-size: 11px;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		color: var(--step, var(--color-ink));
+	}
+
+	[data-theme="serious"] .w4-step-title {
+		font-size: 13px;
+		font-weight: 650;
+		letter-spacing: 0.01em;
+		text-transform: none;
+	}
+
+	.w4-step-body {
+		margin-top: 4px;
+		font-family: var(--font-body);
+		font-size: 13.5px;
+		line-height: 1.55;
+		color: var(--color-dim);
+		max-width: 58ch;
+	}
+
+	/* timestamp + tx chips under a step */
+	.w4-step-meta {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+		margin-top: 6px;
+	}
+
+	.w4-stamp {
+		font-family: var(--font-display);
+		font-size: 9px;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--color-mute);
+	}
+
+	[data-theme="serious"] .w4-stamp {
+		font-size: 11px;
+		font-weight: 600;
+		letter-spacing: 0.02em;
+		text-transform: none;
+	}
+
+	/* the arithmetic verdict line — the one fact the whole page argues */
+	.w4-math {
+		display: inline-block;
+		margin-top: 8px;
+		padding: 6px 10px;
+		font-family: var(--font-board);
+		font-size: 17px;
+		line-height: 1.3;
+		color: var(--color-ink);
+		background: var(--color-inset);
+		border: 2px solid var(--step, var(--color-line-mid));
+	}
+
+	[data-theme="serious"] .w4-math {
+		border-width: 1px;
+		border-radius: var(--radius-ctl);
+		font-size: 14px;
+	}
+
+	/* ─────────────────────────── tx-link chip ─────────────────────── */
+	.w4-txchip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 3px 8px;
+		font-family: var(--font-display);
+		font-size: 9px;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		color: var(--color-sky);
+		border: 2px solid color-mix(in srgb, var(--color-sky) 55%, transparent);
+		background: color-mix(in srgb, var(--color-sky) 10%, transparent);
+		white-space: nowrap;
+	}
+
+	.w4-txchip:hover {
+		filter: brightness(1.15);
+		text-decoration: underline;
+	}
+
+	[data-theme="serious"] .w4-txchip {
+		border-width: 1px;
+		border-radius: 999px;
+		font-size: 11px;
+		font-weight: 600;
+		letter-spacing: 0.01em;
+		text-transform: none;
+	}
+
+	/* ─────────────────────────── share row ────────────────────────── */
+	.w4-share-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 10px;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.w4-step.is-active .w4-step-dot {
+			animation: none;
+		}
+	}
+}

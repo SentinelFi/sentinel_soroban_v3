@@ -43,6 +43,23 @@ function FlightLink({ id, className }: { id: string; className?: string }) {
 	)
 }
 
+/** Deep link to the policy's lifecycle record (/policy/:id). */
+function DetailsLink({ policy, className }: { policy: Policy; className?: string }) {
+	const t = useCopy()
+	return (
+		<Link
+			to={`/policy/${policy.id}`}
+			data-testid="policy-details"
+			className={cn(
+				"font-display text-[10px] tracking-[0.05em] text-sky hover:underline",
+				className,
+			)}
+		>
+			{t.policyDetail.detailsLink}
+		</Link>
+	)
+}
+
 /** Colour buckets for status badges (mapped to CSS vars via --badge). */
 type BadgeKind = "tracking" | "onTime" | "claimable" | "paid" | "expired"
 
@@ -467,6 +484,7 @@ export default function Policies() {
 										stamps={{ success: "stamp-paid" }}
 									/>
 								)}
+								<DetailsLink policy={policy} className="mt-3 inline-block" />
 							</div>
 						))}
 					</div>
@@ -521,6 +539,7 @@ export default function Policies() {
 											: "—"}
 									</span>
 								</span>
+								<DetailsLink policy={policy} />
 							</div>
 						))}
 					</div>
@@ -581,6 +600,7 @@ export default function Policies() {
 										? `${formatUsdc(policy.payoff)} USDC`
 										: "—"}
 								</span>
+								<DetailsLink policy={policy} />
 							</div>
 						))}
 					</div>
