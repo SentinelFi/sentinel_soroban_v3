@@ -194,6 +194,55 @@ bundle so the chain is touched once.
   build cannot reach RPC/Horizon at all. Update origins at cutover; validate a
   full enforcing CSP on a preview deploy (deferred from the 2026-07-30
   frontend remediation). Drop the testnet preconnects in `index.html`.
+- [ ] **SEO/robots at cutover.** Indexing is ON by default today — no
+  `noindex` anywhere, and `dapp/public/robots.txt` only
+  blocks `/admin` + `/api/` from crawlers; Vercel auto-noindexes *preview*
+  deploys only, production is crawlable. At cutover: (1) add
+  `rel="canonical"` to `dapp/index.html` once the domain exists (ties to the
+  Name + domain item — canonical prevents the `*.vercel.app` alias competing
+  with the custom domain); (2) `noindex` the **testnet** deployment (meta tag
+  or `X-Robots-Tag` header on that Vercel project) so search results only
+  ever surface the mainnet app, never the faucet-enabled testnet UI; (3)
+  prefix the custom domain onto the deliberately-relative URLs in
+  `dapp/public/sitemap.xml` and `robots.txt`'s `Sitemap:` line — the sitemap
+  protocol requires absolute URLs, so both are inert (harmlessly ignored by
+  crawlers) until this is done; then submit the sitemap in Search Console,
+  and keep both files in sync if page routes change. Also swap the
+  `sentinel-dapp.vercel.app` origin hardcoded in the `og:url` / `og:image` /
+  `twitter:image` tags in `dapp/index.html` (those NEED an absolute URL —
+  scrapers drop relative ones — so unlike the sitemap they carry the
+  interim origin now).
+- [ ] **SEO backlog.** In rough impact order:
+  - **Content-rich landing at the apex is the biggest lever** — the app is
+    UI, not content; search engines have almost nothing to rank. A landing
+    page (what parametric flight insurance is, how payouts work, FAQ)
+    interlinked with the docs site would outweigh everything else here. The
+    Docusaurus site should enable its sitemap (a default plugin) and link
+    to/from the dapp.
+  - **Prerender the static-content pages.** The SPA serves an empty
+    `<div id="root">` — Google executes JS but ranks rendered-late content
+    worse, and Bing/DuckDuckGo/LLM crawlers mostly don't. Full SSR is
+    overkill; build-time prerendering of `/information`, `/privacy`,
+    `/terms`, `/disclaimers`, and a static hero for `/` gets real HTML into
+    the index cheaply (e.g. `vite-plugin-prerender` or a post-build
+    Playwright snapshot).
+  - **JSON-LD structured data** — `Organization` + `WebSite` on the shell;
+    `FAQPage` markup if the information page has Q&A-shaped content
+    (eligible for rich results).
+  - **`<noscript>` fallback** — one paragraph describing the product with a
+    link to the docs, so no-JS crawlers and preview bots see something
+    instead of an empty body.
+  - **Core Web Vitals pass** — page speed is a ranking input; close out the
+    2026-07-30 performance-audit findings. The font preloads and preconnects
+    in `index.html` are already the right pattern.
+  - **Soft-404 hygiene** — the catch-all route renders Markets with HTTP 200
+    for any garbage URL, so crawlers see infinite duplicate pages. At
+    minimum render a real "not found" component (Google detects those); the
+    `/house`→`/earn` redirect via `<Navigate replace>` is already fine.
+  - **Register the domain in Google Search Console + Bing Webmaster Tools
+    at cutover** — submit the sitemap there; it is also where the
+    og/canonical/soft-404 issues above surface. Free monitoring, and Bing's
+    index feeds several AI assistants' answers.
 - [ ] **Mainnet route-catalog mechanism.** `routes.testnet.json` is statically
   bundled in the frontend board fallback, `/api/routes`, sale-auth fallback,
   and the weather/reprice jobs; `ROUTES_CONFIG_PATH` (runtime readFileSync) is
