@@ -90,6 +90,46 @@ export function utcHm(epochSecs: number): string {
 	return new Date(epochSecs * 1000).toISOString().slice(11, 16)
 }
 
+/* ── viewer-local rendering ────────────────────────────────────────────
+ * The chain, the API and the cron pipeline speak UTC end to end, and that
+ * stays — consistency there is what makes settlement reproducible. But a
+ * traveler reading their own policies wants the clock on their wall, so
+ * anything derived from a REAL INSTANT renders in the viewer's zone.
+ *
+ * A flight DATE BUCKET (the u64 UTC-midnight key the contract stores) is a
+ * calendar label, not an instant: localizing it would shift the flight a day
+ * backwards for every viewer west of UTC. Those keep using formatDate.
+ */
+
+const pad = (n: number): string => String(n).padStart(2, "0")
+
+/** "PDT" / "GMT+2" — the viewer's zone abbreviation, "" if unavailable. */
+function tzAbbr(d: Date): string {
+	try {
+		return (
+			new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
+				.formatToParts(d)
+				.find((p) => p.type === "timeZoneName")?.value ?? ""
+		)
+	} catch {
+		return ""
+	}
+}
+
+/** "18:30 PDT" — local hh:mm + zone for a unix-seconds epoch. */
+export function localHm(epochSecs: number): string {
+	const d = new Date(epochSecs * 1000)
+	const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+	const z = tzAbbr(d)
+	return z ? `${hm} ${z}` : hm
+}
+
+/** "2026-08-06" — local calendar date for a unix-seconds epoch. */
+export function localDate(epochSecs: number): string {
+	const d = new Date(epochSecs * 1000)
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 /** "01 Aug 2026 09:02" (withSeconds: "01 Aug 2026 09:02:47") in UTC. */
 export function utcDateTime(iso: string, withSeconds = false): string {
 	return new Date(iso).toUTCString().slice(5, withSeconds ? 25 : 22)

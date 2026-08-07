@@ -19,7 +19,7 @@ import { DEMO_ROUTES } from "../config/routes"
 import { airlineName, flightradarUrl } from "../config/airlines"
 import { useWallet } from "../hooks/useWallet"
 import { useFlightSchedules } from "../hooks/useFlightSchedules"
-import { utcHm } from "../lib/format"
+import { localHm } from "../lib/format"
 import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet } from "../util/wallet"
 import { txHashOf } from "../lib/utils"
@@ -727,7 +727,7 @@ function BetSlip({
 								data-testid="betslip-departs"
 								className="board-figure text-[18px] text-ink"
 							>
-								{utcHm(depSecs)}
+								{localHm(depSecs)}
 							</span>
 						</div>
 					)}
