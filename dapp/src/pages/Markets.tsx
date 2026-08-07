@@ -1348,7 +1348,7 @@ export default function Markets() {
 											})()}
 											<button
 												type="button"
-												onClick={() => void navigate("/house")}
+												onClick={() => void navigate("/earn")}
 												className="btn-px btn-win btn-sm row-yield"
 												title={t.markets.yieldTitle}
 											>

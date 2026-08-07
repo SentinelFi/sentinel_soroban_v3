@@ -25,7 +25,7 @@ import { unitsToInput } from "../lib/format"
 import { useNotification } from "../hooks/useNotification"
 import { PixelArt } from "../components/PixelArt"
 import { SeriousIcon } from "../components/SeriousIcon"
-import { HowItWorksBubble } from "../components/InfoBubble"
+import { HowItWorksBubble, InfoBubble } from "../components/InfoBubble"
 import { TransactionButton } from "../components/TransactionButton"
 import { TxProgress } from "../components/TxProgress"
 import { Sparkline } from "../components/Sparkline"
@@ -63,6 +63,7 @@ function StatTile({
 	sparkColor,
 	illustrativeLabel,
 	valueTestId,
+	info,
 }: {
 	label: string
 	value: string
@@ -72,10 +73,15 @@ function StatTile({
 	illustrativeLabel?: string
 	/** Inert automation hook stamped on the value element. */
 	valueTestId?: string
+	/** Optional explainer rendered as a "?" bubble beside the label. */
+	info?: React.ReactNode
 }) {
 	return (
 		<div className="panel flex flex-col p-4">
-			<p className="label-px text-sky">{label}</p>
+			<p className="label-px flex items-center gap-2 text-sky">
+				{label}
+				{info && <InfoBubble>{info}</InfoBubble>}
+			</p>
 			<p data-testid={valueTestId} className="board-figure mt-2 text-[26px]">
 				{value}
 			</p>
@@ -229,12 +235,17 @@ export default function House() {
 		locked > 0n &&
 		free <= 0n
 
-	const solvency =
-		totalAssets !== undefined && locked !== undefined
-			? Number(locked) > 0
-				? Math.round((Number(totalAssets) / Number(locked)) * 100)
-				: 100
-			: undefined
+	// Realized APY replaces the old solvency ratio in the stat row: it is the
+	// number an underwriter actually decides on, and it reuses the very series
+	// the share-price chart below plots, so tile and chart can never disagree.
+	// "…" means the series has not loaded; "—" means not measurable — too few
+	// on-chain snapshots, or a sample the anomaly guard rejected.
+	const apyStat =
+		sharePrice === undefined
+			? "…"
+			: realizedYield === null || realizedYield.anomaly
+				? "—"
+				: `${realizedYield.apyPct >= 0 ? "+" : ""}${realizedYield.apyPct.toFixed(1)}%`
 
 	function invalidate() {
 		void queryClient.invalidateQueries({ queryKey: ["vault"] })
@@ -417,11 +428,13 @@ export default function House() {
 					valueTestId="house-free"
 				/>
 				<StatTile
-					label={t.house.statHealth}
-					value={solvency !== undefined ? `${solvency}%` : "…"}
+					label={t.house.statApy}
+					value={apyStat}
 					spark={apySpark.points}
 					sparkColor="var(--color-sky)"
 					illustrativeLabel={apySpark.illustrative ? t.house.illustrative : undefined}
+					valueTestId="house-apy"
+					info={t.house.apyInfo}
 				/>
 			</section>
 			{statsUnavailable && (

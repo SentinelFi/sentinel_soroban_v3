@@ -3,15 +3,20 @@
  * error collection, the network-mismatch banner, and the /admin auth gate.
  */
 import type { Page } from "playwright";
-import { markToasts, origin } from "./_helpers";
+import { markToasts, origin, readSettledText } from "./_helpers";
 
 const MINT_TIMEOUT_MS = 60_000;
 
-/** Text of the TopBar USDC balance chip (needs a connected actor + lg viewport). */
+/**
+ * Text of the TopBar USDC balance chip (needs a connected actor + lg viewport).
+ *
+ * Settled, never the "…" placeholder: mint() diffs this before/after, and a
+ * "…" baseline scores the chip's FIRST LOAD as the balance moving — which is
+ * how the 2026-08-04 run recorded two successful mints against a chain
+ * balance of one.
+ */
 export async function readBalanceChip(page: Page): Promise<string> {
-  const chip = page.getByTestId("topbar-balance");
-  await chip.waitFor({ state: "attached", timeout: 15_000 });
-  return ((await chip.textContent()) ?? "").trim();
+  return readSettledText(page, "topbar-balance");
 }
 
 /**
@@ -45,7 +50,7 @@ export async function mint(page: Page): Promise<{ ok: boolean; error?: string }>
   return { ok: false, error: `balance chip did not change within ${MINT_TIMEOUT_MS / 1000}s of +MINT` };
 }
 
-/** SPA navigation via full page load (route e.g. "/house", "/status"). */
+/** SPA navigation via full page load (route e.g. "/earn", "/status"). */
 export async function gotoRoute(page: Page, route: string): Promise<void> {
   await page.goto(origin(page) + route, { waitUntil: "load" });
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});

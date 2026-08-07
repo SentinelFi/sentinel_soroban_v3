@@ -37,7 +37,10 @@ export async function smoke(cfg: LiveConfig, j: Journal): Promise<void> {
     j.append("observation", "stats strip vs api", { uiStats, apiStats });
     journalCheck(j, "smoke: /api/status/stats reachable", "flights_insured" in apiStats);
 
-    for (const route of ["/house", "/policies", "/status", "/markets"]) {
+    // Every user-reachable route, so the console-error sweep below actually
+    // covers the app. /settings and /information shipped with the hamburger
+    // nav and were not swept until now.
+    for (const route of ["/earn", "/policies", "/status", "/markets", "/settings", "/information"]) {
       await gotoRoute(page, route).catch(() => {});
       const shot = await snap(page, j.shotsDir, `smoke${route.replace("/", "-")}`);
       j.append("screenshot", shot, { route });
