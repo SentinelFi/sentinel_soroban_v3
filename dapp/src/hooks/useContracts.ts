@@ -473,6 +473,24 @@ export function useFlightData(flightId: string, date: bigint, enabled = true) {
 	})
 }
 
+/** Sale-authorization expiry for (flight, date): unix seconds, or null
+ *  when no authorization is live (never opened, closed, or lapsed). */
+export function useSaleAuth(flightId: string, date: bigint, enabled = true) {
+	return useQuery({
+		queryKey: ["oracle", "saleAuth", flightId, date.toString()],
+		queryFn: async () => {
+			const tx = await oracleClient.get_sale_auth({
+				flight_id: flightId,
+				date,
+			})
+			return tx.result ?? null
+		},
+		enabled,
+		refetchInterval: 60_000,
+		retry: 1,
+	})
+}
+
 export function useAuthorizedOracle() {
 	return useQuery({
 		queryKey: ["oracle", "authorizedOracle"],
@@ -621,6 +639,52 @@ export function usePolicyStateBatch(
 		},
 		enabled: !!flights && flights.length > 0 && !!traveler,
 		refetchInterval: 30_000,
+	})
+}
+
+/** Whether `traveler` holds a policy on (flight, date). */
+export function useHasPolicy(
+	flightId: string,
+	date: bigint,
+	traveler: string | undefined,
+) {
+	return useQuery({
+		queryKey: ["pool", "hasPolicy", flightId, date.toString(), traveler],
+		queryFn: async () => {
+			if (!traveler) return false
+			const tx = await flightPoolManagerClient.has_policy({
+				flight_id: flightId,
+				date,
+				traveler,
+			})
+			return tx.result
+		},
+		enabled: !!traveler,
+		refetchInterval: 30_000,
+		retry: 1,
+	})
+}
+
+/** Whether `traveler` has already claimed their payout on (flight, date). */
+export function useHasClaimed(
+	flightId: string,
+	date: bigint,
+	traveler: string | undefined,
+) {
+	return useQuery({
+		queryKey: ["pool", "hasClaimed", flightId, date.toString(), traveler],
+		queryFn: async () => {
+			if (!traveler) return false
+			const tx = await flightPoolManagerClient.has_claimed({
+				flight_id: flightId,
+				date,
+				traveler,
+			})
+			return tx.result
+		},
+		enabled: !!traveler,
+		refetchInterval: 30_000,
+		retry: 1,
 	})
 }
 

@@ -231,6 +231,86 @@ const fun = {
 		claimWindow: (d: string) => `CLAIM BY ${d}`,
 		depTime: (hm: string) => `DEP ${hm}`,
 	},
+	policyDetail: {
+		eyebrow: "POLICY RECORD",
+		detailsLink: "DETAILS ▸",
+		back: "◄ MY POLICIES",
+		loading: "PULLING THE RECORD",
+		loadError: "COULDN'T READ THE CHAIN.",
+		loadErrorSub:
+			"The record is safe on-chain; this page just couldn't read it right now.",
+		retry: "RETRY",
+		notFound: "NO RECORD ON THIS FLIGHT",
+		notFoundSub:
+			"Nothing on-chain for this flight and date. Check the link, or hit the board.",
+		notFoundCta: "TO THE BOARD ✈",
+		dateLabel: "FLIGHT DATE (UTC)",
+		premiumLabel: "PREMIUM",
+		payoutLabel: "PAYOUT IF DELAYED",
+		triggerLabel: (h: number) => `TRIGGER: >${h}H LATE — OR CANCELLED`,
+		buyers: (n: number) => `${n} SLIP${n === 1 ? "" : "S"} SOLD`,
+		claimedOf: (c: number, n: number) => `${c}/${n} CLAIMED`,
+		viewingAs: (addr: string) => `SLIP HELD BY ${addr}`,
+		noPolicyForWallet:
+			"This wallet holds no slip on this flight — showing the market record.",
+		timelineTitle: "THE PAPER TRAIL",
+		timelineSub:
+			"Every step below is a public on-chain fact you can verify independently.",
+		stepSaleTitle: "SALE WINDOW",
+		stepSaleOpen: (d: string) => `Open — cover on sale until ${d}.`,
+		stepSaleDone:
+			"The flight was verified against the live schedule, then sales shut before departure.",
+		stepSaleNone: "No sale window on record for this flight and date.",
+		stepBuyTitle: "COVER BOUGHT",
+		stepBuyKnown: (premium: string) =>
+			`${premium} USDC premium staked. The slip lives on-chain.`,
+		stepBuyMarket: (n: number) =>
+			`${n} traveler${n === 1 ? "" : "s"} bought this cover.`,
+		stepBuyNone: "No slips sold on this flight.",
+		boughtAt: (when: string) => `BOUGHT ${when}`,
+		stepEtaTitle: "SCHEDULE ATTESTED",
+		stepEtaDone: (when: string) =>
+			`The oracle wrote the published timetable: scheduled arrival ${when}. Every payout decision is measured from this instant.`,
+		stepEtaPending:
+			"The oracle writes the published timetable when tracking starts.",
+		stepOutcomeTitle: "FLIGHT OUTCOME",
+		stepOutcomeLanded: (when: string) => `Landed ${when}.`,
+		stepOutcomeLate: (dur: string) =>
+			`That's ${dur} past the scheduled arrival.`,
+		stepOutcomeNotLate: "At (or before) the scheduled arrival.",
+		stepOutcomeCancelled:
+			"Cancelled — corroborated by the oracle before being written on-chain.",
+		stepOutcomePending: "Still to come — the flight hasn't landed yet.",
+		stepSettleTitle: "SETTLED ON-CHAIN",
+		settleMathLate: (late: string, h: number) =>
+			`${late} late vs the ${h}h trigger → DELAYED. THE CONTRACT PAYS.`,
+		settleMathOnTime: (late: string, h: number) =>
+			`${late} late vs the ${h}h trigger → ON TIME. No payout.`,
+		settleCancelled: "Cancelled → THE CONTRACT PAYS the full payout.",
+		stepSettlePending:
+			"Waiting on the keeper sweep — settlement is automatic, no claim forms.",
+		settledAt: (when: string) => `SETTLED ${when}`,
+		stepClaimTitle: "PAYOUT",
+		claimPaid: (amt: string) => `${amt} USDC claimed. Money in the wallet.`,
+		claimReady: (amt: string, by: string) =>
+			`${amt} USDC ready — claim by ${by}.`,
+		claimCta: "CLAIM IT ON MY POLICIES ★",
+		claimExpired: "Claim window shut — the payout returned to the pool.",
+		claimNone: "On time — nothing to claim. The premium stays with the house.",
+		claimAggregate: (c: number, n: number) =>
+			`${c} of ${n} slip${n === 1 ? "" : "s"} claimed so far.`,
+		viewTx: (explorer: string) => `TX ON ${explorer} ↗`,
+		share: "SHARE ✈",
+		linkCopied: "Link copied to clipboard",
+		copyFailed: "Copy failed — try again",
+		shareTitle: "FLIGHTS.FUN — POLICY RECORD",
+		shareTextPaid: (f: string, amt: string) =>
+			`My flight ${f} was late — the contract paid me ${amt} USDC. Receipts on-chain ✈`,
+		shareTextReady: (f: string, amt: string) =>
+			`My flight ${f} was late — ${amt} USDC payout waiting on-chain ✈`,
+		shareTextGeneric: (f: string) =>
+			`Flight ${f} cover on FLIGHTS.FUN — the whole lifecycle is on-chain ✈`,
+	},
 	calc: {
 		title: "UNDERWRITER CALCULATOR",
 		titleHead: "UNDERWRITER",
@@ -614,6 +694,91 @@ const serious: Copy = {
 		reasonCancelledPaid: "Cancelled — paid out.",
 		claimWindow: (d: string) => `Claim by ${d}`,
 		depTime: (hm: string) => `Dep ${hm}`,
+	},
+	policyDetail: {
+		eyebrow: "Policy record",
+		detailsLink: "Details →",
+		back: "← My Policies",
+		loading: "Loading the record…",
+		loadError: "Couldn't read the chain.",
+		loadErrorSub:
+			"The record is safe on-chain; this page just couldn't read it right now.",
+		retry: "Retry",
+		notFound: "No record for this flight",
+		notFoundSub:
+			"Nothing on-chain for this flight and date. Check the link, or browse insurable flights.",
+		notFoundCta: "Browse flights →",
+		dateLabel: "Flight date (UTC)",
+		premiumLabel: "Premium",
+		payoutLabel: "Payout if delayed",
+		triggerLabel: (h: number) =>
+			`Trigger: delayed over ${h}h, or cancelled`,
+		buyers: (n: number) => `${n} polic${n === 1 ? "y" : "ies"} sold`,
+		claimedOf: (c: number, n: number) => `${c}/${n} claimed`,
+		viewingAs: (addr: string) => `Policy held by ${addr}`,
+		noPolicyForWallet:
+			"This wallet holds no policy on this flight — showing the flight's public record.",
+		timelineTitle: "Lifecycle",
+		timelineSub:
+			"Each step below is a public on-chain fact you can verify independently.",
+		stepSaleTitle: "Sale window",
+		stepSaleOpen: (d: string) =>
+			`Open — coverage on sale until ${d}.`,
+		stepSaleDone:
+			"The flight was verified against the live schedule, then sales closed before departure.",
+		stepSaleNone: "No sale window on record for this flight and date.",
+		stepBuyTitle: "Coverage purchased",
+		stepBuyKnown: (premium: string) =>
+			`A ${premium} USDC premium was paid. The policy is recorded on-chain.`,
+		stepBuyMarket: (n: number) =>
+			`${n} traveler${n === 1 ? "" : "s"} purchased this coverage.`,
+		stepBuyNone: "No policies were sold on this flight.",
+		boughtAt: (when: string) => `Purchased ${when}`,
+		stepEtaTitle: "Schedule attested",
+		stepEtaDone: (when: string) =>
+			`The oracle recorded the published timetable: scheduled arrival ${when}. Every payout decision is measured from this baseline.`,
+		stepEtaPending:
+			"The oracle records the published timetable when tracking starts.",
+		stepOutcomeTitle: "Flight outcome",
+		stepOutcomeLanded: (when: string) => `Landed ${when}.`,
+		stepOutcomeLate: (dur: string) =>
+			`That is ${dur} past the scheduled arrival.`,
+		stepOutcomeNotLate: "At (or before) the scheduled arrival.",
+		stepOutcomeCancelled:
+			"Cancelled — corroborated by the oracle before being recorded on-chain.",
+		stepOutcomePending: "Pending — the flight hasn't landed yet.",
+		stepSettleTitle: "Settled on-chain",
+		settleMathLate: (late: string, h: number) =>
+			`${late} late against the ${h}h threshold → classified Delayed. The contract pays.`,
+		settleMathOnTime: (late: string, h: number) =>
+			`${late} late against the ${h}h threshold → classified On time. No payout.`,
+		settleCancelled: "Cancelled → the contract pays the full payout.",
+		stepSettlePending:
+			"Awaiting the automated settlement sweep — no claim forms involved.",
+		settledAt: (when: string) => `Settled ${when}`,
+		stepClaimTitle: "Payout",
+		claimPaid: (amt: string) =>
+			`${amt} USDC claimed and transferred to the wallet.`,
+		claimReady: (amt: string, by: string) =>
+			`${amt} USDC available — claim by ${by}.`,
+		claimCta: "Claim it on My Policies →",
+		claimExpired:
+			"The claim window closed — the payout returned to the pool.",
+		claimNone:
+			"On time — no payout due. The premium remains with the underwriting pool.",
+		claimAggregate: (c: number, n: number) =>
+			`${c} of ${n} polic${n === 1 ? "y" : "ies"} claimed so far.`,
+		viewTx: (explorer: string) => `Transaction on ${explorer} ↗`,
+		share: "Share",
+		linkCopied: "Link copied to clipboard",
+		copyFailed: "Copy failed — try again",
+		shareTitle: "Flights.Fun — policy record",
+		shareTextPaid: (f: string, amt: string) =>
+			`Flight ${f} was delayed — the contract paid out ${amt} USDC, verifiable on-chain.`,
+		shareTextReady: (f: string, amt: string) =>
+			`Flight ${f} was delayed — a ${amt} USDC payout is waiting on-chain.`,
+		shareTextGeneric: (f: string) =>
+			`Flight ${f} coverage on Flights.Fun — the full policy lifecycle, on-chain.`,
 	},
 	calc: {
 		title: "Underwriter Calculator",

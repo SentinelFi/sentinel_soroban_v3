@@ -5,6 +5,7 @@
    preflight beat .btn-px). Keep these here, not as JS imports. */
 @import "./pages/wave2.css" layer(components);
 @import "./pages/wave3.css";
+@import "./pages/wave4.css";
 
 /* ────────────────────────────────────────────────────────────────
    Pixel fonts — self-hosted from /public/fonts (NOT @fontsource) so
