@@ -5,7 +5,7 @@
  */
 import type { LiveConfig } from "../config.js";
 import { USDC_UNITS } from "../config.js";
-import { Chain } from "../chain.js";
+import { Chain, enumTag } from "../chain.js";
 import { loadOrCreateActors, type Actor } from "../actors.js";
 import type { Journal, JournalEntry } from "../journal.js";
 import { recentCronRuns, settlementsFor, outcomesFor, dbAvailable } from "../db.js";
@@ -122,13 +122,9 @@ export async function reconcile(cfg: LiveConfig, j: Journal): Promise<Reconcilia
   let payable = 0;
   for (const b of bought) {
     const fd = await chain.flightData(b.flightId, BigInt(b.dateSecs)).catch(() => null);
-    const tag = fd ? ((fd.status as { tag?: string })?.tag ?? String(fd.status)) : "none";
+    const tag = fd ? enumTag(fd.status) : "none";
     if (tag === "Settled") settled++;
-    const pc = await chain
-      .flightConfig(b.flightId, BigInt(b.dateSecs))
-      .then((c) => Boolean((c as { payable?: boolean } | undefined)?.payable))
-      .catch(() => false);
-    if (pc) payable++;
+    if (await chain.isPayable(b.flightId, BigInt(b.dateSecs))) payable++;
   }
   findings.push({
     section: "D. Lifecycle",

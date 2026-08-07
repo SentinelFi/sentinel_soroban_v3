@@ -15,6 +15,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import type { LiveConfig } from "./config.js";
+import { bigintSafe } from "./journal.js";
 
 const SIM_SOURCE = "GCEODBNVUGJVYQKWY7NMU4U3EIYQOXA7LADMQOPNB5PBBKMYCQJ7E6KD"; // owner (public)
 
@@ -22,6 +23,55 @@ type ScArg = xdr.ScVal;
 const sym = (s: string): ScArg => nativeToScVal(s, { type: "symbol" });
 const u64 = (n: bigint | number): ScArg => nativeToScVal(BigInt(n), { type: "u64" });
 const addr = (a: string): ScArg => nativeToScVal(a, { type: "address" });
+
+/**
+ * Flatten an unknown throw into something a journal reader can act on.
+ * `String(err)` on a JSON-RPC rejection yields "[object Object]" and destroys
+ * the only copy of the reason — pull message/code/response out explicitly.
+ */
+export function describeError(err: unknown): string {
+  if (err instanceof Error) {
+    const e = err as Error & { code?: unknown; response?: { data?: unknown } };
+    const extra = [
+      e.code !== undefined ? `code=${JSON.stringify(e.code, bigintSafe)}` : "",
+      e.response?.data ? `response=${JSON.stringify(e.response.data, bigintSafe).slice(0, 300)}` : "",
+    ].filter(Boolean).join(" ");
+    return extra ? `${e.message} (${extra})` : e.message;
+  }
+  if (err && typeof err === "object") {
+    try {
+      return JSON.stringify(err, bigintSafe).slice(0, 400);
+    } catch {
+      /* circular — fall through */
+    }
+  }
+  return String(err);
+}
+
+const chunk = <T>(xs: T[], size: number): T[][] =>
+  Array.from({ length: Math.ceil(xs.length / size) }, (_, i) => xs.slice(i * size, i * size + size));
+
+/**
+ * Enum TAG out of whatever shape `scValToNative` produced for a contract enum.
+ *
+ * Soroban unit-variant enums come back as a one-element ARRAY (`["Settled"]`),
+ * while payload variants render as `[tag, value]` or `{tag, values}`. Reading
+ * `.tag` alone silently yields `undefined` on the array form — the failure
+ * mode that made the N1 negative-claim check dead for a whole soak run: every
+ * flight compared `"" !== "Settled"` and was skipped. Centralised here so a
+ * call site cannot get it half-right.
+ */
+export function enumTag(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (Array.isArray(v)) return String(v[0]);
+  if (v && typeof v === "object") {
+    const tagged = v as { tag?: unknown };
+    if (typeof tagged.tag === "string") return tagged.tag;
+    const keys = Object.keys(v as Record<string, unknown>);
+    if (keys.length === 1) return keys[0]!;
+  }
+  return String(v);
+}
 
 export interface ChainEvent {
   id: string;
@@ -173,32 +223,63 @@ export class Chain {
       sym(origin),
       sym(dest),
     ]);
-    if (typeof v === "string") return v;
-    if (Array.isArray(v)) return String(v[0]);
-    if (v && typeof v === "object") {
-      const tagged = v as { tag?: unknown };
-      if (typeof tagged.tag === "string") return tagged.tag;
-      const keys = Object.keys(v as Record<string, unknown>);
-      if (keys.length === 1) return keys[0]!;
-    }
-    return String(v);
+    return enumTag(v);
+  }
+
+  /**
+   * Settlement tag off the pool's FlightConfig ("SettledOnTime" |
+   * "SettledDelayed" | "SettledCancelled" | "Active" | ...), or "" if the
+   * entry is unreadable. This — NOT a `payable` boolean — is how the pool
+   * expresses payability; FlightConfig has no such field, so the old
+   * `Boolean(cfg.payable)` read was always false and could not tell an
+   * on-time flight from a paying one.
+   */
+  async flightSettlementTag(flightId: string, date: bigint): Promise<string> {
+    const cfg = await this.flightConfig(flightId, date).catch(() => undefined);
+    if (!cfg) return "";
+    return enumTag((cfg as { status?: unknown }).status);
+  }
+
+  /** True when a settled flight owes a payout (delayed past threshold, or cancelled). */
+  async isPayable(flightId: string, date: bigint): Promise<boolean> {
+    const tag = await this.flightSettlementTag(flightId, date);
+    return tag.startsWith("Settled") && tag !== "SettledOnTime";
   }
 
   // ── events (persisted-cursor pull across all protocol contracts) ──────
   async eventsSince(
     cursor: string | undefined,
   ): Promise<{ events: ChainEvent[]; cursor: string | undefined }> {
-    const contractIds = Object.values(this.cfg.contracts);
+    // Soroban RPC rejects any filter carrying more than 5 contract IDs
+    // ("maximum 5 contract IDs per filter"). The protocol has 6 contracts, so
+    // a single filter failed EVERY pull — silently, because the caller logged
+    // `String(err)` on a structured JSON-RPC error object ("[object Object]").
+    // Multiple filters in one request are allowed and share one cursor, so
+    // chunking keeps the single-query, single-cursor shape intact.
+    const filters = chunk(Object.values(this.cfg.contracts), 5).map((ids) => ({
+      type: "contract" as const,
+      contractIds: ids,
+    }));
     const latest = await this.server.getLatestLedger();
-    const req: rpc.Server.GetEventsRequest = cursor
-      ? ({ filters: [{ type: "contract", contractIds }], cursor, limit: 200 } as never)
-      : {
-          filters: [{ type: "contract", contractIds }],
-          startLedger: Math.max(1, latest.sequence - 100),
-          limit: 200,
-        };
+    const fromWindow = (): rpc.Server.GetEventsRequest => ({
+      filters,
+      startLedger: Math.max(1, latest.sequence - 100),
+      limit: 200,
+    });
     const events: ChainEvent[] = [];
-    let page = await this.server.getEvents(req);
+    // A cursor can be rejected transiently, or permanently once its ledger ages
+    // out of RPC retention. Either way, losing the pull entirely is worse than
+    // resuming from the recent-ledger window, so fall back instead of throwing.
+    let page: Awaited<ReturnType<typeof this.server.getEvents>>;
+    if (cursor) {
+      try {
+        page = await this.server.getEvents({ filters, cursor, limit: 200 } as never);
+      } catch {
+        page = await this.server.getEvents(fromWindow());
+      }
+    } else {
+      page = await this.server.getEvents(fromWindow());
+    }
     for (;;) {
       for (const e of page.events) {
         events.push({
@@ -225,7 +306,7 @@ export class Chain {
       }
       if (page.events.length < 200) break;
       page = await this.server.getEvents({
-        filters: [{ type: "contract", contractIds }],
+        filters,
         cursor: page.cursor,
         limit: 200,
       } as never);

@@ -42,6 +42,19 @@ export interface RunState {
   progress: Record<string, Record<string, unknown>>;
 }
 
+/**
+ * JSON replacer that survives chain data.
+ *
+ * `scValToNative` renders Soroban i128/u64 as native BigInt, and
+ * `JSON.stringify` throws outright on those ("Do not know how to serialize a
+ * BigInt") rather than skipping them — so ONE BigInt anywhere in a payload
+ * loses the entire journal entry. That is what silently killed every chain
+ * event pull of the 2026-08-04 soak run. Emit them as strings; they are
+ * identifiers and amounts, not arithmetic operands, by the time they land here.
+ */
+export const bigintSafe = (_key: string, value: unknown): unknown =>
+  typeof value === "bigint" ? value.toString() : value;
+
 export class Journal {
   readonly dir: string;
   readonly shotsDir: string;
@@ -58,7 +71,7 @@ export class Journal {
 
   append(kind: EntryKind, event: string, data?: Record<string, unknown>, actor?: string): void {
     const entry: JournalEntry = { at: new Date().toISOString(), kind, event, ...(actor && { actor }), ...(data && { data }) };
-    appendFileSync(this.journalPath, JSON.stringify(entry) + "\n");
+    appendFileSync(this.journalPath, JSON.stringify(entry, bigintSafe) + "\n");
   }
 
   entries(): JournalEntry[] {
@@ -74,7 +87,7 @@ export class Journal {
   }
 
   saveState(s: RunState): void {
-    writeFileSync(this.statePath, JSON.stringify(s, null, 2));
+    writeFileSync(this.statePath, JSON.stringify(s, bigintSafe, 2));
   }
 
   static create(buysPlanned: number, soakHours: number): Journal {
