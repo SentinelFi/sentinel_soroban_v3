@@ -566,8 +566,10 @@ export default function PolicyDetail() {
 				return // user dismissed the sheet — not an error
 			}
 		}
+		// clipboard fallback: the bare URL only — prefixed text breaks
+		// pasting the link into an address bar or chat link preview
 		try {
-			await navigator.clipboard.writeText(`${shareText} ${shareUrl}`)
+			await navigator.clipboard.writeText(shareUrl)
 			addNotification(t.policyDetail.linkCopied, "success")
 		} catch {
 			addNotification(t.policyDetail.copyFailed, "error")

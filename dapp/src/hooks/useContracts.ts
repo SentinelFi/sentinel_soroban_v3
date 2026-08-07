@@ -473,6 +473,19 @@ export function useFlightData(flightId: string, date: bigint, enabled = true) {
 	})
 }
 
+/** Oracle outcomes attested but not yet drained by the settle sweep. */
+export function usePendingOutcomes() {
+	return useQuery({
+		queryKey: ["oracle", "pendingOutcomes"],
+		queryFn: async () => {
+			const tx = await oracleClient.get_pending_outcomes()
+			return tx.result
+		},
+		refetchInterval: 30_000,
+		retry: 1,
+	})
+}
+
 /** Sale-authorization expiry for (flight, date): unix seconds, or null
  *  when no authorization is live (never opened, closed, or lapsed). */
 export function useSaleAuth(flightId: string, date: bigint, enabled = true) {
@@ -639,6 +652,19 @@ export function usePolicyStateBatch(
 		},
 		enabled: !!flights && flights.length > 0 && !!traveler,
 		refetchInterval: 30_000,
+	})
+}
+
+/** How many insured flight instances are currently live in the pool. */
+export function useActiveFlightCount() {
+	return useQuery({
+		queryKey: ["pool", "activeFlightCount"],
+		queryFn: async () => {
+			const tx = await flightPoolManagerClient.get_active_flight_count()
+			return tx.result
+		},
+		refetchInterval: 30_000,
+		retry: 1,
 	})
 }
 
