@@ -14,10 +14,10 @@ function LegalShell({
 			<h1 className="mb-1 font-display text-[22px] leading-tight text-ink">
 				{title}
 			</h1>
-			<p className="mb-8 font-body text-[13px] text-mute">
+			<p className="mb-8 font-body text-meta text-mute">
 				Last updated {updated}
 			</p>
-			<div className="panel space-y-6 p-6 font-body text-[14px] leading-relaxed text-dim">
+			<div className="panel space-y-6 p-6 font-body text-meta leading-relaxed text-dim">
 				{children}
 			</div>
 		</div>
@@ -27,7 +27,7 @@ function LegalShell({
 function Section({ heading, children }: { heading: string; children: ReactNode }) {
 	return (
 		<section>
-			<h2 className="mb-2 font-display text-[13px] leading-snug text-ink">
+			<h2 className="mb-2 font-display text-meta leading-snug text-ink">
 				{heading}
 			</h2>
 			{children}

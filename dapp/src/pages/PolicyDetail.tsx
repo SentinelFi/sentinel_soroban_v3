@@ -204,7 +204,7 @@ export default function PolicyDetail() {
 					<p className="font-board text-[22px] text-loss">
 						{t.policyDetail.loadError}
 					</p>
-					<p className="mt-2 font-body text-[13px] text-mute">
+					<p className="mt-2 font-body text-meta text-mute">
 						{t.policyDetail.loadErrorSub}
 					</p>
 					<button
@@ -582,7 +582,7 @@ export default function PolicyDetail() {
 		<div className="mx-auto max-w-3xl space-y-8 px-4 py-8">
 			<Link
 				to="/policies"
-				className="inline-block font-display text-[11px] tracking-[0.06em] text-mute hover:text-ink"
+				className="inline-block font-display text-fine tracking-[0.06em] text-mute hover:text-ink"
 			>
 				{t.policyDetail.back}
 			</Link>
@@ -620,7 +620,7 @@ export default function PolicyDetail() {
 							<PixelArt name="trophy-win" className="h-9 w-9" />
 						))}
 				</div>
-				<p className="mt-2 font-body text-[15px] text-dim">{verdict}</p>
+				<p className="mt-2 font-body text-body text-dim">{verdict}</p>
 
 				<div className="mt-4 flex flex-wrap gap-x-8 gap-y-3">
 					{config && (
@@ -648,7 +648,7 @@ export default function PolicyDetail() {
 				</div>
 
 				{config && (
-					<p className="mt-3 font-body text-[12px] text-mute">
+					<p className="mt-3 font-body text-fine text-mute">
 						{t.policyDetail.triggerLabel(delayHours)} ·{" "}
 						{t.policyDetail.buyers(config.buyer_count)}
 						{pays
@@ -657,12 +657,12 @@ export default function PolicyDetail() {
 					</p>
 				)}
 				{holdsSlip && traveler && (
-					<p className="mt-1 break-all font-body text-[12px] text-mute">
+					<p className="mt-1 break-all font-body text-fine text-mute">
 						{t.policyDetail.viewingAs(traveler)}
 					</p>
 				)}
 				{!holdsSlip && traveler && config && (
-					<p className="mt-1 font-body text-[12px] text-mute">
+					<p className="mt-1 font-body text-fine text-mute">
 						{t.policyDetail.noPolicyForWallet}
 					</p>
 				)}
@@ -688,7 +688,7 @@ export default function PolicyDetail() {
 					{serious && <Check className="h-5 w-5" strokeWidth={1.7} />}
 					{t.policyDetail.timelineTitle}
 				</h2>
-				<p className="mb-5 font-body text-[13px] text-mute">
+				<p className="mb-5 font-body text-meta text-mute">
 					{t.policyDetail.timelineSub}
 				</p>
 				<ol className="w4-timeline">
@@ -713,7 +713,7 @@ function NotFound({ t, serious }: { t: Copy; serious: boolean }) {
 				<PixelArt name="avatar-pilot" className="mx-auto h-24 w-24" />
 			)}
 			<h1 className="h-display mt-6 text-[18px]">{t.policyDetail.notFound}</h1>
-			<p className="mt-4 font-body text-[15px] leading-relaxed text-dim">
+			<p className="mt-4 font-body text-body leading-relaxed text-dim">
 				{t.policyDetail.notFoundSub}
 			</p>
 			<Link to="/" className="btn-px btn-loss mt-6 inline-block">

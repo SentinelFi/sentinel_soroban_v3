@@ -433,6 +433,10 @@ export type TrackedStatus = "in_air" | "cancelled"
 
 export interface TrackedFlight {
 	flightId: string
+	/** UTC-midnight date bucket from the oracle's active list. The same
+	 *  flight NUMBER can be tracked on several dates at once — (flightId,
+	 *  date) is the identity, flightId alone is not. Demo rows carry 0n. */
+	date: bigint
 	origin: string
 	dest: string
 	/**
@@ -476,7 +480,7 @@ function demoTracked(): TrackedFlight[] {
 	return DEMO_ROUTES.flatMap((route, i) => {
 		if (!airportCoords[route.origin] || !airportCoords[route.dest]) return []
 		const status: TrackedStatus = i === DEMO_ROUTES.length - 1 ? "cancelled" : "in_air"
-		return [{ flightId: route.flightId, origin: route.origin, dest: route.dest, status }]
+		return [{ flightId: route.flightId, date: 0n, origin: route.origin, dest: route.dest, status }]
 	})
 }
 
@@ -507,7 +511,7 @@ export function useTrackedFlights(): {
 			(flightData ?? []).map((f) => [f.flightId, f.data]),
 		)
 		const tracked: TrackedFlight[] = []
-		for (const [flightId] of active) {
+		for (const [flightId, date] of active) {
 			const route = ROUTE_BY_ID[flightId]
 			if (!route || !airportCoords[route.origin] || !airportCoords[route.dest])
 				continue
@@ -523,6 +527,7 @@ export function useTrackedFlights(): {
 				if (at > 0 && nowSecs - at > CANCELLED_GRACE_SECS) continue
 				tracked.push({
 					flightId,
+					date,
 					origin: route.origin,
 					dest: route.dest,
 					status: "cancelled",
@@ -536,6 +541,7 @@ export function useTrackedFlights(): {
 			// Everything else is live in the air.
 			tracked.push({
 				flightId,
+				date,
 				origin: route.origin,
 				dest: route.dest,
 				status: "in_air",

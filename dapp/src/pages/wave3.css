@@ -89,6 +89,23 @@
 		color: var(--color-mute);
 	}
 
+	/* Serious @ /policies reads one step larger across the board (the page
+	   title grew; body copy follows). Scoped to the page's data-tour
+	   wrapper so Earn — which shares these classes — keeps its density.
+	   The utility-sized text takes the same step via useTheme branches in
+	   Policies.tsx. */
+	[data-theme="serious"] [data-tour="policies"] .h-section {
+		font-size: 15px;
+	}
+
+	[data-theme="serious"] [data-tour="policies"] .w3-badge {
+		font-size: 12px;
+	}
+
+	[data-theme="serious"] [data-tour="policies"] .w3-reason {
+		font-size: 15px;
+	}
+
 	/* ───────────────── vault-utilization warning (house) ─────────── */
 	.w3-util-warn {
 		display: flex;

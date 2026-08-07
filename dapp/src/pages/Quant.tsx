@@ -90,7 +90,7 @@ function Slider({
 				aria-label={label}
 				style={{ "--fill": `${fill}%` } as React.CSSProperties}
 			/>
-			<span className="mt-1 flex justify-between font-body text-[12px] text-mute">
+			<span className="mt-1 flex justify-between font-body text-fine text-mute">
 				<span>{min.toLocaleString()}</span>
 				<span>{max.toLocaleString()}</span>
 			</span>
@@ -127,7 +127,7 @@ function StatCard({
 			>
 				{value}
 			</p>
-			<p className="mt-1 font-body text-[12px] leading-snug text-mute">
+			<p className="mt-1 font-body text-fine leading-snug text-mute">
 				{note}
 			</p>
 		</div>
@@ -384,7 +384,7 @@ export default function Quant() {
 			<div>
 				<Link
 					to="/earn"
-					className="font-body text-[12px] font-semibold tracking-[0.08em] text-sky hover:text-ink"
+					className="font-body text-fine font-semibold tracking-[0.08em] text-sky hover:text-ink"
 				>
 					{t.quant.back}
 				</Link>
@@ -392,7 +392,7 @@ export default function Quant() {
 					{t.quant.titleHead}{" "}
 					<span className="text-gold">{t.quant.titleTail}</span>
 				</h1>
-				<p className="mt-3 max-w-2xl font-body text-[15px] leading-relaxed text-dim">
+				<p className="mt-3 max-w-2xl font-body text-body leading-relaxed text-dim">
 					{t.quant.intro}
 				</p>
 			</div>
@@ -562,15 +562,15 @@ export default function Quant() {
 						</span>
 					</div>
 				</div>
-				<p className="mt-4 font-body text-[14px] font-semibold text-gold">
+				<p className="mt-4 font-body text-meta font-semibold text-gold">
 					{t.quant.breakEvenLabel(breakEven.toFixed(1))}
 				</p>
-				<p className="mt-1 font-body text-[14px] text-dim">
+				<p className="mt-1 font-body text-meta text-dim">
 					{t.quant.avgNote}
 				</p>
 			</section>
 
-			<p className="font-body text-[13px] text-mute">{t.quant.disclaimer}</p>
+			<p className="font-body text-meta text-mute">{t.quant.disclaimer}</p>
 		</div>
 	)
 }

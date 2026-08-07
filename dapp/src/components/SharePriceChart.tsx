@@ -153,10 +153,10 @@ export function SharePriceChart({
 						transform: `translate(${tipShift}, calc(-100% - 8px))`,
 					}}
 				>
-					<span className="font-body text-[11px] text-mute">
+					<span className="font-body text-fine text-mute">
 						{dateFmt.format(new Date(hovered.day * 86_400_000))} ·{" "}
 					</span>
-					<span className="font-body text-[11px] font-bold text-ink">
+					<span className="font-body text-fine font-bold text-ink">
 						{hovered.price.toFixed(4)} USDC
 					</span>
 				</div>

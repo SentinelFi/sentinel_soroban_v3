@@ -85,6 +85,9 @@ const HUB_CODES = [
 /** The minimal shape the globe + list need — a tracked flight, plottable. */
 interface GlobeRoute {
 	flightId: string
+	/** Date bucket from the tracked list — the same flight NUMBER can be
+	 *  tracked on several dates at once, so list keys need both. */
+	date: bigint
 	origin: string
 	dest: string
 	/** true → flight was cancelled (within 24h grace); paints red regardless. */
@@ -552,6 +555,7 @@ export default function MarketsGlobe() {
 				.filter((f) => airportCoords[f.origin] && airportCoords[f.dest])
 				.map((f) => ({
 					flightId: f.flightId,
+					date: f.date,
 					origin: f.origin,
 					dest: f.dest,
 					cancelled: f.status === "cancelled",
@@ -602,7 +606,7 @@ export default function MarketsGlobe() {
 						{t.globe.titleHead}{" "}
 						<span className="text-gold">{t.globe.titleTail}</span>
 					</h1>
-					<p className="mt-3 max-w-xl font-body text-[15px] leading-relaxed text-dim">
+					<p className="mt-3 max-w-xl font-body text-body leading-relaxed text-dim">
 						{t.globe.intro}
 					</p>
 				</div>
@@ -637,7 +641,7 @@ export default function MarketsGlobe() {
 							const terms = termsOf(r.flightId)
 							return (
 								<button
-									key={r.flightId}
+									key={`${r.flightId}-${r.date}`}
 									type="button"
 									onClick={() => setSelectedId(r.flightId)}
 									className={`mkt-row${
@@ -659,7 +663,7 @@ export default function MarketsGlobe() {
 													: t.globe.statusInAir}
 											</span>
 										</span>
-										<span className="font-body text-[13px] font-semibold text-ink">
+										<span className="font-body text-meta font-semibold text-ink">
 											{r.origin} → {r.dest}
 										</span>
 									</span>
@@ -670,7 +674,7 @@ export default function MarketsGlobe() {
 											pCovered={r.pCovered}
 											compact
 										/>
-										<span className="font-body text-[12px] whitespace-nowrap">
+										<span className="font-body text-fine whitespace-nowrap">
 											<span className="text-ink">
 												{terms.premium != null
 													? formatUsdc(terms.premium)
@@ -701,21 +705,21 @@ export default function MarketsGlobe() {
 					{/* legend */}
 					<div className="flex flex-wrap items-center gap-4 border-2 border-line bg-surface px-4 py-2.5">
 						<span className="label-px">{t.globe.legendTitle}</span>
-						<span className="flex items-center gap-1.5 font-body text-[12px] text-dim">
+						<span className="flex items-center gap-1.5 font-body text-fine text-dim">
 							<span
 								className="risk-dot"
 								style={{ background: RISK_VAR.low, color: RISK_VAR.low }}
 							/>
 							{t.globe.legendLow}
 						</span>
-						<span className="flex items-center gap-1.5 font-body text-[12px] text-dim">
+						<span className="flex items-center gap-1.5 font-body text-fine text-dim">
 							<span
 								className="risk-dot"
 								style={{ background: RISK_VAR.med, color: RISK_VAR.med }}
 							/>
 							{t.globe.legendMed}
 						</span>
-						<span className="flex items-center gap-1.5 font-body text-[12px] text-dim">
+						<span className="flex items-center gap-1.5 font-body text-fine text-dim">
 							<span
 								className="risk-dot"
 								style={{ background: RISK_VAR.high, color: RISK_VAR.high }}
@@ -724,11 +728,11 @@ export default function MarketsGlobe() {
 						</span>
 					</div>
 					{filtered.length > mapRoutes.length && (
-						<p className="font-body text-[12px] text-sky">
+						<p className="font-body text-fine text-sky">
 							{t.globe.mapNote(mapRoutes.length, filtered.length)}
 						</p>
 					)}
-					<p className="font-body text-[12px] text-mute">
+					<p className="font-body text-fine text-mute">
 						{t.globe.riskNote}
 						{isDemo && (
 							<span className="ml-2 text-gold">{t.globe.demoNote}</span>

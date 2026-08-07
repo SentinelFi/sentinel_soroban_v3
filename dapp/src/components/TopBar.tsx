@@ -116,7 +116,7 @@ function WalletMenu({ address }: { address: string }) {
 						role="menuitem"
 						type="button"
 						onClick={() => void copyAddress()}
-						className="block w-full px-3 py-2 text-left font-body text-[12px] font-semibold text-dim hover:bg-raised hover:text-ink"
+						className="block w-full px-3 py-2 text-left font-body text-fine font-semibold text-dim hover:bg-raised hover:text-ink"
 					>
 						{t.wallet.copyAddress}
 					</button>
@@ -124,7 +124,7 @@ function WalletMenu({ address }: { address: string }) {
 						role="menuitem"
 						type="button"
 						onClick={disconnect}
-						className="block w-full px-3 py-2 text-left font-body text-[12px] font-semibold text-dim hover:bg-raised hover:text-loss"
+						className="block w-full px-3 py-2 text-left font-body text-fine font-semibold text-dim hover:bg-raised hover:text-loss"
 					>
 						{t.wallet.disconnect}
 					</button>
@@ -159,7 +159,7 @@ function HamburgerMenu() {
 
 	// shared look for every entry in the dropdown
 	const itemClass =
-		"flex w-full items-center gap-2 px-3 py-2 text-left font-body text-[12px] font-semibold text-dim hover:bg-raised hover:text-ink"
+		"flex w-full items-center gap-2 px-3 py-2 text-left font-body text-fine font-semibold text-dim hover:bg-raised hover:text-ink"
 
 	return (
 		// `flex` (not a plain block) — an inline-flex button inside a block
@@ -291,7 +291,7 @@ function CoinChip() {
 					className="coin-flip h-4 w-4"
 				/>
 			) : (
-				<span className="font-body text-[12px] font-bold text-gold">$</span>
+				<span className="font-body text-fine font-bold text-gold">$</span>
 			)}
 			<span
 				data-testid="topbar-balance"
@@ -313,7 +313,7 @@ function CoinChip() {
 					data-testid="topbar-mint"
 					onClick={() => void mint()}
 					disabled={minting || networkMismatch}
-					className="ml-1 border-l-2 border-line px-2 font-body text-[11px] font-bold tracking-[0.06em] text-win hover:text-ink disabled:opacity-50"
+					className="ml-1 border-l-2 border-line px-2 font-body text-fine font-bold tracking-[0.06em] text-win hover:text-ink disabled:opacity-50"
 					title="Mint 10,000 test USDC"
 				>
 					{minting ? "MINTING…" : "+MINT"}
@@ -343,7 +343,7 @@ export function TopBar() {
 						✈
 					</span>
 					<span className="flex flex-col">
-						<span className="font-display text-[13px] leading-none text-ink">
+						<span className="brand-name font-display text-meta leading-none text-ink">
 							{brandHead}
 							<span className="text-gold">{brandTail}</span>
 						</span>

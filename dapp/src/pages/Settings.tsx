@@ -36,7 +36,7 @@ function SectionPanel({
 }) {
 	return (
 		<section className="panel mt-6 px-5 py-4">
-			<h2 className="font-display text-[13px] tracking-[0.04em] text-ink">
+			<h2 className="font-display text-meta tracking-[0.04em] text-ink">
 				{title}
 			</h2>
 			{children}
@@ -56,7 +56,7 @@ function SettingRow({
 	return (
 		<div className="mt-4">
 			<p className="label-px">{label}</p>
-			{hint && <p className="mt-1 font-body text-[12px] text-mute">{hint}</p>}
+			{hint && <p className="mt-1 font-body text-fine text-mute">{hint}</p>}
 			<div className="mt-2">{children}</div>
 		</div>
 	)
@@ -99,13 +99,13 @@ function EndpointField({
 
 	return (
 		<SettingRow label={label} hint={hint}>
-			<p className="font-body text-[12px] text-dim">
+			<p className="font-body text-fine text-dim">
 				Default:{" "}
-				<span className="font-board text-[14px] text-sky">{defaultUrl}</span>
+				<span className="font-board text-meta text-sky">{defaultUrl}</span>
 			</p>
-			<p className="mt-1 font-body text-[12px] text-dim">
+			<p className="mt-1 font-body text-fine text-dim">
 				In use:{" "}
-				<span className="font-board text-[14px] text-ink">
+				<span className="font-board text-meta text-ink">
 					{storedCustom ?? defaultUrl}
 				</span>
 				{storedCustom === null && (
@@ -143,7 +143,7 @@ function EndpointField({
 				)}
 			</div>
 			{error && (
-				<p role="alert" className="mt-2 font-body text-[12px] text-loss">
+				<p role="alert" className="mt-2 font-body text-fine text-loss">
 					{error}
 				</p>
 			)}
@@ -259,9 +259,9 @@ export default function Settings() {
 							</button>
 						))}
 					</div>
-					<p className="mt-2 font-body text-[12px] break-all text-mute">
+					<p className="mt-2 font-body text-fine break-all text-mute">
 						Transaction links become:{" "}
-						<span className="font-board text-[14px] text-sky">
+						<span className="font-board text-meta text-sky">
 							{EXPLORERS[explorer].txUrl("…")}
 						</span>
 					</p>
@@ -287,7 +287,7 @@ export default function Settings() {
 				/>
 			</SectionPanel>
 
-			<p className="mt-6 font-body text-[12px] text-mute">
+			<p className="mt-6 font-body text-fine text-mute">
 				Preferences are stored in this browser only. Custom endpoints must be
 				https (http is accepted for localhost), and never receive keys — all
 				signing stays in your wallet.
