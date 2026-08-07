@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react"
-import { Link, Route, Routes } from "react-router-dom"
+import { Link, Navigate, Route, Routes } from "react-router-dom"
 import { ErrorBoundary } from "./components/ErrorBoundary"
 import { TopBar } from "./components/TopBar"
 import { FlightBackground } from "./components/FlightBackground"
@@ -79,7 +79,10 @@ export default function App() {
 						<Route path="/" element={<Markets />} />
 						<Route path="/markets" element={<MarketsGlobe />} />
 						<Route path="/policies" element={<Policies />} />
-						<Route path="/house" element={<House />} />
+						<Route path="/earn" element={<House />} />
+						{/* legacy alias — /house is live in the wild (nav, docs,
+						    the soak harness), so keep the URL resolving. */}
+						<Route path="/house" element={<Navigate to="/earn" replace />} />
 						<Route path="/calculator" element={<Quant />} />
 						{/* legacy alias */}
 						<Route path="/quant" element={<Quant />} />

@@ -24,7 +24,7 @@ const STEPS = [
 	{ path: "/", target: "board" },
 	{ path: "/markets", target: "live" },
 	{ path: "/policies", target: "policies" },
-	{ path: "/house", target: "house" },
+	{ path: "/earn", target: "house" },
 	{ path: "/calculator", target: "calc" },
 ] as const
 

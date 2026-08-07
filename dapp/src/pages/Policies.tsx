@@ -12,7 +12,7 @@ import { useWallet } from "../hooks/useWallet"
 import { useFlightSchedules } from "../hooks/useFlightSchedules"
 import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { cn, txHashOf } from "../lib/utils"
-import { formatDate, utcHm } from "../lib/format"
+import { formatDate, localDate, localHm } from "../lib/format"
 import { PixelArt } from "../components/PixelArt"
 import { TxProgress } from "../components/TxProgress"
 import { useTheme } from "../providers/ThemeProvider"
@@ -271,8 +271,14 @@ export default function Policies() {
 			id: `${state.flightId}-${state.date.toString()}`,
 			flightId: state.flightId,
 			date: state.date,
-			dateStr: formatDate(state.date),
-			depTime: depSecs !== undefined ? utcHm(depSecs) : undefined,
+			// The date follows the departure INSTANT whenever we have one, so
+			// date and time on a row are always the same local moment. Without
+			// a schedule the only thing available is the contract's UTC date
+			// bucket — a calendar label, which must not be shifted into the
+			// viewer's zone or the flight moves a day for everyone west of UTC.
+			dateStr:
+				depSecs !== undefined ? localDate(depSecs) : formatDate(state.date),
+			depTime: depSecs !== undefined ? localHm(depSecs) : undefined,
 			section,
 			payoff: state.config?.payoff,
 			claimed: state.claimed,
@@ -433,8 +439,9 @@ export default function Policies() {
 								</p>
 								{policy.claimExpiry !== undefined && (
 									<p className="mt-1 font-body text-[12px] text-mute">
+										{/* a real deadline instant, so local */}
 										{t.policies.claimWindow(
-											formatDate(policy.claimExpiry),
+											localDate(Number(policy.claimExpiry)),
 										)}
 									</p>
 								)}

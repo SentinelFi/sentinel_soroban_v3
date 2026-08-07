@@ -25,7 +25,7 @@ import { unitsToInput } from "../lib/format"
 import { useNotification } from "../hooks/useNotification"
 import { PixelArt } from "../components/PixelArt"
 import { SeriousIcon } from "../components/SeriousIcon"
-import { HowItWorksBubble } from "../components/InfoBubble"
+import { HowItWorksBubble, InfoBubble } from "../components/InfoBubble"
 import { TransactionButton } from "../components/TransactionButton"
 import { TxProgress } from "../components/TxProgress"
 import { Sparkline } from "../components/Sparkline"
@@ -56,6 +56,56 @@ function fmtRemaining(secs: number): string {
 	return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
+/**
+ * One chip in the cash-out line: queue position + what the entry is WORTH.
+ *
+ * The queue stores shares, and shares are ~1000× denser than assets, so
+ * rendering `formatUsdc(entry.shares)` next to the word CASH-OUT printed
+ * "2,000,000.00" for a request worth ~2,018 USDC. Convert through the vault's
+ * own convert_to_assets so the number matches what the entry will actually
+ * pay; the raw share count moves to the tooltip. Queries are keyed by share
+ * amount, so identical entries share one read.
+ */
+/** Asset value of a queued share amount, with the share count on hover. */
+function QueueWorth({ shares }: { shares: bigint }) {
+	const { data: worth } = useConvertToAssets(shares)
+	return (
+		<span title={`${formatUsdc(shares)} shares`}>
+			{worth !== undefined ? `${formatUsdc(worth)} USDC` : "…"}
+		</span>
+	)
+}
+
+function QueueChip({
+	shares,
+	position,
+	mine,
+	mineLabel,
+}: {
+	shares: bigint
+	position: number
+	mine: boolean
+	mineLabel: string
+}) {
+	const { data: worth } = useConvertToAssets(shares)
+	return (
+		<div
+			role="listitem"
+			data-testid="house-queue-row"
+			data-shares={shares.toString()}
+			className={`w3-queue-chip${mine ? " is-mine" : ""}`}
+			title={`${formatUsdc(shares)} shares${mine ? ` · ${mineLabel}` : ""}`}
+		>
+			<span className="w3-queue-pos">
+				{mine ? `#${position} · ${mineLabel}` : `#${position}`}
+			</span>
+			<span className="w3-queue-shares">
+				{worth !== undefined ? `${formatUsdc(worth)} USDC` : "…"}
+			</span>
+		</div>
+	)
+}
+
 function StatTile({
 	label,
 	value,
@@ -63,6 +113,7 @@ function StatTile({
 	sparkColor,
 	illustrativeLabel,
 	valueTestId,
+	info,
 }: {
 	label: string
 	value: string
@@ -72,10 +123,15 @@ function StatTile({
 	illustrativeLabel?: string
 	/** Inert automation hook stamped on the value element. */
 	valueTestId?: string
+	/** Optional explainer rendered as a "?" bubble beside the label. */
+	info?: React.ReactNode
 }) {
 	return (
 		<div className="panel flex flex-col p-4">
-			<p className="label-px text-sky">{label}</p>
+			<p className="label-px flex items-center gap-2 text-sky">
+				{label}
+				{info && <InfoBubble>{info}</InfoBubble>}
+			</p>
 			<p data-testid={valueTestId} className="board-figure mt-2 text-[26px]">
 				{value}
 			</p>
@@ -229,12 +285,17 @@ export default function House() {
 		locked > 0n &&
 		free <= 0n
 
-	const solvency =
-		totalAssets !== undefined && locked !== undefined
-			? Number(locked) > 0
-				? Math.round((Number(totalAssets) / Number(locked)) * 100)
-				: 100
-			: undefined
+	// Realized APY replaces the old solvency ratio in the stat row: it is the
+	// number an underwriter actually decides on, and it reuses the very series
+	// the share-price chart below plots, so tile and chart can never disagree.
+	// "…" means the series has not loaded; "—" means not measurable — too few
+	// on-chain snapshots, or a sample the anomaly guard rejected.
+	const apyStat =
+		sharePrice === undefined
+			? "…"
+			: realizedYield === null || realizedYield.anomaly
+				? "—"
+				: `${realizedYield.apyPct >= 0 ? "+" : ""}${realizedYield.apyPct.toFixed(1)}%`
 
 	function invalidate() {
 		void queryClient.invalidateQueries({ queryKey: ["vault"] })
@@ -417,11 +478,13 @@ export default function House() {
 					valueTestId="house-free"
 				/>
 				<StatTile
-					label={t.house.statHealth}
-					value={solvency !== undefined ? `${solvency}%` : "…"}
+					label={t.house.statApy}
+					value={apyStat}
 					spark={apySpark.points}
 					sparkColor="var(--color-sky)"
 					illustrativeLabel={apySpark.illustrative ? t.house.illustrative : undefined}
+					valueTestId="house-apy"
+					info={t.house.apyInfo}
 				/>
 			</section>
 			{statsUnavailable && (
@@ -767,32 +830,15 @@ export default function House() {
 								    yours highlighted. FUN = arcade ticket row,
 								    SERIOUS = numbered timeline (see wave3.css) */}
 								<div className="w3-queue-line" role="list">
-									{withdrawalQueueRows.map((entry, i) => {
-										const mine =
-											!!address && entry.owner === address
-										return (
-											<div
-												key={entry.request_id.toString()}
-												role="listitem"
-												data-testid="house-queue-row"
-												className={`w3-queue-chip${
-													mine ? " is-mine" : ""
-												}`}
-												title={
-													mine ? t.house.queueMine : undefined
-												}
-											>
-												<span className="w3-queue-pos">
-													{mine
-														? `#${i + 1} · ${t.house.queueMine}`
-														: `#${i + 1}`}
-												</span>
-												<span className="w3-queue-shares">
-													{formatUsdc(entry.shares)}
-												</span>
-											</div>
-										)
-									})}
+									{withdrawalQueueRows.map((entry, i) => (
+										<QueueChip
+											key={entry.request_id.toString()}
+											shares={entry.shares}
+											position={i + 1}
+											mine={!!address && entry.owner === address}
+											mineLabel={t.house.queueMine}
+										/>
+									))}
 								</div>
 
 								{/* cancel controls for MY entries */}
@@ -811,12 +857,14 @@ export default function House() {
 													className="box-soft flex items-center justify-between border-2 border-line bg-inset px-3 py-2"
 												>
 													<span className="flex flex-col">
+														{/* worth, not share count — same
+														    reasoning as QueueChip; the two
+														    must not quote one request
+														    differently */}
 														<span className="font-board text-[18px] text-ink">
-															{t.house.queueShares(
-																formatUsdc(
-																	entry.shares,
-																),
-															)}
+															<QueueWorth
+																shares={entry.shares}
+															/>
 															<span className="ml-2 text-mute">
 																{t.house.queuePosition(
 																	position,

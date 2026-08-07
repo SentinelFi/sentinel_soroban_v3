@@ -1,5 +1,6 @@
 /**
- * House (vault) page driver — route "/house".
+ * House (vault) page driver — route "/earn" (was "/house" until the page
+ * was renamed; the old path still redirects, but drive the real one).
  *
  * Flow shapes encoded here, learned from src/pages/House.tsx:
  *   - deposit          → risk_vault.request_deposit (two-phase LP entry: assets
@@ -15,7 +16,7 @@
  * All single-click single-tx flows (no confirm dialogs anywhere on the page).
  */
 import type { Page } from "playwright";
-import { gotoIfMissing, markToasts, waitTxOutcome } from "./_helpers";
+import { gotoIfMissing, markToasts, readSettledText, waitTxOutcome } from "./_helpers";
 
 export interface TxResult {
   ok: boolean;
@@ -23,7 +24,7 @@ export interface TxResult {
 }
 
 async function ensureHouse(page: Page): Promise<void> {
-  await gotoIfMissing(page, "/house", "house-tvl");
+  await gotoIfMissing(page, "/earn", "house-tvl");
 }
 
 /**
@@ -54,11 +55,7 @@ async function awaitActionButton(page: Page, testId: string, timeoutMs = 15_000)
   return btn;
 }
 
-async function readTestId(page: Page, testId: string): Promise<string> {
-  const el = page.getByTestId(testId).first();
-  await el.waitFor({ state: "attached", timeout: 15_000 });
-  return ((await el.textContent()) ?? "").trim();
-}
+const readTestId = (page: Page, testId: string): Promise<string> => readSettledText(page, testId);
 
 /**
  * Vault figures as displayed. `sharePrice` is the connected actor's position
@@ -73,7 +70,7 @@ export async function scrapeVault(
   const free = await readTestId(page, "house-free");
   const locked = await readTestId(page, "house-locked");
   const sp = page.getByTestId("house-share-price");
-  const sharePrice = (await sp.count()) > 0 ? ((await sp.first().textContent()) ?? "").trim() : undefined;
+  const sharePrice = (await sp.count()) > 0 ? await readSettledText(page, "house-share-price") : undefined;
   return sharePrice !== undefined ? { tvl, free, locked, sharePrice } : { tvl, free, locked };
 }
 

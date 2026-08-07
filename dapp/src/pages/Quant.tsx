@@ -383,7 +383,7 @@ export default function Quant() {
 		>
 			<div>
 				<Link
-					to="/house"
+					to="/earn"
 					className="font-body text-[12px] font-semibold tracking-[0.08em] text-sky hover:text-ink"
 				>
 					{t.quant.back}

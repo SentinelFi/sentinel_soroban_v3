@@ -17,7 +17,7 @@ const NAV = [
 	{ to: "/", key: "markets" },
 	{ to: "/markets", key: "globe" },
 	{ to: "/policies", key: "policies" },
-	{ to: "/house", key: "yield" },
+	{ to: "/earn", key: "earn" },
 ] as const
 
 /** Split a brand name at its last dot so the suffix (".FUN") can carry the accent. */

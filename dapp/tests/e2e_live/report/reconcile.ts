@@ -141,11 +141,15 @@ export async function reconcile(cfg: LiveConfig, j: Journal): Promise<Reconcilia
       cronGrid = {};
       for (const r of runs) cronGrid[r.job] = (cronGrid[r.job] ?? 0) + 1;
       const windowH = (Date.now() - Date.parse(state.startedAt)) / 3600_000;
+      // Runs-per-hour per dapp/vercel.json, halved for the 2× tolerance. Keep
+      // in step with that file AND with the cadence map in scenarios/poll.ts —
+      // queue_maintainer moved from `*/5` to `2-59/15` (12/h → 4/h) and this
+      // copy was missed, so the report failed a healthy job on every run.
       const expect: Record<string, number> = {
-        settler: windowH * 12 * 0.5,
-        queue_maintainer: windowH * 12 * 0.5,
-        classifier: windowH * 0.5,
-        fetcher: (windowH / 2) * 0.5,
+        settler: windowH * 12 * 0.5, //        */5      → 12/h
+        queue_maintainer: windowH * 4 * 0.5, // 2-59/15 →  4/h
+        classifier: windowH * 0.5, //           33 * * * *
+        fetcher: (windowH / 2) * 0.5, //        0 */2
       };
       for (const [job, min] of Object.entries(expect)) {
         findings.push({
