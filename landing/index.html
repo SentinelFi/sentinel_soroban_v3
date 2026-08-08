@@ -5,11 +5,63 @@
   <meta charset="UTF-8" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Flight Insurance</title>
+  <title>Flight Insurance | Parametric Flight Delay Insurance on Stellar</title>
   <meta name="description"
-    content="Parametric flight-delay insurance on Stellar/Soroban. Instant, on-chain payouts when your flight is delayed." />
+    content="Parametric flight-delay insurance on Stellar/Soroban. Insure your flight and claim on-chain USDC payouts when delays hit, or underwrite coverage and earn yield. Decentralized, automated, transparent." />
+  <!-- SWAP origin below (canonical + og/twitter) to the custom domain at cutover.
+       Absolute URLs are required by social scrapers, so the interim Vercel
+       origin is carried here — same convention as dapp/index.html. -->
+  <link rel="canonical" href="https://sentinel-landing.vercel.app/" />
+  <meta name="theme-color" content="#000000" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://sentinel-landing.vercel.app/" />
+  <meta property="og:site_name" content="Sentinel" />
+  <meta property="og:title" content="Flight Insurance — Parametric Flight Delay Cover on Stellar" />
+  <meta property="og:description"
+    content="Insure your flight and claim on-chain USDC payouts when delays hit, or underwrite coverage and earn yield. Decentralized, automated, transparent." />
+  <meta property="og:image" content="https://sentinel-landing.vercel.app/logo.png" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Flight Insurance — Parametric Flight Delay Cover on Stellar" />
+  <meta name="twitter:description"
+    content="Insure your flight and claim on-chain USDC payouts when delays hit, or underwrite coverage and earn yield." />
+  <meta name="twitter:image" content="https://sentinel-landing.vercel.app/logo.png" />
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "name": "Sentinel",
+          "url": "https://sentinel-landing.vercel.app/",
+          "logo": "https://sentinel-landing.vercel.app/logo.png",
+          "sameAs": [
+            "https://x.com/sentinel_fi/",
+            "https://medium.com/@sentineldefi",
+            "https://github.com/SentinelFi/sentinel_soroban_v3/"
+          ]
+        },
+        {
+          "@type": "WebSite",
+          "name": "Sentinel — Parametric Flight Insurance",
+          "url": "https://sentinel-landing.vercel.app/"
+        }
+      ]
+    }
+  </script>
   <link rel="preload" href="/fonts/titillium-web-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/fonts/titillium-web-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin />
+  <noscript>
+    <!-- Reveal-on-scroll and hero-entrance start at opacity 0 and rely on
+         JS/CSS animation; without JS the prerendered page must be readable. -->
+    <style>
+      .reveal,
+      .hero-enter {
+        opacity: 1 !important;
+        transform: none !important;
+        animation: none !important;
+      }
+    </style>
+  </noscript>
 </head>
 
 <body>

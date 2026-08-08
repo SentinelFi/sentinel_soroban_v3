@@ -1,0 +1,7 @@
+# Landing is fully public. The Sitemap URL must become absolute once the
+# custom domain exists (sitemap protocol requires it) — until then it is
+# harmlessly ignored by crawlers, same convention as dapp/public/robots.txt.
+User-agent: *
+Allow: /
+
+Sitemap: /sitemap.xml
