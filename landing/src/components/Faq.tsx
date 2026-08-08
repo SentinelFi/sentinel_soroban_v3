@@ -2,7 +2,7 @@ import { useState } from "react";
 import { FiPlus } from "react-icons/fi";
 import { LINKS } from "../links";
 
-const FAQS = [
+export const FAQS = [
   {
     q: "What is parametric flight insurance?",
     a: "Coverage that pays out on a measurable event — your flight being delayed or cancelled — instead of a claims process. Flight data triggers the payout; no forms, no adjusters, no negotiation.",

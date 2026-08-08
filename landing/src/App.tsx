@@ -18,7 +18,10 @@ const LEGAL_PAGES: Record<string, (() => React.JSX.Element) | undefined> = {
 };
 
 export default function App() {
-  const [route, setRoute] = useState(window.location.hash);
+  // guarded for the build-time prerender pass (no window in Node)
+  const [route, setRoute] = useState(() =>
+    typeof window === "undefined" ? "" : window.location.hash,
+  );
 
   useEffect(() => {
     const onHash = () => setRoute(window.location.hash);

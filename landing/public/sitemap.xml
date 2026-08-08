@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The origin must be prefixed onto the URL at domain cutover (the sitemap
+     protocol requires absolute URLs). Legal pages are hash-routed (#/privacy)
+     and therefore not separately indexable — only the root is listed. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>/</loc></url>
+</urlset>
