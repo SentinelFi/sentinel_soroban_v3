@@ -70,4 +70,397 @@
   --font-sans:
     "Titillium Web", ui-sans-serif, system-ui, "Segoe UI", Helvetica, Arial,
     sans-serif;
+  --color-accent: #e9b949;
+  --color-highlight: #0d7ca8;
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Base — black canvas, smooth scrolling, custom scrollbar
+   ──────────────────────────────────────────────────────────────── */
+
+html {
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: #2a2a2a #000;
+}
+
+body {
+  background: #000;
+  color: #fff;
+  overflow-x: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #000;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+  border: 2px solid #000;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent);
+}
+
+::selection {
+  background: var(--color-accent);
+  color: #000;
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Background — drifting glow orbs + two-layer starfield (pure CSS)
+   ──────────────────────────────────────────────────────────────── */
+
+.bg-stars,
+.bg-stars-far {
+  position: fixed;
+  inset: -100vh 0 0 0;
+  pointer-events: none;
+  background-repeat: repeat;
+}
+
+.bg-stars {
+  background-image:
+    radial-gradient(1.5px 1.5px at 40px 60px, #fff9, transparent),
+    radial-gradient(1px 1px at 190px 130px, #fff6, transparent),
+    radial-gradient(1.5px 1.5px at 320px 40px, #fff8, transparent),
+    radial-gradient(1px 1px at 260px 220px, #fff5, transparent),
+    radial-gradient(1px 1px at 90px 280px, #fff7, transparent);
+  background-size: 380px 320px;
+  animation: stars-drift 240s linear infinite;
+}
+
+.bg-stars-far {
+  background-image:
+    radial-gradient(1px 1px at 120px 90px, #fff4, transparent),
+    radial-gradient(1px 1px at 30px 200px, #fff3, transparent),
+    radial-gradient(1px 1px at 220px 160px, #fff4, transparent);
+  background-size: 290px 260px;
+  animation: stars-drift 480s linear infinite;
+}
+
+@keyframes stars-drift {
+  to {
+    transform: translateY(100vh);
+  }
+}
+
+.glow-orb {
+  position: fixed;
+  border-radius: 9999px;
+  filter: blur(90px);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.glow-accent {
+  width: 44rem;
+  height: 44rem;
+  top: -14rem;
+  right: -12rem;
+  background: radial-gradient(circle, #e9b94926, transparent 65%);
+  animation: orb-float 26s ease-in-out infinite;
+}
+
+.glow-highlight {
+  width: 50rem;
+  height: 50rem;
+  bottom: -18rem;
+  left: -14rem;
+  background: radial-gradient(circle, #0d7ca833, transparent 65%);
+  animation: orb-float 32s ease-in-out infinite reverse;
+}
+
+@keyframes orb-float {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(-4rem, 3rem) scale(1.12);
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Hero — 3D-depth headline, plane fly-by with contrail, entrance
+   ──────────────────────────────────────────────────────────────── */
+
+.hero-title {
+  text-shadow:
+    0 1px 0 #ffffff14,
+    0 3px 0 #ffffff0d,
+    0 6px 0 #ffffff08,
+    0 14px 28px #00000080,
+    0 22px 60px #0d7ca840;
+}
+
+.plane-flyby {
+  position: absolute;
+  top: 16%;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.plane-flyby > div {
+  display: flex;
+  align-items: center;
+  flex-direction: row-reverse;
+  width: max-content;
+  animation: fly-across 19s linear infinite;
+}
+
+.plane-flyby img {
+  width: 44px;
+  image-rendering: pixelated;
+  /* source art points left; mirror it to face the flight direction */
+  transform: scaleX(-1);
+}
+
+.plane-flyby .contrail {
+  height: 2px;
+  width: 34vw;
+  margin-right: -4px;
+  background: linear-gradient(to left, #ffffff59, #0d7ca833 55%, transparent);
+}
+
+@keyframes fly-across {
+  0% {
+    transform: translateX(-40vw) translateY(0);
+  }
+  55% {
+    transform: translateX(72vw) translateY(-2.2rem);
+  }
+  70% {
+    transform: translateX(115vw) translateY(-3rem);
+  }
+  100% {
+    transform: translateX(115vw) translateY(-3rem);
+  }
+}
+
+/* Sheen sweeping across the hero logo — masked by the logo's own
+   luminance so only the white artwork lights up, not its black box */
+.logo-shine {
+  position: relative;
+}
+
+@supports (mask-mode: luminance) {
+  .logo-shine::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      105deg,
+      transparent 42%,
+      #ffffffcc 50%,
+      transparent 58%
+    );
+    background-size: 300% 100%;
+    mask-image: url(/logo.png);
+    mask-mode: luminance;
+    mask-size: 100% 100%;
+    animation: logo-sheen 4.5s ease-in-out infinite;
+  }
+}
+
+@keyframes logo-sheen {
+  0% {
+    background-position: 100% 0;
+  }
+  40%,
+  100% {
+    background-position: 0% 0;
+  }
+}
+
+/* Typewriter cursor (accent yellow) */
+.type-cursor {
+  display: inline-block;
+  width: 3px;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: -0.12em;
+  background: var(--color-accent);
+  animation: cursor-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes cursor-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.1;
+  }
+}
+
+/* Staggered hero entrance */
+.hero-enter {
+  opacity: 0;
+  transform: translateY(1.4rem);
+  animation: rise-in 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes rise-in {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.scroll-hint {
+  animation: hint-bob 2.2s ease-in-out infinite;
+}
+
+@keyframes hint-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  50% {
+    transform: translateY(0.5rem);
+    opacity: 1;
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Reveal on scroll (class toggled by IntersectionObserver hook)
+   ──────────────────────────────────────────────────────────────── */
+
+.reveal {
+  opacity: 0;
+  transform: translateY(2rem);
+  transition:
+    opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.reveal.revealed {
+  opacity: 1;
+  transform: none;
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Buttons (the only rounded elements) + FAQ accordion
+   ──────────────────────────────────────────────────────────────── */
+
+.btn-primary {
+  border-radius: 9999px;
+  background: var(--color-accent);
+  color: #000;
+  transition:
+    background 0.3s ease,
+    box-shadow 0.3s ease,
+    transform 0.3s ease;
+}
+
+.btn-primary:hover {
+  background: #f7d36b;
+  box-shadow:
+    0 0 24px #e9b94966,
+    0 0 80px #e9b94933;
+  transform: translateY(-2px);
+}
+
+.btn-testnet {
+  border-radius: 9999px;
+  background: #21a06a;
+  color: #000;
+  transition:
+    background 0.3s ease,
+    box-shadow 0.3s ease,
+    transform 0.3s ease;
+}
+
+.btn-testnet:hover {
+  background: #2fc584;
+  box-shadow:
+    0 0 24px #21a06a66,
+    0 0 80px #21a06a33;
+  transform: translateY(-2px);
+}
+
+/* Periodic sheen sweeping across a button */
+.btn-shine {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-shine::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -80%;
+  height: 100%;
+  width: 50%;
+  background: linear-gradient(105deg, transparent, #ffffff80, transparent);
+  transform: skewX(-20deg);
+  animation: shine-sweep 3.6s ease-in-out infinite;
+}
+
+@keyframes shine-sweep {
+  0% {
+    left: -80%;
+  }
+  45%,
+  100% {
+    left: 130%;
+  }
+}
+
+.btn-ghost {
+  border-radius: 9999px;
+  background: #ffffff0d;
+  transition:
+    background 0.3s ease,
+    transform 0.3s ease;
+}
+
+.btn-ghost:hover {
+  background: #ffffff1a;
+  transform: translateY(-2px);
+}
+
+.faq-answer {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.faq-answer.open {
+  grid-template-rows: 1fr;
+}
+
+.faq-answer > div {
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .bg-stars,
+  .bg-stars-far,
+  .glow-orb,
+  .plane-flyby > div,
+  .scroll-hint,
+  .btn-shine::after,
+  .logo-shine::after {
+    animation: none;
+  }
+  .hero-enter {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+  .reveal {
+    opacity: 1;
+    transform: none;
+  }
 }
