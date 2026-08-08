@@ -1,0 +1,39 @@
+{
+  "name": "flight-insurance-landing",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Parametric flight-delay insurance on Stellar/Soroban",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SentinelFi/sentinel_soroban_v3.git",
+    "directory": "landing"
+  },
+  "bugs": {
+    "url": "https://github.com/SentinelFi/sentinel_soroban_v3/issues"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "vite --port 5177 --strictPort",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "@fontsource/titillium-web": "^5.3.0",
+    "@tailwindcss/vite": "^4.2.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "tailwindcss": "^4.2.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.10",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1"
+  }
+}
