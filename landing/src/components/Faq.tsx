@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FiPlus } from "react-icons/fi";
+import { MdAdd } from "react-icons/md";
 import { LINKS } from "../links";
 
 export const FAQS = [
@@ -56,21 +56,28 @@ export default function Faq() {
             >
               <button
                 type="button"
+                id={`faq-question-${i}`}
                 onClick={() => setOpen(isOpen ? null : i)}
                 aria-expanded={isOpen}
+                aria-controls={`faq-answer-${i}`}
                 className="flex w-full cursor-pointer items-center justify-between gap-6 px-7 py-5 text-left text-xl font-semibold"
               >
                 {q}
                 {/* plus rotates 45° into an ✕ when open */}
-                <FiPlus
+                <MdAdd
                   aria-hidden="true"
-                  size={22}
+                  size={24}
                   className={`shrink-0 text-accent transition-transform duration-300 ${
                     isOpen ? "rotate-45" : ""
                   }`}
                 />
               </button>
-              <div className={`faq-answer ${isOpen ? "open" : ""}`}>
+              <div
+                id={`faq-answer-${i}`}
+                role="region"
+                aria-labelledby={`faq-question-${i}`}
+                className={`faq-answer ${isOpen ? "open" : ""}`}
+              >
                 <div>
                   <p className="px-7 pb-6 text-lg leading-relaxed text-neutral-400">
                     {a}

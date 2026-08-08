@@ -40,7 +40,7 @@ export function Privacy() {
 		<LegalShell title="Privacy Policy" updated="July 2026">
 			<Section heading="Overview">
 				<p>
-					Flights.Fun is a decentralized parametric flight-delay insurance
+					This is a decentralized parametric flight-delay insurance
 					protocol on the Stellar network. This interface is independent
 					software and is not affiliated with, sponsored, or endorsed by the
 					Stellar Development Foundation. It is early-stage software running on

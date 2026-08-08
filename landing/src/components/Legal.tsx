@@ -20,7 +20,7 @@ function LegalShell({
         &larr; Back
       </a>
       <h1 className="mt-6 text-3xl font-bold md:text-4xl">{title}</h1>
-      <p className="mt-2 text-base text-neutral-500">Last updated {updated}</p>
+      <p className="mt-2 text-base text-neutral-400">Last updated {updated}</p>
       <div className="mt-10 space-y-8 bg-white/5 p-8 text-lg leading-relaxed text-neutral-400 md:p-10">
         {children}
       </div>
@@ -48,7 +48,7 @@ export function Privacy() {
     <LegalShell title="Privacy Policy" updated="July 2026">
       <Section heading="Overview">
         <p>
-          Flights.Fun is a decentralized parametric flight-delay insurance
+          This is a decentralized parametric flight-delay insurance
           protocol on the Stellar network. This interface is independent
           software and is not affiliated with, sponsored, or endorsed by the
           Stellar Development Foundation. It is early-stage software running on

@@ -243,6 +243,31 @@ bundle so the chain is touched once.
     at cutover** — submit the sitemap there; it is also where the
     og/canonical/soft-404 issues above surface. Free monitoring, and Bing's
     index feeds several AI assistants' answers.
+- [ ] **Lighthouse audit on preview deploys** — run Lighthouse (Chrome
+  DevTools or [PageSpeed Insights](https://pagespeed.web.dev/)) against the
+  deployed **landing** and **dapp** before cutover, and re-run after the
+  domain switch. The landing should score high across the board (build-time
+  prerendering, self-hosted subset fonts, ~3 KB WebP LCP image, zero
+  third-party requests, security headers in `landing/vercel.json`); treat
+  any Performance/SEO score below ~90 as a regression to investigate. Known
+  acceptable flag: `style-src 'unsafe-inline'` in the CSP (required by the
+  prerendered inline style attributes and the `<noscript>` style block) may
+  ding Best Practices. Core Web Vitals feed rankings, so this pairs with the
+  Search Console registration above.
+- [ ] **Web analytics (optional, currently none).** Landing and dapp ship no
+  analytics today. If traffic attribution becomes worth having, prefer a
+  cookieless tool (Vercel Web Analytics or Plausible): no cookies or device
+  identifiers means **no consent banner is required** — only a one-line
+  disclosure in the Privacy page (which currently claims minimal data
+  collection, so it must be updated in the same PR that enables analytics).
+  A cookie-based tool (e.g. Google Analytics) would instead require a full
+  consent banner + policy rewrite — avoid unless there's a hard requirement.
+  Notes for whoever wires it: Vercel Analytics serves its script and beacons
+  first-party, so the strict CSP in `landing/vercel.json` needs no changes;
+  a `utm()` tagging helper already exists unused in `landing/src/links.ts`
+  for attributing landing→dapp clicks per placement; and the dapp project
+  needs Analytics toggled in its Vercel dashboard for UTM params to be
+  visible there.
 - [ ] **Mainnet route-catalog mechanism.** `routes.testnet.json` is statically
   bundled in the frontend board fallback, `/api/routes`, sale-auth fallback,
   and the weather/reprice jobs; `ROUTES_CONFIG_PATH` (runtime readFileSync) is

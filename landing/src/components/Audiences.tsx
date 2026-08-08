@@ -1,9 +1,9 @@
-import { FiShield, FiTrendingUp, FiArrowUpRight } from "react-icons/fi";
+import { MdSecurity, MdTrendingUp, MdArrowOutward } from "react-icons/md";
 import { LINKS } from "../links";
 
 const CARDS = [
   {
-    icon: FiShield,
+    icon: MdSecurity,
     accent: "text-accent",
     title: "For Travelers",
     lead: "Insure your flight.",
@@ -12,7 +12,7 @@ const CARDS = [
     href: LINKS.app,
   },
   {
-    icon: FiTrendingUp,
+    icon: MdTrendingUp,
     accent: "text-highlight",
     title: "For Underwriters",
     lead: "Earn yield on coverage.",
@@ -51,7 +51,7 @@ export default function Audiences() {
               className="mt-8 inline-flex items-center gap-2 text-lg font-semibold text-white transition-colors hover:text-accent"
             >
               {cta}
-              <FiArrowUpRight aria-hidden="true" />
+              <MdArrowOutward aria-hidden="true" />
             </a>
           </div>
         ))}

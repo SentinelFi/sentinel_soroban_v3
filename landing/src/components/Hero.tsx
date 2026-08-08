@@ -1,4 +1,4 @@
-import { FiArrowUpRight, FiChevronDown } from "react-icons/fi";
+import { MdArrowOutward, MdExpandMore } from "react-icons/md";
 import { LINKS } from "../links";
 import Typewriter from "./Typewriter";
 
@@ -19,7 +19,14 @@ export default function Hero() {
       </div>
 
       <div className="logo-shine hero-enter mb-8 w-36 md:w-44">
-        <img src="/logo.png" alt="Sentinel" className="w-full" />
+        <img
+          src="/logo.webp"
+          alt="Sentinel"
+          width={352}
+          height={259}
+          fetchPriority="high"
+          className="h-auto w-full"
+        />
       </div>
       
       <h1
@@ -60,7 +67,7 @@ export default function Hero() {
           className="btn-primary btn-shine inline-flex items-center gap-2 px-10 py-4 text-xl font-bold"
         >
           Launch App
-          <FiArrowUpRight aria-hidden="true" />
+          <MdArrowOutward aria-hidden="true" />
         </a>
       </div>
 
@@ -76,7 +83,7 @@ export default function Hero() {
           title="Test network tokens have no monetary value"
         >
           Try on Testnet
-          <FiArrowUpRight aria-hidden="true" />
+          <MdArrowOutward aria-hidden="true" />
         </a>
         <span className="text-sm text-neutral-400">
           Test network has no monetary value
@@ -103,9 +110,9 @@ export default function Hero() {
       <a
         href="#audiences"
         aria-label="Scroll to content"
-        className="scroll-hint mt-6 text-neutral-500"
+        className="scroll-hint mt-6 text-neutral-400"
       >
-        <FiChevronDown size={28} />
+        <MdExpandMore size={32} />
       </a>
     </section>
   );

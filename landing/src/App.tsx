@@ -17,16 +17,32 @@ const LEGAL_PAGES: Record<string, (() => React.JSX.Element) | undefined> = {
   "#/disclaimers": Disclaimers,
 };
 
+/** Resolves the route, honoring typed path URLs (/privacy) as well as the
+ *  canonical hash form. Guarded for the prerender pass (no window in Node). */
+export function initialRoute(): string {
+  if (typeof window === "undefined") return "";
+  const path = window.location.pathname.replace(/\/+$/, "");
+  const asHash = `#${path}`;
+  return asHash in LEGAL_PAGES ? asHash : window.location.hash;
+}
+
+export function isLegalRoute(route: string): boolean {
+  return route in LEGAL_PAGES;
+}
+
 export default function App() {
-  // guarded for the build-time prerender pass (no window in Node)
-  const [route, setRoute] = useState(() =>
-    typeof window === "undefined" ? "" : window.location.hash,
-  );
+  const [route, setRoute] = useState(initialRoute);
 
   useEffect(() => {
+    // Canonicalize a typed path URL (/privacy, served via the vercel.json
+    // rewrite) to the hash form so hash links keep working from here on.
+    if (window.location.pathname.replace(/\/+$/, "") !== "" && isLegalRoute(route)) {
+      window.history.replaceState(null, "", `/${route}`);
+    }
     const onHash = () => setRoute(window.location.hash);
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const LegalPage = LEGAL_PAGES[route];

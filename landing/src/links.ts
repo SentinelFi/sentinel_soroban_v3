@@ -11,3 +11,11 @@ export const LINKS = {
   blog: "https://medium.com/@sentineldefi",
   git: "https://github.com/SentinelFi/sentinel_soroban_v3/",
 } as const;
+
+export function utm(url: string, content: string): string {
+  const u = new URL(url);
+  u.searchParams.set("utm_source", "landing");
+  u.searchParams.set("utm_medium", "web");
+  u.searchParams.set("utm_content", content);
+  return u.toString();
+}
