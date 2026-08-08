@@ -1,4 +1,4 @@
-import { FiArrowUpRight } from "react-icons/fi";
+import { MdArrowOutward } from "react-icons/md";
 import { LINKS } from "../links";
 
 const USDC_STEPS = [
@@ -69,7 +69,7 @@ export default function Stack() {
                   className="mt-4 inline-flex items-center gap-1.5 text-base font-semibold text-highlight transition-colors hover:text-white"
                 >
                   {link.linkText}
-                  <FiArrowUpRight aria-hidden="true" />
+                  <MdArrowOutward aria-hidden="true" />
                 </a>
               )}
             </div>

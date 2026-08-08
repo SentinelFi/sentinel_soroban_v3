@@ -1,4 +1,4 @@
-import { FiMail, FiStar } from "react-icons/fi";
+import { MdMailOutline, MdAutoAwesome } from "react-icons/md";
 
 /* Placeholder strip — subscribe + NFT mint land here (just before the
    footer) once live; visitors reach this point having read everything. */
@@ -7,7 +7,11 @@ export default function ComingSoon() {
     <section className="relative mx-auto max-w-6xl px-6 py-32">
       <div className="grid gap-8 md:grid-cols-2">
         <div className="reveal bg-white/5 p-10">
-          <FiMail className="mb-5 text-accent" size={28} aria-hidden="true" />
+          <MdMailOutline
+            className="mb-5 text-accent"
+            size={30}
+            aria-hidden="true"
+          />
           <h3 className="text-3xl font-bold">Stay in the loop</h3>
           <p className="mt-3 text-lg text-neutral-400">
             Product updates, new routes, and protocol news. No spam.
@@ -30,11 +34,15 @@ export default function ComingSoon() {
               Subscribe
             </button>
           </form>
-          <p className="mt-3 text-base text-neutral-600">Coming soon.</p>
+          <p className="mt-3 text-base text-neutral-400">Coming soon.</p>
         </div>
 
         <div className="reveal bg-white/5 p-10" style={{ transitionDelay: "0.12s" }}>
-          <FiStar className="mb-5 text-highlight" size={28} aria-hidden="true" />
+          <MdAutoAwesome
+            className="mb-5 text-highlight"
+            size={30}
+            aria-hidden="true"
+          />
           <h3 className="text-3xl font-bold">OG NFT</h3>
           <p className="mt-3 text-lg text-neutral-400">
             A collectible for early travelers and underwriters.
@@ -46,7 +54,7 @@ export default function ComingSoon() {
           >
             Mint
           </button>
-          <p className="mt-3 text-base text-neutral-600">Coming soon.</p>
+          <p className="mt-3 text-base text-neutral-400">Coming soon.</p>
         </div>
       </div>
     </section>

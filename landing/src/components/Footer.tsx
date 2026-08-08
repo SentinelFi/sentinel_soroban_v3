@@ -30,18 +30,24 @@ export default function Footer() {
           <a href="#/privacy" className="transition-colors hover:text-white">
             Privacy
           </a>
-          <span className="text-neutral-700">|</span>
+          <span aria-hidden="true" className="text-neutral-700">
+            |
+          </span>
           <a href="#/terms" className="transition-colors hover:text-white">
             Terms
           </a>
-          <span className="text-neutral-700">|</span>
+          <span aria-hidden="true" className="text-neutral-700">
+            |
+          </span>
           <a
             href="#/disclaimers"
             className="transition-colors hover:text-white"
           >
             Disclaimers
           </a>
-          <span className="text-neutral-700">|</span>
+          <span aria-hidden="true" className="text-neutral-700">
+            |
+          </span>
           <a
             href={LINKS.git + "issues"}
             target="_blank"
@@ -52,7 +58,7 @@ export default function Footer() {
           </a>
         </nav>
 
-        <p className="text-base text-neutral-500">
+        <p className="text-base text-neutral-400">
           &copy; {new Date().getFullYear()} Parametric flight
           insurance, on-chain. Not financial advice.
         </p>

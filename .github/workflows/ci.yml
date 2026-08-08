@@ -111,3 +111,43 @@ jobs:
 
       - name: vite build
         run: npx vite build
+
+  landing:
+    name: landing typecheck, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: landing
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: landing/.nvmrc
+          cache: npm
+          cache-dependency-path: landing/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build (client + SSR + prerender)
+        # npm run build chains tsc, the client build, the SSR entry build,
+        # and scripts/prerender.mjs — the prerender inject is the step that
+        # would otherwise break silently.
+        run: npm run build
+
+      - name: Verify prerendered HTML
+        # The prerender script must have replaced the empty root with real
+        # markup and injected the FAQPage JSON-LD.
+        run: |
+          grep -q 'Parametric flight insurance' dist/index.html
+          grep -q 'FAQPage' dist/index.html
+          if grep -q '<div id="root"></div>' dist/index.html; then
+            echo 'dist/index.html still has an empty #root — prerender did not run'
+            exit 1
+          fi
