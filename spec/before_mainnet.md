@@ -297,6 +297,19 @@ bundle so the chain is touched once.
 - [ ] **Reproducible-build check**: recompute wasm hashes and compare against
   the deployment manifest so mainnet bytecode is verifiable against audited
   source; wire into CI.
+- [ ] **Merging to `main` does NOT deploy production — and two different
+  Vercel projects make that easy to miss.** The live app is
+  `enders-projects/sentinel-dapp`, which only ever updates from a manual
+  `vercel --prod` run. The Vercel check that appears on every PR belongs to a
+  DIFFERENT project (`jss-projects-6b9346d8/sentinel-soroban-v3`), so a green
+  "Vercel — Deployment has completed" on a merged PR says nothing about what
+  production is serving. Observed repeatedly: prod sat on `ba92e8e` while
+  `main` moved 10 commits ahead, all of them looking deployed. Before
+  mainnet, either wire the live project to deploy from `main` on merge, or
+  make the divergence visible (a version/commit badge that is checked, plus
+  an alert when the deployed commit differs from `main`). Note the
+  Information page ALREADY has a commit field for exactly this and it is
+  currently broken — see *Frontend user-safety*.
 
 ## Off-chain tooling
 
@@ -586,6 +599,21 @@ bundle so the chain is touched once.
   degrading ops dashboards. Needs an availability/staleness check on
   `vault_history` writes alongside the ingest cron above.
 
+- [ ] **Soak harness: the stale-cron check false-alarms on every 2-hourly
+  job.** `tests/e2e_live/scenarios/poll.ts:139` queries cron runs from a
+  fixed 2-hour lookback (`now - 2 * 3600_000`) but then compares each job
+  against 2x ITS OWN cadence. For `weather` and `fetcher` (both `*/2` hours,
+  so a 240-minute tolerance) any run aged between 120 and 240 minutes falls
+  outside the query, `latest` comes back undefined, and a perfectly healthy
+  job is reported stale — a normal state for them roughly half the time.
+  Observed 2026-08-09: `⚠ stale crons: weather` while weather had run 147
+  minutes earlier, well inside tolerance. Fix is one line: derive the
+  lookback from `2 x max(cadence)` instead of hardcoding 2h. This is the
+  second instance of the exact failure the comment above that map warns
+  about — a check that cries wolf "trains the eye to ignore the stale-cron
+  warning" — the first was `queue_maintainer`'s cadence value, already
+  fixed. Worth auditing the whole check rather than patching twice.
+
 ### Time handling — what the 2026-08-05 audit CLEARED
 
 Recorded so this is not re-audited from scratch. The backend genuinely holds
@@ -708,6 +736,25 @@ logic in the entire frontend is `FlightCalendar.tsx`.
 
 ## Frontend user-safety
 
+- [ ] **The Information page's commit link is broken on every CLI deploy.**
+  `vite.config.ts` defines `__COMMIT_SHA__` as
+  `process.env.VERCEL_GIT_COMMIT_SHA ?? "dev"`. On a `vercel --prod` run with
+  no Git integration, Vercel sets that variable to an EMPTY STRING rather
+  than leaving it undefined, and `??` only falls back on null/undefined — so
+  the bundle inlines `""`. Production currently renders an empty SHA and
+  links to `https://github.com/.../commit/` with nothing after it. One
+  character fixes it (`||`, which also catches the empty string). Worth
+  doing early rather than late: this field is the intended way to tell what
+  production is actually running, which is exactly the gap described under
+  *Mainnet cutover*.
+- [ ] **Decide whether the House page shows a TVL-change figure at all.** The
+  illustrative TVL/APY sparklines were removed (they were synthesized, and
+  the tiles now show only measured values), and nothing replaced them — so
+  the page currently shows TVL as a spot number with no trend. If a change
+  figure is wanted, it must come from the `vault_history` mirror like the
+  APR headline does, NOT from chain reads. Also delete
+  `src/components/Sparkline.tsx`, now unreferenced, or keep it deliberately
+  as a primitive.
 - [ ] **USDC trustline handling** — the likeliest mainnet first-run failure: a
   wallet without the trustline shows "0.00 USDC" and buys fail with an
   unmapped raw error. Add a trustline check + "add USDC trustline" CTA +
