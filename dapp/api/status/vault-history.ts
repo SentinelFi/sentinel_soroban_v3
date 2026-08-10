@@ -23,24 +23,85 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
 
-  const hours = Math.min(720, Math.max(24, Number(req.query.hours) || 336));
+  // 2160h = 90 days: the headline APR window. It has to come from here and
+  // not from RPC, because `get_snapshot_price` entries carry a 30-day TTL —
+  // on-chain snapshots CANNOT answer a window longer than 30 days at all.
+  const hours = Math.min(2160, Math.max(24, Number(req.query.hours) || 336));
+  // Hourly buckets over 90 days would be 2160 rows for a two-point read.
+  // Past a month, bucket by day instead — the long windows only ever feed
+  // annualization, which reads the ends, not the shape.
+  const daily = hours > 720;
 
   let rows: Array<{ ts: string; total_assets: string; share_price: string }> = [];
   let db_available = false;
   if (process.env.GOVERNANCE_DB_URL) {
     try {
       const sql = getDb();
-      rows = (await sql`
+      // Two near-identical queries rather than an interpolated bucket
+      // expression: the bucket feeds DISTINCT ON and ORDER BY, so it must
+      // stay a literal the planner can index, never caller-shaped SQL.
+      rows = (await (daily
+        ? sql`
+        select ts::text, total_assets::text, share_price::text
+        from (
+          select distinct on (date_trunc('day', ts)) ts, total_assets, share_price
+          from vault_history
+          where ts > now() - make_interval(hours => ${hours})
+          order by date_trunc('day', ts), ts desc
+        ) bucketed
+        order by ts asc
+      `
+        : sql`
         select ts::text, total_assets::text, share_price::text
         from (
           select distinct on (date_trunc('hour', ts)) ts, total_assets, share_price
           from vault_history
           where ts > now() - make_interval(hours => ${hours})
           order by date_trunc('hour', ts), ts desc
-        ) hourly
+        ) bucketed
         order by ts asc
-      `) as unknown as typeof rows;
+      `)) as unknown as typeof rows;
       db_available = true;
+
+      // Extend BACKWARDS with the daily share-price series for any day older
+      // than the mirror's first row. The mirror only begins at the first
+      // queue_maintainer run that wrote it, so on a long window it otherwise
+      // measures the mirror's lifetime rather than the vault's — here that
+      // meant annualizing from the vault's local peak and reporting a
+      // negative APR for a vault that was up since inception.
+      //
+      // Only for long windows: the short ones feed chart shape, where mixing
+      // hourly and daily resolution would just look like gaps.
+      // total_assets is null on these rows — the on-chain snapshot records
+      // share_price only — so consumers that need TVL must skip them.
+      // Its own try: share_price_daily is created by the backfill script and
+      // may simply not exist. A missing OPTIONAL extension must never cost
+      // the caller the mirror rows we already have in hand.
+      if (daily) {
+        try {
+          const firstTs = rows[0]?.ts ?? null;
+          const backfill = (await sql`
+            select day, share_price::text
+            from share_price_daily
+            where (${firstTs}::timestamptz is null
+                   or to_timestamp(day * 86400) < ${firstTs}::timestamptz)
+              and to_timestamp(day * 86400) > now() - make_interval(hours => ${hours})
+            order by day asc
+          `) as unknown as Array<{ day: number; share_price: string }>;
+          if (backfill.length > 0) {
+            rows = [
+              ...backfill.map((b) => ({
+                ts: new Date(Number(b.day) * 86_400_000).toISOString(),
+                total_assets: null as unknown as string,
+                share_price: b.share_price,
+              })),
+              ...rows,
+            ];
+          }
+        } catch (err) {
+          console.warn(`[vault-history-api] backfill extension unavailable: ${err}`);
+        }
+      }
     } catch (err) {
       // table missing (mirror not yet written) or DB hiccup — degrade to
       // empty, the caller has an illustrative fallback

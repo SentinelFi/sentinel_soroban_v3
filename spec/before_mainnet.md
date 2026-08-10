@@ -176,6 +176,23 @@ bundle so the chain is touched once.
 - [ ] Re-affirm the accepted economic residuals at real-money scale (oracle
   outage past the 6h delay, pre-landing delay foreknowledge, void-path income,
   14-day-void-as-on-time) — or retune `LP_PRICING_DELAY_SECS`.
+  **`14-day-void-as-on-time` now has a concrete counter-example** (ASA287, see
+  *Off-chain tooling*): a flight that provably did not operate settles on-time,
+  denying the buyer a 100 USDC payout and moving their premium to vault yield.
+  Re-affirming that residual now means accepting a false negative against
+  buyers, not merely accepting void-path income.
+- [ ] **[contract] Make the 14-day void dispute-aware.**
+  `controller/src/settle.rs:219` voids a still-`NotInitiated` flight by settling
+  it **on-time**, and that settlement is terminal:
+  `flight_pool_manager/src/settle.rs:122` panics `FlightNotActive` unless the
+  bucket is `Active`, and the oracle machine is forward-only with no correction
+  path. So the timer closes the case permanently and an operator adjudicating on
+  day 15 has nothing left to act on — any manual-settlement path must RACE the
+  void rather than override it. Add a suppression so an open
+  dispute/intervention on `(flight_id, date)` blocks the auto-void, or commit to
+  a hard "adjudicate within 14 days" SLA and document that instead. The
+  off-chain half is split out under *Off-chain tooling* and *Incident response*;
+  the ASA287 evidence is recorded there.
 - [ ] Re-audit the bundle (5 prior audit rounds are on the current code; the
   upgrade invalidates that coverage for changed modules).
 
@@ -280,6 +297,19 @@ bundle so the chain is touched once.
 - [ ] **Reproducible-build check**: recompute wasm hashes and compare against
   the deployment manifest so mainnet bytecode is verifiable against audited
   source; wire into CI.
+- [ ] **Merging to `main` does NOT deploy production — and two different
+  Vercel projects make that easy to miss.** The live app is
+  `enders-projects/sentinel-dapp`, which only ever updates from a manual
+  `vercel --prod` run. The Vercel check that appears on every PR belongs to a
+  DIFFERENT project (`jss-projects-6b9346d8/sentinel-soroban-v3`), so a green
+  "Vercel — Deployment has completed" on a merged PR says nothing about what
+  production is serving. Observed repeatedly: prod sat on `ba92e8e` while
+  `main` moved 10 commits ahead, all of them looking deployed. Before
+  mainnet, either wire the live project to deploy from `main` on merge, or
+  make the divergence visible (a version/commit badge that is checked, plus
+  an alert when the deployed commit differs from `main`). Note the
+  Information page ALREADY has a commit field for exactly this and it is
+  currently broken — see *Frontend user-safety*.
 
 ## Off-chain tooling
 
@@ -472,6 +502,118 @@ bundle so the chain is touched once.
   joining routes on `flight_id` alone (same duplicate-number bug as the
   composite-key contract item).
 
+- [ ] **Resolve and escalate "uncorroborated" flight outcomes.** *(Evidence:
+  ASA287 EWR→LAX 2026-08-06, live testnet, during the 2026-08-04 soak.)*
+  `isConfirmedCancellation` (`aeroapi_client.ts:56`) requires
+  `cancelled && /cancel/i.test(status)`. AeroAPI returned `cancelled: true` with
+  `status: "result unknown"`, so the fetcher skipped the flight on every tick
+  from 12:01Z onward and it is now on course for the day-14 void. Three fixes,
+  all off-chain:
+  - **Corroborate with the position track.** The 08-06 instance had no
+    `actual_out/off/on/in`, `progress_percent: 100`, and
+    `/flights/{fa_flight_id}/track` returned **0 positions** — while 08-03/04/05
+    each show `Arrived` with a real `actual_in`. A daily flight that transmitted
+    nothing did not operate; that is the corroboration the status string is
+    missing. One extra call, only on the ambiguous branch, so the demand-driven
+    call economy is preserved.
+  - **Raise an intervention after N consecutive unresolvable ticks.**
+    `jobs/fetcher.ts` contains **no** intervention calls at all — its docstring's
+    promise that "persistent cases surface to ops" has no implementation, which
+    is why `interventions` stayed empty through four blocked ticks. The
+    `cancellation` cause in `route_guard.ts` is route-health (stop selling), not
+    per-policy adjudication.
+  - **Persist the evidence at block time, not adjudication time.** Only the skip
+    string survives, buried in a `cron_runs.actions` blob. AeroAPI visibility is
+    −10d (`VISIBILITY_PAST_SECS`) but the void is day 14 — the proof expires
+    FOUR DAYS before the case closes, so late adjudication is guesswork.
+    Snapshot the raw flight payload + track result on first block.
+
+  Money at stake in the recorded case: `delay_hours: 3` and an estimated 71-min
+  arrival delay, so "landed late" settles on-time and pays 0, while "cancelled"
+  pays the full 100 USDC payoff. The current path pays 0 and sweeps the premium
+  to vault yield — a false negative against the buyer, not a conservative hold.
+
+- [ ] **Mirror the chain events the DB does not keep — 2 of ~50 today.**
+  `governance/event_ingest.ts` captures exactly `InsuranceBought` →
+  `policies` and `FlightSettled` → `settlements`. Every other event is gone
+  once it leaves RPC retention (~7 days): `SharePriceSnapshot`,
+  `PayoutClaimed`, the entire LP flow (`DepositRequested/Processed/
+  Cancelled/Dropped`, `WithdrawalRequested/Cancelled`,
+  `RequestPartiallyFilled`, `RequestDropped`, `Collected`), the
+  lifecycle/diagnostic set (`FlightClassified`, `FlightVoided`,
+  `FlightEvicted`, `TtlMiss`, `MissingFlightData`, `FlightTimedOutActive`)
+  and every route/governance event.
+
+  **Nothing on-chain is an archive**, which is what makes this load-bearing
+  rather than nice-to-have: share-price snapshots live in Temporary storage
+  with a 30-day TTL, RPC events last ~7 days, and the contract's own comment
+  says "historical analytics are off-chain via events". The DB is the only
+  durable record the protocol has.
+
+  **It has already cost us twice on testnet:**
+  - `SharePriceSnapshot` fires on every snapshot but nothing ingests it, so
+    `vault_history` is instead built by POLLING contract state from the
+    queue cron. It therefore begins only when the poller began (2026-08-07),
+    three days after the vault opened, and the /earn headline annualized
+    from the vault's local peak — reporting −28.4% APR for a vault that was
+    up +1.0% since inception. Had the events been ingested there would be no
+    gap and no deadline. `scripts/backfill_share_price.ts` repairs it, but
+    only while the on-chain snapshots survive their 30-day TTL.
+  - The corrupt 2026-08-06 snapshot (recorded 10^3 low by the offset bug
+    #119 fixed) was only diagnosable from live chain reads inside that same
+    30-day window. Ask in November and the evidence is gone.
+
+  Shape: one raw `chain_events` table (ledger, tx_hash, event_index,
+  contract_id, topics jsonb, value jsonb), `(tx_hash, event_index)` unique —
+  capture everything cheaply, then project into typed tables FROM it, so a
+  projection bug is replayable instead of a permanent loss.
+
+  Two structural fixes belong with it:
+  - **Give ingest its own cron.** It piggybacks on the hourly `gov_exposure`
+    job today; if that job breaks, the mirror stops silently.
+  - **Alert on `gapLedgers > 0`.** The code already MEASURES permanent loss
+    (ingest down longer than `RETENTION_LEDGERS = 118_000`, ~7 days) and
+    only logs it. Same root cause as the settlement-mirror backfill item
+    under *Incident response* — fix them together.
+- [ ] **Run `scripts/backfill_share_price.ts --apply` before ~2026-09-03.**
+  Written and dry-run verified; deliberately NOT executed (writes are
+  per-step user-gated). It upserts the daily share-price series into
+  `share_price_daily` from the on-chain snapshots, and quarantines
+  implausible samples — it correctly rejected the corrupt 2026-08-06 point
+  without being told about it. Two of the days it recovers (2026-08-04/05)
+  predate the `vault_history` mirror, and recovering them moves the /earn
+  headline from −28.4% APR to the true +61.2%. **After the 30-day Temporary
+  TTL expires those days are unrecoverable anywhere**, which is what puts a
+  date on this. It deliberately does not write into `vault_history`: four of
+  that table's five NOT NULL columns are unrecoverable for past days, and
+  rows without a bracketing `queue_maintainer` run trip the supply-violation
+  check in `admin/security.ts`.
+- [ ] **Frontend analytics now depend on the DB mirror — treat it as a
+  serving path, not just a log.** The /earn headline (90-day APR/APY) and
+  the share-price chart both read `/api/status/vault-history`; live SPOT
+  values (TVL, free, locked) still read the chain, which is correct — that
+  is current truth, not analytics. This cut `/earn` from 106 RPC requests
+  per load to 13, and removed the corrupt on-chain snapshot from the chart.
+  The trade is that a broken mirror now degrades visible UI (headline to a
+  dash, chart to its labelled illustrative fallback) rather than only
+  degrading ops dashboards. Needs an availability/staleness check on
+  `vault_history` writes alongside the ingest cron above.
+
+- [ ] **Soak harness: the stale-cron check false-alarms on every 2-hourly
+  job.** `tests/e2e_live/scenarios/poll.ts:139` queries cron runs from a
+  fixed 2-hour lookback (`now - 2 * 3600_000`) but then compares each job
+  against 2x ITS OWN cadence. For `weather` and `fetcher` (both `*/2` hours,
+  so a 240-minute tolerance) any run aged between 120 and 240 minutes falls
+  outside the query, `latest` comes back undefined, and a perfectly healthy
+  job is reported stale — a normal state for them roughly half the time.
+  Observed 2026-08-09: `⚠ stale crons: weather` while weather had run 147
+  minutes earlier, well inside tolerance. Fix is one line: derive the
+  lookback from `2 x max(cadence)` instead of hardcoding 2h. This is the
+  second instance of the exact failure the comment above that map warns
+  about — a check that cries wolf "trains the eye to ignore the stale-cron
+  warning" — the first was `queue_maintainer`'s cadence value, already
+  fixed. Worth auditing the whole check rather than patching twice.
+
 ### Time handling — what the 2026-08-05 audit CLEARED
 
 Recorded so this is not re-audited from scratch. The backend genuinely holds
@@ -574,9 +716,45 @@ logic in the entire frontend is `FlightCalendar.tsx`.
   hourly exposure job and permanently loses events older than ~118k ledgers
   (~7 days); the mirror is the only source for the expired-claim sweeper
   (real unclaimed money). Document a backfill or add a second ingest trigger.
+- [ ] **Adjudication path for flights the pipeline cannot resolve.** No manual
+  settlement route exists today: `admin/outcomes.ts` is read-only, and
+  re-running the fetcher through `admin/jobs.ts` simply re-hits the same guard.
+  Needs three pieces:
+  - a **gated, evidence-logged admin settle action** for a reviewed outcome;
+  - a **user-facing "raise an issue" on a policy**, so a buyer can dispute an
+    outcome instead of silently absorbing it (today nothing in the UI can);
+  - a **decided default for genuinely undecidable cases** — pay the payoff,
+    refund the premium, or void as on-time. "An admin decides" is a mechanism,
+    not a policy: it leaves a person guessing with no documented default, and
+    today the answer is chosen by a timeout rather than by anyone.
+    `sweep_expired`'s "recovered balance for owner-driven manual remediation" is
+    the existing precedent to reuse if a premium-refund path is chosen.
+
+  Sequencing matters: because settlement is terminal, this path only works
+  BEFORE the day-14 void fires — see the dispute-aware-void item in the contract
+  bundle, and the ASA287 case under *Off-chain tooling*.
 
 ## Frontend user-safety
 
+- [ ] **The Information page's commit link is broken on every CLI deploy.**
+  `vite.config.ts` defines `__COMMIT_SHA__` as
+  `process.env.VERCEL_GIT_COMMIT_SHA ?? "dev"`. On a `vercel --prod` run with
+  no Git integration, Vercel sets that variable to an EMPTY STRING rather
+  than leaving it undefined, and `??` only falls back on null/undefined — so
+  the bundle inlines `""`. Production currently renders an empty SHA and
+  links to `https://github.com/.../commit/` with nothing after it. One
+  character fixes it (`||`, which also catches the empty string). Worth
+  doing early rather than late: this field is the intended way to tell what
+  production is actually running, which is exactly the gap described under
+  *Mainnet cutover*.
+- [ ] **Decide whether the House page shows a TVL-change figure at all.** The
+  illustrative TVL/APY sparklines were removed (they were synthesized, and
+  the tiles now show only measured values), and nothing replaced them — so
+  the page currently shows TVL as a spot number with no trend. If a change
+  figure is wanted, it must come from the `vault_history` mirror like the
+  APR headline does, NOT from chain reads. Also delete
+  `src/components/Sparkline.tsx`, now unreferenced, or keep it deliberately
+  as a primitive.
 - [ ] **USDC trustline handling** — the likeliest mainnet first-run failure: a
   wallet without the trustline shows "0.00 USDC" and buys fail with an
   unmapped raw error. Add a trustline check + "add USDC trustline" CTA +
