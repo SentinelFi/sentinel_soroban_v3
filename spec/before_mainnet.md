@@ -297,6 +297,17 @@ bundle so the chain is touched once.
 - [ ] **Reproducible-build check**: recompute wasm hashes and compare against
   the deployment manifest so mainnet bytecode is verifiable against audited
   source; wire into CI.
+- [ ] **Nothing verifies a migration shipped with the code that needs it.**
+  `#125` merged an `event_ingest.ts` that writes `policies.date` together
+  with the migration that adds the column — but merging does not apply
+  migrations, and nothing failed loudly when the column was absent. Live for
+  three days: every `InsuranceBought` insert would have thrown, and it only
+  went unnoticed because no policy was bought in that window. Applied by
+  hand 2026-08-10 after inspecting the schema. Before mainnet: assert
+  applied-migration state at deploy time (or in CI against a schema dump),
+  so code cannot reach production ahead of the schema it requires. Pairs
+  with the deploy-pipeline item below — merge does not deploy, and deploy
+  does not migrate, so the two can drift independently.
 - [ ] **Merging to `main` does NOT deploy production — and two different
   Vercel projects make that easy to miss.** The live app is
   `enders-projects/sentinel-dapp`, which only ever updates from a manual
@@ -494,6 +505,33 @@ bundle so the chain is touched once.
   still pending (only the barrier-age flag fires) and targeted settlement
   swallows all failures into console.warn — surface both in
   `/api/status/alert`.
+- [ ] **Reconcile the Supabase migration history — it records 2 of 10, and
+  `supabase db push` is currently a loaded gun.**
+  `supabase_migrations.schema_migrations` holds only `20260720011115` and
+  `20260720022128`, yet schema inspection on 2026-08-10 proved **nine** of
+  the ten are genuinely applied (`ops_flags` exists → gov_guardrails;
+  `settlements` exists; all six retired tables are gone → the drop
+  migration; RLS is on for all 14 tables → the RLS migration). They were
+  applied outside the CLI, so the ledger never learned about them.
+
+  The hazard is concrete: a push replays the 8 unrecorded migrations against
+  a schema that already has them and **hard-fails** on
+  `20260727140000_gov_guardrails.sql:21` —
+  `alter table public.signals drop constraint signals_type_check` — because
+  `signals` was dropped on 2026-08-01. That aborts the run, possibly
+  part-applied. Backfill the 8 version rows so history matches reality and a
+  push becomes a safe no-op; then stop applying migrations by hand.
+- [ ] **Chain-event ingest fails SILENTLY.** An insert error throws out of
+  `ingestChainEvents` before the cursor write, so the cursor correctly does
+  NOT advance and the range is retried — the good half of the design. But
+  the throw is swallowed by the hourly `gov_exposure` caller ("failures are
+  logged and never block the exposure signals"), so `cron_runs` records
+  `success=true` and nothing surfaces. A stalled ingest is therefore
+  invisible until someone reads the function logs, and after ~7 days the
+  un-ingested events age out of RPC retention and the stall converts into
+  permanent loss down the `gapLedgers` path. Surface ingest failure
+  distinctly from exposure-signal health — the mirror is now a serving path
+  for the frontend, not just an ops log.
 - [ ] **Governance DB hygiene**: move app-created tables (`interventions`,
   `gov_disable_slots`, `api_rate_limits`, `flight_schedules`,
   `flight_outcomes`) into `supabase/migrations/` (a restore or fresh project
