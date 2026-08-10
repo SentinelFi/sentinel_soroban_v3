@@ -1,6 +1,7 @@
-import { lazy, Suspense } from "react"
+import { lazy, Suspense, type ReactNode } from "react"
 import { Link, Navigate, Route, Routes } from "react-router-dom"
 import { ErrorBoundary } from "./components/ErrorBoundary"
+import { PageMeta } from "./components/PageMeta"
 import { TopBar } from "./components/TopBar"
 import { FlightBackground } from "./components/FlightBackground"
 import { ThemeDock } from "./components/ThemeToggle"
@@ -13,8 +14,10 @@ import { useCopy } from "./copy"
 import { BRIDGE_URL, GITHUB_URL, STELLAR_URL, X_URL } from "./config/links"
 import Markets from "./pages/Markets"
 import Policies from "./pages/Policies"
+import PolicyDetail from "./pages/PolicyDetail"
 import House from "./pages/House"
 import Status from "./pages/Status"
+import Keepers from "./pages/Keepers"
 import Settings from "./pages/Settings"
 import Information from "./pages/Information"
 import { Disclaimers, Privacy, Terms } from "./pages/Legal"
@@ -26,10 +29,20 @@ const MarketsGlobe = lazy(() => import("./pages/MarketsGlobe"))
 const Quant = lazy(() => import("./pages/Quant"))
 const Admin = lazy(() => import("./pages/Admin"))
 
+/** A route's page element plus its hoisted <title>/description. */
+function withMeta(page: ReactNode, title?: string, description?: string) {
+	return (
+		<>
+			<PageMeta title={title} description={description} />
+			{page}
+		</>
+	)
+}
+
 function PageLoading() {
 	return (
 		<div className="flex min-h-[50vh] items-center justify-center">
-			<p className="font-display text-[11px] tracking-[0.1em] text-mute uppercase">
+			<p className="font-display text-fine tracking-[0.1em] text-mute uppercase">
 				LOADING…
 			</p>
 		</div>
@@ -52,7 +65,7 @@ function NetworkMismatchBanner() {
 		<div
 			role="alert"
 			data-testid="network-mismatch-banner"
-			className="relative z-20 border-b border-amber-500/40 bg-amber-500/15 px-4 py-2 text-center font-body text-[13px] text-amber-200"
+			className="relative z-20 border-b border-amber-500/40 bg-amber-500/15 px-4 py-2 text-center font-body text-meta text-amber-200"
 		>
 			{t.wallet.mismatchBanner(stellarNetwork)}
 		</div>
@@ -76,25 +89,130 @@ export default function App() {
 				<ErrorBoundary>
 					<Suspense fallback={<PageLoading />}>
 						<Routes>
-						<Route path="/" element={<Markets />} />
-						<Route path="/markets" element={<MarketsGlobe />} />
-						<Route path="/policies" element={<Policies />} />
-						<Route path="/earn" element={<House />} />
+						<Route
+							path="/"
+							element={withMeta(
+								<Markets />,
+								undefined,
+								"Parametric flight delay insurance, played like a market. Insure your flight. Get paid if it's late.",
+							)}
+						/>
+						<Route
+							path="/markets"
+							element={withMeta(
+								<MarketsGlobe />,
+								"Live Flight Map",
+								"A live global map of insured flights — watch departures, delays, and payouts play out across the board.",
+							)}
+						/>
+						<Route
+							path="/policies"
+							element={withMeta(
+								<Policies />,
+								"My Policies",
+								"Your flight delay policies: premiums staked, claim windows, and payouts — the full record, on-chain.",
+							)}
+						/>
+						{/* deep-linkable per-policy lifecycle record */}
+						<Route
+							path="/policy/:id"
+							element={withMeta(
+								<PolicyDetail />,
+								"Policy Record",
+								"The complete on-chain lifecycle of one flight delay policy: purchase, flight outcome, settlement, and claim.",
+							)}
+						/>
+						<Route
+							path="/earn"
+							element={withMeta(
+								<House />,
+								"Earn",
+								"Deposit USDC into the risk vault that underwrites flight delay insurance and earn premiums as yield.",
+							)}
+						/>
 						{/* legacy alias — /house is live in the wild (nav, docs,
 						    the soak harness), so keep the URL resolving. */}
 						<Route path="/house" element={<Navigate to="/earn" replace />} />
-						<Route path="/calculator" element={<Quant />} />
+						<Route
+							path="/calculator"
+							element={withMeta(
+								<Quant />,
+								"Premium Calculator",
+								"Explore how flight delay premiums are priced — run Monte Carlo simulations over route, delay threshold, and payout.",
+							)}
+						/>
 						{/* legacy alias */}
-						<Route path="/quant" element={<Quant />} />
-						<Route path="/privacy" element={<Privacy />} />
-						<Route path="/terms" element={<Terms />} />
-						<Route path="/disclaimers" element={<Disclaimers />} />
-						<Route path="/status" element={<Status />} />
-						<Route path="/settings" element={<Settings />} />
-						<Route path="/information" element={<Information />} />
+						<Route
+							path="/quant"
+							element={withMeta(
+								<Quant />,
+								"Premium Calculator",
+								"Explore how flight delay premiums are priced — run Monte Carlo simulations over route, delay threshold, and payout.",
+							)}
+						/>
+						<Route
+							path="/privacy"
+							element={withMeta(
+								<Privacy />,
+								"Privacy Policy",
+								"What data Flights.Fun does and does not collect, and what lives on the public Stellar ledger.",
+							)}
+						/>
+						<Route
+							path="/terms"
+							element={withMeta(
+								<Terms />,
+								"Terms of Service",
+								"The terms governing use of the Flights.Fun parametric flight delay insurance interface.",
+							)}
+						/>
+						<Route
+							path="/disclaimers"
+							element={withMeta(
+								<Disclaimers />,
+								"Disclaimers",
+								"Risk disclosures for using early-stage, on-chain parametric flight insurance software.",
+							)}
+						/>
+						<Route
+							path="/status"
+							element={withMeta(
+								<Status />,
+								"Protocol Status",
+								"Live protocol health: oracle, classification, settlement, and governance job runs.",
+							)}
+						/>
+						{/* hamburger-menu page — the run-a-keeper front door */}
+						<Route
+							path="/keepers"
+							element={withMeta(
+								<Keepers />,
+								"Run a Keeper",
+								"What keepers do — classifying flights and settling policies — and how to run one yourself.",
+							)}
+						/>
+						<Route
+							path="/settings"
+							element={withMeta(<Settings />, "Settings")}
+						/>
+						<Route
+							path="/information"
+							element={withMeta(
+								<Information />,
+								"How It Works",
+								"How parametric flight delay insurance works on Stellar — cover, oracle attestation, and automatic payouts.",
+							)}
+						/>
 						{/* hidden — not linked from any nav; ops only */}
-						<Route path="/admin" element={<Admin />} />
-						<Route path="*" element={<Markets />} />
+						<Route path="/admin" element={withMeta(<Admin />, "Admin")} />
+						<Route
+							path="*"
+							element={withMeta(
+								<Markets />,
+								undefined,
+								"Parametric flight delay insurance, played like a market. Insure your flight. Get paid if it's late.",
+							)}
+						/>
 					</Routes>
 					</Suspense>
 				</ErrorBoundary>
@@ -119,7 +237,7 @@ function FooterCopyright() {
 	const t = useCopy()
 	const year = new Date().getFullYear()
 	return (
-		<p className="font-body text-[13px] text-mute">
+		<p className="font-body text-meta text-mute">
 			© {year} {t.brand.name} ·{" "}
 			<a
 				href={STELLAR_URL}
@@ -209,8 +327,8 @@ function SiteFooter() {
 				    rather than wrapping, pushing the whole page sideways */}
 				<div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-6 text-center lg:flex-row lg:items-center lg:justify-between lg:text-left">
 					<FooterCopyright />
-					<FooterLinks className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 font-body text-[13px] whitespace-nowrap" />
-					<p className="font-body text-[12px] text-mute">{t.footer.right}</p>
+					<FooterLinks className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 font-body text-meta whitespace-nowrap" />
+					<p className="font-body text-fine text-mute">{t.footer.right}</p>
 				</div>
 			</footer>
 		)
@@ -226,7 +344,7 @@ function SiteFooter() {
 				<FooterLinks className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 font-display text-[9px] tracking-[0.06em] whitespace-nowrap uppercase" />
 				<div className="flex flex-col items-center justify-between gap-2 text-center md:flex-row md:text-left">
 					<FooterCopyright />
-					<p className="font-body text-[11px] tracking-[0.1em] text-mute">
+					<p className="font-body text-fine tracking-[0.1em] text-mute">
 						{t.footer.right}
 					</p>
 				</div>

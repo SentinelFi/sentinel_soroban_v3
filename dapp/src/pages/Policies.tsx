@@ -43,6 +43,23 @@ function FlightLink({ id, className }: { id: string; className?: string }) {
 	)
 }
 
+/** Deep link to the policy's lifecycle record (/policy/:id). */
+function DetailsLink({ policy, className }: { policy: Policy; className?: string }) {
+	const t = useCopy()
+	return (
+		<Link
+			to={`/policy/${policy.id}`}
+			data-testid="policy-details"
+			className={cn(
+				"font-display text-[10px] tracking-[0.05em] text-sky hover:underline",
+				className,
+			)}
+		>
+			{t.policyDetail.detailsLink}
+		</Link>
+	)
+}
+
 /** Colour buckets for status badges (mapped to CSS vars via --badge). */
 type BadgeKind = "tracking" | "onTime" | "claimable" | "paid" | "expired"
 
@@ -163,11 +180,13 @@ export default function Policies() {
 				) : (
 					<PixelArt name="avatar-pilot" className="mx-auto h-24 w-24" />
 				)}
-				<h1 className="h-display mt-6 text-[18px]">{t.policies.title}</h1>
-				<p className="mt-4 font-body text-[15px] leading-relaxed text-dim">
+				<h1 className={`h-display mt-6 ${serious ? "text-[26px]" : "text-[18px]"}`}>
+					{t.policies.title}
+				</h1>
+				<p className={`mt-4 font-body ${serious ? "text-[17px]" : "text-body"} leading-relaxed text-dim`}>
 					{t.policies.connectSub}
 				</p>
-				<p className="mt-6 font-board text-[20px] text-gold">
+				<p className={`mt-6 font-board ${serious ? "text-[22px]" : "text-[20px]"} text-gold`}>
 					{!serious && <span className="blink">▶</span>}{" "}
 					{t.policies.connectPrompt}
 				</p>
@@ -320,14 +339,18 @@ export default function Policies() {
 			className="mx-auto max-w-4xl space-y-10 px-4 py-8"
 		>
 			<div>
-				<h1 className="h-display text-[20px]">{t.policies.title}</h1>
-				<p className="mt-2 font-body text-[14px] text-dim">
+				{/* serious: Outfit renders optically far smaller than the pixel face,
+				    so the page title takes a larger size there */}
+				<h1 className={`h-display ${serious ? "text-[28px]" : "text-[20px]"}`}>
+					{t.policies.title}
+				</h1>
+				<p className={`mt-2 font-body ${serious ? "text-body" : "text-meta"} text-dim`}>
 					{t.policies.intro}
 				</p>
 				{!isLoading && !loadFailed && policies.length > 0 && (
 					<p
 						data-testid="policies-total"
-						className="mt-1 font-body text-[13px] text-mute"
+						className={`mt-1 font-body ${serious ? "text-body" : "text-meta"} text-mute`}
 					>
 						{t.policies.total(policies.length)}
 					</p>
@@ -336,7 +359,7 @@ export default function Policies() {
 
 			{isLoading && (
 				<div className="panel p-8 text-center">
-					<span className="font-board text-[22px] text-gold">
+					<span className={`font-board ${serious ? "text-[24px]" : "text-[22px]"} text-gold`}>
 						{t.policies.loading}
 						{!serious && <span className="blink">…</span>}
 					</span>
@@ -345,10 +368,10 @@ export default function Policies() {
 
 			{!isLoading && loadFailed && (
 				<div role="alert" className="panel p-8 text-center">
-					<p className="font-board text-[22px] text-loss">
+					<p className={`font-board ${serious ? "text-[24px]" : "text-[22px]"} text-loss`}>
 						{t.policies.loadError}
 					</p>
-					<p className="mt-2 font-body text-[13px] text-mute">
+					<p className={`mt-2 font-body ${serious ? "text-body" : "text-meta"} text-mute`}>
 						{t.policies.loadErrorSub}
 					</p>
 					<button
@@ -377,7 +400,7 @@ export default function Policies() {
 							className="mx-auto h-24 w-24"
 						/>
 					)}
-					<p className="mt-4 font-board text-[22px] text-mute">
+					<p className={`mt-4 font-board ${serious ? "text-[24px]" : "text-[22px]"} text-mute`}>
 						{t.policies.empty}
 					</p>
 					<Link to="/" className="btn-px btn-loss mt-4">
@@ -395,7 +418,7 @@ export default function Policies() {
 						)}
 						{t.policies.claim}
 					</h2>
-					<p className="mb-3 font-body text-[13px] text-mute">
+					<p className={`mb-3 font-body ${serious ? "text-body" : "text-meta"} text-mute`}>
 						{t.policies.claimSub}
 					</p>
 					<div className="grid gap-4 sm:grid-cols-2">
@@ -417,10 +440,10 @@ export default function Policies() {
 										className="mx-auto h-16 w-16"
 									/>
 								)}
-								<p className="h-display mt-3 text-[16px] text-gold">
+								<p className={`h-display mt-3 ${serious ? "text-[18px]" : "text-[16px]"} text-gold`}>
 									{t.policies.claimWin}
 								</p>
-								<p className="mt-1 font-board text-[20px] text-dim">
+								<p className={`mt-1 font-board ${serious ? "text-[22px]" : "text-[20px]"} text-dim`}>
 									<FlightLink id={policy.flightId} /> · {policy.dateStr}
 									{policy.depTime
 										? ` · ${t.policies.depTime(policy.depTime)}`
@@ -438,7 +461,7 @@ export default function Policies() {
 										: "—"}
 								</p>
 								{policy.claimExpiry !== undefined && (
-									<p className="mt-1 font-body text-[12px] text-mute">
+									<p className={`mt-1 font-body ${serious ? "text-meta" : "text-fine"} text-mute`}>
 										{/* a real deadline instant, so local */}
 										{t.policies.claimWindow(
 											localDate(Number(policy.claimExpiry)),
@@ -467,6 +490,7 @@ export default function Policies() {
 										stamps={{ success: "stamp-paid" }}
 									/>
 								)}
+								<DetailsLink policy={policy} className="mt-3 inline-block" />
 							</div>
 						))}
 					</div>
@@ -484,7 +508,7 @@ export default function Policies() {
 						)}
 						{t.policies.active}
 					</h2>
-					<p className="mb-3 font-body text-[13px] text-mute">
+					<p className={`mb-3 font-body ${serious ? "text-body" : "text-meta"} text-mute`}>
 						{t.policies.activeSub}
 					</p>
 					<div className="space-y-2">
@@ -499,7 +523,7 @@ export default function Policies() {
 									id={policy.flightId}
 									className="board-figure text-[24px]"
 								/>
-								<span className="font-board text-[19px] text-dim">
+								<span className={`font-board ${serious ? "text-[21px]" : "text-[19px]"} text-dim`}>
 									{policy.dateStr}
 									{policy.depTime
 										? ` · ${t.policies.depTime(policy.depTime)}`
@@ -509,11 +533,11 @@ export default function Policies() {
 									kind="tracking"
 									label={t.policies.badgeTracking}
 								/>
-								<span className="font-body text-[13px] text-dim">
+								<span className={`font-body ${serious ? "text-body" : "text-meta"} text-dim`}>
 									{policy.outcome}
 									{policy.eta ? ` · ${policy.eta}` : ""}
 								</span>
-								<span className="ml-auto font-board text-[19px] text-dim">
+								<span className={`ml-auto font-board ${serious ? "text-[21px]" : "text-[19px]"} text-dim`}>
 									{t.policies.payoutLabel}{" "}
 									<span className="text-win">
 										{policy.payoff !== undefined
@@ -521,6 +545,7 @@ export default function Policies() {
 											: "—"}
 									</span>
 								</span>
+								<DetailsLink policy={policy} />
 							</div>
 						))}
 					</div>
@@ -536,7 +561,7 @@ export default function Policies() {
 						)}
 						{t.policies.history}
 					</h2>
-					<p className="mb-3 font-body text-[13px] text-mute">
+					<p className={`mb-3 font-body ${serious ? "text-body" : "text-meta"} text-mute`}>
 						{t.policies.historySub}
 					</p>
 					<div className="space-y-2">
@@ -551,7 +576,7 @@ export default function Policies() {
 									id={policy.flightId}
 									className="font-board text-[20px] text-dim"
 								/>
-								<span className="font-board text-[18px] text-mute">
+								<span className={`font-board ${serious ? "text-[20px]" : "text-[18px]"} text-mute`}>
 									{policy.dateStr}
 									{policy.depTime
 										? ` · ${t.policies.depTime(policy.depTime)}`
@@ -576,11 +601,12 @@ export default function Policies() {
 									)}
 									{policy.reason}
 								</span>
-								<span className="ml-auto font-board text-[18px] text-mute">
+								<span className={`ml-auto font-board ${serious ? "text-[20px]" : "text-[18px]"} text-mute`}>
 									{policy.payoff !== undefined
 										? `${formatUsdc(policy.payoff)} USDC`
 										: "—"}
 								</span>
+								<DetailsLink policy={policy} />
 							</div>
 						))}
 					</div>

@@ -5,13 +5,136 @@
    preflight beat .btn-px). Keep these here, not as JS imports. */
 @import "./pages/wave2.css" layer(components);
 @import "./pages/wave3.css";
+@import "./pages/wave4.css";
 
 /* ────────────────────────────────────────────────────────────────
-   Pixel fonts — self-hosted from /public/fonts (NOT @fontsource) so
+   Fonts — self-hosted from /public/fonts (NOT @fontsource) so
    index.html can preload them; bundler-hashed URLs can't be preloaded,
    and without preload the fun skin flashes fallback text (FOUT) while
    the display/board faces load. Subsets + ranges mirror fontsource.
+
+   DM Sans (body, both themes) ships the SAME four static cuts the old
+   @fontsource imports bundled — self-hosting them changes delivery
+   (preloadable, same-origin), never rendering: weight 650 keeps
+   snapping to the 700 cut exactly as it always did, which the fun
+   skin's labels depend on. Outfit (serious display only) ships as a
+   VARIABLE woff2 so its true 600/650 weights render.
    ──────────────────────────────────────────────────────────────── */
+
+@font-face {
+	font-family: "DM Sans";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 400;
+	src: url(/fonts/dm-sans-latin-400-normal.woff2) format("woff2");
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+		U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+		U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: "DM Sans";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 500;
+	src: url(/fonts/dm-sans-latin-500-normal.woff2) format("woff2");
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+		U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+		U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: "DM Sans";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 600;
+	src: url(/fonts/dm-sans-latin-600-normal.woff2) format("woff2");
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+		U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+		U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: "DM Sans";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 700;
+	src: url(/fonts/dm-sans-latin-700-normal.woff2) format("woff2");
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+		U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+		U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: "DM Sans";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 400;
+	src: url(/fonts/dm-sans-latin-ext-400-normal.woff2) format("woff2");
+	unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+		U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+		U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+		U+A720-A7FF;
+}
+
+@font-face {
+	font-family: "DM Sans";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 500;
+	src: url(/fonts/dm-sans-latin-ext-500-normal.woff2) format("woff2");
+	unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+		U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+		U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+		U+A720-A7FF;
+}
+
+@font-face {
+	font-family: "DM Sans";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 600;
+	src: url(/fonts/dm-sans-latin-ext-600-normal.woff2) format("woff2");
+	unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+		U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+		U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+		U+A720-A7FF;
+}
+
+@font-face {
+	font-family: "DM Sans";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 700;
+	src: url(/fonts/dm-sans-latin-ext-700-normal.woff2) format("woff2");
+	unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+		U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+		U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+		U+A720-A7FF;
+}
+
+@font-face {
+	font-family: "Outfit";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 100 900;
+	src: url(/fonts/outfit-latin-wght-normal.woff2) format("woff2-variations");
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+		U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+		U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: "Outfit";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 100 900;
+	src: url(/fonts/outfit-latin-ext-wght-normal.woff2) format("woff2-variations");
+	unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+		U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+		U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+		U+A720-A7FF;
+}
 
 @font-face {
 	font-family: "Press Start 2P";
@@ -105,6 +228,15 @@
 		"Segoe UI", "Helvetica Neue", Arial, sans-serif;
 	--font-board: "VT323", ui-monospace, monospace;
 
+	/* type scale — the RUNNING-TEXT domain. Three steps: fine (fine print,
+	   dense meta), meta (secondary copy, table body), body (primary copy).
+	   Display/board sizes stay per-context — the pixel faces render
+	   optically smaller, so a shared scale would lie — but body copy uses
+	   these instead of ad-hoc pixel values. */
+	--text-fine: 12px;
+	--text-meta: 13px;
+	--text-body: 15px;
+
 	/* hard-edged: kill the default radius scale */
 	--radius-sm: 2px;
 
@@ -164,6 +296,15 @@ body {
 ::selection {
 	background: var(--color-gold);
 	color: var(--color-page);
+}
+
+/* Money, odds and stat columns must column-align: tabular figures on
+   every numeric face. VT323 carries no tabular feature (a harmless
+   no-op in fun); the serious overrides of --font-board / .board-figure
+   honor it, and DM Sans digits align wherever body copy shows money. */
+.font-board,
+.board-figure {
+	font-variant-numeric: tabular-nums;
 }
 
 /* Serious: drop the pixel starfield and let the canvas flight-paths carry
@@ -1454,6 +1595,11 @@ html[data-theme="serious"] {
 		min-width: 30px;
 	}
 
+	/* the departures board's roomier rows carry a bigger readout */
+	.riskbar-wide .riskbar-value {
+		font-size: 18px;
+	}
+
 	/* column "i" — explains its column once, from the table header */
 	.column-info {
 		cursor: help;
@@ -1530,6 +1676,10 @@ html[data-theme="serious"] {
 		font-size: 13px;
 		font-variant-numeric: tabular-nums;
 		font-weight: 600;
+	}
+
+	[data-theme="serious"] .riskbar-wide .riskbar-value {
+		font-size: 15px;
 	}
 
 	[data-theme="serious"] .riskbar-est {
@@ -2324,7 +2474,17 @@ html[data-theme="serious"] {
 	backdrop-filter: saturate(1.1) blur(8px);
 }
 
+/* Outfit renders optically far smaller than the pixel face, so the
+   wordmark and tagline take a size up in serious. Unlayered on purpose —
+   these must beat the spans' text-* utilities, like the letter-spacing
+   override below already does. */
+[data-theme="serious"] .brand-name {
+	font-size: 16px;
+	font-weight: 650;
+}
+
 [data-theme="serious"] .brand-tagline {
+	font-size: 12px;
 	letter-spacing: 0.02em;
 	text-transform: none;
 	color: var(--color-mute);

@@ -39,7 +39,7 @@ export default function Information() {
 			</header>
 
 			<section className="panel mt-6 px-5 py-4">
-				<h2 className="font-display text-[13px] tracking-[0.04em] text-ink">
+				<h2 className="font-display text-meta tracking-[0.04em] text-ink">
 					APPLICATION
 				</h2>
 				<div className="mt-4">
@@ -51,14 +51,14 @@ export default function Information() {
 								href={`${REPO_URL}/commit/${__COMMIT_SHA__}`}
 								target="_blank"
 								rel="noopener noreferrer"
-								className="footer-link ml-2 font-body text-[13px]"
+								className="footer-link ml-2 font-body text-meta"
 								title="Source commit this deploy was built from"
 								data-testid="info-commit"
 							>
 								{__COMMIT_SHA__.slice(0, 7)} ↗
 							</a>
 						) : (
-							<span className="ml-2 font-body text-[13px] text-mute">
+							<span className="ml-2 font-body text-meta text-mute">
 								dev build
 							</span>
 						)}
@@ -82,7 +82,7 @@ export default function Information() {
 			</section>
 
 			<section className="panel mt-6 px-5 py-4">
-				<h2 className="font-display text-[13px] tracking-[0.04em] text-ink">
+				<h2 className="font-display text-meta tracking-[0.04em] text-ink">
 					DEPLOYED CONTRACTS
 				</h2>
 				<div className="mt-3">
@@ -96,7 +96,7 @@ export default function Information() {
 								href={explorerContractUrl(c.address)}
 								target="_blank"
 								rel="noopener noreferrer"
-								className="footer-link mt-1 inline-block font-body text-[12px] break-all"
+								className="footer-link mt-1 inline-block font-body text-fine break-all"
 								data-testid={`info-contract-${c.label.toLowerCase().replaceAll(" ", "-")}`}
 							>
 								{c.address} ↗

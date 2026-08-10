@@ -58,7 +58,7 @@ export default function Status() {
 						{overall.word}
 					</p>
 					{q.data && (
-						<p className="font-body text-[12px] text-mute">
+						<p className="font-body text-fine text-mute">
 							as of {utcDateTime(q.data.as_of, true)} UTC
 						</p>
 					)}
@@ -76,7 +76,7 @@ export default function Status() {
 							))}
 						</tr>
 					</thead>
-					<tbody className="font-body text-[13px]">
+					<tbody className="font-body text-meta">
 						{q.isLoading && (
 							<tr>
 								<td colSpan={5} className="px-3 py-4 text-mute">
@@ -113,7 +113,7 @@ export default function Status() {
 										/>
 										<span
 											aria-hidden="true"
-											className={`font-body text-[11px] ${
+											className={`font-body text-fine ${
 												j.success === false
 													? "text-loss"
 													: j.success === true
@@ -138,7 +138,7 @@ export default function Status() {
 								</td>
 								<td className="px-3 py-2.5">
 									<span className="font-board text-[17px] text-ink">{j.job}</span>
-									<span className="block text-[12px] text-mute">{j.description}</span>
+									<span className="block text-fine text-mute">{j.description}</span>
 								</td>
 								<td className="px-3 py-2.5 whitespace-nowrap">
 									<span className="font-board text-[16px] text-sky">{j.schedule}</span>
@@ -155,7 +155,7 @@ export default function Status() {
 				</table>
 			</div>
 
-			<p className="mt-4 font-body text-[12px] text-mute">
+			<p className="mt-4 font-body text-fine text-mute">
 				Automated keepers for the Soroban testnet deployment — flight status,
 				settlement, and route governance. Times are UTC.
 			</p>

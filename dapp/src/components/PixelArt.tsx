@@ -78,7 +78,7 @@ export function PixelArt({
 			)}
 		>
 			{icon ? (
-				<span className="font-board text-[14px] leading-none text-mute">
+				<span className="font-board text-meta leading-none text-mute">
 					▦
 				</span>
 			) : (

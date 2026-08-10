@@ -1,6 +1,7 @@
 {
   "framework": "vite",
   "outputDirectory": "dist",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- .",
   "installCommand": "npm install && npm run install:contracts",
   "buildCommand": "vite build",
   "rewrites": [

@@ -35,10 +35,10 @@ export class ErrorBoundary extends Component<Props, State> {
 				role="alert"
 				className="mx-auto flex min-h-[50vh] max-w-xl flex-col items-center justify-center gap-4 px-4 py-16 text-center"
 			>
-				<p className="font-display text-[15px] text-loss">
+				<p className="font-display text-body text-loss">
 					SOMETHING WENT WRONG
 				</p>
-				<p className="break-words font-body text-[13px] leading-relaxed text-mute">
+				<p className="break-words font-body text-meta leading-relaxed text-mute">
 					{this.state.error.message}
 				</p>
 				<div className="flex gap-3">

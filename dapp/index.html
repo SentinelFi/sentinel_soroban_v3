@@ -1,55 +1,49 @@
 <!doctype html>
 <html lang="en" data-theme="fun" data-scheme="dark">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/favicon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta
-      name="description"
-      content="FLIGHTS.FUN — parametric flight delay insurance, played like a market. Insure your flight. Get paid if it's late."
-    />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1736" />
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#e6ecf8" />
-    <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="FLIGHTS.FUN" />
-    <meta property="og:title" content="FLIGHTS.FUN — Flight Delay Insurance Market" />
-    <meta
-      property="og:description"
-      content="Parametric flight delay insurance, played like a market. Insure your flight. Get paid if it's late."
-    />
-    <meta property="og:image" content="/px/hero-airport.png" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="FLIGHTS.FUN — Flight Delay Insurance Market" />
-    <meta
-      name="twitter:description"
-      content="Parametric flight delay insurance, played like a market. Insure your flight. Get paid if it's late."
-    />
-    <meta name="twitter:image" content="/px/hero-airport.png" />
-    <!-- Pre-paint theme stamp; external file because CSP has no 'unsafe-inline'. -->
-    <script src="/theme-init.js"></script>
-    <!-- Pixel fonts fetched before first paint — without this the fun skin
-         flashes fallback text while the display/board faces load. -->
-    <link
-      rel="preload"
-      href="/fonts/press-start-2p-latin-400-normal.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
-    <link
-      rel="preload"
-      href="/fonts/vt323-latin-400-normal.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
-    <link rel="preconnect" href="https://soroban-testnet.stellar.org" crossorigin />
-    <link rel="preconnect" href="https://horizon-testnet.stellar.org" crossorigin />
-    <link rel="preconnect" href="https://murcgnleczppbooifkya.supabase.co" crossorigin />
-    <title>FLIGHTS.FUN — Flight Delay Insurance Market</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- No static meta description: every route renders its own via PageMeta
+       (React 19 hoisting), and crawlers take the FIRST description they see,
+       which would always be a static one. og:description below stays for
+       no-JS social scrapers. -->
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1736" />
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#e6ecf8" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://sentinel-dapp.vercel.app/" />
+  <meta property="og:site_name" content="FLIGHTS.FUN" />
+  <meta property="og:title" content="FLIGHTS.FUN — Flight Delay Insurance Market" />
+  <meta property="og:description"
+    content="Parametric flight delay insurance, played like a market. Insure your flight. Get paid if it's late." />
+  <meta property="og:image" content="https://sentinel-dapp.vercel.app/px/og-card.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="FLIGHTS.FUN — Flight Delay Insurance Market" />
+  <meta name="twitter:description"
+    content="Parametric flight delay insurance, played like a market. Insure your flight. Get paid if it's late." />
+  <meta name="twitter:image" content="https://sentinel-dapp.vercel.app/px/og-card.png" />
+  <!-- Pre-paint theme stamp; external file because CSP has no 'unsafe-inline'. -->
+  <script src="/theme-init.js"></script>
+  <!-- Fonts fetched before first paint — without this the page flashes
+         fallback text while the body/display/board faces load. DM Sans is
+         the body face in BOTH themes; Outfit (serious display) is
+         preloaded conditionally by theme-init.js, which knows the
+         persisted theme before paint. -->
+  <link rel="preload" href="/fonts/dm-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/press-start-2p-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/vt323-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preconnect" href="https://soroban-testnet.stellar.org" crossorigin />
+  <link rel="preconnect" href="https://horizon-testnet.stellar.org" crossorigin />
+  <link rel="preconnect" href="https://murcgnleczppbooifkya.supabase.co" crossorigin />
+  <title>FLIGHTS.FUN — Flight Delay Insurance Market</title>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
 </html>

@@ -1,3 +1,4 @@
+use sentinel_types::ttl::{INSTANCE_TTL_EXTEND, INSTANCE_TTL_THRESHOLD};
 use soroban_sdk::{contractimpl, Address, Env, String};
 use stellar_access::ownable;
 use stellar_tokens::fungible::Base;
@@ -33,5 +34,12 @@ impl MockUSDC {
     #[cfg(feature = "testnet")]
     pub fn faucet(e: &Env, to: Address) {
         Base::mint(e, &to, crate::constants::FAUCET_AMOUNT);
+    }
+
+    /// Extend instance TTL.
+    pub fn extend_ttl(e: &Env) {
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
     }
 }
