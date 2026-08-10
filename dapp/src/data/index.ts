@@ -82,8 +82,7 @@ export {
 // ── derived selectors (estimates / illustrative — labelled in UI) ──
 export {
 	routeRisk,
-	useTvlSparkline,
-	useApySparkline,
+	useHeadlineSharePrice,
 	useSharePriceSeries,
 	useTrackedFlights,
 	TRACKED_MAP_LIMIT,

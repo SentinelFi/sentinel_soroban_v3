@@ -124,9 +124,11 @@ const fun = {
 		statTvl: "POOL (TVL)",
 		statBacking: "BACKING POLICIES",
 		statFree: "FREE CAPITAL",
-		statApy: "REALIZED APY",
-		apyInfo:
-			"WHAT THE POOL ACTUALLY EARNED, ANNUALIZED — NOT A PROMISED RATE. Underwriters take the premium on every policy and fund the payout on every delayed or cancelled flight; the net lands in the share price, so the share price is the only input. We read it at the start and end of the window you pick below and compound that move out to a year: APY = (end ÷ start) ^ (365 ÷ days) − 1. Compounding is the whole difference from the APR shown under the chart: APR just multiplies the move by 365 ÷ days, so over a short window APY runs far above it. Both are backward-looking and both swing hard on short windows — a single payout over 3 days annualizes into a huge negative. Widen to 30 days for a number worth trusting. A dash means too few on-chain snapshots to measure.",
+		statApr: "REALIZED APR (90D)",
+		aprHover: (apy: string, days: number) =>
+			`${apy}% APY (compounded) · measured over ${days}d of recorded vault history`,
+		aprInfo:
+			"WHAT THE POOL ACTUALLY EARNED, ANNUALIZED — NOT A PROMISED RATE. Underwriters take the premium on every policy and fund the payout on every delayed or cancelled flight; the net lands in the share price, so the share price is the only input. We read it at the two ends of a 90-day window and annualize: APR = (end ÷ start − 1) × 365 ÷ days. Hover the number for the APY, which compounds the same move instead: APY = (end ÷ start) ^ (365 ÷ days) − 1. That compounding is the ONLY difference between them — identical data, so APY always reads higher, and wildly higher over a short window. The window is fixed at 90 days on purpose: annualizing a few days turns one settlement into a headline (this vault printed +357% APY, then a dash, then −55% APY inside four days while its share price moved a total of +1.0%). It is backward-looking either way, and a dash means too little recorded history to measure. The window only reaches back as far as the vault's recorded history goes — hover shows how many days were actually measured.",
 		deposit: "DEPOSIT",
 		depositAmount: "AMOUNT (USDC)",
 		walletBalance: "Wallet:",
@@ -508,9 +510,11 @@ const serious: Copy = {
 		statTvl: "Total Value Locked",
 		statBacking: "Backing Policies",
 		statFree: "Free Capital",
-		statApy: "Realized APY",
-		apyInfo:
-			"What the vault actually earned, annualized — not a promised rate. Underwriters collect the premium on every policy and fund the payout on every delayed or cancelled flight; the net accrues to the share price, so the share price is the only input. We read it at the start and end of the window selected below and compound that move out to a year: APY = (end ÷ start) ^ (365 ÷ days) − 1. Compounding is the entire difference from the APR shown beneath the chart, which simply multiplies the move by 365 ÷ days — over a short window APY runs far above APR. Both are backward-looking and both are volatile on short windows: a single payout over 3 days annualizes into a large negative. Widen to 30 days for a figure worth relying on. A dash means too few on-chain snapshots to measure.",
+		statApr: "Realized APR (90d)",
+		aprHover: (apy: string, days: number) =>
+			`${apy}% APY (compounded) · measured over ${days}d of recorded vault history`,
+		aprInfo:
+			"What the vault actually earned, annualized — not a promised rate. Underwriters collect the premium on every policy and fund the payout on every delayed or cancelled flight; the net accrues to the share price, so the share price is the only input. We read it at the two ends of a 90-day window and annualize: APR = (end ÷ start − 1) × 365 ÷ days. Hover the number for the APY, which compounds the same move instead: APY = (end ÷ start) ^ (365 ÷ days) − 1. That compounding is the only difference between them — identical data, so APY always reads higher, and dramatically higher over a short window. The window is fixed at 90 days deliberately: annualizing a few days turns a single settlement into a headline (this vault showed +357% APY, then a dash, then −55% APY within four days while its share price moved a total of +1.0%). Both are backward-looking, and a dash means too little recorded history to measure. The window only reaches back as far as the vault's recorded history goes — hover shows how many days were actually measured.",
 		deposit: "Deposit",
 		depositAmount: "Amount (USDC)",
 		walletBalance: "Wallet balance:",

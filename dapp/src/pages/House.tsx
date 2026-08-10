@@ -28,13 +28,8 @@ import { SeriousIcon } from "../components/SeriousIcon"
 import { HowItWorksBubble, InfoBubble } from "../components/InfoBubble"
 import { TransactionButton } from "../components/TransactionButton"
 import { TxProgress } from "../components/TxProgress"
-import { Sparkline } from "../components/Sparkline"
 import { SharePriceChart } from "../components/SharePriceChart"
-import {
-	useTvlSparkline,
-	useApySparkline,
-	useSharePriceSeries,
-} from "../data"
+import { useHeadlineSharePrice, useSharePriceSeries } from "../data"
 import { useTheme } from "../providers/ThemeProvider"
 import { useCopy } from "../copy"
 import { BRIDGE_URL } from "../config/links"
@@ -56,16 +51,52 @@ function fmtRemaining(secs: number): string {
 	return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
+/** Window the headline APR stat annualizes over, independent of the chart. */
+const HEADLINE_WINDOW_DAYS = 90
+
+interface Realized {
+	anomaly: false
+	days: number
+	periodPct: number
+	aprPct: number
+	apyPct: number
+}
+
 /**
- * One chip in the cash-out line: queue position + what the entry is WORTH.
+ * Annualize a share-price series, both ways.
  *
- * The queue stores shares, and shares are ~1000× denser than assets, so
- * rendering `formatUsdc(entry.shares)` next to the word CASH-OUT printed
- * "2,000,000.00" for a request worth ~2,018 USDC. Convert through the vault's
- * own convert_to_assets so the number matches what the entry will actually
- * pay; the raw share count moves to the tooltip. Queries are keyed by share
- * amount, so identical entries share one read.
+ * APR is the SIMPLE annualization (`move × 365/days`); APY compounds the
+ * same move (`(1+move)^(365/days) − 1`). They diverge violently on short
+ * windows — this vault's +0.836% over 2 days is 152% APR but 357% APY — so
+ * the two are always computed from one series here rather than at call
+ * sites, and the UI labels which one it is showing.
+ *
+ * NAV moves slowly (premium drift up, bounded payout drops), so a daily
+ * ratio outside [0.5, 2] means a corrupt sample — report the anomaly
+ * instead of annualizing garbage into a headline number.
  */
+function realizedFrom(
+	series: { points: Array<{ day: number; price: number }> } | undefined,
+): Realized | { anomaly: true } | null {
+	const points = (series?.points ?? []).filter((p) => p.price > 0)
+	if (points.length < 2) return null
+	const first = points[0]!
+	const last = points[points.length - 1]!
+	const days = last.day - first.day
+	if (days <= 0 || first.price <= 0) return null
+	const ratio = last.price / first.price
+	if (Math.pow(ratio, 1 / days) < 0.5 || Math.pow(ratio, 1 / days) > 2) {
+		return { anomaly: true as const }
+	}
+	return {
+		anomaly: false as const,
+		days,
+		periodPct: (ratio - 1) * 100,
+		aprPct: (ratio - 1) * (365 / days) * 100,
+		apyPct: (Math.pow(ratio, 365 / days) - 1) * 100,
+	}
+}
+
 /** Asset value of a queued share amount, with the share count on hover. */
 function QueueWorth({ shares }: { shares: bigint }) {
 	const { data: worth } = useConvertToAssets(shares)
@@ -76,6 +107,16 @@ function QueueWorth({ shares }: { shares: bigint }) {
 	)
 }
 
+/**
+ * One chip in the cash-out line: queue position + what the entry is WORTH.
+ *
+ * The queue stores shares, and shares are ~1000× denser than assets, so
+ * rendering `formatUsdc(entry.shares)` next to the word CASH-OUT printed
+ * "2,000,000.00" for a request worth ~2,018 USDC. Convert through the vault's
+ * own convert_to_assets so the number matches what the entry will actually
+ * pay; the raw share count moves to the tooltip. Queries are keyed by share
+ * amount, so identical entries share one read.
+ */
 function QueueChip({
 	shares,
 	position,
@@ -109,22 +150,18 @@ function QueueChip({
 function StatTile({
 	label,
 	value,
-	spark,
-	sparkColor,
-	illustrativeLabel,
 	valueTestId,
 	info,
+	valueTitle,
 }: {
 	label: string
 	value: string
-	/** optional illustrative sparkline series */
-	spark?: number[]
-	sparkColor?: string
-	illustrativeLabel?: string
 	/** Inert automation hook stamped on the value element. */
 	valueTestId?: string
 	/** Optional explainer rendered as a "?" bubble beside the label. */
 	info?: React.ReactNode
+	/** Native tooltip on the value — a secondary figure, shown on hover. */
+	valueTitle?: string
 }) {
 	return (
 		<div className="panel flex flex-col p-4">
@@ -132,24 +169,13 @@ function StatTile({
 				{label}
 				{info && <InfoBubble>{info}</InfoBubble>}
 			</p>
-			<p data-testid={valueTestId} className="board-figure mt-2 text-[26px]">
+			<p
+				data-testid={valueTestId}
+				title={valueTitle}
+				className="board-figure mt-2 text-[26px]"
+			>
 				{value}
 			</p>
-			{spark && spark.length >= 2 && (
-				<div className="mt-2 flex items-center gap-2">
-					<Sparkline
-						data={spark}
-						color={sparkColor}
-						width={80}
-						height={22}
-					/>
-					{illustrativeLabel && (
-						<span className="w3-illustrative">
-							{illustrativeLabel}
-						</span>
-					)}
-				</div>
-			)}
 		</div>
 	)
 }
@@ -224,36 +250,44 @@ export default function House() {
 
 	// trend series — real vault history once the mirror has samples,
 	// labelled illustrative fallback until then
-	const tvlSpark = useTvlSparkline()
-	const apySpark = useApySparkline()
 	// 3 / 7 / 30-day windows; each window is its own query (day-indexed
 	// snapshot reads), so switching ranges refetches only what it needs.
 	const [sharePriceDays, setSharePriceDays] = useState(3)
 	const { data: sharePrice } = useSharePriceSeries(sharePriceDays)
 
 	// Realized yield from share-price drift across the visible window.
-	// NAV moves slowly (premium drift up, bounded payout drops), so a
-	// daily ratio outside [0.5, 2] means a corrupt sample — report the
-	// anomaly instead of annualizing garbage into a headline number.
-	const realizedYield = useMemo(() => {
-		const points = (sharePrice?.points ?? []).filter((p) => p.price > 0)
-		if (points.length < 2) return null
-		const first = points[0]!
-		const last = points[points.length - 1]!
-		const days = last.day - first.day
-		if (days <= 0 || first.price <= 0) return null
-		const ratio = last.price / first.price
-		if (Math.pow(ratio, 1 / days) < 0.5 || Math.pow(ratio, 1 / days) > 2) {
-			return { anomaly: true as const }
-		}
-		return {
-			anomaly: false as const,
-			days,
-			periodPct: (ratio - 1) * 100,
-			aprPct: (ratio - 1) * (365 / days) * 100,
-			apyPct: (Math.pow(ratio, 365 / days) - 1) * 100,
-		}
-	}, [sharePrice])
+	const realizedYield = useMemo(() => realizedFrom(sharePrice), [sharePrice])
+
+	// The headline stat reads a FIXED 90-day window, deliberately decoupled
+	// from the chart's 3/7/30 selector. A short window annualizes a single
+	// settlement into a headline: the same vault printed +357% APY, then a
+	// dash, then −55% APY inside four days while its share price moved a
+	// total of +1.0%. 90 days is long enough that one payout cannot dominate.
+	//
+	// Sourced from the vault_history mirror (one http call), NOT the chart's
+	// on-chain snapshot reads: those carry a 30-day TTL, so RPC cannot serve
+	// a 90-day window at any price.
+	const headlineSeries = useHeadlineSharePrice(HEADLINE_WINDOW_DAYS)
+	const headline = useMemo(
+		() => realizedFrom({ points: headlineSeries.points }),
+		[headlineSeries.points],
+	)
+
+	// APR leads (simple annualization — the honest "what did it earn"
+	// number); APY rides along on hover for anyone who wants the compounded
+	// figure. "…" = series still loading, "—" = not measurable.
+	const aprStat = headlineSeries.loading
+		? "…"
+		: headline === null || headline.anomaly
+			? "—"
+			: `${headline.aprPct >= 0 ? "+" : ""}${headline.aprPct.toFixed(1)}%`
+	const aprHoverTitle =
+		headline && !headline.anomaly
+			? t.house.aprHover(
+					`${headline.apyPct >= 0 ? "+" : ""}${headline.apyPct.toFixed(1)}`,
+					Math.max(1, Math.round(headline.days)),
+				)
+			: undefined
 
 	const depositAssets = parseUsdc(depositAmount)
 	const withdrawShares = parseUsdc(withdrawAmount)
@@ -284,18 +318,6 @@ export default function House() {
 		locked !== undefined &&
 		locked > 0n &&
 		free <= 0n
-
-	// Realized APY replaces the old solvency ratio in the stat row: it is the
-	// number an underwriter actually decides on, and it reuses the very series
-	// the share-price chart below plots, so tile and chart can never disagree.
-	// "…" means the series has not loaded; "—" means not measurable — too few
-	// on-chain snapshots, or a sample the anomaly guard rejected.
-	const apyStat =
-		sharePrice === undefined
-			? "…"
-			: realizedYield === null || realizedYield.anomaly
-				? "—"
-				: `${realizedYield.apyPct >= 0 ? "+" : ""}${realizedYield.apyPct.toFixed(1)}%`
 
 	function invalidate() {
 		void queryClient.invalidateQueries({ queryKey: ["vault"] })
@@ -454,9 +476,6 @@ export default function House() {
 								? formatUsdc(totalAssets)
 								: "…"
 					}
-					spark={tvlSpark.points}
-					sparkColor="var(--color-win)"
-					illustrativeLabel={tvlSpark.illustrative ? t.house.illustrative : undefined}
 					valueTestId="house-tvl"
 				/>
 				<StatTile
@@ -478,13 +497,11 @@ export default function House() {
 					valueTestId="house-free"
 				/>
 				<StatTile
-					label={t.house.statApy}
-					value={apyStat}
-					spark={apySpark.points}
-					sparkColor="var(--color-sky)"
-					illustrativeLabel={apySpark.illustrative ? t.house.illustrative : undefined}
-					valueTestId="house-apy"
-					info={t.house.apyInfo}
+					label={t.house.statApr}
+					value={aprStat}
+					valueTestId="house-apr"
+					valueTitle={aprHoverTitle}
+					info={t.house.aprInfo}
 				/>
 			</section>
 			{statsUnavailable && (

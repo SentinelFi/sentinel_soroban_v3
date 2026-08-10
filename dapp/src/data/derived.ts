@@ -6,8 +6,13 @@
  *
  * Honesty rule (see conventions): anything synthesized must be labelled, and
  * nothing invents a number that could be mistaken for a measurement. The
- * sparkline series remain deterministic pseudo-values seeded from stable
- * inputs — clearly demo-grade, and callers must label them.
+ * illustrative TVL/APY sparkline series are gone entirely. Every ANALYTICS
+ * series on the House page (headline APR/APY, share-price chart) now reads
+ * the `vault_history` DB mirror, never the chain: on-chain snapshots expire
+ * after 30 days and cost one RPC round trip per day rendered. Live SPOT
+ * values (TVL, free, locked) still read the chain — that is current truth,
+ * not analytics. The only synthesized series left is the chart's
+ * empty-state fallback, which the UI labels.
  *
  * `routeRisk` is NO LONGER in that category: it reports the real ML
  * probability the catalog carries, and returns "no data" when it has none,
@@ -16,11 +21,7 @@
 
 import { useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import {
-	riskVaultClient,
-	useActiveFlights,
-	useFlightDataBatch,
-} from "../hooks/useContracts"
+import { useActiveFlights, useFlightDataBatch } from "../hooks/useContracts"
 import { DEMO_ROUTES, FLEET_ROUTES } from "../config/routes"
 
 /* ── deterministic hashing ─────────────────────────────────────────── */
@@ -137,54 +138,12 @@ export function routeRisk(
 	}
 }
 
-/* ── illustrative 30-day series (TVL / APY sparklines) ─────────────── */
 
-/**
- * Build a plausible trending 30-point series, deterministic per seed. Not real
- * history — the UI labels these "illustrative". Values wobble around a rising
- * baseline so a sparkline reads as a believable trend without implying data.
- */
-function illustrativeSeries(
-	seed: number,
-	base: number,
-	drift: number,
-	jitter: number,
-	points = 30,
-): number[] {
-	const rng = seededRng(seed)
-	const out: number[] = []
-	let v = base
-	for (let i = 0; i < points; i++) {
-		v += drift + (rng() - 0.5) * jitter
-		if (v < base * 0.4) v = base * 0.4
-		out.push(Math.round(v * 100) / 100)
-	}
-	return out
-}
-
-export interface SparkSeries {
-	points: number[]
-	/** true = synthesized fallback — the UI must label it */
-	illustrative: boolean
-}
 
 interface VaultHistoryRow {
 	ts: string
 	total_assets: string
 	share_price: string
-}
-
-const DAY_MS = 86_400_000
-const SPARK_MAX_POINTS = 48
-
-/** Evenly thin a long series so the tiny sparkline stays legible. */
-function thinSeries(points: number[]): number[] {
-	if (points.length <= SPARK_MAX_POINTS) return points
-	const step = (points.length - 1) / (SPARK_MAX_POINTS - 1)
-	return Array.from(
-		{ length: SPARK_MAX_POINTS },
-		(_, i) => points[Math.round(i * step)],
-	)
 }
 
 /**
@@ -193,11 +152,11 @@ function thinSeries(points: number[]): number[] {
  * queue_maintainer cron has appended history — callers fall back to the
  * illustrative series and label it.
  */
-function useVaultHistoryRows() {
+function useVaultHistoryRows(hours = 336) {
 	return useQuery({
-		queryKey: ["derived", "vaultHistory"],
+		queryKey: ["derived", "vaultHistory", hours],
 		queryFn: async (): Promise<VaultHistoryRow[]> => {
-			const res = await fetch("/api/status/vault-history?hours=336")
+			const res = await fetch(`/api/status/vault-history?hours=${hours}`)
 			if (!res.ok) throw new Error(`HTTP ${res.status}`)
 			const body = (await res.json()) as { rows?: VaultHistoryRow[] }
 			return body.rows ?? []
@@ -211,62 +170,37 @@ function useVaultHistoryRows() {
 	})
 }
 
-/** TVL trend — real history when the mirror has ≥2 samples. */
-export function useTvlSparkline(): SparkSeries {
-	const history = useVaultHistoryRows()
-	const { data: fallback } = useQuery({
-		queryKey: ["derived", "tvlSparkline"],
-		queryFn: async () => illustrativeSeries(hashStr("tvl"), 42000, 260, 1400),
-		staleTime: Infinity,
-	})
-	const rows = history.data ?? []
-	if (rows.length >= 2) {
-		return {
-			points: thinSeries(rows.map((r) => Number(r.total_assets) / 1e7)),
-			illustrative: false,
-		}
-	}
-	return { points: fallback ?? [], illustrative: true }
-}
-
 /**
- * Rolling realized APY (%) — each point annualizes the share-price move
- * against the sample ≥24h earlier. Corrupt samples (daily ratio outside
- * [0.5, 2] — a NAV series can't legitimately do that) are skipped rather
- * than annualized into nonsense.
+ * Share-price series for the HEADLINE annualization, from the vault_history
+ * mirror in ONE http call.
+ *
+ * Deliberately not on-chain `get_snapshot_price`: those entries carry a
+ * 30-day TTL, so RPC physically cannot answer a 90-day window, and asking
+ * it for 90 days costs 90 round trips to have most of them return zero.
+ *
+ * `day` is a FRACTIONAL day index (ms ÷ 86 400 000) rather than a whole
+ * bucket, so a sub-day span still annualizes correctly instead of dividing
+ * by a rounded-to-zero denominator.
+ *
+ * Caveat worth knowing at the call site: the mirror only reaches back to
+ * the first queue_maintainer run that wrote it. Until it is older than the
+ * window, this measures the mirror's lifetime, not the window asked for.
  */
-export function useApySparkline(): SparkSeries {
-	const history = useVaultHistoryRows()
-	const { data: fallback } = useQuery({
-		queryKey: ["derived", "apySparkline"],
-		queryFn: async () => illustrativeSeries(hashStr("apy"), 11, 0.04, 1.1),
-		staleTime: Infinity,
-	})
-	const rows = history.data ?? []
-	const points: number[] = []
-	if (rows.length >= 2) {
-		const times = rows.map((r) => new Date(r.ts).getTime())
-		const prices = rows.map((r) => Number(r.share_price))
-		let j = 0
-		for (let i = 0; i < rows.length; i++) {
-			// slide j to the latest sample still ≥24h behind sample i
-			while (j < i && times[i] - times[j + 1] >= DAY_MS) j++
-			const dtMs = times[i] - times[j]
-			if (dtMs < DAY_MS || prices[j] <= 0) continue
-			const days = dtMs / DAY_MS
-			const ratio = prices[i] / prices[j]
-			const daily = Math.pow(ratio, 1 / days)
-			if (daily < 0.5 || daily > 2) continue
-			points.push((Math.pow(ratio, 365 / days) - 1) * 100)
-		}
-	}
-	if (points.length >= 2) {
-		return { points: thinSeries(points), illustrative: false }
-	}
-	return { points: fallback ?? [], illustrative: true }
+export function useHeadlineSharePrice(days: number): {
+	points: Array<{ day: number; price: number }>
+	loading: boolean
+} {
+	const history = useVaultHistoryRows(days * 24)
+	const points = (history.data ?? [])
+		.map((r) => ({
+			day: Date.parse(r.ts) / 86_400_000,
+			price: Number(r.share_price) / SHARE_PRICE_SCALE,
+		}))
+		.filter((p) => Number.isFinite(p.day) && p.price > 0)
+	return { points, loading: history.isPending }
 }
 
-/* ── share-price series (REAL where available) ─────────────────────── */
+/* ── share-price series (from the DB mirror; REAL where available) ─── */
 
 export interface SharePricePoint {
 	day: number
@@ -275,56 +209,58 @@ export interface SharePricePoint {
 
 export interface SharePriceSeries {
 	points: SharePricePoint[]
-	/** true when the series is synthesized (no on-chain snapshots found). */
+	/** true when the series is synthesized (no recorded history yet). */
 	illustrative: boolean
 }
 
 const SHARE_PRICE_SCALE = 10_000_000 // USDC 7-decimals
 
 /**
- * Read `get_snapshot_price(day)` for the last `days` day-indices and return the
- * non-zero points. Snapshots are REAL on-chain data. If the vault has taken no
- * snapshots yet, fall back to a short synthesized series flagged
- * `illustrative: true` so the UI can label it honestly.
+ * Share-price series for the chart, from the `vault_history` mirror.
+ *
+ * Was `get_snapshot_price(day)` per day over RPC. Moved to the DB because
+ * on-chain is the wrong home for ANALYTICS: snapshot entries live in
+ * Temporary storage with a 30-day TTL, so history silently evaporates; the
+ * series cost one RPC round trip per day rendered; and a single corrupt
+ * snapshot (the 2026-08-06 offset bug, recorded 1000x low) is stuck in
+ * chain state forever, where it bent this chart into a false crash.
+ *
+ * The mirror computes share price from total-managed-assets and supply on
+ * every queue run, so it never carried that bug, is hourly rather than
+ * daily, and is retained indefinitely. Live SPOT values (TVL, free, locked)
+ * still read the chain — that is current truth, not analytics.
+ *
+ * Falls back to a short synthesized series flagged `illustrative: true`, so
+ * a deployment with no recorded history yet still renders something the UI
+ * labels honestly.
  */
-export function useSharePriceSeries(days = 14) {
-	return useQuery<SharePriceSeries>({
-		queryKey: ["derived", "sharePriceSeries", days],
-		queryFn: async () => {
-			const today = Math.floor(Date.now() / 1000 / 86_400)
-			const dayIdx = Array.from({ length: days }, (_, i) => today - (days - 1 - i))
-			const results = await Promise.all(
-				dayIdx.map(async (day) => {
-					try {
-						const tx = await riskVaultClient.get_snapshot_price({
-							day: BigInt(day),
-						})
-						return { day, raw: tx.result as bigint }
-					} catch {
-						return { day, raw: 0n }
-					}
-				}),
-			)
-			const points = results
-				.filter((r) => r.raw !== 0n)
-				.map((r) => ({ day: r.day, price: Number(r.raw) / SHARE_PRICE_SCALE }))
-
-			if (points.length >= 2) {
-				return { points, illustrative: false }
-			}
-
-			// No real snapshots — synthesize a short gently-rising series so the
-			// chart is never empty. Flagged illustrative; UI must label it.
-			const rng = seededRng(hashStr("sharePrice"))
-			const synth: SharePricePoint[] = dayIdx.map((day, i) => ({
-				day,
-				price: Math.round((1 + i * 0.004 + (rng() - 0.5) * 0.003) * 1e4) / 1e4,
+export function useSharePriceSeries(days = 14): {
+	data: SharePriceSeries | undefined
+} {
+	const history = useVaultHistoryRows(days * 24)
+	const data = useMemo<SharePriceSeries | undefined>(() => {
+		if (history.isPending) return undefined
+		const points: SharePricePoint[] = (history.data ?? [])
+			.map((r) => ({
+				// FRACTIONAL epoch-day: the mirror is hourly, so a whole-day
+				// index would collapse 24 samples onto one x position.
+				day: Date.parse(r.ts) / 86_400_000,
+				price: Number(r.share_price) / SHARE_PRICE_SCALE,
 			}))
-			return { points: synth, illustrative: true }
-		},
-		staleTime: 300_000,
-		retry: 1,
-	})
+			.filter((p) => Number.isFinite(p.day) && p.price > 0)
+		if (points.length >= 2) return { points, illustrative: false }
+
+		// No recorded history — synthesize a short gently-rising series so the
+		// chart is never empty. Flagged illustrative; UI must label it.
+		const today = Math.floor(Date.now() / 1000 / 86_400)
+		const rng = seededRng(hashStr("sharePrice"))
+		const synth: SharePricePoint[] = Array.from({ length: days }, (_, i) => ({
+			day: today - (days - 1 - i),
+			price: Math.round((1 + i * 0.004 + (rng() - 0.5) * 0.003) * 1e4) / 1e4,
+		}))
+		return { points: synth, illustrative: true }
+	}, [history.data, history.isPending, days])
+	return { data }
 }
 
 /* ── airport coordinates (REAL data — used by the globe in wave 2) ──── */

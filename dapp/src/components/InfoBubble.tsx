@@ -9,7 +9,12 @@ import { useCopy } from "../copy"
  * the serious skin rounds it via the `.info-bubble` class overrides.
  */
 export function InfoBubble({ children }: { children: React.ReactNode }) {
-	const [open, setOpen] = useState(false)
+	// Two independent opens, so hovering away never yanks a panel the user
+	// deliberately clicked open — and so the control still works on touch,
+	// where there is no hover at all.
+	const [pinned, setPinned] = useState(false)
+	const [hovered, setHovered] = useState(false)
+	const open = pinned || hovered
 	const rootRef = useRef<HTMLSpanElement>(null)
 	const t = useCopy()
 
@@ -17,10 +22,13 @@ export function InfoBubble({ children }: { children: React.ReactNode }) {
 	useEffect(() => {
 		if (!open) return
 		const onPointer = (e: MouseEvent) => {
-			if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+			if (!rootRef.current?.contains(e.target as Node)) setPinned(false)
 		}
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") setOpen(false)
+			if (e.key === "Escape") {
+				setPinned(false)
+				setHovered(false)
+			}
 		}
 		document.addEventListener("mousedown", onPointer)
 		document.addEventListener("keydown", onKey)
@@ -31,13 +39,20 @@ export function InfoBubble({ children }: { children: React.ReactNode }) {
 	}, [open])
 
 	return (
-		<span ref={rootRef} className="relative inline-flex">
+		<span
+			ref={rootRef}
+			className="relative inline-flex"
+			onMouseEnter={() => setHovered(true)}
+			onMouseLeave={() => setHovered(false)}
+		>
 			<button
 				type="button"
 				aria-expanded={open}
 				aria-label={t.info.aria}
 				title={t.info.aria}
-				onClick={() => setOpen((o) => !o)}
+				onFocus={() => setHovered(true)}
+				onBlur={() => setHovered(false)}
+				onClick={() => setPinned((o) => !o)}
 				className={`info-bubble flex h-6 w-6 items-center justify-center border-2 font-display text-[10px] leading-none transition-none ${
 					open
 						? "border-gold bg-gold text-page"
