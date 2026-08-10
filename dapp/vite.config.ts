@@ -3,7 +3,34 @@ import react from "@vitejs/plugin-react"
 import { createLogger, defineConfig } from "vite"
 import { nodePolyfills } from "vite-plugin-node-polyfills"
 import wasm from "vite-plugin-wasm"
+import { execSync } from "node:child_process"
 import pkg from "./package.json"
+
+/**
+ * The commit this bundle was built from — surfaced on the Information page
+ * so anyone can tell what production is actually running.
+ *
+ * Three sources, in order, because no single one covers every build:
+ *   1. VERCEL_GIT_COMMIT_SHA — set only on Vercel's OWN git-triggered
+ *      builds. Note `||`, not `??`: a CLI deploy without a git integration
+ *      sets this to the EMPTY STRING, which `??` happily passes through —
+ *      that is why production shipped a blank SHA and a dead
+ *      `github.com/.../commit/` link.
+ *   2. COMMIT_SHA — what our deploy workflow injects, since a `vercel --prod`
+ *      build has no git context of its own.
+ *   3. `git rev-parse` — local builds, so `npm run build` is self-describing.
+ * Falling all the way through means no git and no env: report "unknown"
+ * rather than a plausible-looking lie.
+ */
+function resolveCommitSha(): string {
+	const fromEnv = process.env.VERCEL_GIT_COMMIT_SHA || process.env.COMMIT_SHA
+	if (fromEnv) return fromEnv
+	try {
+		return execSync("git rev-parse HEAD", { encoding: "utf8" }).trim()
+	} catch {
+		return "unknown"
+	}
+}
 
 // The SPA polls /api on intervals, so while `npm run dev:api` is down every
 // tick logs a full proxy-error stack. Collapse them to one line per 10s.
@@ -49,12 +76,9 @@ export default defineConfig({
 		global: "window",
 		// Release identity, shown on the Information page: semver from
 		// package.json (bump minor per release) + the exact commit the
-		// deploy was built from (Vercel injects VERCEL_GIT_COMMIT_SHA;
-		// local builds show "dev").
+		// deploy was built from.
 		__APP_VERSION__: JSON.stringify(pkg.version),
-		__COMMIT_SHA__: JSON.stringify(
-			process.env.VERCEL_GIT_COMMIT_SHA ?? "dev",
-		),
+		__COMMIT_SHA__: JSON.stringify(resolveCommitSha()),
 	},
 	envPrefix: "PUBLIC_",
 	server: {

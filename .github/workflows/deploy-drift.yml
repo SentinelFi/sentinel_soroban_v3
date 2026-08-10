@@ -1,0 +1,53 @@
+name: Deploy drift
+
+# The deploy workflow keeps production in step with `main` going forward.
+# This catches the cases it cannot: a hand-run `vercel --prod` from someone's
+# laptop, a rollback nobody re-deployed over, a failed run that went unread.
+#
+# It answers one question — is the commit production serves still the head of
+# `main`? — on a schedule, so drift surfaces on its own instead of waiting for
+# someone to think of checking.
+
+on:
+  schedule:
+    # Twice daily. Drift is measured in days, not minutes; hourly noise would
+    # get muted, which is how the original problem went unnoticed.
+    - cron: "0 9,21 * * *"
+  workflow_dispatch:
+
+jobs:
+  drift:
+    name: production matches main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need history to count how far behind production is.
+          fetch-depth: 0
+
+      - name: Compare deployed commit against main
+        run: |
+          served=$(curl -fsS --max-time 30 \
+            https://sentinel-dapp.vercel.app/api/status/version \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).commit??"")}catch{process.stdout.write("")}})')
+          head=$(git rev-parse HEAD)
+
+          if [ -z "$served" ] || [ "$served" = "unknown" ]; then
+            echo "::error::production did not report a commit (got '${served:-<none>}')"
+            exit 1
+          fi
+          if [ "$served" = "$head" ]; then
+            echo "in sync: production and main are both $head"
+            exit 0
+          fi
+          # A commit main has never heard of is worse than being behind:
+          # it means production is running something unreviewed.
+          if ! git cat-file -e "$served^{commit}" 2>/dev/null; then
+            echo "::error::production serves $served, which is not a commit on main"
+            exit 1
+          fi
+          behind=$(git rev-list --count "$served..$head")
+          echo "::error::production is $behind commit(s) behind main (serving $served, main is $head)"
+          git log --oneline "$served..$head"
+          exit 1

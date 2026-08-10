@@ -1,0 +1,84 @@
+name: Deploy
+
+# Merging did NOT deploy production before this workflow existed. The live
+# app (enders-projects/sentinel-dapp) only ever updated from someone running
+# `vercel --prod` by hand, while the Vercel check on every PR belongs to a
+# DIFFERENT project — so a green PR said nothing about what production was
+# serving. Production sat 11 commits behind `main` for four days.
+#
+# Why a workflow rather than connecting the project to GitHub: the Vercel
+# project's Root Directory is `.`, which is correct ONLY because a CLI deploy
+# from `dapp/` uploads that folder as the deployment root. A git-triggered
+# build clones the repo root, where there is no package.json at all, and
+# would fail. Running the CLI from `dapp/` here keeps that contract intact and
+# keeps the deploy target in version control instead of dashboard settings.
+
+on:
+  push:
+    branches: [main]
+  # Deploy the current main on demand (re-deploy after a rollback, or after
+  # changing env vars in the Vercel dashboard, which does not rebuild).
+  workflow_dispatch:
+
+# Never let two deploys race to the same alias; a queued run should supersede
+# an older one, so cancel-in-progress rather than queueing them up.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: deploy dapp to production
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dapp
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: dapp/.nvmrc
+          cache: npm
+          cache-dependency-path: dapp/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Build contract binding packages
+        run: npm run install:contracts
+
+      # A `vercel --prod` build carries no git context of its own, so the
+      # bundle and /api/status/version would both report "unknown" without
+      # this. Everything downstream that answers "what is deployed?" hangs
+      # off this one value.
+      - name: Deploy to Vercel production
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          npx vercel@58 --prod --yes \
+            --token "${{ secrets.VERCEL_TOKEN }}" \
+            --build-env COMMIT_SHA="${{ github.sha }}" \
+            --env COMMIT_SHA="${{ github.sha }}"
+
+      # Verify the ALIAS, not the deployment URL: an alias that failed to
+      # move is exactly the silent failure this workflow exists to prevent.
+      - name: Verify production serves this commit
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            served=$(curl -fsS --max-time 30 \
+              https://sentinel-dapp.vercel.app/api/status/version \
+              | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).commit??"")}catch{process.stdout.write("")}})' ) || served=""
+            if [ "$served" = "${{ github.sha }}" ]; then
+              echo "production is serving ${{ github.sha }}"
+              exit 0
+            fi
+            echo "attempt $attempt: alias serves '${served:-<none>}', want ${{ github.sha }}"
+            sleep 10
+          done
+          echo "::error::production alias did not converge on ${{ github.sha }}"
+          exit 1
