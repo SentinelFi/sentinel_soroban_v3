@@ -4,7 +4,7 @@ import { LINKS } from "../links";
 const SOCIALS = [
   { href: LINKS.x, label: "X (Twitter)", Icon: FaXTwitter },
   { href: LINKS.blog, label: "Medium blog", Icon: FaMedium },
-  { href: LINKS.git, label: "GitHub", Icon: FaGithub },
+  { href: LINKS.gitOrg, label: "GitHub", Icon: FaGithub },
 ] as const;
 
 export default function Footer() {

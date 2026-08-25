@@ -5,7 +5,7 @@ import { LINKS } from "../links";
 export const FAQS = [
   {
     q: "What is parametric flight insurance?",
-    a: "Coverage that pays out on a measurable event — your flight being delayed or cancelled — instead of a claims process. Flight data triggers the payout; no forms, no adjusters, no negotiation.",
+    a: "Coverage that pays out on a measurable event instead of a claims process → your flight being delayed or cancelled. Flight data triggers the payout; no forms, no adjusters, no negotiation.",
   },
   {
     q: "How do payouts work?",
@@ -21,11 +21,11 @@ export const FAQS = [
   },
   {
     q: "Is this secure?",
-    a: "Security is a core focus: the smart contracts are open source, developed with extensive testing, and formal audits are planned. That said, no protocol can guarantee absolute safety — smart-contract vulnerabilities, oracle failures, and other unexpected events can and do happen in DeFi. Never commit more than you can afford to lose. By using the protocol you agree to our Terms and Disclaimers.",
+    a: "Security is a core focus: the smart contracts are open source, developed with extensive testing, and formal audits are planned. That said, no protocol can guarantee absolute safety → smart-contract vulnerabilities, oracle failures, and other unexpected events can and do happen in DeFi. Never commit more than you can afford to lose. By using the protocol you agree to our Terms and Disclaimers.",
   },
   {
     q: "Where can I learn more?",
-    a: "The docs cover the protocol, contracts, and risk model in depth. For questions or issues, reach out on GitHub, X, or Medium — links below.",
+    a: "The docs cover the protocol, contracts, and risk model in depth. For questions or issues, reach out on GitHub, X, or Medium → links below.",
   },
 ] as const;
 
@@ -33,8 +33,8 @@ export default function Faq() {
   const [open, setOpen] = useState<number | null>(null);
 
   return (
-    <section id="faq" className="relative mx-auto max-w-3xl scroll-mt-16 px-6 py-32">
-      <h2 className="reveal mb-14 text-center text-4xl font-bold md:text-5xl">
+    <section id="faq" className="relative mx-auto max-w-3xl scroll-mt-16 px-6 py-16">
+      <h2 className="waterline reveal mb-10 text-center text-4xl font-bold md:text-5xl">
         FAQ
       </h2>
       <div className="flex flex-col gap-3">

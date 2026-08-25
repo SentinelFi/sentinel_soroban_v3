@@ -10,6 +10,7 @@ export const LINKS = {
   x: "https://x.com/sentinel_fi/",
   blog: "https://medium.com/@sentineldefi",
   git: "https://github.com/SentinelFi/sentinel_soroban_v3/",
+  gitOrg: "https://github.com/SentinelFi",
 } as const;
 
 export function utm(url: string, content: string): string {

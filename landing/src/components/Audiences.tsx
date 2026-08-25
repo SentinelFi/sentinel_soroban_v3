@@ -26,9 +26,9 @@ export default function Audiences() {
   return (
     <section
       id="audiences"
-      className="relative mx-auto max-w-6xl scroll-mt-16 px-6 py-32"
+      className="relative mx-auto max-w-6xl scroll-mt-16 px-6 pt-32 pb-16"
     >
-      <h2 className="reveal mb-16 text-center text-4xl font-bold md:text-5xl">
+      <h2 className="waterline reveal mb-12 text-center text-4xl font-bold md:text-5xl">
         Two sides of every flight
       </h2>
       <div className="grid gap-8 md:grid-cols-2">

@@ -1,10 +1,12 @@
 import { MdMailOutline, MdAutoAwesome } from "react-icons/md";
+import PlaneFlyby from "./PlaneFlyby";
 
 /* Placeholder strip — subscribe + NFT mint land here (just before the
    footer) once live; visitors reach this point having read everything. */
 export default function ComingSoon() {
   return (
-    <section className="relative mx-auto max-w-6xl px-6 py-32">
+    <section className="relative mx-auto max-w-6xl px-6 py-16">
+      <PlaneFlyby back />
       <div className="grid gap-8 md:grid-cols-2">
         <div className="reveal bg-white/5 p-10">
           <MdMailOutline
@@ -14,7 +16,8 @@ export default function ComingSoon() {
           />
           <h3 className="text-3xl font-bold">Stay in the loop</h3>
           <p className="mt-3 text-lg text-neutral-400">
-            Product updates, new routes, and protocol news. No spam.
+            Product updates, new routes, and protocol news. No spam,
+            unsubscribe at any time.
           </p>
           <form
             className="mt-6 flex gap-3"
@@ -45,7 +48,8 @@ export default function ComingSoon() {
           />
           <h3 className="text-3xl font-bold">OG NFT</h3>
           <p className="mt-3 text-lg text-neutral-400">
-            A collectible for early travelers and underwriters.
+            A collectible for early travelers and underwriters. No monetary or
+            speculative value.
           </p>
           <button
             type="button"
