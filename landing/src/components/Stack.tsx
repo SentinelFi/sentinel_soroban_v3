@@ -27,7 +27,7 @@ const USDC_STEPS = [
 
 export default function Stack() {
   return (
-    <section className="relative mx-auto max-w-6xl px-6 py-32">
+    <section className="relative mx-auto max-w-6xl px-6 py-16">
       <div className="reveal flex flex-col items-center gap-6 text-center">
         <p className="text-base font-semibold tracking-[0.35em] text-neutral-400 uppercase">
           Built on
@@ -48,10 +48,10 @@ export default function Stack() {
       </div>
 
       <div className="mt-24">
-        <h2 className="reveal text-center text-3xl font-bold md:text-4xl">
+        <h2 className="waterline reveal text-center text-3xl font-bold md:text-4xl">
           Runs on <span className="text-highlight">Circle USDC</span>
         </h2>
-        <div className="mt-14 grid gap-8 md:grid-cols-3">
+        <div className="mt-10 grid gap-8 md:grid-cols-3">
           {USDC_STEPS.map(({ n, title, body, ...link }, i) => (
             <div
               key={n}

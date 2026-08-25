@@ -98,13 +98,16 @@ body {
 ::-webkit-scrollbar {
   width: 10px;
 }
+
 ::-webkit-scrollbar-track {
   background: #000;
 }
+
 ::-webkit-scrollbar-thumb {
   background: #2a2a2a;
   border: 2px solid #000;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-accent);
 }
@@ -186,10 +189,12 @@ body {
 }
 
 @keyframes orb-float {
+
   0%,
   100% {
     transform: translate(0, 0) scale(1);
   }
+
   50% {
     transform: translate(-4rem, 3rem) scale(1.12);
   }
@@ -217,7 +222,7 @@ body {
   z-index: 10;
 }
 
-.plane-flyby > div {
+.plane-flyby>div {
   display: flex;
   align-items: center;
   flex-direction: row-reverse;
@@ -243,14 +248,58 @@ body {
   0% {
     transform: translateX(-40vw) translateY(0);
   }
+
   55% {
     transform: translateX(72vw) translateY(-2.2rem);
   }
+
   70% {
     transform: translateX(115vw) translateY(-3rem);
   }
+
   100% {
     transform: translateX(115vw) translateY(-3rem);
+  }
+}
+
+/* Second pass, lower down the page — slower, heading the other way. Placed
+   in the empty band between two sections so it never crosses text, and
+   full-bleed out of its max-width parent so it can cross the whole viewport.
+   Source art already points left, so this one is not mirrored. */
+.plane-flyby-back {
+  top: -1.5rem;
+  left: 50%;
+  width: 100vw;
+  margin-left: -50vw;
+}
+
+.plane-flyby-back > div {
+  flex-direction: row;
+  animation: fly-back 23s linear infinite;
+}
+
+.plane-flyby-back img {
+  transform: none;
+}
+
+.plane-flyby-back .contrail {
+  margin-right: 0;
+  margin-left: -4px;
+  background: linear-gradient(to right, #ffffff59, #0d7ca833 55%, transparent);
+}
+
+@keyframes fly-back {
+  0% {
+    transform: translateX(105vw) translateY(0);
+  }
+
+  55% {
+    transform: translateX(-6vw) translateY(-1.6rem);
+  }
+
+  70%,
+  100% {
+    transform: translateX(-45vw) translateY(-2.2rem);
   }
 }
 
@@ -266,12 +315,10 @@ body {
     position: absolute;
     inset: 0;
     pointer-events: none;
-    background: linear-gradient(
-      105deg,
-      transparent 42%,
-      #ffffffcc 50%,
-      transparent 58%
-    );
+    background: linear-gradient(105deg,
+        transparent 42%,
+        #ffffffcc 50%,
+        transparent 58%);
     background-size: 300% 100%;
     mask-image: url(/logo.webp);
     mask-mode: luminance;
@@ -284,10 +331,30 @@ body {
   0% {
     background-position: 100% 0;
   }
+
   40%,
   100% {
     background-position: 0% 0;
   }
+}
+
+/* Waterline — accent-yellow hairline centred under a section heading, fading
+   out at both ends. It hangs off the heading itself so it reveals together
+   with it. Plain gradient + box-shadow only, so it renders identically
+   everywhere (no color-mix / mask needed). */
+.waterline::after {
+  content: "";
+  display: block;
+  margin: 18px auto 0;
+  width: 220px;
+  height: 2px;
+  border-radius: 1px;
+  background: linear-gradient(90deg,
+      transparent,
+      var(--color-accent) 20%,
+      var(--color-accent) 80%,
+      transparent);
+  box-shadow: 0 0 24px 1px #e9b94966;
 }
 
 /* Typewriter cursor (accent yellow) */
@@ -302,10 +369,12 @@ body {
 }
 
 @keyframes cursor-blink {
+
   0%,
   100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.1;
   }
@@ -326,19 +395,13 @@ body {
 }
 
 .scroll-hint {
-  animation: hint-bob 2.2s ease-in-out infinite;
+  opacity: 0.6;
+  transition: opacity 200ms ease;
 }
 
-@keyframes hint-bob {
-  0%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.5;
-  }
-  50% {
-    transform: translateY(0.5rem);
-    opacity: 1;
-  }
+.scroll-hint:hover,
+.scroll-hint:focus-visible {
+  opacity: 1;
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -359,43 +422,74 @@ body {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Buttons (the only rounded elements) + FAQ accordion
+   Buttons (chamfered hero CTAs, rounded ghost buttons) + FAQ accordion
    ──────────────────────────────────────────────────────────────── */
 
-.btn-primary {
-  border-radius: 9999px;
-  background: var(--color-accent);
+/* The two hero CTAs are rectangles with the top-right and bottom-left
+   corners chamfered. clip-path is what cuts them — and it clips the
+   element's whole painted output, so the hover glow and the focus ring
+   cannot live on the button itself; both move to the .btn-cta wrapper,
+   where a drop-shadow traces the cut outline instead of a rectangle. */
+.btn-primary,
+.btn-testnet {
+  --cut: 14px;
   color: #000;
+  clip-path: polygon(0 0,
+      calc(100% - var(--cut)) 0,
+      100% var(--cut),
+      100% 100%,
+      var(--cut) 100%,
+      0 calc(100% - var(--cut)));
   transition:
     background 0.3s ease,
-    box-shadow 0.3s ease,
     transform 0.3s ease;
+}
+
+.btn-primary:hover,
+.btn-testnet:hover {
+  transform: translateY(-2px);
+}
+
+/* Clipped away on the button, so it is drawn around the wrapper instead. */
+.btn-primary:focus-visible,
+.btn-testnet:focus-visible {
+  outline: none;
+}
+
+.btn-cta {
+  display: inline-block;
+  transition: filter 0.3s ease;
+}
+
+.btn-cta:has(:focus-visible) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+.btn-cta-accent:hover {
+  filter:
+    drop-shadow(0 0 24px #e9b94966) drop-shadow(0 0 80px #e9b94933);
+}
+
+.btn-cta-testnet:hover {
+  filter:
+    drop-shadow(0 0 24px #21a06a66) drop-shadow(0 0 80px #21a06a33);
+}
+
+.btn-primary {
+  background: var(--color-accent);
 }
 
 .btn-primary:hover {
   background: #f7d36b;
-  box-shadow:
-    0 0 24px #e9b94966,
-    0 0 80px #e9b94933;
-  transform: translateY(-2px);
 }
 
 .btn-testnet {
-  border-radius: 9999px;
   background: #21a06a;
-  color: #000;
-  transition:
-    background 0.3s ease,
-    box-shadow 0.3s ease,
-    transform 0.3s ease;
 }
 
 .btn-testnet:hover {
   background: #2fc584;
-  box-shadow:
-    0 0 24px #21a06a66,
-    0 0 80px #21a06a33;
-  transform: translateY(-2px);
 }
 
 /* Periodic sheen sweeping across a button */
@@ -420,6 +514,7 @@ body {
   0% {
     left: -80%;
   }
+
   45%,
   100% {
     left: 130%;
@@ -449,7 +544,7 @@ body {
   grid-template-rows: 1fr;
 }
 
-.faq-answer > div {
+.faq-answer>div {
   overflow: hidden;
 }
 
@@ -457,20 +552,22 @@ body {
   html {
     scroll-behavior: auto;
   }
+
   .bg-stars,
   .bg-stars-far,
   .glow-orb,
-  .plane-flyby > div,
-  .scroll-hint,
+  .plane-flyby>div,
   .btn-shine::after,
   .logo-shine::after {
     animation: none;
   }
+
   .hero-enter {
     opacity: 1;
     transform: none;
     animation: none;
   }
+
   .reveal {
     opacity: 1;
     transform: none;
