@@ -267,6 +267,12 @@ export interface UiRoute {
 	pCovered?: number | null
 	/** True when pCovered is the seasonal peak rather than one priced date. */
 	pCoveredIsPeak?: boolean
+	/** Origin-LOCAL scheduled departure HHMM (e.g. 1730) from the pricing
+	 *  run — an approximate display hint for the UTC-vs-boarding-pass date
+	 *  disclosure in the BetSlip. */
+	depTimeLocalHhmm?: number | null
+	/** IANA zone of the origin airport, when the catalog knows it. */
+	originTz?: string | null
 }
 
 /** Row shape served by GET /api/routes (see api/routes.ts). */
@@ -282,6 +288,8 @@ interface ApiRouteRow {
 	chain_premium_units: string | null
 	p_covered: number | null
 	p_covered_is_peak?: boolean
+	dep_time_local_hhmm?: number | null
+	origin_tz?: string | null
 	payoff_units: string
 	delay_hours: number
 	featured: boolean
@@ -314,6 +322,8 @@ async function fetchRouteCatalog(): Promise<UiRoute[]> {
 		carrier: row.carrier,
 		pCovered: row.p_covered,
 		pCoveredIsPeak: row.p_covered_is_peak ?? false,
+		depTimeLocalHhmm: row.dep_time_local_hhmm ?? null,
+		originTz: row.origin_tz ?? null,
 		terms:
 			row.status === "Active"
 				? {

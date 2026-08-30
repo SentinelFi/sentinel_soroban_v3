@@ -324,9 +324,11 @@ bundle so the chain is touched once.
 
 ## Off-chain tooling
 
-- [ ] **Flight-date semantics: we key on the UTC departure date, the world
-  uses the LOCAL one.** *(Audited 2026-08-05. DEFERRED until after the soak —
-  the fix changes which physical flight a date maps to.)* Every backend
+- [x] **Flight-date semantics: we key on the UTC departure date, the world
+  uses the LOCAL one.** *(Audited 2026-08-05. DECIDED 2026-08-30: keep UTC
+  keying, disclose in the UI — the "label + surface" option, shipped; the
+  re-key-on-local option was rejected because it would touch all four
+  resolution sites and reinterpret existing on-chain keys.)* Every backend
   consumer resolves a policy date as "the instance whose `scheduled_out`
   falls on UTC date D" (`sale_auth.ts:260`, `route_guard.ts:85,116`,
   `aeroapi_client.ts:187`, `fetcher.ts:154`). Airlines, boarding passes and
@@ -336,12 +338,21 @@ bundle so the chain is touched once.
   origins: LAX 42, LAS 36, SFO 25, DFW 24.
   For those, a buyer selecting "Aug 6" holds cover on the flight departing
   local Aug 5 evening. The system is INTERNALLY consistent — all 72 captured
-  schedules have key date == UTC departure date — so this is a
-  product-semantics decision, not a code inconsistency. It is invisible to
-  the buyer because `/api/routes` exposes no departure time.
-  **Decide explicitly:** either label the board "departure date (UTC)" and
-  surface the time, or key on local departure date end to end (which needs
-  the origin's IANA zone at every resolution site).
+  schedules have key date == UTC departure date — so this was a
+  product-semantics decision, not a code inconsistency.
+  **What shipped (2026-08-30):** `/api/routes` now serves
+  `dep_time_local_hhmm` (from the pricing whitelist, which covers all
+  1,069 enabled routes — measurement re-verified same day) and `origin_tz`
+  (`api/_lib/airport_tz.ts`); the BetSlip renders the covered instance's
+  departure as date+time (it previously showed a bare time next to the
+  picked date — actively misleading for the shifted cohort), derives the
+  boarding-pass (origin-local) date, and prints an explicit "dates here
+  are UTC — this covers the flight your boarding pass calls D−1" note
+  whenever the two differ (`Markets.tsx`, `src/lib/flightDates.ts`). The
+  date field was already labelled "FLIGHT DATE (UTC)". Unknown origin
+  zone → the hint is omitted, never wrong. Related items still open: the
+  calendar local/UTC bug below, the ML weather-log item, and completing
+  `AIRPORT_TZ` to all 37 airports before widening the matrix.
 - [ ] **The flight-date calendar is LOCAL while its label says UTC.**
   *(Audited 2026-08-05. Real bug, frontend-only. DEFERRED until after the
   soak — it changes which dates are selectable.)* `FlightCalendar.tsx` builds
@@ -361,6 +372,13 @@ bundle so the chain is touched once.
   a user can page to 2027 and pick a date refused as beyond the horizon; and
   `minDay`/`today` are `useMemo(…, [])`, so a slip left open across local
   midnight keeps a now-past day enabled.
+  A fourth, unfiled one was found and FIXED 2026-08-30: the month-nav
+  buttons were no-ops — they changed `viewMonth` only, and the
+  keep-focus-in-view effect saw `focusDay` still in the old month and
+  snapped the view straight back, so no date beyond the current month was
+  ever reachable by mouse. Nav now moves `focusDay` with the view
+  (same day-of-month, clamped to month length and `minDay`). Note this
+  makes the missing upper bound above REACHABLE for mouse users too.
 - [ ] **ML training rows carry the wrong day's weather for the same ~19%
   cohort.** *(Audited 2026-08-05.)* `outcome_log.ts:89` derives `dateIso`
   from the UTC key, then passes it to Open-Meteo with `timezone=auto`

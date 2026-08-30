@@ -139,6 +139,28 @@ export function FlightCalendar({
 	const prevMonthEnd = new Date(year, month, 0) // last day of prev month
 	const canPrev = prevMonthEnd.getTime() >= minDay.getTime()
 
+	// Month nav must move focusDay WITH the view: the follower effect above
+	// pins the view to the focused day's month, so a nav click that changed
+	// only viewMonth would be snapped straight back — the buttons did
+	// nothing. Standard grid pattern: keep the same day-of-month, clamped
+	// to the target month's length and the minimum selectable day.
+	function gotoMonth(offset: number) {
+		const target = new Date(year, month + offset, 1)
+		const dim = new Date(
+			target.getFullYear(),
+			target.getMonth() + 1,
+			0,
+		).getDate()
+		let next = new Date(
+			target.getFullYear(),
+			target.getMonth(),
+			Math.min(focusDay.getDate(), dim),
+		)
+		if (next.getTime() < minDay.getTime()) next = new Date(minDay)
+		setViewMonth(target)
+		setFocusDay(startOfDay(next))
+	}
+
 	function isDisabled(d: Date): boolean {
 		return startOfDay(d).getTime() < minDay.getTime()
 	}
@@ -215,9 +237,7 @@ export function FlightCalendar({
 							className="w3-cal-nav"
 							aria-label={t.slip.calPrevAria}
 							disabled={!canPrev}
-							onClick={() =>
-								setViewMonth(new Date(year, month - 1, 1))
-							}
+							onClick={() => gotoMonth(-1)}
 						>
 							{serious ? (
 								<ChevronLeft className="h-4 w-4" strokeWidth={2} />
@@ -232,9 +252,7 @@ export function FlightCalendar({
 							type="button"
 							className="w3-cal-nav"
 							aria-label={t.slip.calNextAria}
-							onClick={() =>
-								setViewMonth(new Date(year, month + 1, 1))
-							}
+							onClick={() => gotoMonth(1)}
 						>
 							{serious ? (
 								<ChevronRight className="h-4 w-4" strokeWidth={2} />

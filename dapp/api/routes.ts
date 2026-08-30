@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { loadRoutesConfig, fileTerms, type RouteEntry } from "./_lib/routes_config.js";
+import { airportTz } from "./_lib/airport_tz.js";
 import { getDb } from "./_lib/governance/db.js";
 import { loadGovConfig } from "./_lib/governance/config.js";
 import { GovSubmitter } from "./_lib/governance/submitter.js";
@@ -86,18 +87,19 @@ const routeKey = (r: { flight_id: string; origin: string; destination: string })
  * useful). Neither figure is ever used for pricing — premiums come from
  * the priced date, on-chain.
  */
+const WL_ROWS = (whitelistConfig as {
+  routes?: Array<{
+    flight_id: string;
+    origin: string;
+    destination: string;
+    p_covered?: number | null;
+    p_covered_max?: number | null;
+    dep_time_hhmm?: number | null;
+  }>;
+}).routes ?? [];
+
 const P_COVERED: Map<string, { p: number; peak: boolean }> = new Map(
-  (
-    (whitelistConfig as {
-      routes?: Array<{
-        flight_id: string;
-        origin: string;
-        destination: string;
-        p_covered?: number | null;
-        p_covered_max?: number | null;
-      }>;
-    }).routes ?? []
-  )
+  WL_ROWS
     .map((r) => {
       // Peak when the staged file carries one; otherwise the priced date,
       // flagged so the UI does not claim "up to" about a single day.
@@ -109,6 +111,23 @@ const P_COVERED: Map<string, { p: number; peak: boolean }> = new Map(
       typeof e[1].p === "number",
     )
     .map(([k, v]) => [k, v]),
+);
+
+/**
+ * Origin-LOCAL scheduled departure (HHMM) per route, from the same staged
+ * pricing run. Display-only disclosure: the board is keyed by the UTC
+ * departure date while boarding passes carry the local one, and ~19% of
+ * the fleet departs late enough local that the two differ — the UI uses
+ * this (with `origin_tz`) to show the boarding-pass date next to the
+ * picked one. Approximate by nature (the priced instance's time, and
+ * schedules retime); the BetSlip renders it with a "≈" and upgrades to
+ * the sale-auth answer mid-buy. Nothing prices or settles off it.
+ */
+const DEP_HHMM: Map<string, number> = new Map(
+  WL_ROWS.filter((r) => typeof r.dep_time_hhmm === "number").map((r) => [
+    routeKey(r),
+    r.dep_time_hhmm as number,
+  ]),
 );
 
 /**
@@ -226,6 +245,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       p_covered: P_COVERED.get(key)?.p ?? null,
       /** true when p_covered is the seasonal peak, not a single priced date. */
       p_covered_is_peak: P_COVERED.get(key)?.peak ?? false,
+      // Origin-local departure disclosure (see DEP_HHMM above). Either can
+      // be null independently; the UI needs both to render the hint.
+      dep_time_local_hhmm: DEP_HHMM.get(key) ?? null,
+      origin_tz: airportTz(r.origin),
       featured: featured.has(key),
     };
   });

@@ -105,6 +105,10 @@ const fun = {
 		dateLabel: "FLIGHT DATE (UTC)",
 		datePlaceholder: "PICK A DAY ▾",
 		departsLabel: "DEPARTS",
+		departsApprox: (date: string, hm: string, iata: string) =>
+			`${date} · ≈${hm} ${iata}`,
+		utcShiftNote: (date: string) =>
+			`BOARD DATES ARE UTC — THIS COVERS THE FLIGHT YOUR BOARDING PASS CALLS ${date}.`,
 		calPrevAria: "Previous month",
 		calNextAria: "Next month",
 		calCloseAria: "Close calendar",
@@ -596,6 +600,10 @@ const serious: Copy = {
 		dateLabel: "Flight date (UTC)",
 		datePlaceholder: "Select a date",
 		departsLabel: "Departure",
+		departsApprox: (date: string, hm: string, iata: string) =>
+			`${date} · ≈${hm} ${iata}`,
+		utcShiftNote: (date: string) =>
+			`Dates here are UTC — this policy covers the flight dated ${date} on your boarding pass (local time).`,
 		calPrevAria: "Previous month",
 		calNextAria: "Next month",
 		calCloseAria: "Close calendar",
