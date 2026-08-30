@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /* Domain-warped fractional Brownian motion on a full-screen triangle.
    Noise is fed into noise twice, so the field flows like weather instead of
@@ -109,8 +109,27 @@ const SCALE = 0.5;
 
 export default function FbmField() {
   const ref = useRef<HTMLCanvasElement>(null);
+  const [ready, setReady] = useState(false);
+
+  // The prerendered hero (text, CTAs, starfield) paints long before this
+  // bundle runs — the field is atmosphere, never critical path. Wait for
+  // an idle moment after hydration so shader compile can't compete with
+  // interactivity, capped so the sky still arrives promptly.
+  useEffect(() => {
+    // typeof, not `in`: Safari lacks requestIdleCallback at runtime even
+    // though lib.dom declares it unconditionally.
+    if (typeof window.requestIdleCallback === "function") {
+      const h = window.requestIdleCallback(() => setReady(true), {
+        timeout: 2000,
+      });
+      return () => window.cancelIdleCallback(h);
+    }
+    const h = window.setTimeout(() => setReady(true), 50);
+    return () => window.clearTimeout(h);
+  }, []);
 
   useEffect(() => {
+    if (!ready) return;
     const canvas = ref.current;
     if (!canvas) return;
 
@@ -199,8 +218,11 @@ export default function FbmField() {
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     };
 
-    // One synchronous frame before any rAF, so the hero is never blank.
+    // One synchronous frame before any rAF, then fade the finished frame
+    // in over the already-visible hero — arriving late must feel like
+    // weather rolling in, not a background popping into existence.
     draw();
+    canvas.style.opacity = "1";
 
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -276,13 +298,13 @@ export default function FbmField() {
       gl.deleteShader(vs);
       gl.deleteShader(fs);
     };
-  }, []);
+  }, [ready]);
 
   return (
     <canvas
       ref={ref}
       aria-hidden="true"
-      className="pointer-events-none absolute inset-0 -z-10 h-full w-full"
+      className="pointer-events-none absolute inset-0 -z-10 h-full w-full opacity-0 transition-opacity duration-1000 ease-out"
     />
   );
 }
