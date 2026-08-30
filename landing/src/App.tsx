@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import BackToTop from "./components/BackToTop";
 import Background from "./components/Background";
+import BrowseNotice from "./components/BrowseNotice";
 import Hero from "./components/Hero";
 import Audiences from "./components/Audiences";
 import Stack from "./components/Stack";
@@ -70,6 +72,8 @@ export default function App() {
         )}
         <Footer />
       </main>
+      <BackToTop />
+      <BrowseNotice />
     </>
   );
 }

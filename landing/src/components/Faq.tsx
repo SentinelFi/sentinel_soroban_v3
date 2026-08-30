@@ -33,10 +33,11 @@ export default function Faq() {
   const [open, setOpen] = useState<number | null>(null);
 
   return (
-    <section id="faq" className="relative mx-auto max-w-3xl scroll-mt-16 px-6 py-16">
-      <h2 className="waterline reveal mb-10 text-center text-4xl font-bold md:text-5xl">
-        FAQ
-      </h2>
+    <section id="faq" className="section-y relative mx-auto max-w-3xl scroll-mt-16 px-6">
+      <div className="reveal mb-10 flex flex-col items-center gap-4">
+        <span className="label">Questions</span>
+        <h2 className="waterline section-title text-center">FAQ</h2>
+      </div>
       <div className="flex flex-col gap-3">
         {FAQS.map(({ q, a }, i) => {
           const isOpen = open === i;
@@ -50,9 +51,7 @@ export default function Faq() {
               style={{ transitionDelay: `${Math.min(i * 0.07, 0.35)}s` }}
             >
             <div
-              className={`transition-colors duration-300 ${
-                isOpen ? "bg-white/[0.08]" : "bg-white/5 hover:bg-white/[0.07]"
-              }`}
+              className={`panel ${isOpen ? "panel-open" : "panel-hover"}`}
             >
               <button
                 type="button"
@@ -79,7 +78,7 @@ export default function Faq() {
                 className={`faq-answer ${isOpen ? "open" : ""}`}
               >
                 <div>
-                  <p className="px-7 pb-6 text-lg leading-relaxed text-neutral-400">
+                  <p className="px-7 pb-6 text-lg leading-relaxed text-neutral-300">
                     {a}
                   </p>
                 </div>

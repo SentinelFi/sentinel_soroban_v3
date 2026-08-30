@@ -1,5 +1,6 @@
-import { MdArrowOutward, MdExpandMore } from "react-icons/md";
+import { MdArrowOutward } from "react-icons/md";
 import { LINKS } from "../links";
+import FbmField from "./FbmField";
 import PlaneFlyby from "./PlaneFlyby";
 import Typewriter from "./Typewriter";
 
@@ -11,7 +12,8 @@ const TAGLINES = [
 
 export default function Hero() {
   return (
-    <section className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 pt-10 text-center">
+    <section className="relative isolate flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 pt-10 text-center">
+      <FbmField />
       <PlaneFlyby />
 
       <div className="logo-shine hero-enter mb-8 w-36 md:w-44">
@@ -26,7 +28,7 @@ export default function Hero() {
       </div>
 
       <h1
-        className="hero-title hero-enter text-6xl leading-none font-bold md:text-8xl"
+        className="hero-title hero-enter font-bold"
         style={{ animationDelay: "0.2s" }}
       >
         Fly. <span className="text-accent">Insure.</span>{" "}
@@ -116,9 +118,9 @@ export default function Hero() {
       <a
         href="#audiences"
         aria-label="Scroll to content"
-        className="scroll-hint mt-6 text-neutral-400"
+        className="scroll-hint mt-6"
       >
-        <MdExpandMore size={32} />
+        <span className="scroll-hint-track" aria-hidden="true" />
       </a>
     </section>
   );

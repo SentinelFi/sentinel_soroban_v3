@@ -5,10 +5,13 @@ import PlaneFlyby from "./PlaneFlyby";
    footer) once live; visitors reach this point having read everything. */
 export default function ComingSoon() {
   return (
-    <section className="relative mx-auto max-w-6xl px-6 py-16">
+    <section className="section-y relative mx-auto max-w-6xl px-6">
       <PlaneFlyby back />
+      <div className="reveal mb-10 flex justify-center">
+        <span className="label">Coming next</span>
+      </div>
       <div className="grid gap-8 md:grid-cols-2">
-        <div className="reveal bg-white/5 p-10">
+        <div className="panel reveal p-10">
           <MdMailOutline
             className="mb-5 text-accent"
             size={30}
@@ -40,7 +43,7 @@ export default function ComingSoon() {
           <p className="mt-3 text-base text-neutral-400">Coming soon.</p>
         </div>
 
-        <div className="reveal bg-white/5 p-10" style={{ transitionDelay: "0.12s" }}>
+        <div className="panel reveal p-10" style={{ transitionDelay: "0.12s" }}>
           <MdAutoAwesome
             className="mb-5 text-highlight"
             size={30}

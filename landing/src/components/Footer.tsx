@@ -9,7 +9,7 @@ const SOCIALS = [
 
 export default function Footer() {
   return (
-    <footer className="relative px-6 pt-16 pb-10">
+    <footer className="relative px-6 pt-[var(--section-pad)] pb-10">
       <div className="mx-auto flex max-w-6xl flex-col items-center gap-8 text-center">
         <div className="flex items-center gap-7">
           {SOCIALS.map(({ href, label, Icon }) => (

@@ -21,7 +21,7 @@ function LegalShell({
       </a>
       <h1 className="mt-6 text-3xl font-bold md:text-4xl">{title}</h1>
       <p className="mt-2 text-base text-neutral-400">Last updated {updated}</p>
-      <div className="mt-10 space-y-8 bg-white/5 p-8 text-lg leading-relaxed text-neutral-400 md:p-10">
+      <div className="panel mt-10 space-y-8 p-8 text-lg leading-relaxed text-neutral-400 md:p-10">
         {children}
       </div>
     </section>

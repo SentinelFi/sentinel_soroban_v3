@@ -26,16 +26,19 @@ export default function Audiences() {
   return (
     <section
       id="audiences"
-      className="relative mx-auto max-w-6xl scroll-mt-16 px-6 pt-32 pb-16"
+      className="section-y-first relative mx-auto max-w-6xl scroll-mt-16 px-6"
     >
-      <h2 className="waterline reveal mb-12 text-center text-4xl font-bold md:text-5xl">
-        Two sides of every flight
-      </h2>
+      <div className="reveal mb-12 flex flex-col items-center gap-4">
+        <span className="label">Who it&rsquo;s for</span>
+        <h2 className="waterline section-title text-center">
+          Two sides of every flight
+        </h2>
+      </div>
       <div className="grid gap-8 md:grid-cols-2">
         {CARDS.map(({ icon: Icon, accent, title, lead, body, cta, href }, i) => (
           <div
             key={title}
-            className="reveal bg-white/5 p-10 backdrop-blur-sm transition-colors duration-300 hover:bg-white/[0.08] md:p-12"
+            className="panel panel-interactive reveal p-10 backdrop-blur-sm md:p-12"
             style={{ transitionDelay: `${i * 0.12}s` }}
           >
             <Icon className={`mb-6 ${accent}`} size={36} aria-hidden="true" />
@@ -56,7 +59,7 @@ export default function Audiences() {
           </div>
         ))}
       </div>
-      <p className="reveal mt-12 text-center text-lg text-neutral-400">
+      <p className="reveal mx-auto mt-12 max-w-[54ch] text-center text-lg text-neutral-400">
         One market, both sides. Risk hedged for travelers, yield for
         capital.
       </p>

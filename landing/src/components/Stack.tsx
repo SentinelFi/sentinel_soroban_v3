@@ -27,11 +27,9 @@ const USDC_STEPS = [
 
 export default function Stack() {
   return (
-    <section className="relative mx-auto max-w-6xl px-6 py-16">
+    <section className="section-y relative mx-auto max-w-6xl px-6">
       <div className="reveal flex flex-col items-center gap-6 text-center">
-        <p className="text-base font-semibold tracking-[0.35em] text-neutral-400 uppercase">
-          Built on
-        </p>
+        <span className="label">Built on</span>
         <a
           href={LINKS.stellar}
           target="_blank"
@@ -48,17 +46,20 @@ export default function Stack() {
       </div>
 
       <div className="mt-24">
-        <h2 className="waterline reveal text-center text-3xl font-bold md:text-4xl">
-          Runs on <span className="text-highlight">Circle USDC</span>
-        </h2>
+        <div className="reveal flex flex-col items-center gap-4">
+          <span className="label">Getting started</span>
+          <h2 className="waterline section-title section-title-sm text-center">
+            Runs on <span className="text-highlight">Circle USDC</span>
+          </h2>
+        </div>
         <div className="mt-10 grid gap-8 md:grid-cols-3">
           {USDC_STEPS.map(({ n, title, body, ...link }, i) => (
             <div
               key={n}
-              className="reveal bg-white/5 p-8"
+              className="panel panel-interactive reveal p-8"
               style={{ transitionDelay: `${i * 0.12}s` }}
             >
-              <span className="text-base font-bold text-accent">{n}</span>
+              <span className="tnum text-base font-bold text-accent">{n}</span>
               <h3 className="mt-3 text-2xl font-bold">{title}</h3>
               <p className="mt-2 text-lg text-neutral-400">{body}</p>
               {"href" in link && (
