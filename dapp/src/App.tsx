@@ -7,6 +7,7 @@ import { FlightBackground } from "./components/FlightBackground"
 import { ThemeDock } from "./components/ThemeToggle"
 import { ActivityLog } from "./components/ActivityLog"
 import { Tour } from "./components/Tour"
+import { AgreementGate, useAgreementAccepted } from "./components/AgreementGate"
 import { useTheme } from "./providers/ThemeProvider"
 import { useWallet } from "./hooks/useWallet"
 import { stellarNetwork } from "./contracts/util"
@@ -74,6 +75,9 @@ function NetworkMismatchBanner() {
 
 export default function App() {
 	const { theme } = useTheme()
+	// The sticky chrome (activity drawer, tour invite) stays hidden until
+	// the agreement notice is accepted — nothing competes with the gate.
+	const agreed = useAgreementAccepted()
 	return (
 		<div className="app-shell flex min-h-screen flex-col">
 			{/* Serious mode: smooth canvas flight-paths behind everything.
@@ -224,10 +228,16 @@ export default function App() {
 			<ThemeDock />
 
 			{/* Activity log — collapsible drawer, docks above the MODE dock. */}
-			<ActivityLog />
+			{agreed && <ActivityLog />}
 
-			{/* First-visit onboarding — invite card bottom-right, guided tour. */}
-			<Tour />
+			{/* First-visit onboarding — invite card bottom-right, guided tour.
+			    Mounts only after the agreement, so the welcome card makes its
+			    first-visit appearance right after acceptance. */}
+			{agreed && <Tour />}
+
+			{/* First-visit agreement notice — blocking modal on the board and
+			    vault pages (z-50). */}
+			<AgreementGate />
 		</div>
 	)
 }

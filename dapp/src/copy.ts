@@ -122,6 +122,44 @@ const fun = {
 		fineprint:
 			"Buying cover IS predicting your flight lands late: the premium is your stake on DELAYED. An oracle settles the flight on-chain after it lands. No claims forms.",
 	},
+	// First-visit agreement gate. Deliberately professional in BOTH themes —
+	// eligibility and risk notices don't get the arcade voice.
+	agreement: {
+		eyebrow: "NOTICE",
+		title: "BEFORE YOU USE THIS DAPP",
+		intro: "Please read these and confirm your eligibility before using the dapp. The full documents:",
+		privacyLink: "Privacy Policy",
+		termsLink: "Terms of Service",
+		disclaimersLink: "Disclaimers",
+		sections: [
+			{
+				heading: "THE SERVICE",
+				body: "This application is an interface to open-source parametric flight-delay insurance contracts deployed on the Stellar network. The interface operator does not custody user funds, does not act as your counterparty, and does not execute transactions on your behalf; every transaction is built and signed by your own wallet.",
+			},
+			{
+				heading: "ELIGIBILITY",
+				body: "You may not use this application if you are a resident of, or accessing it from, a prohibited or sanctioned jurisdiction, or if you are otherwise barred from using it under applicable law. It is your responsibility to confirm that using it is lawful where you are.",
+			},
+			{
+				heading: "RISK DISCLOSURE",
+				body: "Using on-chain protocols involves substantial risk of loss, up to the total loss of any funds you commit. Smart contracts may contain bugs, flight data and oracles can be late or wrong, and confirmed transactions cannot be reversed. You alone are responsible for your decisions.",
+			},
+			{
+				heading: "NO ADVICE",
+				body: "Nothing in this application constitutes financial, investment, legal, tax, accounting, or insurance advice.",
+			},
+			{
+				heading: "CHANGES",
+				body: "These terms may change as the protocol evolves; continued use after a change constitutes acceptance of the updated terms.",
+			},
+		],
+		representation:
+			"By pressing “Got it”, I confirm that I have read the notices above, that I am not a resident of, and am not accessing this application from, a prohibited or sanctioned jurisdiction, and that I am legally permitted to use it.",
+		draftNote:
+			"This summary is provided for convenience and is not the final legal language. Questions or concerns? Open an issue on",
+		issuesLink: "GitHub",
+		accept: "GOT IT",
+	},
 	house: {
 		heroLine1: "EARN YIELD.",
 		heroLine2: "BE THE UNDERWRITER.",
@@ -616,6 +654,42 @@ const serious: Copy = {
 		unavailablePrompt: "This route is no longer available.",
 		fineprint:
 			"Your premium is a fixed stake on the flight being delayed. An oracle settles the flight on-chain after it lands, so the payout is automatic, with no claim forms.",
+	},
+	agreement: {
+		eyebrow: "Notice",
+		title: "Before you use this dapp",
+		intro: "Please read these and confirm your eligibility before using the dapp. The full documents:",
+		privacyLink: "Privacy Policy",
+		termsLink: "Terms of Service",
+		disclaimersLink: "Disclaimers",
+		sections: [
+			{
+				heading: "The service",
+				body: "This application is an interface to open-source parametric flight-delay insurance contracts deployed on the Stellar network. The interface operator does not custody user funds, does not act as your counterparty, and does not execute transactions on your behalf; every transaction is built and signed by your own wallet.",
+			},
+			{
+				heading: "Eligibility",
+				body: "You may not use this application if you are a resident of, or accessing it from, a prohibited or sanctioned jurisdiction, or if you are otherwise barred from using it under applicable law. It is your responsibility to confirm that using it is lawful where you are.",
+			},
+			{
+				heading: "Risk disclosure",
+				body: "Using on-chain protocols involves substantial risk of loss, up to the total loss of any funds you commit. Smart contracts may contain bugs, flight data and oracles can be late or wrong, and confirmed transactions cannot be reversed. You alone are responsible for your decisions.",
+			},
+			{
+				heading: "No advice",
+				body: "Nothing in this application constitutes financial, investment, legal, tax, accounting, or insurance advice.",
+			},
+			{
+				heading: "Changes",
+				body: "These terms may change as the protocol evolves; continued use after a change constitutes acceptance of the updated terms.",
+			},
+		],
+		representation:
+			"By pressing “Got it”, I confirm that I have read the notices above, that I am not a resident of, and am not accessing this application from, a prohibited or sanctioned jurisdiction, and that I am legally permitted to use it.",
+		draftNote:
+			"This summary is provided for convenience and is not the final legal language. Questions or concerns? Open an issue on",
+		issuesLink: "GitHub",
+		accept: "Got it",
 	},
 	house: {
 		heroLine1: "Underwriter",
