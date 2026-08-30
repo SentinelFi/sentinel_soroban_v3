@@ -23,6 +23,62 @@ import { Plane, Trophy, Clock, Check, PlaneTakeoff } from "lucide-react"
 type OracleTag = FlightData["status"]["tag"]
 type PolicySection = "open" | "won" | "settled"
 
+/**
+ * History age filter — hide SETTLED policies whose flight date is older
+ * than N days. "all" (the default) keeps every row. Persisted per
+ * browser. Deliberately never applied to active or claimable policies:
+ * rows that still represent money in motion must stay visible.
+ */
+const AGE_FILTER_KEY = "flightsfun_policy_age"
+const AGE_OPTIONS = [7, 30, 90] as const
+type AgeFilter = "all" | (typeof AGE_OPTIONS)[number]
+
+function loadAgeFilter(): AgeFilter {
+	try {
+		const n = Number(localStorage.getItem(AGE_FILTER_KEY))
+		return (AGE_OPTIONS as readonly number[]).includes(n)
+			? (n as AgeFilter)
+			: "all"
+	} catch {
+		return "all"
+	}
+}
+
+function saveAgeFilter(v: AgeFilter) {
+	try {
+		if (v === "all") localStorage.removeItem(AGE_FILTER_KEY)
+		else localStorage.setItem(AGE_FILTER_KEY, String(v))
+	} catch {
+		// Can't persist — the choice still holds for this session.
+	}
+}
+
+/** Companion status filter over the same section — the terminal badge
+ *  kinds double as the option values. Same persistence rules. */
+const STATUS_FILTER_KEY = "flightsfun_policy_status"
+const STATUS_OPTIONS = ["onTime", "paid", "expired"] as const
+type StatusFilter = "all" | (typeof STATUS_OPTIONS)[number]
+
+function loadStatusFilter(): StatusFilter {
+	try {
+		const raw = localStorage.getItem(STATUS_FILTER_KEY) ?? ""
+		return (STATUS_OPTIONS as readonly string[]).includes(raw)
+			? (raw as StatusFilter)
+			: "all"
+	} catch {
+		return "all"
+	}
+}
+
+function saveStatusFilter(v: StatusFilter) {
+	try {
+		if (v === "all") localStorage.removeItem(STATUS_FILTER_KEY)
+		else localStorage.setItem(STATUS_FILTER_KEY, v)
+	} catch {
+		// Can't persist — the choice still holds for this session.
+	}
+}
+
 /** Flight ident as an external FR24 tracking link (same behaviour as the
  *  departures board); falls back to plain text when the ident cannot be
  *  mapped to an IATA flight number. */
@@ -141,6 +197,9 @@ export default function Policies() {
 	const { theme } = useTheme()
 	const serious = theme === "serious"
 	const [claimingId, setClaimingId] = useState<string | null>(null)
+	const [ageFilter, setAgeFilter] = useState<AgeFilter>(loadAgeFilter)
+	const [statusFilter, setStatusFilter] =
+		useState<StatusFilter>(loadStatusFilter)
 	const claimFlow = useTxFlow({
 		invalidateKeys: [["pool"], ["usdc"]],
 		errorFallback: "Claim failed",
@@ -311,7 +370,15 @@ export default function Policies() {
 
 	const openPolicies = policies.filter((b) => b.section === "open")
 	const wonPolicies = policies.filter((b) => b.section === "won")
-	const settledPolicies = policies.filter((b) => b.section === "settled")
+	const settledAll = policies.filter((b) => b.section === "settled")
+	const ageCutoff =
+		ageFilter === "all" ? null : nowSecs - BigInt(ageFilter * 86_400)
+	const settledPolicies = settledAll.filter(
+		(b) =>
+			(ageCutoff === null || b.date >= ageCutoff) &&
+			(statusFilter === "all" || b.badge === statusFilter),
+	)
+	const hiddenCount = settledAll.length - settledPolicies.length
 
 	const handleClaim = (policy: Policy) => {
 		if (!address || claimingId) return
@@ -552,18 +619,91 @@ export default function Policies() {
 				</section>
 			)}
 
-			{/* HISTORY — terminal, with an eligibility reason each */}
-			{!isLoading && settledPolicies.length > 0 && (
+			{/* HISTORY — terminal, with an eligibility reason each. Rendered
+			    off settledAll so the age-filter control stays reachable even
+			    when the current cutoff hides every row. */}
+			{!isLoading && settledAll.length > 0 && (
 				<section>
-					<h2 className="h-section mb-1 flex items-center gap-2 text-mute">
-						{serious && (
-							<Clock className="h-5 w-5" strokeWidth={1.7} />
-						)}
-						{t.policies.history}
-					</h2>
+					<div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+						<h2 className="h-section flex items-center gap-2 text-mute">
+							{serious && (
+								<Clock className="h-5 w-5" strokeWidth={1.7} />
+							)}
+							{t.policies.history}
+						</h2>
+						<div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+							<label className="flex items-center gap-2">
+								<span className="label-px">
+									{t.policies.historyStatusLabel}
+								</span>
+								<select
+									data-testid="history-status-filter"
+									className="field-px w-auto px-2 py-1 text-meta"
+									value={statusFilter}
+									onChange={(e) => {
+										const v = e.target.value as StatusFilter
+										setStatusFilter(v)
+										saveStatusFilter(v)
+										e.currentTarget.blur()
+									}}
+									aria-label={t.policies.historyStatusAria}
+								>
+									<option value="all">
+										{t.policies.historyFilterAll}
+									</option>
+									<option value="onTime">
+										{t.policies.badgeOnTime}
+									</option>
+									<option value="paid">
+										{t.policies.badgePaid}
+									</option>
+									<option value="expired">
+										{t.policies.badgeExpired}
+									</option>
+								</select>
+							</label>
+							<label className="flex items-center gap-2">
+								<span className="label-px">
+									{t.policies.historyFilterLabel}
+								</span>
+								<select
+									data-testid="history-age-filter"
+									className="field-px w-auto px-2 py-1 text-meta"
+									value={String(ageFilter)}
+									onChange={(e) => {
+										const v =
+											e.target.value === "all"
+												? "all"
+												: (Number(e.target.value) as AgeFilter)
+										setAgeFilter(v)
+										saveAgeFilter(v)
+										e.currentTarget.blur()
+									}}
+									aria-label={t.policies.historyFilterAria}
+								>
+									<option value="all">
+										{t.policies.historyFilterAll}
+									</option>
+									{AGE_OPTIONS.map((d) => (
+										<option key={d} value={d}>
+											{t.policies.historyFilterDays(d)}
+										</option>
+									))}
+								</select>
+							</label>
+						</div>
+					</div>
 					<p className={`mb-3 font-body ${serious ? "text-body" : "text-meta"} text-mute`}>
 						{t.policies.historySub}
 					</p>
+					{hiddenCount > 0 && (
+						<p
+							data-testid="history-hidden-count"
+							className={`mb-3 font-body ${serious ? "text-meta" : "text-fine"} text-mute`}
+						>
+							{t.policies.historyHidden(hiddenCount)}
+						</p>
+					)}
 					<div className="space-y-2">
 						{settledPolicies.map((policy) => (
 							<div
