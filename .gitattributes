@@ -1,1 +1,18 @@
-*.sh text eol=lf
+# Normalize all text files to LF in the repo AND in the working tree,
+# regardless of each contributor's core.autocrlf.
+* text=auto eol=lf
+
+# Binaries — never touch line endings.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.wasm binary
+*.pdf binary
+*.zip binary
