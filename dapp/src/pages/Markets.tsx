@@ -19,7 +19,8 @@ import { DEMO_ROUTES } from "../config/routes"
 import { airlineName, flightradarUrl } from "../config/airlines"
 import { useWallet } from "../hooks/useWallet"
 import { useFlightSchedules } from "../hooks/useFlightSchedules"
-import { localHm } from "../lib/format"
+import { localDate, localHm } from "../lib/format"
+import { coveredLocalDate, hhmmStr, zonedDate } from "../lib/flightDates"
 import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet } from "../util/wallet"
 import { txHashOf } from "../lib/utils"
@@ -540,6 +541,29 @@ function BetSlip({
 			? schedMap?.get(`${route.flightId}:${Number(dateSecs)}`)
 			: undefined
 
+	// UTC-vs-boarding-pass disclosure. The calendar is keyed by the UTC
+	// departure date while boarding passes carry the origin-LOCAL one, and
+	// ~19% of the fleet departs late enough local evening that the two
+	// differ by a day. Compute the boarding-pass date of the covered
+	// instance — precisely from a known schedule, else approximately from
+	// the catalog's static local departure time — and call the shift out
+	// so nobody insures the wrong day. Unknown zone → no hint, never a
+	// wrong one.
+	const originTz = route.originTz ?? null
+	const depHint = route.depTimeLocalHhmm ?? null
+	const boardingPassDate =
+		originTz === null
+			? null
+			: depSecs !== undefined
+				? zonedDate(depSecs, originTz)
+				: flightDate && depHint !== null
+					? coveredLocalDate(flightDate, depHint, originTz)
+					: null
+	const dateShifted =
+		flightDate !== "" &&
+		boardingPassDate !== null &&
+		boardingPassDate !== flightDate
+
 	// Dialog behaviour: initial focus on the panel, Escape closes, Tab is
 	// trapped inside, and focus returns to the opener on unmount — the
 	// overlay is a real modal, not just a visual one.
@@ -720,16 +744,43 @@ function BetSlip({
 				<div className="border-t-2 border-dashed border-line-mid" />
 
 				<div className="space-y-2">
-					{depSecs !== undefined && (
+					{depSecs !== undefined ? (
+						// A real instant: date + time in the viewer's zone —
+						// same rule as the Policies page, so the pair can't
+						// read as the picked (UTC) day.
 						<div className="flex items-center justify-between">
 							<span className="label-px">{t.slip.departsLabel}</span>
 							<span
 								data-testid="betslip-departs"
 								className="board-figure text-[18px] text-ink"
 							>
-								{localHm(depSecs)}
+								{`${localDate(depSecs)} · ${localHm(depSecs)}`}
 							</span>
 						</div>
+					) : flightDate && depHint !== null && boardingPassDate !== null ? (
+						// No schedule snapshot yet: the catalog's static
+						// origin-local time, dated by boarding pass.
+						<div className="flex items-center justify-between">
+							<span className="label-px">{t.slip.departsLabel}</span>
+							<span
+								data-testid="betslip-departs"
+								className="board-figure text-[18px] text-ink"
+							>
+								{t.slip.departsApprox(
+									boardingPassDate,
+									hhmmStr(depHint),
+									route.origin,
+								)}
+							</span>
+						</div>
+					) : null}
+					{dateShifted && boardingPassDate !== null && (
+						<p
+							data-testid="betslip-date-shift"
+							className="font-body text-meta text-dim"
+						>
+							{t.slip.utcShiftNote(boardingPassDate)}
+						</p>
 					)}
 					<div className="flex items-center justify-between">
 						<span className="label-px">{t.slip.premiumLabel}</span>
