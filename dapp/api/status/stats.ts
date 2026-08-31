@@ -21,6 +21,11 @@ import { FlightStatus } from "../_lib/types.js";
  * insurances_paid  — DB: settlements count, Delayed + Cancelled (both pay)
  * delayed_count    — DB: settlements count, ToBeSettledDelayed
  * cancelled_count  — DB: settlements count, ToBeSettledCancelled
+ * recent_settlements — DB: the last few settled flights (id + outcome),
+ *                     so the Markets flight ticker can show real recent
+ *                     outcomes instead of demo chips when nothing is in
+ *                     the air. Flight ids and outcomes are already public
+ *                     on-chain data; no addresses or amounts.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== "GET") {
@@ -39,6 +44,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     let delayed_count: number | null = null;
     let cancelled_count: number | null = null;
     let insurances_paid: number | null = null;
+    let recent_settlements: Array<{ flight_id: string; outcome: string }> | null = null;
     let db_available = false;
 
     if (process.env.GOVERNANCE_DB_URL) {
@@ -53,6 +59,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         delayed_count = byOutcome[FlightStatus.ToBeSettledDelayed] ?? 0;
         cancelled_count = byOutcome[FlightStatus.ToBeSettledCancelled] ?? 0;
         insurances_paid = delayed_count + cancelled_count;
+        recent_settlements = (await sql`
+          select flight_id, outcome from settlements
+          where outcome in (${FlightStatus.ToBeSettledDelayed}, ${FlightStatus.ToBeSettledCancelled},
+                            ${FlightStatus.ToBeSettledOnTime})
+          order by ledger desc
+          limit 8
+        `) as unknown as Array<{ flight_id: string; outcome: string }>;
         db_available = true;
       } catch {
         // DB hiccup — chain-only fields above still answer.
@@ -66,6 +79,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       delayed_count,
       cancelled_count,
       total_paid_out: distributed.toString(),
+      recent_settlements,
       db_available,
       as_of: new Date().toISOString(),
     });

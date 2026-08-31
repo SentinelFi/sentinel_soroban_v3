@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getDb } from "./_lib/governance/db.js";
+import { FlightStatus } from "./_lib/types.js";
 
 /**
  * GET /api/leaderboard — the Seatbelters board: top premium buyers from
@@ -50,7 +51,7 @@ async function topBuyers(hours: number | null): Promise<LeaderRow[]> {
     left join settlements s
       on s.flight_id = p.flight_id
      and s.date = p.date
-     and s.outcome in ('Delayed', 'Cancelled')
+     and s.outcome in (${FlightStatus.ToBeSettledDelayed}, ${FlightStatus.ToBeSettledCancelled})
     where ${hours === null ? sql`true` : sql`p.bought_at > now() - make_interval(hours => ${hours})`}
     group by p.buyer
     order by sum(p.premium_units) desc nulls last, count(*) desc, p.buyer

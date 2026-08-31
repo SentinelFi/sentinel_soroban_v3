@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from "react"
-import { Link, Navigate, Route, Routes } from "react-router-dom"
+import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { ErrorBoundary } from "./components/ErrorBoundary"
 import { PageMeta } from "./components/PageMeta"
 import { TopBar } from "./components/TopBar"
@@ -79,6 +79,9 @@ export default function App() {
 	// The sticky chrome (activity drawer, tour invite) stays hidden until
 	// the agreement notice is accepted — nothing competes with the gate.
 	const agreed = useAgreementAccepted()
+	// Keying the routed content by pathname replays a 140ms fade on every
+	// navigation, softening the hard cut between pages.
+	const { pathname } = useLocation()
 	return (
 		<div className="app-shell flex min-h-screen flex-col">
 			{/* Serious mode: smooth canvas flight-paths behind everything.
@@ -93,6 +96,7 @@ export default function App() {
 				    lands here as a reload prompt instead of a white screen. */}
 				<ErrorBoundary>
 					<Suspense fallback={<PageLoading />}>
+						<div key={pathname} className="page-fade">
 						<Routes>
 						<Route
 							path="/"
@@ -228,6 +232,7 @@ export default function App() {
 							)}
 						/>
 					</Routes>
+						</div>
 					</Suspense>
 				</ErrorBoundary>
 			</main>

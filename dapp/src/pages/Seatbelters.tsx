@@ -5,6 +5,7 @@ import { Trophy } from "lucide-react"
 import { formatUsdc } from "../hooks/useContracts"
 import { explorerAccountUrl, explorerLabel } from "../lib/explorer"
 import { PixelArt } from "../components/PixelArt"
+import { SkeletonRows } from "../components/Skeleton"
 import { useTheme } from "../providers/ThemeProvider"
 import { useCopy } from "../copy"
 
@@ -112,12 +113,12 @@ export default function Seatbelters() {
 			</div>
 
 			{isLoading && (
-				<div className="panel p-8 text-center">
-					<span className={`font-board ${serious ? "text-[24px]" : "text-[22px]"} text-gold`}>
+				<>
+					<p role="status" className="sr-only">
 						{t.seatbelters.loading}
-						{!serious && <span className="blink">…</span>}
-					</span>
-				</div>
+					</p>
+					<SkeletonRows rows={6} />
+				</>
 			)}
 
 			{!isLoading && boardUnavailable && (
