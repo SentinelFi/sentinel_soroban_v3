@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { NavLink } from "react-router-dom"
-import { BookOpen, Bot, Info, Settings as SettingsIcon } from "lucide-react"
+import { BookOpen, Bot, Info, Settings as SettingsIcon, Trophy } from "lucide-react"
 import { useWallet } from "../hooks/useWallet"
 import { useNotification } from "../hooks/useNotification"
 import { formatUsdc, mockUsdcClient, useUsdcBalance } from "../hooks/useContracts"
@@ -28,6 +28,47 @@ function splitBrand(name: string): [string, string] {
 
 function shortAddr(addr: string) {
 	return `${addr.slice(0, 4)}…${addr.slice(-4)}`
+}
+
+/** Icon-only main-nav entry for the Seatbelters leaderboard — a trophy
+ *  (pixel sprite in fun, line icon in serious). The label lives in
+ *  aria-label/title so the bar spends exactly one glyph on it. */
+function TrophyNavLink({ compact = false }: { compact?: boolean }) {
+	const t = useCopy()
+	const { theme } = useTheme()
+	return (
+		<NavLink
+			to="/seatbelters"
+			aria-label={t.nav.seatbelters}
+			title={t.nav.seatbelters}
+			data-testid="nav-seatbelters"
+			className={({ isActive }) =>
+				cn(
+					// shrink-0 (link AND sprite): when the pixel-font nav row
+					// gets tight, text links wrap their labels but a squeezed
+					// image just collapses to 0 width and vanishes.
+					"nav-link flex shrink-0 items-center self-stretch px-3",
+					compact ? "py-0.5" : "py-1",
+					// Active: serious gets the standard gold chip; fun keeps the
+					// background transparent — a gold fill behind the gold
+					// sprite just swallows it.
+					isActive
+						? theme === "serious"
+							? "bg-gold text-page"
+							: "bg-transparent"
+						: "text-dim hover:bg-raised hover:text-ink",
+				)
+			}
+		>
+			{theme === "serious" ? (
+				<Trophy size={14} aria-hidden="true" />
+			) : (
+				// shrink-0 so the sprite holds its size instead of collapsing
+				// to 0 width when the row squeezes.
+				<PixelArt name="trophy-win" className="h-4 w-4 shrink-0" />
+			)}
+		</NavLink>
+	)
 }
 
 /** Connected-wallet chip: opens a small menu with copy-address / disconnect. */
@@ -373,6 +414,7 @@ export function TopBar() {
 							{t.nav[item.key]}
 						</NavLink>
 					))}
+					<TrophyNavLink />
 				</nav>
 
 				<div className="ml-auto flex items-center gap-3">
@@ -412,6 +454,7 @@ export function TopBar() {
 						{t.nav[item.key]}
 					</NavLink>
 				))}
+				<TrophyNavLink compact />
 			</nav>
 		</header>
 	)
