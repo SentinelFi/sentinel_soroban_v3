@@ -2971,6 +2971,19 @@ html * {
 }
 
 /* ────────────────────────────────────────────────────────────────
+   Wallet-kit auth modal — a gold airplane before the stock title.
+   The kit (v2.5.0) renders light DOM under a stable
+   `.stellar-wallets-kit` root and offers no API for a header icon,
+   so it rides in from here. Selector kept shallow (stable class +
+   semantic tags) so a kit upgrade degrades to the stock header,
+   never breaks it.
+   ──────────────────────────────────────────────────────────────── */
+.stellar-wallets-kit header h1::before {
+	content: "✈ ";
+	color: var(--color-gold);
+}
+
+/* ────────────────────────────────────────────────────────────────
    Seatbelters leaderboard — podium shine on the top-3 names
    ──────────────────────────────────────────────────────────────── */
 .lb-shine {
