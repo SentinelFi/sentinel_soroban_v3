@@ -232,25 +232,39 @@ const LIVE_STATUS: Record<OracleTag, { label: string; color: string }> = {
 
 function Ticker({
 	liveFlights,
+	recent,
 }: {
 	liveFlights: Array<{ flightId: string; tag: OracleTag | null }>
+	/** Recent real settlements from /api/status/stats — the fallback layer
+	 *  between live tracking and the canned demo chips. */
+	recent?: Array<{ flight_id: string; outcome: string }>
 }) {
 	const t = useCopy()
-	const isDemo = liveFlights.length === 0
+	// Three layers, most alive wins: flights in the air → the last real
+	// settlements (proof of life when the sky is quiet) → demo chips.
+	const mode: "live" | "recent" | "demo" =
+		liveFlights.length > 0 ? "live" : recent && recent.length > 0 ? "recent" : "demo"
 	// Capped like the globe, and for the same reason: the strip is an
 	// ambient sample of what is in the air, not a manifest. Uncapped it
 	// grows one chip per policy, which stretches the loop until any given
 	// flight comes round every several minutes.
-	const chips = !isDemo
-		? liveFlights.slice(0, TRACKED_MAP_LIMIT).map((f) => ({
-				code: f.flightId,
-				status: f.tag ? LIVE_STATUS[f.tag] : LIVE_STATUS.NotInitiated,
-			}))
-		: [
-				{ code: "AA100", status: LIVE_STATUS.ToBeSettledDelayed },
-				{ code: "UA200", status: LIVE_STATUS.ToBeSettledOnTime },
-				{ code: "DL300", status: LIVE_STATUS.Active },
-			]
+	const chips =
+		mode === "live"
+			? liveFlights.slice(0, TRACKED_MAP_LIMIT).map((f) => ({
+					code: f.flightId,
+					status: f.tag ? LIVE_STATUS[f.tag] : LIVE_STATUS.NotInitiated,
+				}))
+			: mode === "recent"
+				? recent!.map((s) => ({
+						code: s.flight_id,
+						status:
+							LIVE_STATUS[s.outcome as OracleTag] ?? LIVE_STATUS.Settled,
+					}))
+				: [
+						{ code: "AA100", status: LIVE_STATUS.ToBeSettledDelayed },
+						{ code: "UA200", status: LIVE_STATUS.ToBeSettledOnTime },
+						{ code: "DL300", status: LIVE_STATUS.Active },
+					]
 
 	// duplicate content for a seamless -50% marquee loop
 	const loop = [...chips, ...chips, ...chips, ...chips]
@@ -265,10 +279,28 @@ function Ticker({
 		<div className="ticker flex items-center gap-3 overflow-hidden border-2 border-line bg-inset py-2">
 			<span className="z-10 flex shrink-0 items-center gap-2 border-r-2 border-line bg-inset pl-3 pr-3">
 				<span
-					className={`inline-block h-2 w-2 ${isDemo ? "blink bg-gold" : "breathe bg-win"}`}
+					className={`inline-block h-2 w-2 ${
+						mode === "live"
+							? "breathe bg-win"
+							: mode === "recent"
+								? "bg-sky"
+								: "blink bg-gold"
+					}`}
 				/>
-				<span className={`label-px ${isDemo ? "text-gold" : "text-win"}`}>
-					{isDemo ? t.markets.statusDemo : "LIVE"}
+				<span
+					className={`label-px ${
+						mode === "live"
+							? "text-win"
+							: mode === "recent"
+								? "text-sky"
+								: "text-gold"
+					}`}
+				>
+					{mode === "live"
+						? "LIVE"
+						: mode === "recent"
+							? t.markets.statusRecent
+							: t.markets.statusDemo}
 				</span>
 			</span>
 			{/* the 4× loop is presentational — screen readers get the
@@ -322,6 +354,9 @@ interface PublicStats {
 	delayed_count: number | null
 	cancelled_count: number | null
 	total_paid_out: string
+	/** Last few settled flights (id + outcome) — feeds the flight ticker
+	 *  when nothing is in the air. Null when the DB is unavailable. */
+	recent_settlements: Array<{ flight_id: string; outcome: string }> | null
 	db_available: boolean
 	as_of: string
 }
@@ -364,7 +399,10 @@ function StatsTicker({ openMarkets }: { openMarkets: number }) {
 	const delayedCountUp = useCountUp(publicStats?.delayed_count ?? 0)
 	const cancelledCountUp = useCountUp(publicStats?.cancelled_count ?? 0)
 
-	const items: Array<{ key: string; label: string; value: string }> = [
+	// `dim` marks a DB-optional stat the endpoint answered `null` for — it
+	// renders muted with a tooltip so it can't read as a broken binding
+	// (or, worse, as a real zero).
+	const items: Array<{ key: string; label: string; value: string; dim?: boolean }> = [
 		{
 			key: "tvl",
 			label: t.statsTicker.tvl,
@@ -403,6 +441,7 @@ function StatsTicker({ openMarkets }: { openMarkets: number }) {
 			value: !publicStats
 				? "…"
 				: (publicStats.insurances_paid != null ? insurancesPaidCount.toLocaleString() : "—"),
+			dim: publicStats !== undefined && publicStats.insurances_paid == null,
 		},
 		{
 			key: "delayed",
@@ -410,6 +449,7 @@ function StatsTicker({ openMarkets }: { openMarkets: number }) {
 			value: !publicStats
 				? "…"
 				: (publicStats.delayed_count != null ? delayedCountUp.toLocaleString() : "—"),
+			dim: publicStats !== undefined && publicStats.delayed_count == null,
 		},
 		{
 			key: "cancelled",
@@ -417,6 +457,7 @@ function StatsTicker({ openMarkets }: { openMarkets: number }) {
 			value: !publicStats
 				? "…"
 				: (publicStats.cancelled_count != null ? cancelledCountUp.toLocaleString() : "—"),
+			dim: publicStats !== undefined && publicStats.cancelled_count == null,
 		},
 	]
 
@@ -437,7 +478,10 @@ function StatsTicker({ openMarkets }: { openMarkets: number }) {
 						className="flex items-baseline gap-2 whitespace-nowrap"
 					>
 						<span className="label-px text-mute">{item.label}</span>
-						<span className="font-board text-[19px] text-ink">
+						<span
+							title={item.dim ? t.statsTicker.unavailable : undefined}
+							className={`font-board text-[19px] ${item.dim ? "text-mute" : "text-ink"}`}
+						>
 							{item.value}
 						</span>
 					</span>
@@ -452,7 +496,8 @@ function StatsTicker({ openMarkets }: { openMarkets: number }) {
 						<span className="label-px text-mute">{item.label}</span>
 						<span
 							data-testid={`markets-stat-${item.key}`}
-							className="font-board text-[19px] text-ink"
+							title={item.dim ? t.statsTicker.unavailable : undefined}
+							className={`font-board text-[19px] ${item.dim ? "text-mute" : "text-ink"}`}
 						>
 							{item.value}
 						</span>
@@ -896,6 +941,8 @@ export default function Markets() {
 	const { data: defaults } = useGovernanceDefaults()
 	const { data: activeFlights } = useActiveFlights()
 	const { data: flightData } = useFlightDataBatch(activeFlights)
+	// Shared with StatsTicker via the query cache — one fetch serves both.
+	const { data: publicStats } = usePublicStats()
 
 	// Never block the board on route loading: demo rows render immediately
 	// and are swapped for live rows once the /api/routes catalog lands (one
@@ -1076,7 +1123,10 @@ export default function Markets() {
 				</section>
 			)}
 
-			<Ticker liveFlights={liveRows} />
+			<Ticker
+				liveFlights={liveRows}
+				recent={publicStats?.recent_settlements ?? undefined}
+			/>
 
 			{/* live protocol numbers, straight from the data facade */}
 			<StatsTicker openMarkets={isDemo ? 0 : (routes?.length ?? 0)} />
@@ -1189,6 +1239,7 @@ export default function Markets() {
 										{
 											label: t.markets.colStake,
 											key: "stake",
+											numeric: true,
 											info: (
 												<ColumnInfo title="PREMIUM AND PAYOUT">
 													You pay the premium once; if the flight is 3+
@@ -1213,12 +1264,13 @@ export default function Markets() {
 									] as Array<{
 										label: string
 										key?: SortKey
+										numeric?: boolean
 										info?: React.ReactNode
 									}>
 								).map((col, i) => (
 									<th
 										key={i}
-										className="label-px px-4 py-2 text-fine font-normal"
+										className={`label-px px-4 py-2 text-fine font-normal${col.numeric ? " text-right" : ""}`}
 										aria-sort={
 											col.key && sort?.key === col.key
 												? sort.dir === 1
@@ -1341,7 +1393,7 @@ export default function Markets() {
 											/>
 										</div>
 									</td>
-									<td className="px-4 py-3 whitespace-nowrap">
+									<td className="px-4 py-3 text-right whitespace-nowrap">
 										{(() => {
 											const { premium, payoff } = termsFor(
 												route,

@@ -59,6 +59,7 @@ const fun = {
 			`PAYS PAST A ${h}H DELAY — OR CANCELLATION`,
 		statusScanning: "◌ SCANNING",
 		statusDemo: "◌ DEMO",
+		statusRecent: "RECENT",
 		statusBoarding: "● BOARDING",
 		noMatch: (q: string) => `NO FLIGHTS MATCH “${q}”`,
 		noMatchHint: "Try a flight number or an airport code.",
@@ -96,6 +97,7 @@ const fun = {
 		delayed: "DELAYED",
 		cancelled: "CANCELLED",
 		paidOut: "TOTAL PAID OUT",
+		unavailable: "Not available right now",
 	},
 	slip: {
 		title: "INSURANCE SLIP",
@@ -626,6 +628,7 @@ const serious: Copy = {
 			`Pays out once the flight is more than ${h}h late, or cancelled`,
 		statusScanning: "Scanning",
 		statusDemo: "Sample",
+		statusRecent: "Recent",
 		statusBoarding: "Open",
 		noMatch: (q: string) => `No flights match “${q}”`,
 		noMatchHint: "Try a flight number or an airport code.",
@@ -663,6 +666,7 @@ const serious: Copy = {
 		delayed: "Delayed",
 		cancelled: "Cancelled",
 		paidOut: "Total paid out",
+		unavailable: "Not available right now",
 	},
 	slip: {
 		title: "Coverage",

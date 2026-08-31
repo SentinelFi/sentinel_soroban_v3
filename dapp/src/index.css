@@ -2892,6 +2892,85 @@ html[data-scheme="light"] input.field-px[type="date"] {
 }
 
 /* ────────────────────────────────────────────────────────────────
+   Shared polish: skeleton loaders, route-change fade, link focus
+   rings, thin scrollbars for the fun skin
+   ──────────────────────────────────────────────────────────────── */
+
+/* Ghost bars while content loads. Hard-edged by default (fun);
+   the serious override below rounds them. */
+.skeleton {
+	position: relative;
+	overflow: hidden;
+	background: var(--color-inset);
+	border: 1px solid var(--color-line);
+}
+
+.skeleton::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	transform: translateX(-100%);
+	background: linear-gradient(90deg,
+			transparent,
+			color-mix(in srgb, var(--color-ink) 9%, transparent),
+			transparent);
+	animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-sweep {
+	to {
+		transform: translateX(100%);
+	}
+}
+
+[data-theme="serious"] .skeleton {
+	border: none;
+	border-radius: 6px;
+}
+
+/* Micro-fade on route change — soften the hard cut between pages. */
+.page-fade {
+	animation: page-fade-in 140ms ease-out both;
+}
+
+@keyframes page-fade-in {
+	from {
+		opacity: 0;
+	}
+
+	to {
+		opacity: 1;
+	}
+}
+
+/* Keyboard focus on links matches the deliberate ring buttons already
+   have — instead of each browser's default outline. */
+a:focus-visible {
+	outline: 2px solid var(--color-gold);
+	outline-offset: 2px;
+}
+
+[data-theme="serious"] a:focus-visible {
+	outline-color: var(--color-highlight);
+}
+
+/* Fun skin: same thin themed scrollbars serious already has — the OS
+   default gray bar clashes with the near-black panels. */
+html,
+html * {
+	scrollbar-width: thin;
+	scrollbar-color: var(--color-line-strong) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+	.skeleton::after,
+	.page-fade {
+		animation: none;
+	}
+}
+
+/* ────────────────────────────────────────────────────────────────
    Seatbelters leaderboard — podium shine on the top-3 names
    ──────────────────────────────────────────────────────────────── */
 .lb-shine {

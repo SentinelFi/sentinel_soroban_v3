@@ -14,6 +14,7 @@ import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { cn, txHashOf } from "../lib/utils"
 import { formatDate, localDate, localHm } from "../lib/format"
 import { PixelArt } from "../components/PixelArt"
+import { SkeletonRows } from "../components/Skeleton"
 import { TxProgress } from "../components/TxProgress"
 import { useTheme } from "../providers/ThemeProvider"
 import { useCopy } from "../copy"
@@ -425,12 +426,12 @@ export default function Policies() {
 			</div>
 
 			{isLoading && (
-				<div className="panel p-8 text-center">
-					<span className={`font-board ${serious ? "text-[24px]" : "text-[22px]"} text-gold`}>
+				<>
+					<p role="status" className="sr-only">
 						{t.policies.loading}
-						{!serious && <span className="blink">…</span>}
-					</span>
-				</div>
+					</p>
+					<SkeletonRows rows={4} />
+				</>
 			)}
 
 			{!isLoading && loadFailed && (
