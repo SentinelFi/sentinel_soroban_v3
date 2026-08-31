@@ -19,6 +19,7 @@ import PolicyDetail from "./pages/PolicyDetail"
 import House from "./pages/House"
 import Status from "./pages/Status"
 import Keepers from "./pages/Keepers"
+import Seatbelters from "./pages/Seatbelters"
 import Settings from "./pages/Settings"
 import Information from "./pages/Information"
 import { Disclaimers, Privacy, Terms } from "./pages/Legal"
@@ -184,6 +185,15 @@ export default function App() {
 								<Status />,
 								"Protocol Status",
 								"Live protocol health: oracle, classification, settlement, and governance job runs.",
+							)}
+						/>
+						{/* main-nav trophy icon — the travelers' leaderboard */}
+						<Route
+							path="/seatbelters"
+							element={withMeta(
+								<Seatbelters />,
+								"Seatbelters",
+								"The Seatbelters leaderboard — top flight-delay cover buyers, ranked by premiums staked.",
 							)}
 						/>
 						{/* hamburger-menu page — the run-a-keeper front door */}
