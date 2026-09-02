@@ -3004,8 +3004,18 @@ html * {
 	}
 }
 
+/* The serious skin repaints every .board-figure in ink (see the
+   [data-theme="serious"] .board-figure rule above) at a specificity that
+   beats a lone class — which would put opaque ink over the clipped
+   gradient and hide the shine. Match that specificity here so the podium
+   glows in both skins. */
+[data-theme="serious"] .lb-shine {
+	color: transparent;
+}
+
 @media (prefers-reduced-motion: reduce) {
-	.lb-shine {
+	.lb-shine,
+	[data-theme="serious"] .lb-shine {
 		animation: none;
 		color: var(--color-gold);
 		background: none;

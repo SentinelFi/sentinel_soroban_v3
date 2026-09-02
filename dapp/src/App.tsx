@@ -197,7 +197,7 @@ export default function App() {
 							element={withMeta(
 								<Seatbelters />,
 								"Seatbelters",
-								"The Seatbelters leaderboard — top flight-delay cover buyers, ranked by premiums staked.",
+								"The Seatbelters leaderboard — flight-delay cover buyers ranked by net P&L: payouts collected minus premiums paid.",
 							)}
 						/>
 						{/* hamburger-menu page — the run-a-keeper front door */}

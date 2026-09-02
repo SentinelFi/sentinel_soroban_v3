@@ -3,6 +3,11 @@ import { verifyAdmin } from "../_lib/governance/admin_auth.js";
 import { getDb } from "../_lib/governance/db.js";
 import { ensureVaultHistoryTable } from "../_lib/governance/vault_history.js";
 import { ensureExposureHistoryTable } from "../_lib/governance/exposure_history.js";
+import {
+  paidSettlementForPolicy,
+  resolvedPayoff,
+  routesForPolicy,
+} from "../_lib/governance/payouts.js";
 
 /**
  * Admin API — the TRENDS feed: every money metric as a time series, all
@@ -18,7 +23,9 @@ import { ensureExposureHistoryTable } from "../_lib/governance/exposure_history.
  * The premium/payout join prefers the exact (flight_id, date) match and
  * falls back to the 4-day bought_at window for policy rows ingested
  * before the `date` column existed — same heuristic the Security board
- * documents.
+ * documents. Which outcomes pay, and what a paid policy is worth, come
+ * from governance/payouts.ts (the mirror stores the on-chain outcome
+ * name and never records a per-policy payoff — see there).
  *
  * `totals.loss_ratio` is a CALENDAR loss ratio: payouts settled in the
  * window over premiums sold in the window. The cohorts differ (a policy
@@ -106,19 +113,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         order by 1 asc
       ` as unknown as Promise<Array<{ day: string; policies: number; premium_units: string }>>,
       sql`
-        select date_trunc('day', s.settled_at)::text as day,
-               count(distinct (s.flight_id, s.date))::int as settled_flights,
+        select date_trunc('day', w.settled_at)::text as day,
+               count(distinct (w.flight_id, w.date))::int as settled_flights,
                count(*)::int as policies_paid,
-               coalesce(sum(p.payoff_units), 0)::text as payout_units
-        from settlements s
-        join policies p
-          on p.flight_id = s.flight_id
-         and (p.date = s.date
-              or (p.date is null
-                  and s.settled_at >= p.bought_at
-                  and s.settled_at <  p.bought_at + interval '4 days'))
-        where s.outcome in ('Delayed', 'Cancelled')
-          and s.settled_at > now() - make_interval(hours => ${hours})
+               coalesce(sum(${resolvedPayoff(sql)}), 0)::text as payout_units
+        from policies p
+        ${paidSettlementForPolicy(sql)}
+        ${routesForPolicy(sql)}
+        where w.flight_id is not null
+          and w.settled_at > now() - make_interval(hours => ${hours})
         group by 1
         order by 1 asc
       ` as unknown as Promise<
