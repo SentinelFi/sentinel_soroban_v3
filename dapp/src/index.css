@@ -3021,3 +3021,72 @@ html * {
 		background: none;
 	}
 }
+
+/* ────────────────────────────────────────────────────────────────
+   Seatbelters leaderboard — border beam
+   ──────────────────────────────────────────────────────────────── */
+/* A registered custom property so the conic beam's start angle can
+   tween — animating a raw `from <angle>` inside the gradient cannot. */
+@property --lb-beam {
+	syntax: "<angle>";
+	inherits: false;
+	initial-value: 0deg;
+}
+
+/* One bright arc sweeping the panel's border. The beam lives on a
+   WRAPPER around the panel, not the panel: the panel scrolls
+   horizontally on narrow screens, and a ring pseudo hanging over its
+   edge would register as overflow and show scrollbars. The wrapper's
+   box equals the panel's border box, so an inset-0 ring masked to the
+   border width lands exactly on the border. */
+.lb-panel {
+	position: relative;
+	isolation: isolate;
+}
+
+.lb-panel::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	padding: 2px;
+	pointer-events: none;
+	z-index: 1;
+	background: conic-gradient(
+		from var(--lb-beam),
+		transparent 0deg 250deg,
+		var(--color-gold) 300deg,
+		#fff6d8 325deg,
+		var(--color-gold) 350deg,
+		transparent 360deg
+	);
+	-webkit-mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask-composite: exclude;
+	animation: lb-beam-spin 5s linear infinite;
+}
+
+/* serious panels draw a 1px rounded border — ring matches */
+[data-theme="serious"] .lb-panel::before {
+	padding: 1px;
+	border-radius: var(--radius-card);
+	opacity: 0.7;
+	animation-duration: 7s;
+}
+
+@keyframes lb-beam-spin {
+	to {
+		--lb-beam: 360deg;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.lb-panel::before {
+		display: none;
+	}
+}

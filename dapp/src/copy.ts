@@ -189,6 +189,11 @@ const fun = {
 		seatsOpen: (n: number) =>
 			`${n} SEAT${n === 1 ? "" : "S"} STILL OPEN ON THIS LIST.`,
 		explorerTitle: (label: string) => `View account on ${label} ↗`,
+		youTitle: "YOUR SEAT",
+		you: "YOU",
+		youConnect: "INSERT COIN — CONNECT WALLET TO FIND YOUR SEAT.",
+		youOffBoard: "NO COVER BOUGHT IN THIS WINDOW → NO SEAT YET.",
+		youError: "YOUR SEAT IS UNAVAILABLE RIGHT NOW.",
 		fineprint:
 			"TESTNET NUMBERS — TEST USDC IS FREE, GLORY ISN'T. Seats rank by net P&L over policies seen by the chain-event mirror.",
 	},
@@ -313,7 +318,43 @@ const fun = {
 		reasonDelayedPaid: "Delayed — paid out.",
 		reasonCancelledPaid: "Cancelled — paid out.",
 		claimWindow: (d: string) => `CLAIM BY ${d}`,
+		expiresIn: (left: string) => `EXPIRES IN ${left}`,
+		expiresNow: "WINDOW CLOSING — CLAIM NOW",
+		remindBtn: "🔔 REMIND ME",
+		remindBtnTitle:
+			"Get a browser notification when a payout is close to expiring",
+		remindOn:
+			"Reminders on — you'll get a heads-up when a payout nears expiry.",
+		notifTitle: (amt: string) => `${amt} USDC payout waiting`,
+		notifBody: (flight: string, left: string) =>
+			`${flight}: claim before the window shuts — ${left} left.`,
 		depTime: (hm: string) => `DEP ${hm}`,
+	},
+	// OS notification strings + the post-first-transaction permission card.
+	// Notification text stays sentence case in BOTH themes — it renders in
+	// the OS shell, not the app.
+	alerts: {
+		promptTitle: "STAY IN THE LOOP?",
+		promptBody:
+			"Get a browser alert when your flight is delayed, a payout is ready, or your vault deposit is processed. Works while a tab with this app is open.",
+		promptEnable: "ENABLE ALERTS",
+		promptDismiss: "NOT NOW",
+		promptNever: "NEVER",
+		enabledToast:
+			"Alerts on — you'll get a heads-up when something needs you.",
+		delayed: (f: string) => `${f} is delayed`,
+		delayedBody: "Your covered flight hit the threshold — a payout is on the way.",
+		cancelledFlight: (f: string) => `${f} was cancelled`,
+		cancelledBody: "Your covered flight was cancelled — a payout is on the way.",
+		settledOnTime: (f: string) => `${f} landed on time`,
+		settledOnTimeBody: "Policy settled — no payout this trip.",
+		payoutReady: (amt: string) => `Payout ready: ${amt} USDC`,
+		payoutReadyBody: (f: string) =>
+			`${f} settled in your favor. Claim before the window closes.`,
+		depositProcessed: "Vault deposit processed",
+		depositProcessedBody: "Your shares are minted and earning.",
+		withdrawalProcessed: "Vault withdrawal processed",
+		withdrawalProcessedBody: "Your USDC is ready to collect on the Earn page.",
 	},
 	policyDetail: {
 		eyebrow: "POLICY RECORD",
@@ -759,6 +800,11 @@ const serious: Copy = {
 		seatsOpen: (n: number) =>
 			`${n} seat${n === 1 ? "" : "s"} still open on this list.`,
 		explorerTitle: (label: string) => `View account on ${label} ↗`,
+		youTitle: "Your seat",
+		you: "You",
+		youConnect: "Connect your wallet to find your seat.",
+		youOffBoard: "No cover bought in this window → no seat yet.",
+		youError: "Your seat is unavailable right now.",
 		fineprint:
 			"Testnet numbers — test USDC has no monetary value. Seats rank by net P&L over policies seen by the chain-event mirror.",
 	},
@@ -883,7 +929,40 @@ const serious: Copy = {
 		reasonDelayedPaid: "Delayed — paid out.",
 		reasonCancelledPaid: "Cancelled — paid out.",
 		claimWindow: (d: string) => `Claim by ${d}`,
+		expiresIn: (left: string) => `Expires in ${left}`,
+		expiresNow: "Window closing — claim now",
+		remindBtn: "🔔 Remind me",
+		remindBtnTitle:
+			"Get a browser notification when a payout is close to expiring",
+		remindOn:
+			"Reminders on — you'll get a heads-up when a payout nears expiry.",
+		notifTitle: (amt: string) => `${amt} USDC payout waiting`,
+		notifBody: (flight: string, left: string) =>
+			`${flight}: claim before the window shuts — ${left} left.`,
 		depTime: (hm: string) => `Dep ${hm}`,
+	},
+	alerts: {
+		promptTitle: "Stay in the loop?",
+		promptBody:
+			"Get a browser alert when your flight is delayed, a payout is ready, or your vault deposit is processed. Works while a tab with this app is open.",
+		promptEnable: "Enable alerts",
+		promptDismiss: "Not now",
+		promptNever: "Never",
+		enabledToast:
+			"Alerts on — you'll get a heads-up when something needs you.",
+		delayed: (f: string) => `${f} is delayed`,
+		delayedBody: "Your covered flight hit the threshold — a payout is on the way.",
+		cancelledFlight: (f: string) => `${f} was cancelled`,
+		cancelledBody: "Your covered flight was cancelled — a payout is on the way.",
+		settledOnTime: (f: string) => `${f} landed on time`,
+		settledOnTimeBody: "Policy settled — no payout this trip.",
+		payoutReady: (amt: string) => `Payout ready: ${amt} USDC`,
+		payoutReadyBody: (f: string) =>
+			`${f} settled in your favor. Claim before the window closes.`,
+		depositProcessed: "Vault deposit processed",
+		depositProcessedBody: "Your shares are minted and earning.",
+		withdrawalProcessed: "Vault withdrawal processed",
+		withdrawalProcessedBody: "Your USDC is ready to collect on the Earn page.",
 	},
 	policyDetail: {
 		eyebrow: "Policy record",

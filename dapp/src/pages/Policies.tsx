@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import type { FlightData } from "oracle_aggregator"
 import {
@@ -13,6 +13,12 @@ import { useFlightSchedules } from "../hooks/useFlightSchedules"
 import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { cn, txHashOf } from "../lib/utils"
 import { formatDate, localDate, localHm } from "../lib/format"
+import {
+	notificationPermission,
+	notifyClaims,
+	timeLeft,
+} from "../lib/claimReminders"
+import { useNotification } from "../hooks/useNotification"
 import { PixelArt } from "../components/PixelArt"
 import { SkeletonRows } from "../components/Skeleton"
 import { TxProgress } from "../components/TxProgress"
@@ -178,6 +184,30 @@ function computeEta(estimatedArrival: bigint): string | undefined {
 	return `ETA ${hours}H ${minutes}M`
 }
 
+/**
+ * Live "expires in…" line for a claimable card — the loud counterpart of
+ * the small absolute "claim by" date. Ticks every 30s; escalates from
+ * gold to the loss color inside the final 24 hours.
+ */
+function ClaimCountdown({ expirySecs }: { expirySecs: number }) {
+	const t = useCopy()
+	const [, setTick] = useState(0)
+	useEffect(() => {
+		const h = window.setInterval(() => setTick((n) => n + 1), 30_000)
+		return () => window.clearInterval(h)
+	}, [])
+	const left = timeLeft(expirySecs)
+	const urgent = expirySecs - Math.floor(Date.now() / 1000) < 24 * 3600
+	return (
+		<p
+			data-testid="claim-countdown"
+			className={`mt-2 font-board text-[18px] ${urgent ? "text-loss" : "text-gold"}`}
+		>
+			{left === "" ? t.policies.expiresNow : t.policies.expiresIn(left)}
+		</p>
+	)
+}
+
 /** Small themed status badge. FUN = pixel chip, SERIOUS = soft pill. */
 function StatusBadge({ kind, label }: { kind: BadgeKind; label: string }) {
 	return (
@@ -228,6 +258,40 @@ export default function Policies() {
 	const { data: depTimes } = useFlightSchedules(
 		(flights ?? []).map(([flightId, date]) => ({ flightId, date })),
 	)
+
+	const { addNotification } = useNotification()
+	const [notifPerm, setNotifPerm] = useState(notificationPermission())
+
+	// Opt-in claim-expiry browser notifications, deduped per policy per
+	// day in claimReminders. Derived straight from policyStates (the
+	// "won" rule inlined) so this hook can sit above the no-wallet early
+	// return, as rules-of-hooks require.
+	useEffect(() => {
+		if (notifPerm !== "granted" || !policyStates) return
+		const nowS = Math.floor(Date.now() / 1000)
+		notifyClaims(
+			policyStates
+				.filter((s) => {
+					const tag = s.config?.status.tag
+					return (
+						(tag === "SettledDelayed" || tag === "SettledCancelled") &&
+						!s.claimed &&
+						s.config != null &&
+						nowS < Number(s.config.claim_expiry)
+					)
+				})
+				.map((s) => ({
+					id: `${s.flightId}-${s.date.toString()}`,
+					title: t.policies.notifTitle(
+						s.config ? formatUsdc(s.config.payoff) : "—",
+					),
+					body: t.policies.notifBody(
+						s.flightId,
+						timeLeft(Number(s.config?.claim_expiry ?? 0)),
+					),
+				})),
+		)
+	}, [notifPerm, policyStates, t])
 
 	if (!address) {
 		return (
@@ -480,12 +544,34 @@ export default function Policies() {
 			{/* READY TO CLAIM — delayed / cancelled, window still open */}
 			{!isLoading && wonPolicies.length > 0 && (
 				<section>
-					<h2 className="h-section mb-1 flex items-center gap-2 text-gold">
-						{serious && (
-							<Trophy className="h-5 w-5" strokeWidth={1.7} />
+					<div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+						<h2 className="h-section flex items-center gap-2 text-gold">
+							{serious && (
+								<Trophy className="h-5 w-5" strokeWidth={1.7} />
+							)}
+							{t.policies.claim}
+						</h2>
+						{/* Offered only while the browser hasn't been asked yet —
+						    never an unsolicited permission prompt; granted/denied
+						    both make the button disappear. */}
+						{notifPerm === "default" && (
+							<button
+								type="button"
+								data-testid="claim-remind-btn"
+								title={t.policies.remindBtnTitle}
+								className="btn-px btn-ghost btn-sm"
+								onClick={() => {
+									void Notification.requestPermission().then((p) => {
+										setNotifPerm(p)
+										if (p === "granted")
+											addNotification(t.policies.remindOn, "success")
+									})
+								}}
+							>
+								{t.policies.remindBtn}
+							</button>
 						)}
-						{t.policies.claim}
-					</h2>
+					</div>
 					<p className={`mb-3 font-body ${serious ? "text-body" : "text-meta"} text-mute`}>
 						{t.policies.claimSub}
 					</p>
@@ -529,12 +615,17 @@ export default function Policies() {
 										: "—"}
 								</p>
 								{policy.claimExpiry !== undefined && (
-									<p className={`mt-1 font-body ${serious ? "text-meta" : "text-fine"} text-mute`}>
-										{/* a real deadline instant, so local */}
-										{t.policies.claimWindow(
-											localDate(Number(policy.claimExpiry)),
-										)}
-									</p>
+									<>
+										<ClaimCountdown
+											expirySecs={Number(policy.claimExpiry)}
+										/>
+										<p className={`mt-1 font-body ${serious ? "text-meta" : "text-fine"} text-mute`}>
+											{/* a real deadline instant, so local */}
+											{t.policies.claimWindow(
+												localDate(Number(policy.claimExpiry)),
+											)}
+										</p>
+									</>
 								)}
 								<button
 									type="button"

@@ -90,7 +90,11 @@ function realizedFrom(
 	}
 	return {
 		anomaly: false as const,
-		days,
+		// Sample days are fractional (snapshot timestamps); the copy prints
+		// this straight, so keep it to one decimal — "2.9583316782409383d"
+		// is not a duration anyone reads. The annualization below still
+		// uses the exact span.
+		days: Math.round(days * 10) / 10,
 		periodPct: (ratio - 1) * 100,
 		aprPct: (ratio - 1) * (365 / days) * 100,
 		apyPct: (Math.pow(ratio, 365 / days) - 1) * 100,

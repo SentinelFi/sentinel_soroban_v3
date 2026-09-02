@@ -67,11 +67,26 @@ async function dbAllow(bucket: string, limit: number): Promise<boolean | null> {
   }
 }
 
-/** Best-effort caller identity: first hop of x-forwarded-for (set by Vercel). */
+/**
+ * Best-effort caller identity for rate-limit buckets: first hop of
+ * x-forwarded-for (set by Vercel).
+ *
+ * IPv6 callers are collapsed to their /64 ("2001:db8:1:2::/64") — that's
+ * one subscriber allocation, and per-address buckets would hand every v6
+ * caller 2^64 free identities. IPv4 (including v4-mapped "::ffff:1.2.3.4")
+ * stays per-address.
+ */
 export function clientIp(req: VercelRequest): string {
   const fwd = req.headers["x-forwarded-for"];
   const first = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(",")[0]?.trim();
-  return first || req.socket?.remoteAddress || "unknown";
+  const ip = first || req.socket?.remoteAddress || "unknown";
+  if (!ip.includes(":") || ip.includes(".")) return ip; // v4 / v4-mapped
+  // Expand "::" so the first four hextets are the real upper 64 bits.
+  const [head = "", tail = ""] = ip.split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const zeros = Array<string>(Math.max(0, 8 - left.length - right.length)).fill("0");
+  return `${[...left, ...zeros, ...right].slice(0, 4).join(":")}::/64`;
 }
 
 /**

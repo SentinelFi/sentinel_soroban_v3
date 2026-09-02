@@ -8,6 +8,7 @@ import { ThemeDock } from "./components/ThemeToggle"
 import { ActivityLog } from "./components/ActivityLog"
 import { Tour } from "./components/Tour"
 import { AgreementGate, useAgreementAccepted } from "./components/AgreementGate"
+import { AlertsPrompt, EventAlerts } from "./components/EventAlerts"
 import { useTheme } from "./providers/ThemeProvider"
 import { useWallet } from "./hooks/useWallet"
 import { stellarNetwork } from "./contracts/util"
@@ -253,6 +254,11 @@ export default function App() {
 			{/* First-visit agreement notice — blocking modal on the board and
 			    vault pages (z-50). */}
 			<AgreementGate />
+
+			{/* In-app event alerts: null-rendering chain watcher + the
+			    post-first-transaction permission card. */}
+			<EventAlerts />
+			<AlertsPrompt />
 		</div>
 	)
 }

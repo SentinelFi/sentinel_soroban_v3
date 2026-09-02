@@ -60,7 +60,7 @@ import { handler as interventionsHandler } from "../../api/admin/interventions";
 import { handler as freezeHandler } from "../../api/admin/freeze";
 import { run as exposureRun, type ExposureDeps } from "../../api/_lib/governance/exposure_collector";
 import type { GovConfig } from "../../api/_lib/governance/config";
-import { allowRequest } from "../../api/_lib/rate_limit";
+import { allowRequest, clientIp } from "../../api/_lib/rate_limit";
 import type { SorobanClient } from "../../api/_lib/soroban_client";
 import { check, summarize } from "../../scripts/e2e/harness";
 
@@ -428,6 +428,27 @@ async function testRateLimiter(): Promise<void> {
   }
 
   await sql`delete from api_rate_limits where bucket like 'e2e-rl%'`;
+
+  // clientIp bucket keys: IPv6 collapses to its /64 (per-address buckets
+  // would hand a v6 caller 2^64 identities); IPv4 and v4-mapped stay
+  // per-address. Pure function — fake requests suffice.
+  const ipOf = (fwd: string) =>
+    clientIp({ headers: { "x-forwarded-for": fwd } } as unknown as Parameters<typeof clientIp>[0]);
+  check("clientIp: IPv4 stays per-address", ipOf("203.0.113.7") === "203.0.113.7");
+  check(
+    "clientIp: v4-mapped v6 stays per-address",
+    ipOf("::ffff:203.0.113.7") === "::ffff:203.0.113.7"
+  );
+  check(
+    "clientIp: two v6 addresses in one /64 share a bucket",
+    ipOf("2001:db8:a:b::1") === ipOf("2001:db8:a:b:dead:beef:1234:5678") &&
+      ipOf("2001:db8:a:b::1") === "2001:db8:a:b::/64",
+    `${ipOf("2001:db8:a:b::1")} vs ${ipOf("2001:db8:a:b:dead:beef:1234:5678")}`
+  );
+  check(
+    "clientIp: different /64s get different buckets",
+    ipOf("2001:db8:a:b::1") !== ipOf("2001:db8:a:c::1")
+  );
 }
 
 async function main(): Promise<void> {

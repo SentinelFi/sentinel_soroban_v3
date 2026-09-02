@@ -87,11 +87,27 @@ jobs:
         run: cargo audit
 
   dapp:
-    name: dapp lint, typecheck, build
+    name: dapp lint, typecheck, build, e2e
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: dapp
+    services:
+      # Throwaway Postgres for the DB-attached e2e suites (gov + admin).
+      # They only need "a real Postgres with the governance schema" — every
+      # migration applies to vanilla PG17 — so CI never touches the live
+      # Supabase project from a PR.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -117,6 +133,40 @@ jobs:
 
       - name: vite build
         run: npx vite build
+
+      # ── e2e suites — the executor's functional gate ──────────────────
+      # The oracle/sale-auth/route-guard/interventions logic (dapp/api)
+      # was previously verified by review only; these three suites are its
+      # real coverage and used to run by hand.
+
+      - name: Install mock-aeroapi deps
+        # test_oracle_e2e spawns tools/mock-aeroapi (express) with tsx;
+        # the server resolves its deps from its own node_modules.
+        run: npm ci --prefix ../tools/mock-aeroapi
+
+      - name: e2e — oracle pipeline (mock AeroAPI, in-memory chain)
+        # Hermetic and deliberately DB-less: the suite deletes
+        # GOVERNANCE_DB_URL itself to pin the DB-optional degrade path.
+        run: npm run test:e2e
+
+      - name: Apply governance migrations
+        # Filename order == timestamp order under bash's lexicographic glob.
+        run: |
+          for f in ../supabase/migrations/*.sql; do
+            psql "$GOVERNANCE_DB_URL" -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+        env:
+          GOVERNANCE_DB_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
+      - name: e2e — governance interventions ledger (DB-attached)
+        run: npm run test:e2e:gov
+        env:
+          GOVERNANCE_DB_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
+      - name: e2e — admin HTTP + exposure orchestrator (DB-attached)
+        run: npm run test:e2e:admin
+        env:
+          GOVERNANCE_DB_URL: postgresql://postgres:postgres@localhost:5432/postgres
 
   landing:
     name: landing typecheck, build
