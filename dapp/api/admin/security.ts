@@ -5,6 +5,11 @@ import { getDb } from "../_lib/governance/db.js";
 import { loadPublicConfig } from "../_lib/config.js";
 import { ensureVaultHistoryTable } from "../_lib/governance/vault_history.js";
 import { mapLimited, simulateRead } from "../_lib/sim_read.js";
+import {
+  paidSettlementForPolicy,
+  resolvedPayoff,
+  routesForPolicy,
+} from "../_lib/governance/payouts.js";
 
 /**
  * Admin API — the fraud-signals board.
@@ -25,11 +30,14 @@ import { mapLimited, simulateRead } from "../_lib/sim_read.js";
  *   actor_summary     every governance actor's 7-day action/failure count
  *                     (an unexpected actor or failure spike shows here).
  *
- * The win-rate join is a HEURISTIC: the policies mirror has no flight
- * date, so a policy is counted as "won" when its flight settled
- * Delayed/Cancelled within 4 days after purchase. Good enough to rank
- * outliers; not a court record. All figures come from the durable DB
- * mirrors — RPC's ~7-day event retention never limits this board.
+ * A policy counts as "won" when its flight settled with a paying
+ * outcome — exact (flight_id, date) pairing, with the 4-day-after-
+ * purchase window as the HEURISTIC fallback for policy rows ingested
+ * before the mirror stored the flight date. Good enough to rank
+ * outliers; not a court record. Paid-outcome names and per-policy
+ * payoff resolution live in governance/payouts.ts. All figures come
+ * from the durable DB mirrors — RPC's ~7-day event retention never
+ * limits this board.
  *
  * GET → { baseline, win_outliers, swarm_flights, ledger_batches,
  *         manual_triggers, whitelist_changes, actor_summary, as_of }
@@ -72,18 +80,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   try {
     const sql = getDb();
 
-    // Per-buyer win rates via the time-window join described above.
+    // Per-buyer win rates via the settlement pairing described above.
     const buyerRows = (await sql`
       with joined as (
         select p.buyer,
                p.bought_at,
-               (s.flight_id is not null)::int as won
+               (w.flight_id is not null)::int as won
         from policies p
-        left join settlements s
-          on s.flight_id = p.flight_id
-         and s.outcome in ('Delayed', 'Cancelled')
-         and s.settled_at >= p.bought_at
-         and s.settled_at <  p.bought_at + interval '4 days'
+        ${paidSettlementForPolicy(sql)}
       )
       select buyer,
              count(*)::int as policies,
@@ -102,14 +106,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       .slice(0, 20);
 
     const swarmFlights = (await sql`
-      select flight_id,
-             date_trunc('day', bought_at)::text as day,
-             count(distinct buyer)::int as buyers,
+      select p.flight_id,
+             date_trunc('day', p.bought_at)::text as day,
+             count(distinct p.buyer)::int as buyers,
              count(*)::int as policies,
-             coalesce(sum(premium_units), 0)::text as premium_units,
-             coalesce(sum(payoff_units), 0)::text as payoff_units
-      from policies
-      group by flight_id, date_trunc('day', bought_at)
+             coalesce(sum(p.premium_units), 0)::text as premium_units,
+             coalesce(sum(${resolvedPayoff(sql)}), 0)::text as payoff_units
+      from policies p
+      ${routesForPolicy(sql)}
+      group by p.flight_id, date_trunc('day', p.bought_at)
       having count(distinct buyer) >= ${SWARM_MIN_BUYERS}
       order by buyers desc
       limit 20
@@ -180,12 +185,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
              p.buyer,
              p.bought_at::text,
              extract(epoch from (p.bought_at - a.ts))::int as delay_secs,
-             coalesce(p.payoff_units, 0)::text as payoff_units
+             ${resolvedPayoff(sql)}::text as payoff_units
       from actions_log a
       join policies p
         on p.flight_id = a.flight_id
        and p.bought_at >= a.ts
        and p.bought_at < a.ts + make_interval(mins => ${TERM_BUY_WINDOW_MIN})
+      ${routesForPolicy(sql)}
       where a.action in ('update_route_terms', 'whitelist_route', 'enable_route')
         and a.success
       order by a.ts desc

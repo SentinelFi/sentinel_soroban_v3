@@ -8,6 +8,12 @@
       "port": 5175
     },
     {
+      "name": "dapp-api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:api", "--prefix", "dapp"],
+      "port": 3000
+    },
+    {
       "name": "landing",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "landing"],

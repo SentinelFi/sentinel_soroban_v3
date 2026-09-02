@@ -1,12 +1,21 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getDb } from "./_lib/governance/db.js";
-import { FlightStatus } from "./_lib/types.js";
+import {
+  paidSettlementForPolicy,
+  resolvedPayoff,
+  routesForPolicy,
+} from "./_lib/governance/payouts.js";
 
 /**
- * GET /api/leaderboard — the Seatbelters board: top premium buyers from
- * the chain-event mirror (`policies`, written by event_ingest.ts), with a
- * win count from `settlements` (a "win" = the covered flight settled
- * Delayed or Cancelled — the payout outcomes).
+ * GET /api/leaderboard — the Seatbelters board: travelers ranked by net
+ * P&L (payouts collected minus premiums paid) from the chain-event mirror
+ * (`policies` + `settlements`, written by event_ingest.ts).
+ *
+ * A "win" = a covered flight that settled with a paying outcome. Which
+ * outcomes pay, how a settlement pairs with a policy (exact date, with
+ * a four-day fallback for rows ingested before the mirror stored the
+ * date), and what a win is worth all come from governance/payouts.ts —
+ * shared with the admin boards so the figures agree.
  *
  * All four time windows ship in ONE cached response so the UI's filter
  * flips instantly with no extra requests. Rankings only see what the
@@ -24,8 +33,14 @@ const TOP_N = 20;
 export interface LeaderRow {
   buyer: string;
   policies: number;
+  /** Premiums paid in the window, USDC base units. */
   premium_units: string;
+  /** Covered flights that settled Delayed or Cancelled. */
   wins: number;
+  /** Payouts credited for those wins, USDC base units. */
+  payout_units: string;
+  /** payout_units − premium_units — the ranking key. */
+  pnl_units: string;
 }
 
 const WINDOWS = ["24h", "7d", "30d", "all"] as const;
@@ -38,23 +53,36 @@ const WINDOW_HOURS: Record<LeaderWindow, number | null> = {
   all: null,
 };
 
-async function topBuyers(hours: number | null): Promise<LeaderRow[]> {
+async function topTravelers(hours: number | null): Promise<LeaderRow[]> {
   const sql = getDb();
-  // `settlements.date` and `policies.date` are the same UTC day bucket, so
-  // the pair join attributes a settlement to every policy on that flight.
   const rows = (await sql`
-    select p.buyer,
-           count(*)::int as policies,
-           coalesce(sum(p.premium_units), 0)::text as premium_units,
-           count(s.flight_id)::int as wins
-    from policies p
-    left join settlements s
-      on s.flight_id = p.flight_id
-     and s.date = p.date
-     and s.outcome in (${FlightStatus.ToBeSettledDelayed}, ${FlightStatus.ToBeSettledCancelled})
-    where ${hours === null ? sql`true` : sql`p.bought_at > now() - make_interval(hours => ${hours})`}
-    group by p.buyer
-    order by sum(p.premium_units) desc nulls last, count(*) desc, p.buyer
+    with scored as (
+      select p.buyer,
+             p.premium_units,
+             case when w.flight_id is null then 0 else ${resolvedPayoff(sql)} end as payout_units,
+             (w.flight_id is not null) as won
+      from policies p
+      ${routesForPolicy(sql)}
+      ${paidSettlementForPolicy(sql)}
+      where ${hours === null ? sql`true` : sql`p.bought_at > now() - make_interval(hours => ${hours})`}
+    ),
+    totals as (
+      select buyer,
+             count(*)::int as policies,
+             coalesce(sum(premium_units), 0) as premium_units,
+             count(*) filter (where won)::int as wins,
+             coalesce(sum(payout_units), 0) as payout_units
+      from scored
+      group by buyer
+    )
+    select buyer,
+           policies,
+           premium_units::text as premium_units,
+           wins,
+           payout_units::text as payout_units,
+           (payout_units - premium_units)::text as pnl_units
+    from totals
+    order by (payout_units - premium_units) desc, premium_units desc, policies desc, buyer
     limit ${TOP_N}
   `) as unknown as LeaderRow[];
   return rows;
@@ -72,7 +100,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   if (process.env.GOVERNANCE_DB_URL) {
     try {
-      const results = await Promise.all(WINDOWS.map((w) => topBuyers(WINDOW_HOURS[w])));
+      const results = await Promise.all(WINDOWS.map((w) => topTravelers(WINDOW_HOURS[w])));
       windows = Object.fromEntries(WINDOWS.map((w, i) => [w, results[i] ?? []]));
       db = true;
     } catch (err) {

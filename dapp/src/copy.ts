@@ -174,10 +174,13 @@ const fun = {
 		windowAll: "ALL TIME",
 		colRank: "SEAT",
 		colWho: "WHO",
-		colPolicies: "COVERS",
+		colPolicies: "POLICIES",
 		colPremium: "STAKED",
 		colWins: "WINS",
+		colPnl: "P&L",
+		rankTitle: "Seats are ranked by net P&L — payouts collected minus premiums paid.",
 		winsTitle: "Covered flights that settled delayed or cancelled — the ones that paid.",
+		pnlTitle: "Payouts collected minus premiums paid. Seats are ranked by this.",
 		loading: "FASTENING",
 		loadError: "BOARD UNAVAILABLE — TRY AGAIN IN A MOMENT.",
 		empty: "NO SEATBELTERS YET. BUCKLE UP FIRST, BRAG FOREVER.",
@@ -187,7 +190,7 @@ const fun = {
 			`${n} SEAT${n === 1 ? "" : "S"} STILL OPEN ON THIS LIST.`,
 		explorerTitle: (label: string) => `View account on ${label} ↗`,
 		fineprint:
-			"TESTNET NUMBERS — TEST USDC IS FREE, GLORY ISN'T. Rankings count policies seen by the chain-event mirror.",
+			"TESTNET NUMBERS — TEST USDC IS FREE, GLORY ISN'T. Seats rank by net P&L over policies seen by the chain-event mirror.",
 	},
 	house: {
 		heroLine1: "EARN YIELD.",
@@ -744,7 +747,10 @@ const serious: Copy = {
 		colPolicies: "Policies",
 		colPremium: "Premiums",
 		colWins: "Wins",
+		colPnl: "P&L",
+		rankTitle: "Seats are ranked by net P&L — payouts collected minus premiums paid.",
 		winsTitle: "Covered flights that settled delayed or cancelled — the ones that paid.",
+		pnlTitle: "Payouts collected minus premiums paid. Seats are ranked by this.",
 		loading: "Loading",
 		loadError: "The board is unavailable — try again in a moment.",
 		empty: "No seatbelters yet. Buckle up first, brag forever.",
@@ -754,7 +760,7 @@ const serious: Copy = {
 			`${n} seat${n === 1 ? "" : "s"} still open on this list.`,
 		explorerTitle: (label: string) => `View account on ${label} ↗`,
 		fineprint:
-			"Testnet numbers — test USDC has no monetary value. Rankings count policies seen by the chain-event mirror.",
+			"Testnet numbers — test USDC has no monetary value. Seats rank by net P&L over policies seen by the chain-event mirror.",
 	},
 	house: {
 		heroLine1: "Underwriter",
