@@ -78,5 +78,9 @@
     "vite": "^7.3.1",
     "vite-plugin-node-polyfills": "^0.25.0",
     "vite-plugin-wasm": "^3.5.0"
+  },
+  "overrides": {
+    "protobufjs": "^7.6.6",
+    "axios": "^1.20.0"
   }
 }

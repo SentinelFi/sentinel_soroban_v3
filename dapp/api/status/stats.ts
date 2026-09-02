@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { loadConfig } from "../_lib/config.js";
 import { getDb } from "../_lib/governance/db.js";
+import { allowRequest, clientIp } from "../_lib/rate_limit.js";
 import { publicError } from "../_lib/public_error.js";
 import { SorobanClient } from "../_lib/soroban_client.js";
 import { FlightStatus } from "../_lib/types.js";
@@ -30,6 +31,13 @@ import { FlightStatus } from "../_lib/types.js";
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+  // Chain read + DB per cache miss, and unique query strings bypass the
+  // CDN cache entirely — throttle what the cache can't absorb.
+  if (!(await allowRequest("status-stats", clientIp(req), 30))) {
+    res.setHeader("Retry-After", "60");
+    res.status(429).json({ error: "rate limit exceeded — retry in a minute" });
     return;
   }
 

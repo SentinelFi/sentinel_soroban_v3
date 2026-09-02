@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getDb } from "../_lib/governance/db.js";
+import { allowRequest, clientIp } from "../_lib/rate_limit.js";
 import { JOB_REGISTRY, latestRuns } from "../_lib/governance/runs.js";
 import { publicError } from "../_lib/public_error.js";
 
@@ -30,6 +31,13 @@ const BARRIER_STALL_SECS = 600;
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+  // no-store + a DB read on every hit — 30/min still clears a 1/min
+  // uptime monitor by a wide margin.
+  if (!(await allowRequest("status-alert", clientIp(req), 30))) {
+    res.setHeader("Retry-After", "60");
+    res.status(429).json({ error: "rate limit exceeded — retry in a minute" });
     return;
   }
   res.setHeader("Cache-Control", "no-store");
