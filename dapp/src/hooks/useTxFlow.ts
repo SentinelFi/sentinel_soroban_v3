@@ -150,6 +150,10 @@ export function useTxFlow(options: TxFlowOptions = {}) {
 			try {
 				const result = await fn(transition)
 				transition("success")
+				// App-level listeners (the alerts permission prompt, the
+				// event watcher's self-action suppression) hear every
+				// successful signing flow without each caller wiring it.
+				window.dispatchEvent(new CustomEvent("flightsfun:tx-success"))
 				if (result?.message) {
 					addNotification(result.message, "success", {
 						txHash: result.txHash,

@@ -7,6 +7,7 @@ import { explorerAccountUrl, explorerLabel } from "../lib/explorer"
 import { PixelArt } from "../components/PixelArt"
 import { SkeletonRows } from "../components/Skeleton"
 import { useTheme } from "../providers/ThemeProvider"
+import { useWallet } from "../hooks/useWallet"
 import { useCopy } from "../copy"
 
 /**
@@ -17,7 +18,9 @@ import { useCopy } from "../copy"
  * travels with its row: the column headers re-sort the view, they never
  * re-rank the board. Podium rows get medals and a shine; below twenty
  * entrants the board shows how many seats are still open rather than
- * padding with placeholders.
+ * padding with placeholders. A connected wallet gets its own row under
+ * the board — same columns, plus the seat it holds even when that is
+ * below the cut — from the endpoint's ?buyer= lookup.
  */
 
 const WINDOWS = ["24h", "7d", "30d", "all"] as const
@@ -43,11 +46,18 @@ interface SeatedRow extends LeaderRow {
 	seat: number
 }
 
+interface SeatResponse {
+	db: boolean
+	buyer: string
+	windows: Record<LeaderWindow, SeatedRow | null>
+}
+
 /** Sortable columns; null = the board's own P&L order. */
 type SortKey = "seat" | "policies" | "premium" | "wins" | "pnl"
 type SortState = { key: SortKey; dir: 1 | -1 } | null
 
 const MEDALS = ["🥇", "🥈", "🥉"] as const
+
 
 /** "GABCD…VWXYZ" — first and last five characters. */
 function shortAddr(a: string): string {
@@ -88,10 +98,30 @@ async function fetchLeaderboard(): Promise<LeaderboardResponse> {
 	return (await res.json()) as LeaderboardResponse
 }
 
+async function fetchMySeat(address: string): Promise<SeatResponse> {
+	const res = await fetch(`/api/leaderboard?buyer=${encodeURIComponent(address)}`)
+	if (!res.ok) throw new Error(`HTTP ${res.status}`)
+	return (await res.json()) as SeatResponse
+}
+
+/** Medal for the podium, plain number below it, dash for no seat. */
+function SeatCell({ seat }: { seat: number | null }) {
+	if (seat === null)
+		return <span className="font-board text-[18px] text-mute">—</span>
+	if (seat <= 3)
+		return (
+			<span className="text-[18px]" role="img" aria-label={`Rank ${seat}`}>
+				{MEDALS[seat - 1]}
+			</span>
+		)
+	return <span className="font-board text-[18px] text-mute">{seat}</span>
+}
+
 export default function Seatbelters() {
 	const t = useCopy()
 	const { theme } = useTheme()
 	const serious = theme === "serious"
+	const { address } = useWallet()
 	const [timeWindow, setTimeWindow] = useState<LeaderWindow>("all")
 	const [sort, setSort] = useState<SortState>(null)
 
@@ -101,6 +131,20 @@ export default function Seatbelters() {
 		staleTime: 60_000,
 		retry: 1,
 	})
+
+	// The connected traveler's own seat — a separate, per-address request
+	// so the shared board blob stays cacheable at the edge.
+	const mySeat = useQuery({
+		queryKey: ["leaderboard", "seat", address],
+		queryFn: () => fetchMySeat(address!),
+		enabled: address !== undefined,
+		staleTime: 60_000,
+		retry: 1,
+	})
+	const mySeatUnavailable =
+		mySeat.isError || (mySeat.data !== undefined && !mySeat.data.db)
+	const myRow = mySeat.data?.windows[timeWindow] ?? null
+	const myPnl = myRow ? BigInt(myRow.pnl_units) : 0n
 
 	// A DB outage must not masquerade as "no seatbelters yet" — same rule
 	// the Policies page applies to RPC failures. `db: false` is the
@@ -269,7 +313,11 @@ export default function Seatbelters() {
 			)}
 
 			{!isLoading && !boardUnavailable && rows.length > 0 && (
-				<div className="panel overflow-x-auto p-3">
+				<div className="lb-panel">
+					{/* beam wrapper sits outside the scroll container: a ring drawn
+					    on the panel itself would count as overflow and summon
+					    scrollbars */}
+					<div className="panel overflow-x-auto p-3">
 					<table className="w-full border-collapse" data-testid="lb-table">
 						<thead>
 							<tr className="border-b-2 border-line text-left">
@@ -336,19 +384,7 @@ export default function Seatbelters() {
 										className="border-b border-line/40 last:border-b-0"
 									>
 										<td className="px-2 py-2 text-center">
-											{podium ? (
-												<span
-													className="text-[18px]"
-													role="img"
-													aria-label={`Rank ${row.seat}`}
-												>
-													{MEDALS[row.seat - 1]}
-												</span>
-											) : (
-												<span className="font-board text-[18px] text-mute">
-													{row.seat}
-												</span>
-											)}
+											<SeatCell seat={row.seat} />
 										</td>
 										<td className="px-2 py-2">
 											<a
@@ -385,6 +421,7 @@ export default function Seatbelters() {
 							})}
 						</tbody>
 					</table>
+					</div>
 				</div>
 			)}
 
@@ -400,6 +437,106 @@ export default function Seatbelters() {
 			<p className={`text-center font-body ${serious ? "text-meta" : "text-fine"} text-mute`}>
 				{t.seatbelters.fineprint}
 			</p>
+
+			{/* the connected traveler's own row — last thing on the page, same
+			    columns as the board, seat included even below the top-N cut */}
+			{!isLoading && !boardUnavailable && (
+				<section data-testid="lb-me" aria-labelledby="lb-me-title">
+					<h2 id="lb-me-title" className="label-px mb-2 text-left">
+						{t.seatbelters.youTitle}
+					</h2>
+					<div className="panel p-3">
+					{address === undefined ? (
+						<p
+							className={`px-2 pb-2 font-board ${serious ? "text-[18px]" : "text-[17px]"} text-gold`}
+						>
+							{!serious && <span className="blink">▶</span>}{" "}
+							{t.seatbelters.youConnect}
+						</p>
+					) : mySeat.isLoading ? (
+						<SkeletonRows rows={1} />
+					) : mySeatUnavailable ? (
+						<p role="alert" className="px-2 pb-2 font-body text-meta text-loss">
+							{t.seatbelters.youError}
+						</p>
+					) : (
+						<div className="overflow-x-auto">
+							<table className="w-full border-collapse">
+								<thead>
+									<tr className="border-b-2 border-line text-left">
+										{columns.map((col) => (
+											<th
+												key={col.label}
+												scope="col"
+												className={`label-px px-2 py-2${
+													col.align === "right"
+														? " text-right"
+														: col.align === "center"
+															? " text-center"
+															: ""
+												}`}
+												title={col.title}
+											>
+												{col.label}
+											</th>
+										))}
+									</tr>
+								</thead>
+								<tbody>
+									<tr data-testid="lb-me-row">
+										<td className="px-2 py-2 text-center">
+											<SeatCell seat={myRow?.seat ?? null} />
+										</td>
+										<td className="px-2 py-2">
+											<span className="label-px mr-2 text-gold">
+												{t.seatbelters.you}
+											</span>
+											<a
+												href={explorerAccountUrl(address)}
+												target="_blank"
+												rel="noopener noreferrer"
+												title={t.seatbelters.explorerTitle(explorerLabel())}
+												data-testid="lb-me-address"
+												className={`board-figure text-[17px] hover:underline ${
+													myRow && myRow.seat <= 3
+														? "lb-shine"
+														: "text-ink hover:text-sky"
+												}`}
+											>
+												{shortAddr(address)}
+											</a>
+										</td>
+										<td className="board-figure px-2 py-2 text-right text-[17px] text-dim">
+											{myRow?.policies ?? 0}
+										</td>
+										<td className="board-figure px-2 py-2 text-right text-[17px] text-ink">
+											{formatUsdc(BigInt(myRow?.premium_units ?? "0"))}{" "}
+											<span className="text-meta text-mute">USDC</span>
+										</td>
+										<td className="board-figure px-2 py-2 text-right text-[17px] text-win">
+											{myRow?.wins ?? 0}
+										</td>
+										<td
+											className={`board-figure px-2 py-2 text-right text-[17px] ${
+												myPnl > 0n ? "text-win" : myPnl < 0n ? "text-loss" : "text-mute"
+											}`}
+										>
+											{formatSigned(myPnl)}{" "}
+											<span className="text-meta text-mute">USDC</span>
+										</td>
+									</tr>
+								</tbody>
+							</table>
+							{myRow === null && (
+								<p className="px-2 pt-2 font-body text-fine text-mute">
+									{t.seatbelters.youOffBoard}
+								</p>
+							)}
+						</div>
+					)}
+					</div>
+				</section>
+			)}
 		</div>
 	)
 }

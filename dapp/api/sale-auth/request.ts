@@ -41,6 +41,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     res.status(429).json({ error: "rate limit exceeded — retry in a minute" });
     return;
   }
+  // Global circuit breaker on top of the per-caller limit: per-IP caps one
+  // caller, not many addresses walking the space together — and what this
+  // endpoint ultimately protects is billed AeroAPI spend, which is global.
+  // 120/min (2/sec sustained) is far above organic buy-click traffic and
+  // bounds the worst-case burn regardless of how many IPs participate.
+  // Checked AFTER the per-IP gate so throttled callers can't drain the
+  // shared budget for everyone else.
+  if (!(await allowRequest("sale-auth-global", "all", 120))) {
+    res.setHeader("Retry-After", "60");
+    res.status(429).json({ error: "busy — retry in a minute" });
+    return;
+  }
   const { flight_id, date } = (req.body ?? {}) as { flight_id?: unknown; date?: unknown };
   const dateNum = Number(date);
   if (
