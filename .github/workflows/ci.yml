@@ -48,7 +48,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev libudev-dev
 
       - name: Install stellar-cli, cargo-audit, and cargo-llvm-cov
-        run: cargo binstall -y stellar-cli cargo-audit cargo-llvm-cov
+        # --locked matters for binstall's build-from-source FALLBACK (taken
+        # whenever a fresh crate release has no prebuilt binary yet): an
+        # unlocked build resolves the newest deps, which can demand a newer
+        # rustc than the pinned toolchain (seen: cargo-audit 0.22.2 pulling
+        # a kstring that wants 1.96 on our 1.94). The crate's committed
+        # lockfile builds with the versions its authors actually tested.
+        run: cargo binstall -y --locked stellar-cli cargo-audit cargo-llvm-cov
 
       - name: cargo test with coverage
         # Runs the suite and writes a browsable HTML report to target/llvm-cov/html.
