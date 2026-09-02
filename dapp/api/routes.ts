@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { loadRoutesConfig, fileTerms, type RouteEntry } from "./_lib/routes_config.js";
 import { airportTz } from "./_lib/airport_tz.js";
+import { allowRequest, clientIp } from "./_lib/rate_limit.js";
 import { getDb } from "./_lib/governance/db.js";
 import { loadGovConfig } from "./_lib/governance/config.js";
 import { GovSubmitter } from "./_lib/governance/submitter.js";
@@ -190,6 +191,15 @@ async function resolveChainPremiums(
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+  // The heaviest public endpoint (a fleet-wide chain sweep per cache
+  // miss), and a unique query string bypasses the CDN cache — the
+  // throttle bounds what the cache can't absorb. Browsers refetch at
+  // most once a minute; 20/min/IP never touches a real visitor.
+  if (!(await allowRequest("routes", clientIp(req), 20))) {
+    res.setHeader("Retry-After", "60");
+    res.status(429).json({ error: "rate limit exceeded — retry in a minute" });
     return;
   }
 

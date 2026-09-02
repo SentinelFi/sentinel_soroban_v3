@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getDb } from "../_lib/governance/db.js";
+import { allowRequest, clientIp } from "../_lib/rate_limit.js";
 import { JOB_REGISTRY, latestRuns } from "../_lib/governance/runs.js";
 import { publicError } from "../_lib/public_error.js";
 
@@ -40,6 +41,11 @@ async function readBarrier(): Promise<{ engaged: boolean; stalled: boolean } | n
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+  if (!(await allowRequest("status-runs", clientIp(req), 20))) {
+    res.setHeader("Retry-After", "60");
+    res.status(429).json({ error: "rate limit exceeded — retry in a minute" });
     return;
   }
 
