@@ -116,6 +116,9 @@ const fun = {
 		calNextAria: "Next month",
 		calCloseAria: "Close calendar",
 		premiumLabel: "PREMIUM (FIXED)",
+		walletLabel: "YOUR USDC",
+		insufficientPrompt:
+			"Not enough USDC for this premium — top up your wallet first.",
 		payoutLabel: "PAYOUT IF DELAYED",
 		cta: (amt: string) => `BUY COVER ✈ ${amt} USDC`,
 		pickDateHint: "Pick a flight date first.",
@@ -729,6 +732,9 @@ const serious: Copy = {
 		calNextAria: "Next month",
 		calCloseAria: "Close calendar",
 		premiumLabel: "Premium (fixed)",
+		walletLabel: "Wallet USDC",
+		insufficientPrompt:
+			"Not enough USDC for this premium — top up your wallet first.",
 		payoutLabel: "Payout if delayed",
 		cta: (amt: string) => `Buy Coverage · ${amt} USDC`,
 		pickDateHint: "Pick a flight date first.",

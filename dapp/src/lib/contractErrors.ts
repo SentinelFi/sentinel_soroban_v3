@@ -8,9 +8,11 @@
  * failure means and what, if anything, they can do about it.
  *
  * Codes are namespaced by contract in the Rust source (3xx controller,
- * 4xx flight pool manager, 5xx governance, 6xx oracle, 7xx risk vault), so
- * one flat map is unambiguous. Anything absent falls through to a generic
- * message that still shows the number.
+ * 4xx flight pool manager, 5xx governance, 6xx oracle, 7xx risk vault) —
+ * plus 1xx from the OpenZeppelin token layer (`FungibleTokenError` in
+ * stellar-tokens, which the USDC contract is built on) — so one flat map
+ * is unambiguous. Anything absent falls through to a generic message that
+ * still shows the number.
  */
 
 export interface ContractErrorInfo {
@@ -23,6 +25,25 @@ export interface ContractErrorInfo {
 }
 
 export const CONTRACT_ERRORS: Record<number, ContractErrorInfo> = {
+	// ── Token layer (1xx — OZ FungibleTokenError, USDC transfers) ───────
+	100: {
+		message: "Your wallet doesn't hold enough USDC for this amount.",
+		action: "Top it up first.",
+	},
+	101: {
+		message: "The USDC spending allowance for this action is too small.",
+		action: "Retry the flow from the start so it can request a fresh approval.",
+		transient: true,
+	},
+	103: {
+		message: "The amount must be greater than zero.",
+		action: "Enter a positive amount.",
+	},
+	104: {
+		message: "That amount is too large to process.",
+		action: "Try a smaller amount.",
+	},
+
 	// ── Controller (3xx) ────────────────────────────────────────────────
 	306: {
 		message: "This wallet isn't on the buyer allowlist.",
