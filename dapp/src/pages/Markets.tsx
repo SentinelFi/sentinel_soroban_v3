@@ -12,6 +12,7 @@ import {
 	useFlightDataBatch,
 	useGovernanceDefaults,
 	useIsWhitelisted,
+	useUsdcBalance,
 	useWhitelistEnabled,
 } from "../hooks/useContracts"
 import type { UiRoute } from "../hooks/useContracts"
@@ -19,7 +20,7 @@ import { DEMO_ROUTES } from "../config/routes"
 import { airlineName, flightradarUrl } from "../config/airlines"
 import { useWallet } from "../hooks/useWallet"
 import { useFlightSchedules } from "../hooks/useFlightSchedules"
-import { localDate, localHm } from "../lib/format"
+import { compactUsdc, localDate, localHm } from "../lib/format"
 import { coveredLocalDate, hhmmStr, zonedDate } from "../lib/flightDates"
 import { stagedSigner, useTxFlow } from "../hooks/useTxFlow"
 import { connectWallet } from "../util/wallet"
@@ -579,6 +580,7 @@ function BetSlip({
 	const { data: schedMap } = useFlightSchedules(
 		dateSecs !== null ? [{ flightId: route.flightId, date: dateSecs }] : [],
 	)
+	const { data: usdcBalance } = useUsdcBalance(address)
 	const authDepSecs = authDepIso ? Date.parse(authDepIso) / 1000 : NaN
 	const depSecs = Number.isFinite(authDepSecs)
 		? authDepSecs
@@ -657,8 +659,25 @@ function BetSlip({
 		route.terms?.delay_hours ??
 		defaults?.default_delay_hours
 
+	// Early insufficient-funds detection: the contract would refuse the
+	// buy anyway (token error #100), but the shortfall is knowable the
+	// moment the slip opens — surface it before a wallet popup ever
+	// appears. The chain stays the final judge; a stale read here only
+	// costs one extra click.
+	const insufficientUsdc =
+		!!address &&
+		usdcBalance !== undefined &&
+		premium !== undefined &&
+		usdcBalance < premium
+
 	const placeBet = () => {
-		if (!address || !flightDate || whitelistBlocked || routeUnavailable)
+		if (
+			!address ||
+			!flightDate ||
+			whitelistBlocked ||
+			routeUnavailable ||
+			insufficientUsdc
+		)
 			return
 		void flow.run(async (step) => {
 			step("verifying")
@@ -836,6 +855,19 @@ function BetSlip({
 							{premium !== undefined ? formatUsdc(premium) : "…"} USDC
 						</span>
 					</div>
+					{address && usdcBalance !== undefined && (
+						<div className="flex items-center justify-between">
+							<span className="label-px">{t.slip.walletLabel}</span>
+							<span
+								data-testid="betslip-wallet"
+								className={`board-figure text-[18px] ${
+									insufficientUsdc ? "text-loss" : "text-dim"
+								}`}
+							>
+								{compactUsdc(usdcBalance)} USDC
+							</span>
+						</div>
+					)}
 					<div className="flex items-center justify-between">
 						<span className="label-px text-win">
 							{t.slip.payoutLabel}
@@ -862,10 +894,15 @@ function BetSlip({
 						!flightDate ||
 						whitelistBlocked ||
 						networkMismatch ||
-						routeUnavailable
+						routeUnavailable ||
+						insufficientUsdc
 					}
 					title={
-						address && !flightDate ? t.slip.pickDateHint : undefined
+						address && !flightDate
+							? t.slip.pickDateHint
+							: insufficientUsdc
+								? t.slip.insufficientPrompt
+								: undefined
 					}
 					className="btn-loss w-full"
 					data-testid="betslip-buy"
@@ -888,6 +925,14 @@ function BetSlip({
 						className="font-body text-meta text-loss"
 					>
 						{t.slip.unavailablePrompt}
+					</p>
+				)}
+				{insufficientUsdc && flow.state === "idle" && !routeUnavailable && (
+					<p
+						data-testid="betslip-insufficient"
+						className="font-body text-meta text-loss"
+					>
+						{t.slip.insufficientPrompt}
 					</p>
 				)}
 				{!address && (

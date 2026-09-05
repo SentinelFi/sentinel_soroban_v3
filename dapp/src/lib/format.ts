@@ -38,6 +38,24 @@ export function parseUsdc(amount: string): bigint {
 }
 
 /**
+ * Short, rounded USDC display for tight rows: "950", "12.3", "1.2k",
+ * "3.4M". At most one decimal, trailing ".0" trimmed — a glanceable
+ * figure, never an accounting one (exact amounts keep using formatUsdc).
+ */
+export function compactUsdc(units: bigint): string {
+	const v = Number(units) / Number(USDC_DIVISOR)
+	const one = (n: number): string => {
+		const s = n.toFixed(1)
+		return s.endsWith(".0") ? s.slice(0, -2) : s
+	}
+	// Tier cutoffs sit at the rounding point, so 999.99 reads "1k" and
+	// 999,950 reads "1M" — never "1000" or "1000k".
+	if (v >= 999_950) return `${one(v / 1_000_000)}M`
+	if (v >= 999.95) return `${one(v / 1_000)}k`
+	return one(v)
+}
+
+/**
  * Exact input-field string for a unit amount ("1234.567", no grouping,
  * trailing zeros trimmed) — used by MAX buttons so the round-trip
  * through parseUsdc reproduces the balance to the last unit.
